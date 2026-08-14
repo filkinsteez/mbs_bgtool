@@ -1,5 +1,5 @@
-import { EditorShell } from '@/components/editor/EditorShell'
+import { BackgroundShell } from '@/components/background/BackgroundShell'
 
 export default function Home() {
-  return <EditorShell />
+  return <BackgroundShell />
 }

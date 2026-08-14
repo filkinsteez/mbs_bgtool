@@ -15,13 +15,18 @@ import { labContentHash } from './recipe'
 const ANALYSIS_MAX = 1024
 
 export type LabSource = {
-  image: HTMLImageElement
-  url: string // object URL, revoked on replace
+  image: CanvasImageSource
+  url?: string // object URL, revoked on replace
   fullW: number
   fullH: number
   maps: AnalysisMaps
   hash: string
   filename: string
+}
+
+export type LabSourceOptions = {
+  filename?: string
+  url?: string
 }
 
 let current: LabSource | null = null
@@ -31,8 +36,60 @@ export function getLabSource(): LabSource | null {
 }
 
 export function clearLabSource(): void {
-  if (current) URL.revokeObjectURL(current.url)
+  if (current?.url) URL.revokeObjectURL(current.url)
   current = null
+}
+
+// One RGBA8 analysis contract for decoded images, frozen WebGL frames,
+// generated fixtures, and material export. The analysis raster always uses
+// the same Canvas2D drawImage conversion and the same capped dimensions.
+export function createLabSourceFromImage(
+  image: CanvasImageSource,
+  fullW: number,
+  fullH: number,
+  options: LabSourceOptions = {},
+): LabSource {
+  if (!fullW || !fullH) throw new Error('Source decoded to zero size.')
+  const k = Math.min(1, ANALYSIS_MAX / Math.max(fullW, fullH))
+  const aw = Math.max(8, Math.round(fullW * k))
+  const ah = Math.max(8, Math.round(fullH * k))
+  const scratch = document.createElement('canvas')
+  scratch.width = aw
+  scratch.height = ah
+  const ctx = scratch.getContext('2d', { willReadFrequently: true })
+  if (!ctx) throw new Error('2D context unavailable.')
+  ctx.drawImage(image, 0, 0, aw, ah)
+  const data = ctx.getImageData(0, 0, aw, ah)
+  return {
+    image,
+    url: options.url,
+    fullW,
+    fullH,
+    maps: analyzeRGBA(data.data, aw, ah),
+    hash: labContentHash(data.data, aw, ah),
+    filename: options.filename ?? 'rgba-source',
+  }
+}
+
+// Freeze a canvas before analysis and compositing. WebGL's drawing buffer can
+// change or be discarded after the current task; the 2D snapshot guarantees
+// photo cells and every analysis map observe the exact same frame.
+export function createLabSourceFromCanvas(
+  canvas: HTMLCanvasElement,
+  options: LabSourceOptions = {},
+): LabSource {
+  const snapshot = document.createElement('canvas')
+  snapshot.width = canvas.width
+  snapshot.height = canvas.height
+  const ctx = snapshot.getContext('2d')
+  if (!ctx) throw new Error('2D snapshot context unavailable.')
+  ctx.drawImage(canvas, 0, 0)
+  return createLabSourceFromImage(
+    snapshot,
+    snapshot.width,
+    snapshot.height,
+    { ...options, filename: options.filename ?? 'canvas-frame.rgba' },
+  )
 }
 
 // decode WITHOUT committing — the caller decides whether this decode
@@ -54,37 +111,22 @@ export async function decodeLabSourceFile(file: File): Promise<LabSource> {
     throw new Error(`"${file.name}" decoded to zero size.`)
   }
 
-  // analysis raster: capped long edge, aspect preserved
-  const k = Math.min(1, ANALYSIS_MAX / Math.max(fullW, fullH))
-  const aw = Math.max(8, Math.round(fullW * k))
-  const ah = Math.max(8, Math.round(fullH * k))
-  const scratch = document.createElement('canvas')
-  scratch.width = aw
-  scratch.height = ah
-  const ctx = scratch.getContext('2d', { willReadFrequently: true })
-  if (!ctx) {
+  try {
+    return createLabSourceFromImage(image, fullW, fullH, {
+      url,
+      filename: file.name,
+    })
+  } catch (error) {
     URL.revokeObjectURL(url)
-    throw new Error('2D context unavailable.')
-  }
-  ctx.drawImage(image, 0, 0, aw, ah)
-  const data = ctx.getImageData(0, 0, aw, ah)
-
-  return {
-    image,
-    url,
-    fullW,
-    fullH,
-    maps: analyzeRGBA(data.data, aw, ah),
-    hash: labContentHash(data.data, aw, ah),
-    filename: file.name,
+    throw error
   }
 }
 
 export function commitLabSource(src: LabSource): void {
-  if (current && current !== src) URL.revokeObjectURL(current.url)
+  if (current && current !== src && current.url) URL.revokeObjectURL(current.url)
   current = src
 }
 
 export function discardLabSource(src: LabSource): void {
-  if (src !== current) URL.revokeObjectURL(src.url)
+  if (src !== current && src.url) URL.revokeObjectURL(src.url)
 }

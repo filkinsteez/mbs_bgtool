@@ -56,6 +56,20 @@ describe('field sources', () => {
     expect(f(2, 2)).toBeLessThan(0.05)
   })
 
+  it('uses the canonical filled Meta silhouette for background subjects', () => {
+    const f = buildCurveField(
+      { ...META_CURVE, amplitudeX: 1, amplitudeY: 1, silhouette: 'meta-symbol' },
+      400,
+      280,
+      0.05,
+    )
+    expect(f(20, 180)).toBeGreaterThan(0.9)
+    expect(f(200, 120)).toBeGreaterThan(0.9)
+    expect(f(100, 140)).toBeLessThan(0.1)
+    expect(f(300, 140)).toBeLessThan(0.1)
+    expect(f(200, 10)).toBeLessThan(0.1)
+  })
+
   it('invert and combine modes compose', () => {
     const a = { ...createFieldSource('linear', 'a'), angle: 0, weight: 1, softness: 0.05 }
     const b = { ...createFieldSource('linear', 'b'), angle: 0, weight: 1, softness: 0.05, invert: true, combine: 'multiply' as const }

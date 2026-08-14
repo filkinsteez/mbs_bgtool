@@ -10,7 +10,19 @@ import type { LabPatch } from './labStore'
 // All ten are today's proven recipes, judged against the reference
 // sheet before earning a slot.
 
-export type Look = { id: string; label: string; patch: LabPatch }
+export type LookId =
+  | 'frame'
+  | 'pixels'
+  | 'scanlines'
+  | 'streams'
+  | 'brushwork'
+  | 'beads'
+  | 'quilt'
+  | 'weave'
+  | 'marks'
+  | 'trails'
+
+export type Look = { id: LookId; label: string; patch: LabPatch }
 
 export const LOOKS: Look[] = [
   {

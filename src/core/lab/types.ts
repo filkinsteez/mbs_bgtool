@@ -39,6 +39,7 @@ export type CurveSnapshot = {
   offsetX: number
   offsetY: number
   curve?: 'meta'
+  silhouette?: 'meta-symbol'
 }
 
 export type FieldSourceState = {
@@ -148,6 +149,13 @@ export type MarkParams = {
   echo: number
 }
 
+export type MotionState = {
+  enabled: boolean
+  amount: number // 0..1
+  speed: number // cycles per second
+  loopSeconds: number // loop duration for deterministic previews
+}
+
 export type LabState = {
   version: number
   studyId: 'territory'
@@ -169,6 +177,7 @@ export type LabState = {
   // the applied look and its strength: 1 = full effect, lower blends
   // the photo back over the result (the Lightroom-Amount read)
   look: { id: string | null; strength: number }
+  motion: MotionState
 }
 
 // Views are ui, not recipe: composite plus the intermediate maps that

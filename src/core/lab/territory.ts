@@ -2,6 +2,11 @@ import { chan } from '@/core/organic/random'
 import { META_PHASE } from '@/core/lissajous/equation'
 import { sampleCurve } from '@/core/lissajous/sampler'
 import { buildDistanceGrid } from '@/core/cloner/contours'
+import {
+  META_SYMBOL_HEIGHT,
+  META_SYMBOL_WIDTH,
+  sampleMetaSymbol,
+} from '@/core/metaSymbol'
 import type { AnalysisMaps } from './analysis'
 import type { Field, FitRect } from './field'
 import { fieldFromMap } from './field'
@@ -41,6 +46,9 @@ export function buildCurveField(
   outH: number,
   softness: number,
 ): Field {
+  if (snap.silhouette === 'meta-symbol') {
+    return buildMetaSymbolField(snap, outW, outH, softness)
+  }
   const samples = sampleCurve(
     { ...snap, sampleDensity: 96, curve: snap.curve },
     outW,
@@ -60,6 +68,54 @@ export function buildCurveField(
     const t = Math.max(0, 1 - d / falloff)
     return t * t * (3 - 2 * t)
   }
+}
+
+export function buildMetaSymbolField(
+  snap: CurveSnapshot,
+  outW: number,
+  outH: number,
+  softness: number,
+): Field {
+  const centerX = outW / 2 + (snap.offsetX * outW) / 2
+  const centerY = outH / 2 + (snap.offsetY * outH) / 2
+  const boxWidth = Math.max(0.001, Math.abs(snap.amplitudeX) * outW)
+  const boxHeight = Math.max(0.001, Math.abs(snap.amplitudeY) * outH)
+  const symbolScale = Math.max(
+    0.001,
+    Math.min(boxWidth / META_SYMBOL_WIDTH, boxHeight / META_SYMBOL_HEIGHT),
+  )
+  const falloff = Math.max(1, softness * symbolScale * 2)
+  const cos = Math.cos(snap.rotation)
+  const sin = Math.sin(snap.rotation)
+  const cols = Math.max(12, Math.round((128 * outW) / Math.max(outW, outH)))
+  const rows = Math.max(12, Math.round((128 * outH) / Math.max(outW, outH)))
+  const cellW = outW / cols
+  const cellH = outH / rows
+  const values = new Float32Array((cols + 1) * (rows + 1))
+
+  for (let row = 0; row <= rows; row += 1) {
+    const y = row * cellH
+    for (let column = 0; column <= cols; column += 1) {
+      const x = column * cellW
+      const dx = x - centerX
+      const dy = y - centerY
+      const localX = dx * cos + dy * sin
+      const localY = -dx * sin + dy * cos
+      const point = sampleMetaSymbol(
+        localX / symbolScale + META_SYMBOL_WIDTH / 2,
+        localY / symbolScale + META_SYMBOL_HEIGHT / 2,
+      )
+      let value = 1
+      if (!point.inside) {
+        const amount = Math.max(0, 1 - (point.distance * symbolScale) / falloff)
+        value = amount * amount * (3 - 2 * amount)
+      }
+      values[row * (cols + 1) + column] = value
+    }
+  }
+
+  const grid: DistGrid = { cols, rows, cellW, cellH, values }
+  return (x, y) => sampleDistGrid(grid, x, y)
 }
 
 function sampleDistGrid(grid: DistGrid, x: number, y: number): number {

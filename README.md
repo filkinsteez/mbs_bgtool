@@ -1,16 +1,20 @@
-# Lissajous Brand System
+# MBS Background Generator
 
-A brand creation instrument where a single Lissajous curve generates the
-editorial grid, typography rules, glyph fields, and material of the output.
-The curve itself stays hidden during composition — it appears only as faint
-construction geometry in **Lissajous Setup** mode.
+This fork is focused on generating export-ready Meta backgrounds with a
+simplified workflow:
 
-Built from `lissajous_brand_system_prd_v3.md`.
+- Format aspect selection (16:9, 9:16, 1:1, 4:5, custom) + export resolution presets
+- Looks (Frame, Pixels, Scanlines, Streams, Brushwork, Beads, Quilt, Weave, Marks, Trails)
+- Approved color packs + normalized ratio mixing
+- Direct canvas move, scale, rotate, crop, pan, zoom, snapping, and undo/redo
+- Independent Background and Material transforms with framing presets and numeric precision
+- Licensed Shaders.com Glass/Liquid/Stainless Steel 1 finishes with a Clean fallback
+- Static 4K PNG export, capability-gated experimental 8K, and loop-safe motion preview
 
 ## Stack
 
-Next.js (App Router) · TypeScript · React · Zustand · WebGL2 (custom minimal
-wrapper) · lz-string share URLs · vitest.
+Next.js (App Router) · TypeScript · React · Zustand · Canvas/WebGL2 fallback ·
+licensed `shaders` WebGPU runtime · Vitest.
 
 ## Develop
 
@@ -21,47 +25,31 @@ npm test        # core math + determinism tests
 npm run lint    # eslint
 ```
 
-Everything is client-side: no server, no accounts, no uploads leaving the
-browser. State is deterministic from seed + recipe; share links encode the
-whole project as `#s=<lz-string>` in the URL hash.
+Everything runs client-side. `BackgroundRecipeV2` is deterministic from seed +
+settings, migrates the previous recipe format, and is autosaved independently
+from the original LAB. Background Looks re-render at requested export dimensions;
+GPU materials use a separate offscreen renderer at the requested target size.
 
-A scripting hook is exposed at `window.__lbs` (state get/set, undo/redo,
-debug counters) for automation and verification.
+Commercial deployment of the Shaders.com finish layer requires an active Pro,
+Team, or applicable OEM license. Unsupported WebGPU environments keep the
+base-color canvas usable; Clean remains available as the guaranteed treatment.
 
-## Motion
+## Material rendering fidelity
 
-The third editor mode prototypes easing/velocity curves — and the easing
-family IS the Lissajous family. Pick a ratio and phase; one arc of that
-figure, read left to right, is the easing curve. 1:1 is the diagonal
-(linear), 2:1's top arc is the classic ease, 1:3 swings once (bounce),
-more lobes go elastic. Same two controls as the grid; MATCH SYSTEM CURVE
-copies the poster's ratio into the easing.
+- The installed Shaders `3.0.452` runtime is WebGPU-only. Preview canvases use
+  their visible CSS dimensions and the runtime's device-pixel ratio backing
+  (capped at 2× on desktop and 1.5× on mobile), so a small frame is not enlarged.
+- GPU material export uses the runtime's recording-resolution path at a 1:1
+  pixel ratio and must produce the selected dimensions exactly. It fails instead
+  of silently resampling when GPU texture-size or memory limits are exceeded.
+- Stainless Steel 1 is procedural except for the Meta signed-distance field.
+  Shaders `3.0.452` natively consumes that field at 512 × 512 in `r16float`;
+  there is no compressed color texture to upscale.
+- The preset's static `FilmGrain` (`strength: 0.1`) provides subtle,
+  deterministic breakup of 8-bit gradients without softening detail. Browser
+  Canvas PNG encoding remains limited to 8 bits per channel; the WebGPU
+  intermediate math and SDF textures retain higher precision before encoding.
 
-The lab shows the figure with its arc marked and a tracer riding it, the
-position/velocity plot, and a dot moving on a straight line — all on one
-clock. Tick marks on the line sit at equal time steps — their spacing is
-the velocity.
+## Reference inputs
 
-Motion settings live in recipes and share links like everything else, and
-the easing exports as a CSS `linear()` token.
-
-## North star
-
-- Apply motion tokens to compose layers — staggered headline / glyph /
-  material entrance choreography — and capture it as WebM via MediaRecorder.
-- Direct-manipulation grid: drag column boundaries, block span handles.
-- Design-token bundle export: grid CSS variables, ink palette, easing tokens.
-- SVG hybrid export; multi-artboard sets (poster / social / banner) from
-  one recipe.
-
-## Deploy (GitHub + Vercel)
-
-The repo is local-only until you publish it:
-
-1. Create an empty repo at https://github.com/new (e.g. `lissajous-brand-system`, no README).
-2. ```bash
-   git remote add origin https://github.com/<you>/lissajous-brand-system.git
-   git push -u origin main
-   ```
-3. In the Vercel dashboard: **Add New → Project → Import** the GitHub repo.
-   No configuration needed — defaults build Next.js correctly.
+Source visual references used for this fork are in `docs/references/`.

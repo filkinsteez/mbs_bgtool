@@ -21,12 +21,27 @@ import { stampProto } from './stamp'
 // lattices (curve distance, curve flow) cache across renders.
 
 let scratch: HTMLCanvasElement | null = null
+let artworkScratch: HTMLCanvasElement | null = null
+
+export type ArtworkTransform = {
+  x: number
+  y: number
+  scale: number
+  rotation: number
+}
 
 function mapCanvas(w: number, h: number): CanvasRenderingContext2D {
   if (!scratch) scratch = document.createElement('canvas')
   scratch.width = w
   scratch.height = h
   return scratch.getContext('2d')!
+}
+
+function artworkCanvas(w: number, h: number): CanvasRenderingContext2D {
+  if (!artworkScratch) artworkScratch = document.createElement('canvas')
+  artworkScratch.width = w
+  artworkScratch.height = h
+  return artworkScratch.getContext('2d')!
 }
 
 // curve lattice caches — keyed by the exact inputs, capped small
@@ -446,6 +461,54 @@ export function renderLab(
   if (lab.finish.grain > 0) applyGrain(ctx, lab.finish.grain, lab.seed)
 }
 
+// The generated Look is stable in its own full-artboard coordinate system.
+// Editing the 2D transform composites that completed artwork as one clipped
+// layer, so the symbol, cells, marks, grain, and source pixels move together.
+export function renderLabArtwork(
+  ctx: CanvasRenderingContext2D,
+  lab: LabState,
+  source: LabSource | null,
+  protos: ShapeProto[],
+  view: LabView,
+  transform: ArtworkTransform,
+  focusedSourceId?: string | null,
+): void {
+  const { width: outW, height: outH } = lab.output
+  const artwork = artworkCanvas(outW, outH)
+  artwork.setTransform(1, 0, 0, 1, 0, 0)
+  artwork.globalAlpha = 1
+  artwork.globalCompositeOperation = 'source-over'
+  renderLab(artwork, lab, source, protos, view)
+  if (focusedSourceId && view === 'composite') {
+    renderSourceOverlay(artwork, lab, source, focusedSourceId)
+  }
+
+  const transparent = view === 'composite' && lab.territory.bands.includes('empty')
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.globalAlpha = 1
+  ctx.globalCompositeOperation = 'source-over'
+  ctx.clearRect(0, 0, outW, outH)
+  if (!transparent) {
+    ctx.fillStyle = lab.colors?.paper ?? PAPER
+    ctx.fillRect(0, 0, outW, outH)
+  }
+
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(0, 0, outW, outH)
+  ctx.clip()
+  ctx.translate(
+    outW * (0.5 + transform.x * 0.5),
+    outH * (0.5 + transform.y * 0.5),
+  )
+  ctx.rotate((transform.rotation * Math.PI) / 180)
+  ctx.scale(transform.scale, transform.scale)
+  ctx.translate(-outW / 2, -outH / 2)
+  ctx.imageSmoothingEnabled = true
+  ctx.drawImage(artwork.canvas, 0, 0)
+  ctx.restore()
+}
+
 function strokePolyline(ctx: CanvasRenderingContext2D, pts: number[]): void {
   if (pts.length < 4) return
   ctx.beginPath()
@@ -635,14 +698,19 @@ export async function exportLabPng(
   lab: LabState,
   source: LabSource | null,
   protos: ShapeProto[],
+  transform: ArtworkTransform = { x: 0, y: 0, scale: 1, rotation: 0 },
 ): Promise<Blob> {
   const canvas = document.createElement('canvas')
   canvas.width = lab.output.width
   canvas.height = lab.output.height
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('2D context unavailable')
-  renderLab(ctx, lab, source, protos, 'composite')
-  return await new Promise<Blob>((resolve, reject) => {
+  renderLabArtwork(ctx, lab, source, protos, 'composite', transform)
+  return canvasToPng(canvas)
+}
+
+function canvasToPng(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png')
   })
 }

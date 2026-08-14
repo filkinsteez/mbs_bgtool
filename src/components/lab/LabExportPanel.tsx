@@ -1,20 +1,34 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { useLabStore } from '@/core/lab/labStore'
 import { getLabSource } from '@/core/lab/sourceCache'
 import { exportLabPng } from '@/core/lab/render'
-import { designHref, resolveReturnImageId, setDesignHandoff } from '@/core/lab/handoff'
 import { resolveBankCached } from './bankCache'
+import { ExportResolutionControl } from '@/components/background/ExportResolutionControl'
+import { inspect8kCapability } from '@/features/background-generator/capabilities'
+import { exportMaterialAtTarget } from '@/features/background-generator/material/exportMaterial'
+import { useBackgroundStore } from '@/features/background-generator/store'
 
 // Export is WYSIWYG: the PNG is the preview's exact painter at full
 // output size. Transparency isn't a toggle — zones set to "None"
 // export as alpha, exactly as the checkerboard shows them.
+async function renderCurrentPng(): Promise<Blob> {
+  const recipe = useBackgroundStore.getState().recipe
+  const state = useLabStore.getState()
+  const protos = resolveBankCached(state.lab.mark.bank)
+  if (recipe.mode === 'material') return exportMaterialAtTarget(recipe, protos)
+  return exportLabPng(
+    state.lab,
+    getLabSource(),
+    protos,
+    recipe.transforms.background,
+  )
+}
+
 export function LabExportPanel() {
-  const output = useLabStore((s) => s.lab.output)
-  const apply = useLabStore((s) => s.apply)
-  const router = useRouter()
+  const recipe = useBackgroundStore((state) => state.recipe)
+  const output = recipe.format
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
 
@@ -23,51 +37,28 @@ export function LabExportPanel() {
     setTimeout(() => setNote(''), 2500)
   }
 
-  const renderPng = async (): Promise<Blob> => {
-    const s = useLabStore.getState()
-    return exportLabPng(s.lab, getLabSource(), resolveBankCached(s.lab.mark.bank))
-  }
-
   const doExport = async () => {
     setBusy(true)
     try {
-      const blob = await renderPng()
+      if (recipe.format.resolution === '8k') {
+        const capability = inspect8kCapability(
+          recipe.format.aspect,
+          recipe.mode === 'material' ? recipe.material.id : 'clean',
+        )
+        if (!capability.supported) throw new Error(capability.reason ?? '8K unsupported')
+      }
+      setNote(`Rendering ${output.width} × ${output.height}…`)
+      const blob = await renderCurrentPng()
       const a = document.createElement('a')
       a.href = URL.createObjectURL(blob)
-      a.download = `lab-${useLabStore.getState().lab.seed}.png`
+      const treatment = recipe.mode === 'background' ? recipe.look.id : recipe.material.id
+      a.download = `mbs-${recipe.mode}-${treatment}-${recipe.seed}.png`
       a.click()
       URL.revokeObjectURL(a.href)
       flash('PNG exported')
-    } catch {
-      flash('Export failed')
+    } catch (error) {
+      flash(error instanceof Error ? `Export failed: ${error.message}` : 'Export failed')
     } finally {
-      setBusy(false)
-    }
-  }
-
-  // the round trip back: render the real export and drop it on the
-  // design canvas as an image block
-  const sendToDesign = async () => {
-    setBusy(true)
-    try {
-      const blob = await renderPng()
-      const src = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve(String(reader.result))
-        reader.onerror = () => reject(reader.error)
-        reader.readAsDataURL(blob)
-      })
-      const live = useLabStore.getState()
-      setDesignHandoff({
-        src,
-        name: `lab-${live.lab.seed}.png`,
-        // came in via EDIT IN LAB and still working on that image → the
-        // send REPLACES that block; otherwise it lands as a new one
-        imageId: resolveReturnImageId(live.lab.source?.contentHash) ?? undefined,
-      })
-      router.push(designHref())
-    } catch {
-      flash('Could not render the image')
       setBusy(false)
     }
   }
@@ -77,8 +68,7 @@ export function LabExportPanel() {
     if (process.env.NODE_ENV === 'production') return
     const w = window as unknown as { __lbsLabExportPng?: () => Promise<string> }
     w.__lbsLabExportPng = async () => {
-      const s = useLabStore.getState()
-      const blob = await exportLabPng(s.lab, getLabSource(), resolveBankCached(s.lab.mark.bank))
+      const blob = await renderCurrentPng()
       return await new Promise<string>((resolve) => {
         const reader = new FileReader()
         reader.onload = () => resolve(String(reader.result))
@@ -90,54 +80,21 @@ export function LabExportPanel() {
     }
   }, [])
 
-  // dimensions edit as free text and commit on blur/Enter — clamping
-  // per keystroke turned "type 900" into 64 -> 640 -> 6400 with an undo
-  // entry and a full re-render at every bogus intermediate value
-  const [draft, setDraft] = useState<{ width?: string; height?: string }>({})
-
-  const commitDim = (key: 'width' | 'height') => {
-    const v = draft[key]
-    setDraft((d) => ({ ...d, [key]: undefined }))
-    if (v === undefined) return
-    const n = Math.round(Number(v))
-    if (!Number.isFinite(n) || n < 1) return
-    apply({ output: { [key]: Math.max(64, Math.min(8192, n)) } })
-  }
-
-  const dimInput = (key: 'width' | 'height') => (
-    <input
-      className="lab-dim-input"
-      type="number"
-      value={draft[key] ?? String(output[key])}
-      min={64}
-      max={8192}
-      onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
-      onBlur={() => commitDim(key)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-        if (e.key === 'Escape') setDraft((d) => ({ ...d, [key]: undefined }))
-      }}
-    />
-  )
-
   return (
-    <div className="panel-section">
-      <div className="panel-heading">Export</div>
-      <button className="ctl-action primary" disabled={busy} onClick={sendToDesign}>
-        {busy ? 'Rendering…' : 'Send to Design'}
+    <div className="panel-section" role="region" aria-labelledby="export-heading">
+      <div className="panel-heading" id="export-heading">Export</div>
+      <ExportResolutionControl />
+      <button type="button" className="ctl-action primary" disabled={busy} onClick={doExport}>
+        {busy ? 'Rendering…' : 'Export PNG'}
       </button>
       <div className="panel-note">
-        Renders the result and places it on the design canvas as an image.
+        Static PNG at exact output dimensions. Materials render offscreen at target size.
       </div>
-      <div className="lab-row">
-        <label className="lab-dim">W{dimInput('width')}</label>
-        <label className="lab-dim">H{dimInput('height')}</label>
-      </div>
-      <button className="ctl-action" disabled={busy} onClick={doExport}>
-        Export PNG
-      </button>
-      <div className="panel-note">Exports exactly what you see.</div>
-      {note ? <div className="panel-note">{note}</div> : null}
+      {note ? (
+        <div className="panel-note" role="status" aria-live="polite">
+          {note}
+        </div>
+      ) : null}
     </div>
   )
 }

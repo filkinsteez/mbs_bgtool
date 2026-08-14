@@ -15,11 +15,13 @@ export type SegmentedOption<T extends string> = {
 // own tokens and row metrics, so it sits in the stack as one of theirs.
 export function SegmentedControl<T extends string>({
   label,
+  ariaLabel,
   value,
   options,
   onChange,
 }: {
   label?: string
+  ariaLabel?: string
   value: T
   options: SegmentedOption<T>[]
   onChange: (v: T) => void
@@ -41,11 +43,12 @@ export function SegmentedControl<T extends string>({
     <div className="ctl-dial">
       <div className="dial-row">
         {label ? <span className="dial-row-label">{niceLabel(label)}</span> : null}
-        <div className="dial-segments" role="group" aria-label={label}>
+        <div className="dial-segments" role="group" aria-label={ariaLabel ?? label}>
           {options.map((o) => {
             const Icon = o.icon
             return (
               <button
+                type="button"
                 key={o.value}
                 className={o.value === value ? 'dial-segment active' : 'dial-segment'}
                 aria-pressed={o.value === value}

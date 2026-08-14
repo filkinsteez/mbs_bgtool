@@ -4,6 +4,7 @@ import { DialRoot } from 'dialkit'
 import 'dialkit/styles.css'
 import '@/styles/globals.css'
 import '@/styles/editor.css'
+import '@/styles/lab.css'
 
 // Optimistic is the whole type system: one variable family carrying
 // weight (300..800), width (80..100), italic and DRKM.
@@ -15,9 +16,9 @@ const optimistic = localFont({
 })
 
 export const metadata: Metadata = {
-  title: 'Lissajous Brand System',
+  title: 'MBS Background Generator',
   description:
-    'A brand creation instrument where a Lissajous curve generates the grid, typography, glyph fields, and material.',
+    'Generate Meta background Looks with approved color packs, framing, material, motion preview, and export controls.',
 }
 
 export default function RootLayout({

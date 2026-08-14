@@ -40,6 +40,7 @@ export function createDefaultLab(seed = 1913): LabState {
     flow: { ...FLOW_DEFAULTS },
     finish: { grain: 0.12 },
     look: { id: null, strength: 1 },
+    motion: { enabled: false, amount: 0.35, speed: 0.12, loopSeconds: 8 },
   }
 }
 
@@ -92,6 +93,12 @@ export function deserializeLab(json: string): LabState | null {
     lab.flow.warp = Math.max(0, Math.min(1, lab.flow.warp))
     lab.finish.grain = Math.max(0, Math.min(1, lab.finish.grain))
     lab.look.strength = Math.max(0, Math.min(1, lab.look.strength))
+    lab.motion = {
+      enabled: !!lab.motion?.enabled,
+      amount: Math.max(0, Math.min(1, lab.motion?.amount ?? 0.35)),
+      speed: Math.max(0, Math.min(2, lab.motion?.speed ?? 0.12)),
+      loopSeconds: Math.max(2, Math.min(30, lab.motion?.loopSeconds ?? 8)),
+    }
     return lab
   } catch {
     return null
