@@ -22,6 +22,7 @@ import { artDirectTerritory, sampleCompositionPlan } from './compositionPlan'
 import { weightedColorIndex } from './colorDirection'
 import { renderQuilt } from './quilt'
 import { renderFrameLook } from './frameRenderer'
+import { renderTrails } from './renderTrails'
 
 // One painter for preview AND export. The ctx arrives pre-scaled and
 // everything draws in output units. Per-render work is lazy: the
@@ -541,6 +542,10 @@ export function renderLab(
             colorPlan,
           ]),
     })
+  }
+
+  if (lab.look?.id === 'trails') {
+    renderTrails(ctx, lab)
   }
 
   // the process treatments share one composed vector field

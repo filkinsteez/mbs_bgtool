@@ -159,6 +159,29 @@ for (const lookId of LOOKS) {
   })
 }
 
+test('trails keeps exact parity across complexity and aspect', async ({ page }, testInfo) => {
+  await openHarness(page)
+  const matrix = [
+    { width: 320, height: 180, seed: 42, detail: 0.15 },
+    { width: 240, height: 240, seed: 1913, detail: 0.5 },
+    { width: 180, height: 320, seed: 8675309, detail: 0.85 },
+  ] as const
+  const results: LookParityResult[] = []
+  for (const input of matrix) {
+    const result = await runLook(page, { lookId: 'trails', ...input })
+    results.push(result)
+    expect.soft(result.diff.alphaMismatchCount).toBe(0)
+    expect.soft(result.diff.mismatchedPixelFraction).toBe(0)
+    expect.soft(result.diff.maxAbsoluteError).toBe(0)
+    expect.soft(result.twoDimensionalHash).toBe(result.threeDimensionalHash)
+  }
+  expect(new Set(results.map((result) => result.twoDimensionalHash)).size).toBe(matrix.length)
+  await testInfo.attach('trails-parity-matrix.json', {
+    body: Buffer.from(`${JSON.stringify(results, null, 2)}\n`),
+    contentType: 'application/json',
+  })
+})
+
 test('3D export includes the selected Look', async ({ page }) => {
   await page.addInitScript(() => localStorage.clear())
   await page.goto('/')

@@ -123,11 +123,11 @@ export const LOOKS: Look[] = [
     id: 'trails',
     label: 'Trails',
     patch: {
-      territory: { bands: ['marks', 'marks', 'marks'], boundary: 'porous' },
-      structure: { baseCell: 34, maxLevels: 0, subdivide: 0 },
-      mark: { colorMode: 'palette', echo: 4, bank: 'geo', occupancy: 0.9 },
-      flow: { basis: 'angle', angle: 0, curl: 0.15 },
-      finish: { grain: 0.1 },
+      territory: { bands: ['quiet', 'quiet', 'quiet'], boundary: 'hard' },
+      structure: { baseCell: 72, maxLevels: 0, subdivide: 0 },
+      mark: { colorMode: 'palette', echo: 0, bank: 'geo', occupancy: 0.9 },
+      flow: { basis: 'curve', angle: 0, curl: 0.42 },
+      finish: { grain: 0.07 },
       sourceVisibility: 0,
     },
   },
@@ -181,13 +181,11 @@ const COMPLEXITY_PROFILES: Record<LookId, ComplexityProfile> = {
     occupancy: [0.72, 0.98],
   },
   trails: {
-    coarseCell: 64,
-    fineCell: 20,
-    levels: [1, 1, 1],
-    subdivide: [0.35, 0.56],
-    occupancy: [0.68, 0.94],
-    curl: [0.38, 0.52],
-    echo: [6, 9],
+    coarseCell: 112,
+    fineCell: 44,
+    levels: [0, 0, 0],
+    subdivide: [0, 0],
+    curl: [0.34, 0.5],
   },
 }
 
@@ -197,40 +195,35 @@ function mix(from: number, to: number, amount: number): number {
 
 export function lookComplexityPatch(lookId: LookId, value: number): LabPatch {
   const complexity = Math.max(0, Math.min(1, value))
-  // Preserve the dense echo grammar that makes Trails coherent. The low end
-  // should simplify it, not reduce it to unrelated fragments.
-  const structuralComplexity = lookId === 'trails'
-    ? 0.52 + complexity * 0.48
-    : complexity
   const profile = COMPLEXITY_PROFILES[lookId]
   const level = profile.levels[
-    structuralComplexity < 0.34 ? 0 : structuralComplexity < 0.67 ? 1 : 2
+    complexity < 0.34 ? 0 : complexity < 0.67 ? 1 : 2
   ]
   const patch: LabPatch = {
     structure: {
-      baseCell: Math.round(mix(profile.coarseCell, profile.fineCell, structuralComplexity)),
+      baseCell: Math.round(mix(profile.coarseCell, profile.fineCell, complexity)),
       maxLevels: level,
-      subdivide: mix(profile.subdivide[0], profile.subdivide[1], structuralComplexity),
+      subdivide: mix(profile.subdivide[0], profile.subdivide[1], complexity),
     },
   }
   if (profile.occupancy) {
     patch.mark = {
-      occupancy: mix(profile.occupancy[0], profile.occupancy[1], structuralComplexity),
+      occupancy: mix(profile.occupancy[0], profile.occupancy[1], complexity),
     }
   }
   if (profile.curl || profile.warp) {
     patch.flow = {}
     if (profile.curl) {
-      patch.flow.curl = mix(profile.curl[0], profile.curl[1], structuralComplexity)
+      patch.flow.curl = mix(profile.curl[0], profile.curl[1], complexity)
     }
     if (profile.warp) {
-      patch.flow.warp = mix(profile.warp[0], profile.warp[1], structuralComplexity)
+      patch.flow.warp = mix(profile.warp[0], profile.warp[1], complexity)
     }
   }
   if (profile.echo) {
     patch.mark = {
       ...patch.mark,
-      echo: Math.round(mix(profile.echo[0], profile.echo[1], structuralComplexity)),
+      echo: Math.round(mix(profile.echo[0], profile.echo[1], complexity)),
     }
   }
   return patch
