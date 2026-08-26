@@ -20,6 +20,7 @@ import { createOrganicMotionWarp } from './motion'
 import { constrainArtworkToCanvas } from './artworkTransform'
 import { artDirectTerritory, sampleCompositionPlan } from './compositionPlan'
 import { weightedColorIndex } from './colorDirection'
+import { renderQuilt } from './quilt'
 
 // One painter for preview AND export. The ctx arrives pre-scaled and
 // everything draws in output units. Per-render work is lazy: the
@@ -268,10 +269,29 @@ export function renderLab(
     }
   }
 
-  // BLOCKS — the flat color quilt: flush palette fills whose neighbor
-  // coherence merges cells into larger shapes; rare nested accents
+  // BLOCKS — generic flat fills, except Quilt: its focused renderer owns
+  // the patch topology, role-led color groups, and textile seam hierarchy.
   if (cells.some((c) => c.treatment === 'blocks')) {
-    for (const f of buildBlockFills({
+    if (lab.look?.id === 'quilt') {
+      const curve = lab.territory.sources.find(
+        (source) => source.kind === 'curve' && source.enabled && source.curve,
+      )?.curve
+      renderQuilt(ctx, {
+        width: outW,
+        height: outH,
+        seed: lab.seed,
+        complexity: lab.look.complexity ?? 0.5,
+        palette,
+        paletteSize: K,
+        colorPlan,
+        composition: lab.composition,
+        curve,
+        cells,
+        motionPhase: lab.motion.frame?.phase,
+        motionAmount: lab.motion.amount,
+        motionSpeed: lab.motion.speed,
+      })
+    } else for (const f of buildBlockFills({
       cells,
       paletteSize: K,
       seed: lab.seed,
