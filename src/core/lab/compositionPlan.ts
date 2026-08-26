@@ -215,7 +215,11 @@ export function resolveCompositionPlan(input: {
     strength: 0.78 + energy * 0.22,
     angle: baseAngle,
   }
-  const secondaryCount = complexity > 0.66 ? 2 : 1
+  // Brushwork owns a fixed stroke catalog. Keep its full macro plan stable so
+  // Complexity reveals existing stroke IDs rather than moving their anchors
+  // or changing the quiet-space mask underneath them.
+  const stableBrushworkHierarchy = lookId === 'brushwork'
+  const secondaryCount = stableBrushworkHierarchy ? 2 : complexity > 0.66 ? 2 : 1
   const anchors: CompositionAnchor[] = [primary]
   for (let index = 0; index < secondaryCount; index += 1) {
     const angle = baseAngle + Math.PI * (0.72 + index * 0.46)
@@ -229,7 +233,11 @@ export function resolveCompositionPlan(input: {
     })
   }
 
-  const quietCount = openness > 0.62 && complexity > 0.45 ? 2 : 1
+  const quietCount = stableBrushworkHierarchy
+    ? 2
+    : openness > 0.62 && complexity > 0.45
+      ? 2
+      : 1
   const quietShapes: QuietShape[] = []
   for (let index = 0; index < quietCount; index += 1) {
     const angle = baseAngle + Math.PI * (0.5 + index * 0.55)
@@ -245,9 +253,10 @@ export function resolveCompositionPlan(input: {
   }
 
   const steps = 5 + Math.floor(chan(seed, 0, `plan.${lookId}.rhythm.steps`) * 9)
+  const rhythmComplexity = stableBrushworkHierarchy ? 0.5 : complexity
   const pulses = Math.max(2, Math.min(
     steps - 1,
-    Math.round(2 + energy * (steps - 4) + complexity * 2),
+    Math.round(2 + energy * (steps - 4) + rhythmComplexity * 2),
   ))
   const rhythmPhase = Math.floor(chan(seed, 0, `plan.${lookId}.rhythm.phase`) * steps)
 

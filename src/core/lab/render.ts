@@ -23,6 +23,7 @@ import { weightedColorIndex } from './colorDirection'
 import { renderQuilt } from './quilt'
 import { renderFrameLook } from './frameRenderer'
 import { renderTrails } from './renderTrails'
+import { renderBrushwork } from './brushworkRender'
 
 // One painter for preview AND export. The ctx arrives pre-scaled and
 // everything draws in output units. Per-render work is lazy: the
@@ -553,9 +554,12 @@ export function renderLab(
   }
 
   // the process treatments share one composed vector field
-  const needsVector =
-    cells.some((c) => c.treatment === 'scan' || c.treatment === 'dabs' || c.treatment === 'streams') ||
-    (lab.mark.echo > 0 && cells.some((c) => c.treatment === 'marks'))
+  const needsVector = cells.some((c) => c.treatment === 'scan' || c.treatment === 'streams')
+    || (
+      lab.look?.id !== 'brushwork'
+      && cells.some((c) => c.treatment === 'dabs')
+    )
+    || (lab.mark.echo > 0 && cells.some((c) => c.treatment === 'marks'))
   const vector: VectorField | null =
     needsVector
       ? composeFlow(lab.flow, {
@@ -680,8 +684,26 @@ export function renderLab(
     ctx.globalAlpha = 1
   }
 
+  // BRUSHWORK — a fixed scene of broad hero gestures, supporting strokes,
+  // and sparse bristle texture. Complexity reveals stable IDs from that scene;
+  // motion deforms its existing points instead of reseeding cell-sized dabs.
+  if (lab.look?.id === 'brushwork') {
+    renderBrushwork(ctx, {
+      width: outW,
+      height: outH,
+      seed: lab.seed,
+      complexity: lab.look.complexity ?? 0.5,
+      composition: lab.composition,
+      palette,
+      colorPlan,
+      territory: T,
+      motionPhase: lab.motion.frame?.phase,
+      motionAmount: lab.motion.amount,
+    })
+  }
+
   // DABS — short strokes riding the flow, density and width from tone
-  if (vector && cells.some((c) => c.treatment === 'dabs')) {
+  if (lab.look?.id !== 'brushwork' && vector && cells.some((c) => c.treatment === 'dabs')) {
     const dabs = buildDabs({
       cells,
       maps,

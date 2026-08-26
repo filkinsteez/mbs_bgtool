@@ -71,7 +71,9 @@ export const LOOKS: Look[] = [
     label: 'Brushwork',
     patch: {
       territory: { bands: ['dabs', 'dabs', 'dabs'], boundary: 'porous' },
-      structure: { baseCell: 26, maxLevels: 2, subdivide: 0.68 },
+      // Brushwork renders a normalized stroke scene, not one dab per cell.
+      // Keep the carrier coarse so 4K setup stays cheap.
+      structure: { baseCell: 224, maxLevels: 0, subdivide: 0 },
       mark: { colorMode: 'palette', occupancy: 1 },
       flow: { basis: 'curve', curl: 0.5, scale: 0.35 },
       finish: { grain: 0.18 },
@@ -163,12 +165,10 @@ const COMPLEXITY_PROFILES: Record<LookId, ComplexityProfile> = {
     curl: [0.08, 0.42],
   },
   brushwork: {
-    coarseCell: 86,
-    fineCell: 18,
-    levels: [0, 1, 2],
-    subdivide: [0.28, 0.78],
-    occupancy: [0.48, 1],
-    curl: [0.18, 0.78],
+    coarseCell: 256,
+    fineCell: 192,
+    levels: [0, 0, 0],
+    subdivide: [0, 0],
   },
   beads: { coarseCell: 82, fineCell: 18, levels: [0, 0, 0], subdivide: [0, 0] },
   quilt: { coarseCell: 148, fineCell: 28, levels: [0, 1, 2], subdivide: [0.22, 0.72] },
