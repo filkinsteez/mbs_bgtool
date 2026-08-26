@@ -545,7 +545,11 @@ export function renderLab(
   }
 
   if (lab.look?.id === 'trails') {
-    renderTrails(ctx, lab)
+    renderTrails(
+      ctx,
+      lab,
+      source ? { source, rect, territory: compiledTerritory } : null,
+    )
   }
 
   // the process treatments share one composed vector field

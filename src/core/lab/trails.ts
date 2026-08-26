@@ -9,12 +9,13 @@ import {
   type CompositionPlan,
 } from './compositionPlan'
 import { createOrganicMotionWarp } from './motion'
+import { trailCarrierBounds, type TrailCarrierBounds } from './trailSourceCarrier'
 import type { MotionState } from './types'
 
 const TAU = Math.PI * 2
 const GUIDE_SAMPLES = 384
 
-export const TRAIL_GEOMETRY_REVISION = 2
+export const TRAIL_GEOMETRY_REVISION = 3
 
 export type TrailTier = 'back' | 'support' | 'hero'
 
@@ -60,9 +61,17 @@ export type TrailPlan = {
   width: number
   height: number
   complexity: number
+  carrierKind: 'canonical' | 'source'
+  carrierBounds: TrailCarrierBounds
   families: readonly TrailFamily[]
   paths: readonly TrailPath[]
   crossings: readonly TrailCrossing[]
+}
+
+export type TrailPlanCarrierInput = {
+  kind: 'source'
+  key: string
+  points: Float32Array
 }
 
 export type TrailPlanInput = {
@@ -71,6 +80,7 @@ export type TrailPlanInput = {
   height: number
   complexity: number
   composition?: CompositionPlan
+  carrier?: TrailPlanCarrierInput
 }
 
 type Point = {
@@ -292,6 +302,27 @@ function buildGuide(
   })
   warped[warped.length - 1] = { ...warped[0] }
   return resampleClosed(warped, GUIDE_SAMPLES)
+}
+
+function buildSourceGuide(carrier: TrailPlanCarrierInput): GuidePoint[] {
+  if (carrier.points.length < 8 || carrier.points.length % 2 !== 0) {
+    throw new Error('Source Trails carrier requires at least four points.')
+  }
+  const points: Point[] = []
+  for (let index = 0; index < carrier.points.length; index += 2) {
+    const x = carrier.points[index]
+    const y = carrier.points[index + 1]
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      throw new Error('Source Trails carrier contains a non-finite point.')
+    }
+    points.push({ x, y })
+  }
+  const first = points[0]
+  const last = points.at(-1)!
+  if (Math.hypot(first.x - last.x, first.y - last.y) > 1e-4) {
+    points.push({ ...first })
+  }
+  return resampleClosed(points, GUIDE_SAMPLES)
 }
 
 function familyTier(index: number): TrailTier {
@@ -635,8 +666,22 @@ export function buildTrailPlan(input: TrailPlanInput): TrailPlan {
     complexity,
     aspect: width / height,
   })
-  const guide = buildGuide(input.seed, width, height, composition)
+  const guide = input.carrier
+    ? buildSourceGuide(input.carrier)
+    : buildGuide(input.seed, width, height, composition)
+  const guidePoints = new Float32Array(guide.length * 2)
+  guide.forEach((point, index) => {
+    guidePoints[index * 2] = point.x
+    guidePoints[index * 2 + 1] = point.y
+  })
+  const carrierBounds = trailCarrierBounds(guidePoints)
   const minDimension = Math.min(width, height)
+  const carrierDimension = input.carrier
+    ? Math.max(
+        minDimension * 0.35,
+        Math.min(minDimension, Math.max(carrierBounds.width, carrierBounds.height)),
+      )
+    : minDimension
   const mainFamilyCount = 4 + Math.round(complexity * 4)
   const paths: TrailPath[] = []
   const families: TrailFamily[] = []
@@ -644,8 +689,8 @@ export function buildTrailPlan(input: TrailPlanInput): TrailPlan {
   const offsetOrder = [0, -1, 1, -2, 2, -3, 3, 4]
   const startOrder = [0.015, 0.39, 0.68, 0.18, 0.79, 0.52, 0.29, 0.9]
   const spanOrder = [0.97, 0.76, 0.67, 0.61, 0.72, 0.58, 0.64, 0.55]
-  const laneGap = minDimension * (0.0082 - complexity * 0.0013)
-  const familyGap = minDimension * (0.016 + complexity * 0.004)
+  const laneGap = carrierDimension * (0.0082 - complexity * 0.0013)
+  const familyGap = carrierDimension * (0.016 + complexity * 0.004)
 
   for (let familyIndex = 0; familyIndex < mainFamilyCount; familyIndex += 1) {
     const tier = familyTier(familyIndex)
@@ -786,6 +831,8 @@ export function buildTrailPlan(input: TrailPlanInput): TrailPlan {
     width,
     height,
     complexity,
+    carrierKind: input.carrier ? 'source' : 'canonical',
+    carrierBounds,
     families,
     paths,
     crossings,

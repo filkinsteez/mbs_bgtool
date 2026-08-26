@@ -40,6 +40,41 @@ type LookParityResult = {
   processor: 'canvas2d-canonical'
 }
 
+type PixelBounds = {
+  x: number
+  y: number
+  width: number
+  height: number
+  centerX: number
+  centerY: number
+  pixelCount: number
+}
+
+type TranslatedTrailsResult = {
+  width: number
+  height: number
+  sourceHash: string
+  twoDimensionalHash: string
+  materialHash: string
+  diff: LookParityResult['diff']
+  carrierMethod: 'source-contour' | 'source-field-loop'
+  carrierBounds: Omit<PixelBounds, 'pixelCount'>
+  trailBounds: PixelBounds
+  canonicalTrailBounds: PixelBounds
+  subjectBounds: PixelBounds
+  renderMilliseconds: number
+}
+
+type Trails4kResult = {
+  width: 3840
+  height: 2160
+  sourceWidth: number
+  sourceHeight: number
+  renderMilliseconds: number
+  pngMilliseconds: number
+  pngBytes: number
+}
+
 const LOOKS: LookId[] = [
   'frame',
   'pixels',
@@ -114,6 +149,30 @@ async function runLook(
   }, input)
 }
 
+async function runTranslatedTrails(page: Page): Promise<TranslatedTrailsResult> {
+  return page.evaluate(async () => {
+    const harness = (window as typeof window & {
+      __mbsLookParity?: {
+        runTranslatedTrails: () => Promise<TranslatedTrailsResult>
+      }
+    }).__mbsLookParity
+    if (!harness) throw new Error('Look parity harness unavailable')
+    return harness.runTranslatedTrails()
+  })
+}
+
+async function runTranslatedTrails4k(page: Page): Promise<Trails4kResult> {
+  return page.evaluate(async () => {
+    const harness = (window as typeof window & {
+      __mbsLookParity?: {
+        renderTranslatedTrails4k: () => Promise<Trails4kResult>
+      }
+    }).__mbsLookParity
+    if (!harness) throw new Error('Look parity harness unavailable')
+    return harness.renderTranslatedTrails4k()
+  })
+}
+
 test('the raw-byte harness is deterministic', async ({ page }) => {
   await openHarness(page)
   const first = await runLook(page, { lookId: 'marks' })
@@ -180,6 +239,54 @@ test('trails keeps exact parity across complexity and aspect', async ({ page }, 
     body: Buffer.from(`${JSON.stringify(results, null, 2)}\n`),
     contentType: 'application/json',
   })
+})
+
+test('trails material follows a translated non-Meta source frame', async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000)
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await openHarness(page)
+  const result = await runTranslatedTrails(page)
+  const screenshotPath = '/tmp/mbs-trails-material-translated-source.png'
+  await page.locator('#translated-trails-material').screenshot({ path: screenshotPath })
+  await testInfo.attach('trails-translated-material.png', {
+    path: screenshotPath,
+    contentType: 'image/png',
+  })
+  await testInfo.attach('trails-translated-material.json', {
+    body: Buffer.from(`${JSON.stringify(result, null, 2)}\n`),
+    contentType: 'application/json',
+  })
+
+  expect(result.carrierMethod).toBe('source-contour')
+  expect(result.diff.alphaMismatchCount).toBe(0)
+  expect(result.diff.mismatchedPixelFraction).toBe(0)
+  expect(result.twoDimensionalHash).toBe(result.materialHash)
+  expect(result.carrierBounds.centerX).toBeGreaterThan(result.width * 0.72)
+  expect(result.trailBounds.centerX).toBeGreaterThan(result.width * 0.67)
+  expect(result.canonicalTrailBounds.centerX).toBeLessThan(result.width * 0.58)
+  expect(result.trailBounds.centerX - result.canonicalTrailBounds.centerX)
+    .toBeGreaterThan(result.width * 0.13)
+  expect(Math.abs(result.trailBounds.centerX - result.subjectBounds.centerX))
+    .toBeLessThan(result.width * 0.1)
+  console.info('TRAILS_TRANSLATED_MATERIAL', JSON.stringify(result))
+})
+
+test('trails source-aware material renders and encodes at 4K', async ({ page }, testInfo) => {
+  test.setTimeout(120_000)
+  await openHarness(page)
+  const result = await runTranslatedTrails4k(page)
+  await testInfo.attach('trails-material-4k.json', {
+    body: Buffer.from(`${JSON.stringify(result, null, 2)}\n`),
+    contentType: 'application/json',
+  })
+  expect(result.width).toBe(3840)
+  expect(result.height).toBe(2160)
+  expect(result.pngBytes).toBeGreaterThan(100_000)
+  expect(result.renderMilliseconds).toBeLessThan(6_000)
+  expect(result.pngMilliseconds).toBeLessThan(20_000)
+  console.info('TRAILS_MATERIAL_4K', JSON.stringify(result))
 })
 
 test('3D export includes the selected Look', async ({ page }) => {

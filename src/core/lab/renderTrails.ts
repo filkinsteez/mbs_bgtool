@@ -1,4 +1,11 @@
 import { createOrganicMotionWarp } from './motion'
+import type { Field, FitRect } from './field'
+import type { LabSource } from './sourceCache'
+import {
+  buildSourceTrailCarrier,
+  TRAIL_SOURCE_CARRIER_REVISION,
+  type SourceTrailCarrier,
+} from './trailSourceCarrier'
 import {
   buildTrailPlan,
   normalizeTrailPhase,
@@ -12,7 +19,14 @@ import {
 import type { LabState } from './types'
 
 const trailPlanCache = new Map<string, TrailPlan>()
+const sourceCarrierCache = new Map<string, SourceTrailCarrier>()
 const CACHE_LIMIT = 12
+
+export type TrailRenderScene = {
+  source: LabSource
+  rect: FitRect
+  territory: Field
+}
 
 function tierRank(tier: TrailTier): number {
   return tier === 'hero' ? 2 : tier === 'support' ? 1 : 0
@@ -26,6 +40,7 @@ function cacheKey(input: TrailPlanInput): string {
     input.height,
     input.complexity.toFixed(4),
     input.composition ? JSON.stringify(input.composition) : 'default',
+    input.carrier ? `${input.carrier.kind}:${input.carrier.key}` : 'canonical',
   ].join('|')
 }
 
@@ -47,6 +62,48 @@ export function getCachedTrailPlan(input: TrailPlanInput): TrailPlan {
 
 export function clearTrailPlanCache(): void {
   trailPlanCache.clear()
+  sourceCarrierCache.clear()
+}
+
+function sourceCarrierKey(scene: TrailRenderScene, lab: LabState): string {
+  return [
+    TRAIL_SOURCE_CARRIER_REVISION,
+    scene.source.hash,
+    scene.source.maps.w,
+    scene.source.maps.h,
+    lab.output.width,
+    lab.output.height,
+    scene.rect.x.toFixed(4),
+    scene.rect.y.toFixed(4),
+    scene.rect.w.toFixed(4),
+    scene.rect.h.toFixed(4),
+    JSON.stringify(lab.territory),
+  ].join('|')
+}
+
+function getCachedSourceCarrier(scene: TrailRenderScene, lab: LabState): {
+  carrier: SourceTrailCarrier
+  key: string
+} {
+  const key = sourceCarrierKey(scene, lab)
+  const existing = sourceCarrierCache.get(key)
+  if (existing) {
+    sourceCarrierCache.delete(key)
+    sourceCarrierCache.set(key, existing)
+    return { carrier: existing, key }
+  }
+  const carrier = buildSourceTrailCarrier({
+    maps: scene.source.maps,
+    rect: scene.rect,
+    width: lab.output.width,
+    height: lab.output.height,
+    territory: scene.territory,
+  })
+  sourceCarrierCache.set(key, carrier)
+  while (sourceCarrierCache.size > CACHE_LIMIT) {
+    sourceCarrierCache.delete(sourceCarrierCache.keys().next().value!)
+  }
+  return { carrier, key }
 }
 
 function canvasPath(
@@ -94,16 +151,28 @@ function crossingPath(
   return output
 }
 
-export function renderTrails(ctx: CanvasRenderingContext2D, lab: LabState): void {
+export function renderTrails(
+  ctx: CanvasRenderingContext2D,
+  lab: LabState,
+  scene?: TrailRenderScene | null,
+): void {
   const width = lab.output.width
   const height = lab.output.height
   const complexity = Math.max(0, Math.min(1, lab.look?.complexity ?? 0.5))
+  const sourceCarrier = scene ? getCachedSourceCarrier(scene, lab) : null
   const plan = getCachedTrailPlan({
     seed: lab.seed,
     width,
     height,
     complexity,
     composition: lab.composition,
+    carrier: sourceCarrier
+      ? {
+          kind: 'source',
+          key: sourceCarrier.key,
+          points: sourceCarrier.carrier.points,
+        }
+      : undefined,
   })
   const palette = lab.colors.palette.length
     ? lab.colors.palette
