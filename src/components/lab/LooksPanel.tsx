@@ -1,31 +1,26 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { useLabStore } from '@/core/lab/labStore'
-import { LOOKS, lookPatchFor } from '@/core/lab/looks'
+import { LOOKS } from '@/core/lab/looks'
 import { mergeDeep } from '@/core/state/store'
-import { renderLab } from '@/core/lab/render'
-import { createLabSourceFromCanvas, getLabSource } from '@/core/lab/sourceCache'
+import { createLabSourceFromCanvas } from '@/core/lab/sourceCache'
 import { resolveBankCached } from './bankCache'
 import { useBackgroundStore } from '@/features/background-generator/store'
-import { scaleLabForPreview } from '@/core/lab/preview'
 import { createDefaultBackgroundRecipe } from '@/features/background-generator/recipe'
+import { renderBackground2DCanvas } from '@/features/background-generator/render2d'
 import {
   renderRecipeLookToCanvas,
   sourceAwareLabForRecipe,
 } from '@/features/background-generator/lookProcessor'
 
-// The looks strip: every look rendered as a live thumbnail of YOUR
-// image through the real pipeline. Clicking applies the look as one
-// normal undo entry — every control underneath lands on real values.
+// 2D thumbnails use only the active generator recipe. 3D thumbnails use
+// one fixed generic frame so live camera and material changes cannot leak in.
 
-const THUMB_H = 72
 const GENERIC_3D_BASE_RECIPE = createDefaultBackgroundRecipe(1913)
 const GENERIC_3D_RECIPE = {
   ...GENERIC_3D_BASE_RECIPE,
   format: {
     aspect: 'custom' as const,
-    resolution: '4k' as const,
     width: 320,
     height: 180,
   },
@@ -69,35 +64,28 @@ export function LooksPanel() {
   const materialOverlayEnabled = useBackgroundStore(
     (state) => state.recipe.materialLookOverlay.enabled,
   )
+  const thumbnailRecipeKey = useBackgroundStore((state) => {
+    const recipe = state.recipe
+    return [
+      recipe.seed,
+      recipe.look.detail,
+      recipe.palette.mix.map((item) =>
+        `${item.color}:${item.enabled ? 1 : 0}:${item.ratio}`,
+      ).join(','),
+      recipe.palette.ink,
+      recipe.palette.ground,
+      `${recipe.format.width}x${recipe.format.height}`,
+    ].join('|')
+  })
   const updateRecipe = useBackgroundStore((state) => state.updateRecipe)
-  const lab = useLabStore((s) => s.lab)
-  const sourceNonce = useLabStore((s) => s.ui.sourceNonce)
   const stripRef = useRef<HTMLDivElement>(null)
   const rafRef = useRef(0)
 
-  // thumbnails: real renders at small scale, redrawn only when the
-  // state they inherit changes. The key deliberately uses the source
-  // CONTENT hash and the COMMITTED paint (pointer-up), never the
-  // per-stroke nonce — one brush stroke must not re-render ten full
-  // pipelines per pointer sample.
+  // Direct artwork transforms intentionally do not invalidate all ten
+  // thumbnails on every pointer sample.
   const thumbKey = mode === 'material'
     ? 'generic-3d-look-preview-v1'
-    : [
-        lab.source?.contentHash ?? 'none',
-        lab.source?.fit ?? '',
-        lab.seed,
-        lab.colors.palette.join(),
-        lab.colors.ink,
-        lab.colors.paper,
-        `${lab.output.width}x${lab.output.height}`,
-        // Direct canvas transforms intentionally do not invalidate all ten
-        // thumbnails on every pointer sample.
-        lab.paint?.data.length ?? 0,
-        // bitmap PRESENCE, not the per-stroke nonce: flips exactly when an
-        // image arrives (rehydration included) or is removed
-        getLabSource() ? 'img' : 'none',
-      ].join('|')
-  void sourceNonce // subscription: re-render (and re-key) on cache changes
+    : thumbnailRecipeKey
   useEffect(() => {
     cancelAnimationFrame(rafRef.current)
     rafRef.current = requestAnimationFrame(() => {
@@ -108,9 +96,8 @@ export function LooksPanel() {
       const genericSource = genericFrame
         ? createLabSourceFromCanvas(genericFrame, { filename: 'generic-3d-look-preview.rgba' })
         : null
-      const source = generic ? null : getLabSource()
       const canvases = strip.querySelectorAll('canvas')
-      const base = useLabStore.getState().lab
+      const liveRecipe = useBackgroundStore.getState().recipe
       LOOKS.forEach((look, i) => {
         const canvas = canvases[i]
         if (!canvas) return
@@ -129,17 +116,12 @@ export function LooksPanel() {
           )
           return
         }
-        const targetWidth = Math.max(1, Math.round((base.output.width * THUMB_H) / base.output.height))
-        const fullPreview = mergeDeep(base, lookPatchFor(look, !!source))
-        fullPreview.look = { id: look.id, strength: 1 }
-        fullPreview.finish = { grain: 0 }
-        const preview = scaleLabForPreview(fullPreview, Math.max(targetWidth, THUMB_H))
-        canvas.width = preview.output.width
-        canvas.height = preview.output.height
-        const ctx = canvas.getContext('2d')
-        if (!ctx) return
-        ctx.setTransform(1, 0, 0, 1, 0, 0)
-        renderLab(ctx, preview, source, resolveBankCached(preview.mark.bank), 'composite')
+        renderBackground2DCanvas(canvas, liveRecipe, {
+          phase: 'thumbnail',
+          maxLongEdge: 128,
+          lookId: look.id,
+          grain: 0,
+        })
       })
     })
     return () => cancelAnimationFrame(rafRef.current)

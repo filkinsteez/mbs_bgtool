@@ -1,12 +1,11 @@
 'use client'
 
 import { create } from 'zustand'
-import { useLabStore } from '@/core/lab/labStore'
 import { History } from '@/core/state/history'
 import { mergeDeep } from '@/core/state/store'
 import {
   applyFramingPreset,
-  backgroundRecipeToLab,
+  canonicalizeFormat,
   constrainBackgroundTransform,
   createDefaultBackgroundRecipe,
   normalizeSubjectTransform,
@@ -40,12 +39,6 @@ export const backgroundHistory = new History<BackgroundRecipeV2>()
 
 let transactionStart: BackgroundRecipeV2 | null = null
 
-function syncLab(recipe: BackgroundRecipeV2, live = false): void {
-  const labStore = useLabStore.getState()
-  labStore.replaceLab(backgroundRecipeToLab(recipe), { keepHistory: true })
-  labStore.setUi({ quality: live ? 'live' : 'hq' })
-}
-
 function historyFlags(): Pick<BackgroundStore, 'canUndo' | 'canRedo'> {
   const depth = backgroundHistory.depth
   return { canUndo: depth.past > 0, canRedo: depth.future > 0 }
@@ -56,17 +49,21 @@ function changed(a: BackgroundRecipeV2, b: BackgroundRecipeV2): boolean {
 }
 
 export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
-  const normalizeRecipe = (recipe: BackgroundRecipeV2): BackgroundRecipeV2 => ({
-    ...recipe,
-    transforms: {
-      background: constrainBackgroundTransform(
-        recipe.transforms.background,
-        recipe.format.width,
-        recipe.format.height,
-      ),
-      material: normalizeSubjectTransform(recipe.transforms.material),
-    },
-  })
+  const normalizeRecipe = (recipe: BackgroundRecipeV2): BackgroundRecipeV2 => {
+    const format = canonicalizeFormat(recipe.format)
+    return {
+      ...recipe,
+      format,
+      transforms: {
+        background: constrainBackgroundTransform(
+          recipe.transforms.background,
+          format.width,
+          format.height,
+        ),
+        material: normalizeSubjectTransform(recipe.transforms.material),
+      },
+    }
+  }
 
   const commitRecipe = (recipe: BackgroundRecipeV2) => {
     recipe = normalizeRecipe(recipe)
@@ -83,7 +80,6 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
       historyVersion: state.historyVersion + 1,
       ...historyFlags(),
     }))
-    syncLab(recipe)
   }
 
   return {
@@ -93,6 +89,7 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
     canUndo: false,
     canRedo: false,
     replaceRecipe: (recipe) => {
+      recipe = normalizeRecipe(recipe)
       transactionStart = null
       backgroundHistory.clear()
       set((state) => ({
@@ -100,7 +97,6 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
         historyVersion: state.historyVersion + 1,
         ...historyFlags(),
       }))
-      syncLab(recipe)
     },
     updateRecipe: (patch) => {
       commitRecipe(mergeDeep(get().recipe, patch))
@@ -113,7 +109,6 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
       const recipe = normalizeRecipe(mergeDeep(get().recipe, patch))
       if (!changed(get().recipe, recipe)) return
       set({ recipe })
-      syncLab(recipe, true)
     },
     commitTransaction: () => {
       const before = transactionStart
@@ -125,7 +120,6 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
         historyVersion: state.historyVersion + 1,
         ...historyFlags(),
       }))
-      syncLab(recipe)
     },
     cancelTransaction: () => {
       const before = transactionStart
@@ -136,7 +130,6 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
         historyVersion: state.historyVersion + 1,
         ...historyFlags(),
       }))
-      syncLab(before)
     },
     undo: () => {
       if (transactionStart) {
@@ -150,7 +143,6 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
         historyVersion: state.historyVersion + 1,
         ...historyFlags(),
       }))
-      syncLab(previous)
     },
     redo: () => {
       if (transactionStart) {
@@ -164,7 +156,6 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
         historyVersion: state.historyVersion + 1,
         ...historyFlags(),
       }))
-      syncLab(next)
     },
     setMode: (mode) => {
       if (transactionStart) get().commitTransaction()
@@ -184,7 +175,3 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
     },
   }
 })
-
-export function syncBackgroundRecipe(): void {
-  syncLab(useBackgroundStore.getState().recipe)
-}

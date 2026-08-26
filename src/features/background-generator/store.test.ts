@@ -80,6 +80,18 @@ describe('background recipe history', () => {
     expect(useBackgroundStore.getState().recipe.look.detail).toBe(0.5)
   })
 
+  it('canonicalizes invalid custom dimensions before they enter state', () => {
+    useBackgroundStore.getState().updateRecipe({
+      format: { aspect: 'custom', width: 100, height: 0 },
+    })
+
+    expect(useBackgroundStore.getState().recipe.format).toEqual({
+      aspect: '16:9',
+      width: 3840,
+      height: 2160,
+    })
+  })
+
   it('persists 3D Look overlay selection as recipe history', () => {
     const store = useBackgroundStore.getState()
     store.updateRecipe({

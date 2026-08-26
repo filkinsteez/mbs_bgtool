@@ -48,6 +48,7 @@ describe('background recipe', () => {
   it('round-trips a deterministic versioned recipe', () => {
     const recipe = createDefaultBackgroundRecipe(42)
     expect(recipe.materialLookOverlay.enabled).toBe(false)
+    expect(recipe.format).not.toHaveProperty('resolution')
     expect(recipe.transforms.background.scale).toBe(1)
     expect(recipe.transforms.material.scale).toBe(0.95)
     expect(deserializeBackgroundRecipe(JSON.stringify(recipe))).toEqual(recipe)
@@ -66,23 +67,31 @@ describe('background recipe', () => {
     const cases = [
       {
         format: { aspect: '16:9', resolution: '1080', width: 1920, height: 1080 },
-        expected: { aspect: '16:9', resolution: '4k', width: 3840, height: 2160 },
+        expected: { aspect: '16:9', width: 3840, height: 2160 },
       },
       {
         format: { aspect: '9:16', resolution: '2k', width: 999, height: 1 },
-        expected: { aspect: '9:16', resolution: '4k', width: 2160, height: 3840 },
+        expected: { aspect: '9:16', width: 2160, height: 3840 },
       },
       {
         format: { aspect: '1:1', resolution: '8k', width: 1, height: 999 },
-        expected: { aspect: '1:1', resolution: '4k', width: 3840, height: 3840 },
+        expected: { aspect: '1:1', width: 3840, height: 3840 },
       },
       {
         format: { aspect: 'custom', resolution: '1080', width: 100, height: 200 },
-        expected: { aspect: 'custom', resolution: '4k', width: 1920, height: 3840 },
+        expected: { aspect: 'custom', width: 1920, height: 3840 },
       },
       {
         format: { aspect: 'custom', resolution: '8k', width: 100, height: 0 },
-        expected: { aspect: 'custom', resolution: '4k', width: 3840, height: 2458 },
+        expected: { aspect: '16:9', width: 3840, height: 2160 },
+      },
+      {
+        format: { aspect: 'custom', resolution: 'unknown', width: -100, height: 200 },
+        expected: { aspect: '16:9', width: 3840, height: 2160 },
+      },
+      {
+        format: { aspect: '4:5', width: 2, height: 9 },
+        expected: { aspect: '4:5', width: 3072, height: 3840 },
       },
     ]
 
@@ -136,10 +145,12 @@ describe('background recipe', () => {
     const migrated = deserializeBackgroundRecipe(JSON.stringify({
       ...rest,
       version: 1,
+      format: { aspect: '16:9', resolution: '8k', width: 7680, height: 4320 },
       framing: { mode: 'free', x: 0.2, y: -0.1, zoom: 1.5 },
       crop: { x: 0.1, y: 0.1, zoom: 2 },
     }))
     expect(migrated?.version).toBe(2)
+    expect(migrated?.format).toEqual({ aspect: '16:9', width: 3840, height: 2160 })
     expect(migrated?.transforms.background.x).toBeCloseTo(0.3)
     expect(migrated?.transforms.background).toMatchObject({
       preset: 'free',
@@ -153,6 +164,8 @@ describe('background recipe', () => {
   it('derives custom aspect dimensions from the selected long edge', () => {
     expect(dimensionsForRatio(2)).toEqual({ width: 3840, height: 1920 })
     expect(dimensionsForRatio(0.5)).toEqual({ width: 1920, height: 3840 })
+    expect(dimensionsForRatio(0)).toEqual({ width: 3840, height: 2160 })
+    expect(dimensionsForRatio(Number.NaN)).toEqual({ width: 3840, height: 2160 })
   })
 
   it('creates identical render state from identical recipes', () => {

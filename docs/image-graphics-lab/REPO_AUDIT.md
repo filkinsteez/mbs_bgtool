@@ -1,5 +1,7 @@
 # Repo audit — image & graphics research lab
 
+> Archived planning document for the original editor. It does not describe the current MBS generator route or its fixed 4K export.
+
 Milestone 0 of the exploratory build. Six subsystem audits (structure/state, rendering,
 shape system, export/persistence, perf/tests, routing isolation) with file:line evidence,
 followed by the implementation plan. Everything below was verified against the code, not

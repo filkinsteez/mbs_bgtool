@@ -132,7 +132,6 @@ function recipeForInput(input: LookParityInput): BackgroundRecipeV2 {
     mode: 'material',
     format: {
       aspect: 'custom',
-      resolution: '4k',
       width: input.width,
       height: input.height,
     },

@@ -1,15 +1,12 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useLabStore } from '@/core/lab/labStore'
-import { getLabSource } from '@/core/lab/sourceCache'
-import { exportLabPng } from '@/core/lab/render'
-import { resolveBankCached } from './bankCache'
 import { exportMaterialAtTarget } from '@/features/background-generator/material/exportMaterial'
+import { canonicalizeFormat } from '@/features/background-generator/recipe'
 import {
-  dimensionsFor,
-  dimensionsForRatio,
-} from '@/features/background-generator/recipe'
+  exportBackground2DPng,
+  resolveBackground2DInputs,
+} from '@/features/background-generator/render2d'
 import { useBackgroundStore } from '@/features/background-generator/store'
 
 // Export is WYSIWYG: the PNG is the preview's exact painter at full
@@ -19,31 +16,15 @@ async function renderCurrentPng(): Promise<Blob> {
   const background = useBackgroundStore.getState()
   const recipe = background.recipe
   const mode = background.mode
-  const state = useLabStore.getState()
-  const protos = resolveBankCached(state.lab.mark.bank)
-  const dimensions = recipe.format.aspect === 'custom'
-    ? dimensionsForRatio(recipe.format.width / recipe.format.height)
-    : dimensionsFor(recipe.format.aspect)
   const exportRecipe = {
     ...recipe,
-    format: {
-      ...recipe.format,
-      ...dimensions,
-    },
+    format: canonicalizeFormat(recipe.format),
   }
-  if (mode === 'material') return exportMaterialAtTarget(exportRecipe, protos)
-  return exportLabPng(
-    {
-      ...state.lab,
-      output: {
-        ...state.lab.output,
-        ...dimensions,
-      },
-    },
-    getLabSource(),
-    protos,
-    exportRecipe.transforms.background,
-  )
+  if (mode === 'material') {
+    const { protos } = resolveBackground2DInputs(exportRecipe, { phase: 'export' })
+    return exportMaterialAtTarget(exportRecipe, protos)
+  }
+  return exportBackground2DPng(exportRecipe)
 }
 
 export function LabExportPanel() {
@@ -61,9 +42,7 @@ export function LabExportPanel() {
   const doExport = async () => {
     setBusy(true)
     try {
-      const dimensions = output.aspect === 'custom'
-        ? dimensionsForRatio(output.width / output.height)
-        : dimensionsFor(output.aspect)
+      const dimensions = canonicalizeFormat(output)
       setNote(`Rendering ${dimensions.width} × ${dimensions.height}…`)
       const blob = await renderCurrentPng()
       const a = document.createElement('a')

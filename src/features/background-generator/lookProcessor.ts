@@ -74,7 +74,7 @@ export function renderRecipeLookToCanvas(
   const context = canvas.getContext('2d', { willReadFrequently: true })
   if (!context) throw new Error('2D Look context unavailable')
   context.setTransform(1, 0, 0, 1, 0, 0)
-  renderLab(context, lab, source, protos, 'composite')
+  renderLab(context, lab, source, protos, 'composite', null)
   return lab
 }
 
@@ -88,5 +88,7 @@ export function exportRecipeLookPng(
     sourceAwareLabForRecipe(recipe, source, fit),
     source,
     protos,
+    undefined,
+    null,
   )
 }

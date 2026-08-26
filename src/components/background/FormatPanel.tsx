@@ -3,7 +3,7 @@
 import { SegmentedControl } from '@/components/controls/SegmentedControl'
 import {
   dimensionsFor,
-  type AspectId,
+  type FixedAspectId,
 } from '@/features/background-generator/recipe'
 import { useBackgroundStore } from '@/features/background-generator/store'
 import {
@@ -11,7 +11,7 @@ import {
   CANVAS_FIT_VIEW_EVENT,
 } from '@/components/lab/canvasEvents'
 
-const ASPECTS: Exclude<AspectId, 'custom'>[] = ['16:9', '9:16', '1:1', '4:5']
+const ASPECTS: FixedAspectId[] = ['16:9', '9:16', '1:1', '4:5']
 
 export function FormatPanel() {
   const format = useBackgroundStore((state) => state.recipe.format)
@@ -35,11 +35,11 @@ export function FormatPanel() {
           label: aspect,
         }))}
         onChange={(value) => {
-          const aspect = value as AspectId
+          const aspect = value as FixedAspectId
           update({
             format: {
               aspect,
-              ...dimensionsFor(aspect, format),
+              ...dimensionsFor(aspect),
             },
           })
           fitAfterLayout()

@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { expect, test, type Page } from '@playwright/test'
+import { createDefaultBackgroundRecipe } from '../../src/features/background-generator/recipe'
 
 const LOOKS = [
   'Frame',
@@ -265,6 +266,33 @@ async function enlargeArtworkFromCenter(page: Page, ratio = 1.5): Promise<void> 
   await zoomOut.click()
   await waitForAnimationFrames(page, 2)
 }
+
+test('rewrites legacy resolution metadata before exposing the generator', async ({ page }) => {
+  const legacy = createDefaultBackgroundRecipe(42) as ReturnType<
+    typeof createDefaultBackgroundRecipe
+  > & {
+    format: ReturnType<typeof createDefaultBackgroundRecipe>['format'] & {
+      resolution?: string
+    }
+  }
+  legacy.format = {
+    aspect: 'custom',
+    resolution: '8k',
+    width: 100,
+    height: 200,
+  }
+  await page.addInitScript((raw) => {
+    localStorage.setItem('mbs-bg-generator-autosave-v2', raw)
+  }, JSON.stringify(legacy))
+
+  await page.goto('/')
+  await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Export', exact: true })).toHaveCount(1)
+  expect(await page.evaluate(() => {
+    const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
+    return recipe.format
+  })).toEqual({ aspect: 'custom', width: 1920, height: 3840 })
+})
 
 test('renders every curated look and keeps autosave isolated', async ({ page }) => {
   const errors: string[] = []
@@ -1729,6 +1757,7 @@ test('exports both modes as exact 4K PNGs', async ({ page }) => {
 
   const formatSection = page.getByRole('region', { name: 'Format', exact: true })
   const exportSection = page.getByRole('region', { name: 'Export', exact: true })
+  await expect(page.getByRole('button', { name: 'Export', exact: true })).toHaveCount(1)
   await expect(formatSection.getByRole('group', { name: 'Aspect', exact: true })).toBeVisible()
   await expect(
     formatSection.getByRole('group', { name: 'Export resolution', exact: true }),
@@ -1836,6 +1865,44 @@ test('exports both modes as exact 4K PNGs', async ({ page }) => {
   const portraitPng = Buffer.from(portraitExportUrl.split(',')[1], 'base64')
   expect(portraitPng.readUInt32BE(16)).toBe(2160)
   expect(portraitPng.readUInt32BE(20)).toBe(3840)
+
+  await page.getByRole('tab', { name: '2D', exact: true }).click()
+  await formatSection.getByRole('button', { name: 'Custom aspect…', exact: true }).click()
+  const aspectHandle = page.getByRole('button', {
+    name: 'Resize centered aspect from E edge',
+    exact: true,
+  })
+  await aspectHandle.focus()
+  await page.keyboard.press('ArrowLeft')
+  await expect.poll(async () =>
+    page.evaluate(() => {
+      const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
+      return recipe.format
+    }),
+  ).toMatchObject({ aspect: 'custom' })
+  const savedCustomFormat = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}').format as {
+      width: number
+      height: number
+    },
+  )
+  const exportDataUrl = () => page.evaluate(async () => {
+    const exportPng = (window as unknown as {
+      __lbsLabExportPng?: () => Promise<string>
+    }).__lbsLabExportPng
+    if (!exportPng) throw new Error('Dev export hook unavailable')
+    return exportPng()
+  })
+  const custom2dPng = Buffer.from((await exportDataUrl()).split(',')[1], 'base64')
+  await page.getByRole('tab', { name: '3D', exact: true }).click()
+  await expect(page.locator('[data-mbs-material-model="true"]'))
+    .toHaveAttribute('data-model-status', 'ready')
+  const custom3dPng = Buffer.from((await exportDataUrl()).split(',')[1], 'base64')
+  for (const png of [custom2dPng, custom3dPng]) {
+    expect(png.readUInt32BE(16)).toBe(savedCustomFormat.width)
+    expect(png.readUInt32BE(20)).toBe(savedCustomFormat.height)
+    expect(Math.max(savedCustomFormat.width, savedCustomFormat.height)).toBe(3840)
+  }
 })
 
 test('exports the shared WebGL 3D scene without WebGPU', async ({ page }) => {

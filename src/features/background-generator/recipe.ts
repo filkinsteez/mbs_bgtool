@@ -19,6 +19,7 @@ export const BACKGROUND_AUTOSAVE_KEY = 'mbs-bg-generator-autosave-v2'
 export const LEGACY_BACKGROUND_AUTOSAVE_KEY = 'mbs-bg-generator-autosave-v1'
 
 export type AspectId = '16:9' | '9:16' | '1:1' | '4:5' | 'custom'
+export type FixedAspectId = Exclude<AspectId, 'custom'>
 export type FramingMode = 'full' | 'oversized' | 'left' | 'right' | 'crossover' | 'free'
 export type GeneratorMode = 'background' | 'material'
 const LEGACY_MATERIAL_LOOKS: Record<string, LookId> = {
@@ -41,16 +42,17 @@ export type MaterialCameraPose = {
   zoom: number
 }
 
+export type BackgroundFormat = {
+  aspect: AspectId
+  width: number
+  height: number
+}
+
 export type BackgroundRecipeV2 = {
   version: 2
   mode: GeneratorMode
   seed: number
-  format: {
-    aspect: AspectId
-    resolution: '4k'
-    width: number
-    height: number
-  }
+  format: BackgroundFormat
   look: {
     id: LookId
     detail: number
@@ -87,15 +89,28 @@ export type BackgroundRecipeV2 = {
 
 export type BackgroundRecipePatch = DeepPartial<BackgroundRecipeV2>
 
+type SerializedFormat = Partial<BackgroundFormat> & {
+  resolution?: unknown
+}
+
+type SerializedBackgroundRecipeV2 = Omit<
+  DeepPartial<BackgroundRecipeV2>,
+  'version' | 'format'
+> & {
+  version: 2
+  format?: SerializedFormat
+}
+
 type LegacyBackgroundRecipeV1 = Partial<
-  Omit<BackgroundRecipeV2, 'version' | 'transforms'>
+  Omit<BackgroundRecipeV2, 'version' | 'transforms' | 'format'>
 > & {
   version: 1
+  format?: SerializedFormat
   framing?: { mode?: FramingMode; x?: number; y?: number; zoom?: number }
   crop?: { x?: number; y?: number; zoom?: number }
 }
 
-const ASPECTS: Record<Exclude<AspectId, 'custom'>, readonly [number, number]> = {
+const ASPECTS: Record<FixedAspectId, readonly [number, number]> = {
   '16:9': [16, 9],
   '9:16': [9, 16],
   '1:1': [1, 1],
@@ -120,15 +135,8 @@ const BACKGROUND_FRAMING: Record<Exclude<FramingMode, 'free'>, FramingTransform>
 }
 
 export function dimensionsFor(
-  aspect: AspectId,
-  custom?: { width: number; height: number },
+  aspect: FixedAspectId,
 ): { width: number; height: number } {
-  if (aspect === 'custom') {
-    return {
-      width: clampInt(custom?.width ?? 3840, 64, 8192),
-      height: clampInt(custom?.height ?? 2160, 64, 8192),
-    }
-  }
   const [w, h] = ASPECTS[aspect]
   const edge = EXPORT_LONG_EDGE
   return w >= h
@@ -139,11 +147,34 @@ export function dimensionsFor(
 export function dimensionsForRatio(
   ratio: number,
 ): { width: number; height: number } {
-  const safeRatio = Math.max(1 / 8, Math.min(8, Number.isFinite(ratio) ? ratio : 16 / 9))
+  const validRatio = Number.isFinite(ratio) && ratio > 0 ? ratio : 16 / 9
+  const safeRatio = Math.max(1 / 8, Math.min(8, validRatio))
   const edge = EXPORT_LONG_EDGE
   return safeRatio >= 1
     ? { width: edge, height: Math.max(64, Math.round(edge / safeRatio)) }
     : { width: Math.max(64, Math.round(edge * safeRatio)), height: edge }
+}
+
+export function canonicalizeFormat(
+  format: Partial<BackgroundFormat>,
+): BackgroundFormat {
+  const aspect = format.aspect
+  if (aspect && aspect !== 'custom' && aspect in ASPECTS) {
+    return { aspect, ...dimensionsFor(aspect) }
+  }
+  if (
+    aspect === 'custom'
+    && Number.isFinite(format.width)
+    && Number.isFinite(format.height)
+    && (format.width ?? 0) > 0
+    && (format.height ?? 0) > 0
+  ) {
+    return {
+      aspect,
+      ...dimensionsForRatio((format.width ?? 0) / (format.height ?? 1)),
+    }
+  }
+  return { aspect: '16:9', ...dimensionsFor('16:9') }
 }
 
 function presetTransform(
@@ -161,7 +192,7 @@ export function createDefaultBackgroundRecipe(seed = 1913): BackgroundRecipeV2 {
     version: BACKGROUND_RECIPE_VERSION,
     mode: 'background',
     seed,
-    format: { aspect: '16:9', resolution: '4k', ...dimensionsFor('16:9') },
+    format: { aspect: '16:9', ...dimensionsFor('16:9') },
     look: { id: 'frame', detail: 0.5 },
     materialLookOverlay: { enabled: false },
     palette: {
@@ -189,7 +220,7 @@ export function createDefaultBackgroundRecipe(seed = 1913): BackgroundRecipeV2 {
 
 export function deserializeBackgroundRecipe(json: string): BackgroundRecipeV2 | null {
   try {
-    const raw = JSON.parse(json) as Partial<BackgroundRecipeV2> | LegacyBackgroundRecipeV1
+    const raw = JSON.parse(json) as SerializedBackgroundRecipeV2 | LegacyBackgroundRecipeV1
     if (!raw || (raw.version !== 1 && raw.version !== BACKGROUND_RECIPE_VERSION)) return null
     let recipe: BackgroundRecipeV2
     const rawPalette = raw.palette
@@ -220,7 +251,7 @@ export function deserializeBackgroundRecipe(json: string): BackgroundRecipeV2 | 
     } else {
       recipe = mergeDeep(
         createDefaultBackgroundRecipe(raw.seed),
-        raw as DeepPartial<BackgroundRecipeV2>,
+        raw as unknown as DeepPartial<BackgroundRecipeV2>,
       )
     }
     const migratedLook = LEGACY_MATERIAL_LOOKS[recipe.material.id as string]
@@ -242,19 +273,14 @@ export function deserializeBackgroundRecipe(json: string): BackgroundRecipeV2 | 
       || !MATERIAL_BY_ID[recipe.material.id]
     ) return null
     recipe.seed = clampInt(recipe.seed, 0, 0x7fffffff)
-    recipe.format.width = clampInt(recipe.format.width, 64, 8192)
-    recipe.format.height = clampInt(recipe.format.height, 64, 8192)
     if (!['16:9', '9:16', '1:1', '4:5', 'custom'].includes(recipe.format.aspect)) {
       return null
     }
-    const exportDimensions = recipe.format.aspect === 'custom'
-      ? dimensionsForRatio(recipe.format.width / recipe.format.height)
-      : dimensionsFor(recipe.format.aspect)
-    recipe.format = {
+    recipe.format = canonicalizeFormat({
       aspect: recipe.format.aspect,
-      resolution: '4k',
-      ...exportDimensions,
-    }
+      width: raw.format?.width,
+      height: raw.format?.height,
+    })
     recipe.materialLookOverlay.enabled = recipe.materialLookOverlay.enabled === true
     const weightedPalette = buildWeightedPalette(recipe.palette.mix, 100)
     recipe.palette.ground = normalizeHexColor(
@@ -439,5 +465,6 @@ function normalizeVector3(
 }
 
 function clampInt(value: number | undefined, min: number, max: number): number {
-  return Math.max(min, Math.min(max, Math.round(value ?? min)))
+  const finite = Number.isFinite(value) ? (value as number) : min
+  return Math.max(min, Math.min(max, Math.round(finite)))
 }

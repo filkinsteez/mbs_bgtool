@@ -12,11 +12,6 @@ import {
 import { Box, Image as ImageIcon } from 'lucide-react'
 import { MaterialModelViewer } from '@/components/background/MaterialModelViewer'
 import { MATERIAL_MODEL_SETTLE_VIEW_EVENT } from '@/components/background/materialModelEvents'
-import { applyMotionAt } from '@/core/lab/motion'
-import { scaleLabForPreview } from '@/core/lab/preview'
-import { renderLabArtwork } from '@/core/lab/render'
-import { useLabStore } from '@/core/lab/labStore'
-import { getLabSource } from '@/core/lab/sourceCache'
 import {
   artworkContainsPoint,
   moveSubject,
@@ -33,9 +28,12 @@ import {
   type SubjectTransform,
 } from '@/features/background-generator/recipe'
 import { useReducedMotion } from '@/features/background-generator/motion/useReducedMotion'
+import {
+  renderBackground2DCanvas,
+  resolveBackground2DInputs,
+} from '@/features/background-generator/render2d'
 import { useBackgroundStore } from '@/features/background-generator/store'
 import { renderController } from '@/render/renderController'
-import { resolveBankCached } from './bankCache'
 import { CANVAS_ASPECT_TOOL_EVENT, CANVAS_FIT_VIEW_EVENT } from './canvasEvents'
 
 type CanvasTool = 'select' | 'hand' | 'aspect'
@@ -153,16 +151,10 @@ function zoomCameraAt(
 }
 
 export function LabCanvas() {
-  const lab = useLabStore((state) => state.lab)
-  const view = useLabStore((state) => state.ui.view)
-  const quality = useLabStore((state) => state.ui.quality)
-  const sourceNonce = useLabStore((state) => state.ui.sourceNonce)
-  const note = useLabStore((state) => state.ui.note)
-  const focusedSourceId = useLabStore((state) => state.ui.focusedSourceId)
-  const motionEnabled = useLabStore((state) => state.lab.motion.amount > 0)
   const recipe = useBackgroundStore((state) => state.recipe)
   const mode = useBackgroundStore((state) => state.mode)
   const transform = recipe.transforms[mode]
+  const motionEnabled = recipe.motion.amount > 0
   const reducedMotion = useReducedMotion()
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -213,38 +205,34 @@ export function LabCanvas() {
       if (!canvas) return
       const background = useBackgroundStore.getState()
       const liveRecipe = background.recipe
-      const liveLab = useLabStore.getState().lab
-      const viewMode = useLabStore.getState().ui.view
-      const activeLab = timeMs !== undefined ? applyMotionAt(liveLab, timeMs) : liveLab
-      const previewLab = scaleLabForPreview(activeLab, quality === 'live' ? 700 : 1200)
-      if (canvas.width !== previewLab.output.width) canvas.width = previewLab.output.width
-      if (canvas.height !== previewLab.output.height) canvas.height = previewLab.output.height
-      const context = canvas.getContext('2d')
-      if (!context) return
-      context.setTransform(1, 0, 0, 1, 0, 0)
       if (background.mode === 'material') {
+        const inputs = resolveBackground2DInputs(liveRecipe, {
+          phase: 'preview',
+          maxLongEdge: 1200,
+        })
+        if (canvas.width !== inputs.lab.output.width) canvas.width = inputs.lab.output.width
+        if (canvas.height !== inputs.lab.output.height) canvas.height = inputs.lab.output.height
+        const context = canvas.getContext('2d')
+        if (!context) return
+        context.setTransform(1, 0, 0, 1, 0, 0)
         context.fillStyle = materialBaseColor(liveRecipe)
         context.fillRect(0, 0, canvas.width, canvas.height)
         return
       }
-      renderLabArtwork(
-        context,
-        previewLab,
-        getLabSource(),
-        resolveBankCached(previewLab.mark.bank),
-        viewMode,
-        liveRecipe.transforms.background,
-        focusedSourceId,
-      )
+      renderBackground2DCanvas(canvas, liveRecipe, {
+        phase: 'preview',
+        maxLongEdge: 1200,
+        timeMs,
+      })
     },
-    [focusedSourceId, quality],
+    [],
   )
 
   useEffect(() => {
     cancelAnimationFrame(rafRef.current)
     rafRef.current = requestAnimationFrame(() => draw())
     return () => cancelAnimationFrame(rafRef.current)
-  }, [draw, lab, mode, view, sourceNonce])
+  }, [draw, recipe, mode])
 
   useEffect(() => {
     if (mode !== 'background' || !motionEnabled || reducedMotion) return
@@ -1039,7 +1027,6 @@ export function LabCanvas() {
             {hud.text}
           </div>
         ) : null}
-        {note ? <div className="lab-note">{note}</div> : null}
       </div>
     </div>
   )

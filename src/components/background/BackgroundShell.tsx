@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ConfirmDialog } from '@/components/controls/ConfirmDialog'
 import { LooksPanel } from '@/components/lab/LooksPanel'
 import { LabCanvas } from '@/components/lab/LabCanvas'
@@ -12,10 +12,7 @@ import {
   LEGACY_BACKGROUND_AUTOSAVE_KEY,
   deserializeBackgroundRecipe,
 } from '@/features/background-generator/recipe'
-import {
-  syncBackgroundRecipe,
-  useBackgroundStore,
-} from '@/features/background-generator/store'
+import { useBackgroundStore } from '@/features/background-generator/store'
 import { FormatPanel } from './FormatPanel'
 import { MaterialColorsPanel } from './MaterialColorsPanel'
 import { MaterialPanel } from './MaterialPanel'
@@ -25,16 +22,8 @@ import {
   MATERIAL_MODEL_SETTLE_VIEW_EVENT,
 } from './materialModelEvents'
 
-const subscribeHydration = () => () => undefined
-const getClientHydration = () => true
-const getServerHydration = () => false
-
 export function BackgroundShell() {
-  const hydrated = useSyncExternalStore(
-    subscribeHydration,
-    getClientHydration,
-    getServerHydration,
-  )
+  const [restored, setRestored] = useState(false)
   const mode = useBackgroundStore((state) => state.mode)
   const newVariation = useBackgroundStore((state) => state.newVariation)
   const reset = useBackgroundStore((state) => state.reset)
@@ -66,15 +55,15 @@ export function BackgroundShell() {
       if (recipe) {
         useBackgroundStore.getState().replaceRecipe(recipe)
         localStorage.setItem(BACKGROUND_AUTOSAVE_KEY, JSON.stringify(recipe))
-      } else {
-        syncBackgroundRecipe()
       }
     } catch {
-      syncBackgroundRecipe()
       queueMicrotask(() => {
         if (mounted) setSaveStatus('error')
       })
     }
+    queueMicrotask(() => {
+      if (mounted) setRestored(true)
+    })
     let timer: ReturnType<typeof setTimeout> | undefined
     let pending = useBackgroundStore.getState().recipe
     const write = (announce = true) => {
@@ -131,8 +120,12 @@ export function BackgroundShell() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
+  if (!restored) {
+    return <div className="lab-root dialkit-root" data-hydrated="false" aria-busy="true" />
+  }
+
   return (
-    <div className="lab-root dialkit-root" data-hydrated={hydrated ? 'true' : 'false'}>
+    <div className="lab-root dialkit-root" data-hydrated="true">
       <ConfirmDialog
         open={confirmReset}
         title="Reset all?"

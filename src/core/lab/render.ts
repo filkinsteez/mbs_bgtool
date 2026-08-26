@@ -12,7 +12,7 @@ import { buildCellMarks, buildCells, curveFlowField, tintFor } from './compositi
 import { buildDabs, buildScanlines, buildStreams, composeFlow, type VectorField } from './flow'
 import { buildColorField, hexToRgb, rgbCss } from './colorField'
 import { buildBlockFills, buildBeadFills, buildShingleFills, regionValue } from './fills'
-import { getPaintRaster, reconcilePaint } from './paintRuntime'
+import { getPaintRaster, reconcilePaint, type PaintRaster } from './paintRuntime'
 import { sampleRGB } from './analysis'
 import { stampProto } from './stamp'
 import { createOrganicMotionWarp } from './motion'
@@ -67,6 +67,7 @@ export function renderLab(
   source: LabSource | null,
   protos: ShapeProto[],
   view: LabView,
+  paintRaster?: PaintRaster | null,
 ): void {
   const { width: outW, height: outH } = lab.output
   // defensive: a live HMR session may hold pre-`colors` state until the
@@ -98,8 +99,8 @@ export function renderLab(
   }
 
   // territory — curve lattices arrive as cached field overrides
-  reconcilePaint(lab.paint)
-  const paint = getPaintRaster()
+  if (paintRaster === undefined) reconcilePaint(lab.paint)
+  const paint = paintRaster === undefined ? getPaintRaster() : paintRaster
   // the mask is SIGNED around its neutral midpoint: brush strokes read
   // negative (carve into the glitch), erase reads positive (override up
   // to photo), untouched reads ~0 — folded in with plain 'add'
@@ -475,6 +476,7 @@ export function renderLabArtwork(
   view: LabView,
   transform: ArtworkTransform,
   focusedSourceId?: string | null,
+  paintRaster?: PaintRaster | null,
 ): void {
   const { width: outW, height: outH } = lab.output
   const renderTransform = constrainArtworkCover(
@@ -487,7 +489,7 @@ export function renderLabArtwork(
   artwork.setTransform(1, 0, 0, 1, 0, 0)
   artwork.globalAlpha = 1
   artwork.globalCompositeOperation = 'source-over'
-  renderLab(artwork, lab, source, protos, view)
+  renderLab(artwork, lab, source, protos, view, paintRaster)
   if (focusedSourceId && view === 'composite') {
     renderSourceOverlay(artwork, lab, source, focusedSourceId)
   }
@@ -714,13 +716,14 @@ export async function exportLabPng(
   source: LabSource | null,
   protos: ShapeProto[],
   transform: ArtworkTransform = { x: 0, y: 0, scale: 1, rotation: 0 },
+  paintRaster?: PaintRaster | null,
 ): Promise<Blob> {
   const canvas = document.createElement('canvas')
   canvas.width = lab.output.width
   canvas.height = lab.output.height
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('2D context unavailable')
-  renderLabArtwork(ctx, lab, source, protos, 'composite', transform)
+  renderLabArtwork(ctx, lab, source, protos, 'composite', transform, null, paintRaster)
   return canvasToPng(canvas)
 }
 
