@@ -16,21 +16,23 @@ import { useBackgroundStore } from '@/features/background-generator/store'
 // output size. Transparency isn't a toggle — zones set to "None"
 // export as alpha, exactly as the checkerboard shows them.
 async function renderCurrentPng(): Promise<Blob> {
-  const recipe = useBackgroundStore.getState().recipe
+  const background = useBackgroundStore.getState()
+  const recipe = background.recipe
+  const mode = background.mode
   const state = useLabStore.getState()
   const protos = resolveBankCached(state.lab.mark.bank)
   const dimensions = recipe.format.aspect === 'custom'
-    ? dimensionsForRatio('4k', recipe.format.width / recipe.format.height)
-    : dimensionsFor('4k', recipe.format.aspect)
+    ? dimensionsForRatio(recipe.format.width / recipe.format.height)
+    : dimensionsFor(recipe.format.aspect)
   const exportRecipe = {
     ...recipe,
+    mode,
     format: {
       ...recipe.format,
-      resolution: '4k' as const,
       ...dimensions,
     },
   }
-  if (recipe.mode === 'material') return exportMaterialAtTarget(exportRecipe, protos)
+  if (mode === 'material') return exportMaterialAtTarget(exportRecipe, protos)
   return exportLabPng(
     {
       ...state.lab,
@@ -47,6 +49,7 @@ async function renderCurrentPng(): Promise<Blob> {
 
 export function LabExportPanel() {
   const recipe = useBackgroundStore((state) => state.recipe)
+  const mode = useBackgroundStore((state) => state.mode)
   const output = recipe.format
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
@@ -60,14 +63,14 @@ export function LabExportPanel() {
     setBusy(true)
     try {
       const dimensions = output.aspect === 'custom'
-        ? dimensionsForRatio('4k', output.width / output.height)
-        : dimensionsFor('4k', output.aspect)
+        ? dimensionsForRatio(output.width / output.height)
+        : dimensionsFor(output.aspect)
       setNote(`Rendering ${dimensions.width} × ${dimensions.height}…`)
       const blob = await renderCurrentPng()
       const a = document.createElement('a')
       a.href = URL.createObjectURL(blob)
-      const treatment = recipe.mode === 'background' ? recipe.look.id : recipe.material.id
-      a.download = `mbs-${recipe.mode}-${treatment}-${recipe.seed}.png`
+      const treatment = mode === 'background' ? recipe.look.id : recipe.material.id
+      a.download = `mbs-${mode}-${treatment}-${recipe.seed}.png`
       a.click()
       URL.revokeObjectURL(a.href)
       flash('PNG exported')

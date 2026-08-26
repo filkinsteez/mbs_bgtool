@@ -1,7 +1,6 @@
 import type { ShapeProto } from '@/core/canvas/shapeProtos'
-import { PROTO_SIZE, shapeProto } from '@/core/canvas/shapeProtos'
+import { PROTO_SIZE } from '@/core/canvas/shapeProtos'
 import { metaUnitOutline, unitPolygon } from '@/core/sheet/sheet'
-import { deserializeProject } from '@/core/state/serialize'
 import { INK } from '@/core/state/defaults'
 import type { MarkBankId } from './types'
 
@@ -54,27 +53,9 @@ export function builtinBank(id: 'dots' | 'geo'): ShapeProto[] {
   return [LINE, RING, HALF, TRIANGLE, CROSS, DOT, SQUARE]
 }
 
-// the brand fallback when no shapes have been drawn in the editor yet —
-// meta-forward so the vocabulary still reads as this brand's
-const BRAND_FALLBACK = [META, RING, HALF, CROSS, DOT, SQUARE]
+const BRAND_BANK = [META, RING, HALF, CROSS, DOT, SQUARE]
 
-// The brand bank pulls the user's own drawn shapes out of the editor's
-// autosave — their vocabulary follows them into the lab with zero
-// duplication. Read-only: the lab never writes the editor's storage.
-export function brandBankFromAutosave(raw: string | null): {
-  protos: ShapeProto[]
-  fromProject: boolean
-} {
-  if (raw) {
-    const project = deserializeProject(raw)
-    if (project && project.shapes.length) {
-      return { protos: [...project.shapes.map(shapeProto), META], fromProject: true }
-    }
-  }
-  return { protos: BRAND_FALLBACK, fromProject: false }
-}
-
-export function resolveBank(id: MarkBankId, autosaveRaw: string | null): ShapeProto[] {
-  if (id === 'brand') return brandBankFromAutosave(autosaveRaw).protos
+export function resolveBank(id: MarkBankId): ShapeProto[] {
+  if (id === 'brand') return BRAND_BANK
   return builtinBank(id)
 }

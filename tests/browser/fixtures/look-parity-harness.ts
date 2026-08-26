@@ -132,7 +132,7 @@ function recipeForInput(input: LookParityInput): BackgroundRecipeV2 {
     mode: 'material',
     format: {
       aspect: 'custom',
-      resolution: '1080',
+      resolution: '4k',
       width: input.width,
       height: input.height,
     },
@@ -147,6 +147,8 @@ function recipeForInput(input: LookParityInput): BackgroundRecipeV2 {
         enabled: true,
         ratio: 1,
       })),
+      ink: input.palette[0],
+      ground: input.palette.at(-1) ?? input.palette[0],
     },
   }
 }
@@ -162,7 +164,7 @@ function renderCurrent2D(
   canvas.height = input.height
   const context = canvas.getContext('2d', { willReadFrequently: true })
   if (!context) throw new Error('2D output context unavailable')
-  renderLab(context, lab, source, resolveBank(lab.mark.bank, null), 'composite')
+  renderLab(context, lab, source, resolveBank(lab.mark.bank), 'composite')
   return context.getImageData(0, 0, input.width, input.height).data
 }
 
@@ -177,7 +179,7 @@ function renderCurrent3DLook(
     canvas,
     recipe,
     source,
-    resolveBank(lab.mark.bank, null),
+    resolveBank(lab.mark.bank),
   )
   const context = canvas.getContext('2d', { willReadFrequently: true })
   if (!context) throw new Error('Material Look output context unavailable')

@@ -5,6 +5,8 @@ import type { LabSource } from '@/core/lab/sourceCache'
 import type { LabFit, LabState } from '@/core/lab/types'
 import {
   backgroundRecipeToLab,
+  materialBaseColor,
+  materialHighlightColor,
   type BackgroundRecipeV2,
 } from './recipe'
 
@@ -18,7 +20,7 @@ export function sourceAwareLabForRecipe(
   source: LabSource,
   fit: LabFit = 'contain',
 ): LabState {
-  return backgroundRecipeToLab(recipe, {
+  const lab = backgroundRecipeToLab(recipe, {
     hasSource: true,
     source: {
       filename: source.filename,
@@ -28,6 +30,22 @@ export function sourceAwareLabForRecipe(
       fit,
     },
   })
+  const tone = lab.territory.sources.find((item) => item.kind === 'tone')
+  return {
+    ...lab,
+    colors: {
+      paper: materialBaseColor(recipe),
+      ink: materialHighlightColor(recipe),
+      palette: [materialBaseColor(recipe), materialHighlightColor(recipe)],
+    },
+    territory: {
+      ...lab.territory,
+      gain: 1,
+      sources: tone
+        ? [{ ...tone, enabled: true, invert: false, weight: 1, combine: 'add' }]
+        : [],
+    },
+  }
 }
 
 // Canonical Look processor shared by material preview, material export, and

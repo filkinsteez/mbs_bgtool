@@ -168,7 +168,6 @@ test('3D export includes the selected Look', async ({ page }) => {
     'data-model-status',
     'ready',
   )
-  await page.getByRole('button', { name: '1080', exact: true }).click()
 
   const exportPng = () => page.evaluate(async () => {
     const hook = (window as typeof window & {
@@ -186,4 +185,9 @@ test('3D export includes the selected Look', async ({ page }) => {
   const looked = await exportPng()
 
   expect(looked).not.toBe(raw)
+  for (const pngUrl of [raw, looked]) {
+    const png = Buffer.from(pngUrl.split(',')[1], 'base64')
+    expect(png.readUInt32BE(16)).toBe(3840)
+    expect(png.readUInt32BE(20)).toBe(2160)
+  }
 })

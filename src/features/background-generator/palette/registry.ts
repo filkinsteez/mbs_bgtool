@@ -1,4 +1,10 @@
-import { EXTENDED_APPROVED_COLORS } from './extended'
+import {
+  EXTENDED_APPROVED_COLORS,
+  EXTENDED_CORE,
+  EXTENDED_DEEP_BLUES,
+  EXTENDED_NEUTRALS,
+  EXTENDED_PRODUCT_BLUES,
+} from './extended'
 
 export type PaletteTier = 'primary' | 'secondary' | 'extended'
 
@@ -14,6 +20,13 @@ export type PalettePack = {
 
 export const META_BLUE = '#0064E0'
 export const CUSTOM_PALETTE_ID = 'custom'
+
+export const APPROVED_COLOR_GROUPS = [
+  { id: 'core', label: 'Core ramps', colors: EXTENDED_CORE },
+  { id: 'neutral', label: 'Neutrals', colors: EXTENDED_NEUTRALS },
+  { id: 'product-blue', label: 'Product blues', colors: EXTENDED_PRODUCT_BLUES },
+  { id: 'deep-blue', label: 'Deep blues', colors: EXTENDED_DEEP_BLUES },
+] as const
 
 export const PALETTE_PACKS: readonly PalettePack[] = [
   {
@@ -109,17 +122,13 @@ export function addColorToMix(mix: readonly ColorMix[], color: string): ColorMix
   )
   if (existingIndex >= 0 && mix[existingIndex].enabled) return [...mix]
 
-  const enabled = mix.filter((item) => item.enabled)
-  const newShare = 100 / (enabled.length + 1)
-  const currentTotal = enabled.reduce((sum, item) => sum + item.ratio, 0)
-  const retainedShare = 100 - newShare
-  const next = mix.map((item) => ({
-    ...item,
-    ratio: item.enabled && currentTotal > 0
-      ? (item.ratio / currentTotal) * retainedShare
-      : 0,
-  }))
-  const added = { color, enabled: true, ratio: newShare }
+  const next = mix.map((item) => ({ ...item }))
+  const previousWeight = existingIndex >= 0 ? next[existingIndex].ratio : 0
+  const added = {
+    color,
+    enabled: true,
+    ratio: previousWeight > 0 ? previousWeight : 50,
+  }
   if (existingIndex >= 0) next[existingIndex] = added
   else next.push(added)
   return next

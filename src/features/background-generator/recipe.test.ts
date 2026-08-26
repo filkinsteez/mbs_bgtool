@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   backgroundRecipeToLab,
+  constrainBackgroundTransform,
   createDefaultBackgroundRecipe,
   deserializeBackgroundRecipe,
   dimensionsFor,
@@ -9,10 +10,39 @@ import {
 
 describe('background recipe', () => {
   it('defines the required 4K dimensions by long edge', () => {
-    expect(dimensionsFor('4k', '16:9')).toEqual({ width: 3840, height: 2160 })
-    expect(dimensionsFor('4k', '9:16')).toEqual({ width: 2160, height: 3840 })
-    expect(dimensionsFor('4k', '1:1')).toEqual({ width: 3840, height: 3840 })
-    expect(dimensionsFor('4k', '4:5')).toEqual({ width: 3072, height: 3840 })
+    expect(dimensionsFor('16:9')).toEqual({ width: 3840, height: 2160 })
+    expect(dimensionsFor('9:16')).toEqual({ width: 2160, height: 3840 })
+    expect(dimensionsFor('1:1')).toEqual({ width: 3840, height: 3840 })
+    expect(dimensionsFor('4:5')).toEqual({ width: 3072, height: 3840 })
+  })
+
+  it('keeps every output corner inside the transformed 2D artwork', () => {
+    for (const [width, height] of [[3840, 2160], [2160, 3840], [3840, 3840]]) {
+      for (const rotation of [-135, -45, 0, 30, 90, 175]) {
+        for (const [x, y, scale] of [[-2, 2, 0.1], [0.8, -0.7, 1], [0, 0, 4]]) {
+          const transform = constrainBackgroundTransform(
+            { preset: 'free', x, y, scale, rotation },
+            width,
+            height,
+          )
+          const angle = (transform.rotation * Math.PI) / 180
+          const cos = Math.cos(angle)
+          const sin = Math.sin(angle)
+          const centerX = width * transform.x / 2
+          const centerY = height * transform.y / 2
+          for (const cornerX of [-width / 2, width / 2]) {
+            for (const cornerY of [-height / 2, height / 2]) {
+              const dx = cornerX - centerX
+              const dy = cornerY - centerY
+              const localX = dx * cos + dy * sin
+              const localY = -dx * sin + dy * cos
+              expect(Math.abs(localX)).toBeLessThanOrEqual(width * transform.scale / 2 + 0.001)
+              expect(Math.abs(localY)).toBeLessThanOrEqual(height * transform.scale / 2 + 0.001)
+            }
+          }
+        }
+      }
+    }
   })
 
   it('round-trips a deterministic versioned recipe', () => {
@@ -31,6 +61,37 @@ describe('background recipe', () => {
     expect(deserializeBackgroundRecipe(JSON.stringify({ ...recipe, mode: 'combined' }))).toBeNull()
   })
 
+  it('loads obsolete resolution values and dimensions as fixed 4K output', () => {
+    const recipe = createDefaultBackgroundRecipe(42)
+    const cases = [
+      {
+        format: { aspect: '16:9', resolution: '1080', width: 1920, height: 1080 },
+        expected: { aspect: '16:9', resolution: '4k', width: 3840, height: 2160 },
+      },
+      {
+        format: { aspect: '9:16', resolution: '2k', width: 999, height: 1 },
+        expected: { aspect: '9:16', resolution: '4k', width: 2160, height: 3840 },
+      },
+      {
+        format: { aspect: '1:1', resolution: '8k', width: 1, height: 999 },
+        expected: { aspect: '1:1', resolution: '4k', width: 3840, height: 3840 },
+      },
+      {
+        format: { aspect: 'custom', resolution: '1080', width: 100, height: 200 },
+        expected: { aspect: 'custom', resolution: '4k', width: 1920, height: 3840 },
+      },
+      {
+        format: { aspect: 'custom', resolution: '8k', width: 100, height: 0 },
+        expected: { aspect: 'custom', resolution: '4k', width: 3840, height: 2458 },
+      },
+    ]
+
+    for (const { format, expected } of cases) {
+      const restored = deserializeBackgroundRecipe(JSON.stringify({ ...recipe, format }))
+      expect(restored?.format).toEqual(expected)
+    }
+  })
+
   it('round-trips a custom palette without reverting to defaults', () => {
     const recipe = createDefaultBackgroundRecipe(42)
     const mix = [
@@ -42,7 +103,12 @@ describe('background recipe', () => {
       palette: { packId: 'custom', mix },
     }))
 
-    expect(restored?.palette).toEqual({ packId: 'custom', mix })
+    expect(restored?.palette).toEqual({
+      packId: 'custom',
+      mix,
+      ink: '#0288F9',
+      ground: '#24D366',
+    })
   })
 
   it('defaults older recipes to a disabled 3D Look overlay', () => {
@@ -85,8 +151,8 @@ describe('background recipe', () => {
   })
 
   it('derives custom crop dimensions from the selected long edge', () => {
-    expect(dimensionsForRatio('4k', 2)).toEqual({ width: 3840, height: 1920 })
-    expect(dimensionsForRatio('1080', 0.5)).toEqual({ width: 540, height: 1080 })
+    expect(dimensionsForRatio(2)).toEqual({ width: 3840, height: 1920 })
+    expect(dimensionsForRatio(0.5)).toEqual({ width: 1920, height: 3840 })
   })
 
   it('creates identical render state from identical recipes', () => {

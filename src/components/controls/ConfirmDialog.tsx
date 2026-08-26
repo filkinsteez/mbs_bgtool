@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useId, useRef } from 'react'
 import { createPortal } from 'react-dom'
 
 // A real modal for destructive confirms — one component for every
@@ -10,8 +10,8 @@ import { createPortal } from 'react-dom'
 // host carries `dialkit-root` because the --dial-* tokens are scoped to
 // that class (a portal outside it renders unstyled).
 //
-// Keyboard contract, the same as any dialog: Enter confirms, Escape
-// cancels, focus lands on the confirm button and returns to whatever
+// Keyboard contract, the same as any dialog: Escape cancels, focus
+// lands on the confirm button and returns to whatever
 // opened it, and Tab cycles inside the dialog instead of escaping into
 // the page behind.
 
@@ -36,6 +36,8 @@ export function ConfirmDialog({
 }: ConfirmDialogProps) {
   const cardRef = useRef<HTMLDivElement>(null)
   const confirmRef = useRef<HTMLButtonElement>(null)
+  const titleId = useId()
+  const bodyId = useId()
 
   useEffect(() => {
     if (!open) return
@@ -46,11 +48,6 @@ export function ConfirmDialog({
       if (e.key === 'Escape') {
         e.preventDefault()
         onCancel()
-        return
-      }
-      if (e.key === 'Enter') {
-        e.preventDefault()
-        onConfirm()
         return
       }
       if (e.key !== 'Tab') return
@@ -91,15 +88,21 @@ export function ConfirmDialog({
         className="modal-card"
         role="alertdialog"
         aria-modal="true"
-        aria-label={title}
+        aria-labelledby={titleId}
+        aria-describedby={body ? bodyId : undefined}
       >
-        <div className="modal-title">{title}</div>
-        {body ? <div className="modal-body">{body}</div> : null}
+        <h2 className="modal-title" id={titleId}>{title}</h2>
+        {body ? <div className="modal-body" id={bodyId}>{body}</div> : null}
         <div className="modal-actions">
-          <button className="ctl-action" onClick={onCancel}>
+          <button type="button" className="ctl-action" onClick={onCancel}>
             {cancelLabel}
           </button>
-          <button ref={confirmRef} className="ctl-action primary" onClick={onConfirm}>
+          <button
+            ref={confirmRef}
+            type="button"
+            className="ctl-action primary"
+            onClick={onConfirm}
+          >
             {confirmLabel}
           </button>
         </div>

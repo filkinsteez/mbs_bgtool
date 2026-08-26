@@ -1,6 +1,8 @@
 'use client'
 
 import { useState } from 'react'
+import { ApprovedColorPicker } from './ApprovedColorPicker'
+import { handleRadioGroupKeyDown } from '@/components/controls/radioKeyboard'
 import {
   groupColorsByHue,
   type HueGroup,
@@ -18,7 +20,6 @@ const CURATED_COLORS = Array.from(new Set(
 
 const EXTENDED_COLORS = PALETTE_PACKS.find((pack) => pack.tier === 'extended')?.colors ?? []
 const CURATED_GROUPS = groupColorsByHue(CURATED_COLORS)
-const EXTENDED_GROUPS = groupColorsByHue(EXTENDED_COLORS)
 
 function HueColorGroups({
   groups,
@@ -78,34 +79,34 @@ export function MaterialColorsPanel() {
 
   return (
     <div className="panel-section">
-      <div className="panel-heading">Color</div>
-      <div className="panel-note">Material uses two colors—no ratio mixing.</div>
-      <div className="lab-material-color-roles" role="tablist" aria-label="Material color role">
+      <h2 className="panel-heading">Color</h2>
+      <div className="lab-material-color-roles" role="radiogroup" aria-label="Material color role">
         <button
           type="button"
-          role="tab"
-          aria-selected={role === 'background'}
+          role="radio"
+          aria-checked={role === 'background'}
+          tabIndex={role === 'background' ? 0 : -1}
           className={role === 'background' ? 'active' : ''}
           onClick={() => setRole('background')}
+          onKeyDown={handleRadioGroupKeyDown}
         >
           <span className="lab-material-color-chip" style={{ background: backgroundColor }} />
           <span>Background</span>
-          <code>{backgroundColor}</code>
         </button>
         <button
           type="button"
-          role="tab"
-          aria-selected={role === 'highlight'}
+          role="radio"
+          aria-checked={role === 'highlight'}
+          tabIndex={role === 'highlight' ? 0 : -1}
           className={role === 'highlight' ? 'active' : ''}
           onClick={() => setRole('highlight')}
+          onKeyDown={handleRadioGroupKeyDown}
         >
           <span className="lab-material-color-chip" style={{ background: highlightColor }} />
           <span>Highlight</span>
-          <code>{highlightColor}</code>
         </button>
       </div>
       <div className="lab-material-color-actions">
-        <span>Set {role}</span>
         <button
           type="button"
           className="lab-chip"
@@ -127,11 +128,9 @@ export function MaterialColorsPanel() {
       />
       <details>
         <summary>More approved colors ({EXTENDED_COLORS.length})</summary>
-        <HueColorGroups
-          groups={EXTENDED_GROUPS}
-          selected={selected}
-          role={role}
-          extended
+        <ApprovedColorPicker
+          selected={[selected]}
+          action="Use"
           onSelect={setColor}
         />
       </details>

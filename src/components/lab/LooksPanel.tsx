@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react'
 import { useLabStore } from '@/core/lab/labStore'
 import { LOOKS, lookPatchFor } from '@/core/lab/looks'
+import { createDefaultLab } from '@/core/lab/recipe'
 import { mergeDeep } from '@/core/state/store'
 import { renderLab } from '@/core/lab/render'
 import { getLabSource } from '@/core/lab/sourceCache'
@@ -15,9 +16,10 @@ import { scaleLabForPreview } from '@/core/lab/preview'
 // normal undo entry — every control underneath lands on real values.
 
 const THUMB_H = 72
+const GENERIC_3D_THUMBNAIL = createDefaultLab(1913)
 
 export function LooksPanel() {
-  const mode = useBackgroundStore((state) => state.recipe.mode)
+  const mode = useBackgroundStore((state) => state.mode)
   const lookId = useBackgroundStore((state) => state.recipe.look.id)
   const materialOverlayEnabled = useBackgroundStore(
     (state) => state.recipe.materialLookOverlay.enabled,
@@ -33,30 +35,33 @@ export function LooksPanel() {
   // CONTENT hash and the COMMITTED paint (pointer-up), never the
   // per-stroke nonce — one brush stroke must not re-render ten full
   // pipelines per pointer sample.
-  const thumbKey = [
-    lab.source?.contentHash ?? 'none',
-    lab.source?.fit ?? '',
-    lab.seed,
-    lab.colors.palette.join(),
-    lab.colors.ink,
-    lab.colors.paper,
-    `${lab.output.width}x${lab.output.height}`,
-    // Direct canvas transforms intentionally do not invalidate all ten
-    // thumbnails on every pointer sample.
-    lab.paint?.data.length ?? 0,
-    // bitmap PRESENCE, not the per-stroke nonce: flips exactly when an
-    // image arrives (rehydration included) or is removed
-    getLabSource() ? 'img' : 'none',
-  ].join('|')
+  const thumbKey = mode === 'material'
+    ? 'generic-3d-look-preview-v1'
+    : [
+        lab.source?.contentHash ?? 'none',
+        lab.source?.fit ?? '',
+        lab.seed,
+        lab.colors.palette.join(),
+        lab.colors.ink,
+        lab.colors.paper,
+        `${lab.output.width}x${lab.output.height}`,
+        // Direct canvas transforms intentionally do not invalidate all ten
+        // thumbnails on every pointer sample.
+        lab.paint?.data.length ?? 0,
+        // bitmap PRESENCE, not the per-stroke nonce: flips exactly when an
+        // image arrives (rehydration included) or is removed
+        getLabSource() ? 'img' : 'none',
+      ].join('|')
   void sourceNonce // subscription: re-render (and re-key) on cache changes
   useEffect(() => {
     cancelAnimationFrame(rafRef.current)
     rafRef.current = requestAnimationFrame(() => {
       const strip = stripRef.current
       if (!strip) return
-      const source = getLabSource()
+      const generic = mode === 'material'
+      const source = generic ? null : getLabSource()
       const canvases = strip.querySelectorAll('canvas')
-      const base = useLabStore.getState().lab
+      const base = generic ? GENERIC_3D_THUMBNAIL : useLabStore.getState().lab
       LOOKS.forEach((look, i) => {
         const canvas = canvases[i]
         if (!canvas) return
@@ -74,14 +79,14 @@ export function LooksPanel() {
       })
     })
     return () => cancelAnimationFrame(rafRef.current)
-  }, [thumbKey])
+  }, [mode, thumbKey])
 
   return (
     <div className="panel-section">
-      <div className="panel-heading">Looks</div>
+      <h2 className="panel-heading">Looks</h2>
       {mode === 'material' ? (
         <div className="panel-note" data-mbs-look-scope="3d-full-frame">
-          Processes the live 3D frame. Click the active Look to turn it off.
+          Generic effect previews
         </div>
       ) : null}
       <div className="lab-looks" ref={stripRef}>
@@ -92,7 +97,7 @@ export function LooksPanel() {
             <button
               key={look.id}
               className={active ? 'lab-look active' : 'lab-look'}
-              title={mode === 'material' ? `${look.label} · full-frame 3D post-process` : look.label}
+              title={mode === 'material' ? `${look.label} · generic effect preview` : look.label}
               aria-pressed={active}
               onClick={() => {
                 if (mode === 'background') {
@@ -107,7 +112,10 @@ export function LooksPanel() {
                 })
               }}
             >
-              <canvas className="lab-look-thumb" />
+              <canvas
+                className="lab-look-thumb"
+                data-preview-mode={mode === 'material' ? 'generic' : 'live'}
+              />
               <span className="lab-look-label">{look.label}</span>
             </button>
           )

@@ -1,10 +1,12 @@
 'use client'
 
-import { useEffect, useSyncExternalStore } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { ConfirmDialog } from '@/components/controls/ConfirmDialog'
 import { LooksPanel } from '@/components/lab/LooksPanel'
 import { LabCanvas } from '@/components/lab/LabCanvas'
 import { ColorsPanel } from '@/components/lab/ColorsPanel'
 import { LabExportPanel } from '@/components/lab/LabExportPanel'
+import { CANVAS_FIT_VIEW_EVENT } from '@/components/lab/canvasEvents'
 import {
   BACKGROUND_AUTOSAVE_KEY,
   LEGACY_BACKGROUND_AUTOSAVE_KEY,
@@ -18,6 +20,10 @@ import { FormatPanel } from './FormatPanel'
 import { MaterialColorsPanel } from './MaterialColorsPanel'
 import { MaterialPanel } from './MaterialPanel'
 import { MotionPanel } from './MotionPanel'
+import {
+  MATERIAL_MODEL_RESET_VIEW_EVENT,
+  MATERIAL_MODEL_SETTLE_VIEW_EVENT,
+} from './materialModelEvents'
 
 const subscribeHydration = () => () => undefined
 const getClientHydration = () => true
@@ -29,11 +35,29 @@ export function BackgroundShell() {
     getClientHydration,
     getServerHydration,
   )
-  const mode = useBackgroundStore((state) => state.recipe.mode)
+  const mode = useBackgroundStore((state) => state.mode)
   const newVariation = useBackgroundStore((state) => state.newVariation)
   const reset = useBackgroundStore((state) => state.reset)
+  const inspectorRef = useRef<HTMLElement>(null)
+  const previousModeRef = useRef(mode)
+  const scrollByModeRef = useRef({ background: 0, material: 0 })
+  const [confirmReset, setConfirmReset] = useState(false)
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error'>('saved')
+  const resetAll = () => {
+    reset()
+    window.dispatchEvent(new Event(CANVAS_FIT_VIEW_EVENT))
+    window.dispatchEvent(new Event(MATERIAL_MODEL_RESET_VIEW_EVENT))
+  }
+
+  useLayoutEffect(() => {
+    const inspector = inspectorRef.current
+    if (!inspector || previousModeRef.current === mode) return
+    inspector.scrollTop = scrollByModeRef.current[mode]
+    previousModeRef.current = mode
+  }, [mode])
 
   useEffect(() => {
+    let mounted = true
     try {
       const current = localStorage.getItem(BACKGROUND_AUTOSAVE_KEY)
       const legacy = localStorage.getItem(LEGACY_BACKGROUND_AUTOSAVE_KEY)
@@ -47,21 +71,40 @@ export function BackgroundShell() {
       }
     } catch {
       syncBackgroundRecipe()
+      queueMicrotask(() => {
+        if (mounted) setSaveStatus('error')
+      })
     }
     let timer: ReturnType<typeof setTimeout> | undefined
+    let pending = useBackgroundStore.getState().recipe
+    const write = (announce = true) => {
+      clearTimeout(timer)
+      timer = undefined
+      try {
+        localStorage.setItem(BACKGROUND_AUTOSAVE_KEY, JSON.stringify(pending))
+        if (announce && mounted) setSaveStatus('saved')
+      } catch {
+        if (announce && mounted) setSaveStatus('error')
+      }
+    }
+    const flush = () => write()
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') flush()
+    }
     const unsub = useBackgroundStore.subscribe((state, prev) => {
       if (state.recipe === prev.recipe) return
+      pending = state.recipe
       clearTimeout(timer)
-      timer = setTimeout(() => {
-        try {
-          localStorage.setItem(BACKGROUND_AUTOSAVE_KEY, JSON.stringify(state.recipe))
-        } catch {
-          // ignore storage write failures
-        }
-      }, 350)
+      setSaveStatus('saving')
+      timer = setTimeout(flush, 350)
     })
+    window.addEventListener('pagehide', flush)
+    document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
-      clearTimeout(timer)
+      mounted = false
+      write(false)
+      window.removeEventListener('pagehide', flush)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
       unsub()
     }
   }, [])
@@ -78,6 +121,9 @@ export function BackgroundShell() {
       if (editable || event.isComposing || (!event.metaKey && !event.ctrlKey)) return
       if (event.key.toLowerCase() !== 'z') return
       event.preventDefault()
+      if (useBackgroundStore.getState().mode === 'material') {
+        window.dispatchEvent(new Event(MATERIAL_MODEL_SETTLE_VIEW_EVENT))
+      }
       if (event.shiftKey) useBackgroundStore.getState().redo()
       else useBackgroundStore.getState().undo()
     }
@@ -87,16 +133,32 @@ export function BackgroundShell() {
 
   return (
     <div className="lab-root dialkit-root" data-hydrated={hydrated ? 'true' : 'false'}>
+      <ConfirmDialog
+        open={confirmReset}
+        title="Reset all?"
+        body="This resets 2D and 3D settings."
+        confirmLabel="Reset all"
+        onConfirm={() => {
+          resetAll()
+          setConfirmReset(false)
+        }}
+        onCancel={() => setConfirmReset(false)}
+      />
       <header className="lab-topbar">
-        <span className="lab-title">MBS Background Generator</span>
+        <h1 className="lab-title">MBS Background Generator</h1>
+        <span
+          className={saveStatus === 'error' ? 'lab-save-status error' : 'lab-save-status'}
+          role={saveStatus === 'error' ? 'alert' : 'status'}
+          aria-live="polite"
+        >
+          {saveStatus === 'error' ? 'Save failed' : saveStatus === 'saving' ? 'Saving' : 'Saved'}
+        </span>
         <div className="lab-topbar-actions">
-          {mode === 'background' ? (
-            <button type="button" className="lab-chip" onClick={newVariation}>
-              New variation
-            </button>
-          ) : null}
-          <button type="button" className="lab-chip" onClick={reset}>
-            Reset
+          <button type="button" className="lab-chip" onClick={newVariation}>
+            New variation
+          </button>
+          <button type="button" className="lab-chip" onClick={() => setConfirmReset(true)}>
+            Reset all
           </button>
         </div>
       </header>
@@ -104,7 +166,14 @@ export function BackgroundShell() {
         <main className="lab-stage">
           <LabCanvas />
         </main>
-        <aside className="lab-side lab-side-right">
+        <aside
+          ref={inspectorRef}
+          className="lab-side lab-side-right"
+          aria-label={`${mode === 'background' ? '2D' : '3D'} controls`}
+          onScroll={(event) => {
+            scrollByModeRef.current[mode] = event.currentTarget.scrollTop
+          }}
+        >
           <FormatPanel />
           {mode === 'background' ? (
             <>

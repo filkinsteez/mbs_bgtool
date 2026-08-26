@@ -16,6 +16,28 @@ const BASE: SubjectTransform = {
   scale: 0.5,
   rotation: 0,
 }
+const COVERED: SubjectTransform = { ...BASE, scale: 1.5 }
+
+function expectArtboardCovered(
+  transform: SubjectTransform,
+  width: number,
+  height: number,
+): void {
+  const box = subjectBox(transform, width, height)
+  const angle = (transform.rotation * Math.PI) / 180
+  for (const x of [0, width]) {
+    for (const y of [0, height]) {
+      const cos = Math.cos(angle)
+      const sin = Math.sin(angle)
+      const dx = x - box.centerX
+      const dy = y - box.centerY
+      const localX = dx * cos + dy * sin
+      const localY = -dx * sin + dy * cos
+      expect(Math.abs(localX)).toBeLessThanOrEqual(box.width / 2 + 0.001)
+      expect(Math.abs(localY)).toBeLessThanOrEqual(box.height / 2 + 0.001)
+    }
+  }
+}
 
 describe('canvas geometry', () => {
   it('maps normalized transforms to an artboard box', () => {
@@ -29,48 +51,61 @@ describe('canvas geometry', () => {
   })
 
   it('moves, axis-constrains, and snaps the artwork center', () => {
-    const constrained = moveSubject(BASE, 100, 20, 1000, 500, true, false)
+    const constrained = moveSubject(COVERED, 100, 20, 1000, 500, true, false)
     expect(constrained.transform.x).toBeCloseTo(0.2)
     expect(constrained.transform.y).toBe(0)
 
-    const snapped = moveSubject({ ...BASE, x: 0.01 }, 0, 0, 1000, 500, false, true)
+    const snapped = moveSubject({ ...COVERED, x: 0.01 }, 0, 0, 1000, 500, false, true)
     expect(snapped.transform.x).toBeCloseTo(0)
     expect(snapped.guideX).toBe(500)
   })
 
+  it('keeps a full-frame artwork unchanged when a gesture would expose canvas', () => {
+    const full: SubjectTransform = {
+      preset: 'full',
+      x: 0,
+      y: 0,
+      scale: 1,
+      rotation: 0,
+    }
+
+    expect(moveSubject(full, 200, 100, 1000, 500, false).transform).toBe(full)
+    expect(
+      scaleSubjectFromCorner(full, 'se', 1000, 500, 700, 350, true).transform,
+    ).toBe(full)
+  })
+
   it('snaps all four artwork edges in screen space while moving', () => {
     const cases = [
-      { dx: -246, dy: 20, edge: 'left' as const, target: 0, guide: 'guideX' as const },
-      { dx: 246, dy: 20, edge: 'right' as const, target: 1000, guide: 'guideX' as const },
-      { dx: 20, dy: -121, edge: 'top' as const, target: 0, guide: 'guideY' as const },
-      { dx: 20, dy: 121, edge: 'bottom' as const, target: 500, guide: 'guideY' as const },
+      { dx: 246, dy: 20, edge: 'left' as const, target: 0, guide: 'guideX' as const },
+      { dx: -246, dy: 20, edge: 'right' as const, target: 1000, guide: 'guideX' as const },
+      { dx: 20, dy: 121, edge: 'top' as const, target: 0, guide: 'guideY' as const },
+      { dx: 20, dy: -121, edge: 'bottom' as const, target: 500, guide: 'guideY' as const },
     ]
     for (const item of cases) {
-      const result = moveSubject(BASE, item.dx, item.dy, 1000, 500, false, true)
+      const result = moveSubject(COVERED, item.dx, item.dy, 1000, 500, false, true)
       expect(subjectVisualBounds(result.transform, 1000, 500)[item.edge]).toBeCloseTo(item.target)
       expect(result[item.guide]).toBe(item.target)
     }
 
-    const outsideThreshold = moveSubject(BASE, -241, 20, 1000, 500, false, true)
+    const outsideThreshold = moveSubject(COVERED, 241, 20, 1000, 500, false, true)
     expect(outsideThreshold.guideX).toBeUndefined()
-    const sameEightPixelsAtTwoX = moveSubject(BASE, -492, 20, 2000, 1000, false, true)
+    const sameEightPixelsAtTwoX = moveSubject(COVERED, 492, 20, 2000, 1000, false, true)
     expect(sameEightPixelsAtTwoX.guideX).toBe(0)
   })
 
-  it('snaps the rotated visual edge users see while moving', () => {
-    const rotated = { ...BASE, rotation: 30 }
-    const initial = subjectVisualBounds(rotated, 1000, 500)
+  it('clamps rotated movement before it exposes the artboard', () => {
+    const rotated = { ...BASE, scale: 2, rotation: 30 }
     const result = moveSubject(
       rotated,
-      -initial.left + 4,
-      20,
+      2000,
+      -2000,
       1000,
       500,
       false,
       true,
     )
-    expect(subjectVisualBounds(result.transform, 1000, 500).left).toBeCloseTo(0)
-    expect(result.guideX).toBe(0)
+    expectArtboardCovered(result.transform, 1000, 500)
   })
 
   it('hit-tests the complete transformed artwork rectangle', () => {
@@ -93,11 +128,11 @@ describe('canvas geometry', () => {
   })
 
   it('keeps the opposite corner fixed during uniform scaling', () => {
-    const scaled = scaleSubjectFromCorner(BASE, 'se', 1000, 500, 1000, 500, false, false)
+    const scaled = scaleSubjectFromCorner(COVERED, 'se', 1000, 500, 1000, 500, false, false)
     const box = subjectBox(scaled.transform, 1000, 500)
-    expect(scaled.transform.scale).toBeCloseTo(0.75)
-    expect(box.centerX - box.width / 2).toBeCloseTo(250)
-    expect(box.centerY - box.height / 2).toBeCloseTo(125)
+    expect(scaled.transform.scale).toBeCloseTo(1.25)
+    expect(box.centerX - box.width / 2).toBeCloseTo(-250)
+    expect(box.centerY - box.height / 2).toBeCloseTo(-125)
   })
 
   it('snaps every dragged corner edge and preserves its opposite anchor', () => {
@@ -106,30 +141,30 @@ describe('canvas geometry', () => {
         corner: 'nw' as const,
         pointer: { x: 4, y: 4 },
         edges: { left: 0, top: 0 },
-        opposite: { x: 750, y: 375 },
+        opposite: { x: 1500, y: 750 },
       },
       {
         corner: 'ne' as const,
         pointer: { x: 996, y: 4 },
         edges: { right: 1000, top: 0 },
-        opposite: { x: 250, y: 375 },
+        opposite: { x: -500, y: 750 },
       },
       {
         corner: 'sw' as const,
         pointer: { x: 4, y: 496 },
         edges: { left: 0, bottom: 500 },
-        opposite: { x: 750, y: 125 },
+        opposite: { x: 1500, y: -250 },
       },
       {
         corner: 'se' as const,
         pointer: { x: 996, y: 496 },
         edges: { right: 1000, bottom: 500 },
-        opposite: { x: 250, y: 125 },
+        opposite: { x: -500, y: -250 },
       },
     ]
     for (const item of cases) {
       const result = scaleSubjectFromCorner(
-        BASE,
+        { ...BASE, scale: 2 },
         item.corner,
         1000,
         500,
@@ -156,7 +191,7 @@ describe('canvas geometry', () => {
   })
 
   it('keeps the center fixed for Alt scaling while snapping edges', () => {
-    const result = scaleSubjectFromCorner(BASE, 'se', 1000, 500, 996, 496, true)
+    const result = scaleSubjectFromCorner({ ...BASE, scale: 2 }, 'se', 1000, 500, 996, 496, true)
     const box = subjectBox(result.transform, 1000, 500)
     const bounds = subjectVisualBounds(result.transform, 1000, 500)
     expect(box.centerX).toBe(500)

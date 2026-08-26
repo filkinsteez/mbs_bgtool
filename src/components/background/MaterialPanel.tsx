@@ -1,11 +1,11 @@
 'use client'
 
 import { Slider } from '@/components/controls/Slider'
+import { handleRadioGroupKeyDown } from '@/components/controls/radioKeyboard'
 import {
-  MATERIAL_BY_ID,
-  SHADERS_CATALOG,
+  MATERIALS,
   type MaterialId,
-} from '@/features/background-generator/material/shadersCatalog'
+} from '@/features/background-generator/material/catalog'
 import { useBackgroundStore } from '@/features/background-generator/store'
 
 const pct = (v: number) => `${Math.round(v * 100)}`
@@ -15,28 +15,24 @@ export function MaterialPanel() {
   const update = useBackgroundStore((state) => state.updateRecipe)
   const setTransient = useBackgroundStore((state) => state.setTransient)
   const commit = useBackgroundStore((state) => state.commitTransaction)
-  const selectedMaterial = MATERIAL_BY_ID[material.id]
 
   return (
     <div className="panel-section">
-      <div className="panel-heading">Materials</div>
-      <div className="lab-add-row">
-        {SHADERS_CATALOG.map((item) => (
+      <h2 className="panel-heading">Materials</h2>
+      <div className="lab-add-row" role="radiogroup" aria-label="3D surface">
+        {MATERIALS.map((item) => (
           <button
             key={item.id}
             className={material.id === item.id ? 'lab-chip active' : 'lab-chip'}
+            role="radio"
+            aria-checked={material.id === item.id}
+            tabIndex={material.id === item.id ? 0 : -1}
             onClick={() => update({ material: { id: item.id as MaterialId } })}
+            onKeyDown={handleRadioGroupKeyDown}
           >
             {item.label}
           </button>
         ))}
-      </div>
-      <div className="panel-note">
-        {material.id === 'clean'
-          ? 'Opaque untreated Meta symbol.'
-          : selectedMaterial.preset
-            ? `Licensed Shaders.com preset ${selectedMaterial.label} · ${selectedMaterial.preset.id}. Intensity changes the effect—not symbol opacity.`
-            : 'Licensed Shaders.com finish. Intensity changes the effect—not symbol opacity.'}
       </div>
       {material.id === 'clean' ? null : (
         <>
@@ -47,6 +43,7 @@ export function MaterialPanel() {
             max={1}
             step={0.01}
             format={pct}
+            defaultValue={0.65}
             onChange={(intensity) => setTransient({ material: { intensity } })}
             onCommit={commit}
           />
@@ -57,6 +54,7 @@ export function MaterialPanel() {
             max={1}
             step={0.01}
             format={pct}
+            defaultValue={0.55}
             onChange={(light) => setTransient({ material: { light } })}
             onCommit={commit}
           />
@@ -67,6 +65,7 @@ export function MaterialPanel() {
             max={1}
             step={0.01}
             format={pct}
+            defaultValue={0.35}
             onChange={(depth) => setTransient({ material: { depth } })}
             onCommit={commit}
           />

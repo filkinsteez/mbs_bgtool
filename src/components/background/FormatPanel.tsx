@@ -15,7 +15,7 @@ export function FormatPanel() {
 
   return (
     <div className="panel-section" role="region" aria-labelledby="format-heading">
-      <div className="panel-heading" id="format-heading">Format</div>
+      <h2 className="panel-heading" id="format-heading">Format</h2>
       <SegmentedControl
         label="Aspect"
         value={format.aspect}
@@ -28,7 +28,7 @@ export function FormatPanel() {
           update({
             format: {
               aspect,
-              ...dimensionsFor(format.resolution, aspect, format),
+              ...dimensionsFor(aspect, format),
             },
           })
         }}

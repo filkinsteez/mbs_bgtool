@@ -7,15 +7,18 @@ import { mergeDeep } from '@/core/state/store'
 import {
   applyFramingPreset,
   backgroundRecipeToLab,
+  constrainBackgroundTransform,
   createDefaultBackgroundRecipe,
   normalizeSubjectTransform,
   type BackgroundRecipePatch,
   type BackgroundRecipeV2,
   type FramingMode,
+  type GeneratorMode,
 } from './recipe'
 
 type BackgroundStore = {
   recipe: BackgroundRecipeV2
+  mode: GeneratorMode
   historyVersion: number
   canUndo: boolean
   canRedo: boolean
@@ -27,6 +30,7 @@ type BackgroundStore = {
   cancelTransaction: () => void
   undo: () => void
   redo: () => void
+  setMode: (mode: GeneratorMode) => void
   setFramingMode: (mode: FramingMode) => void
   newVariation: () => void
   reset: () => void
@@ -55,7 +59,11 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
   const normalizeRecipe = (recipe: BackgroundRecipeV2): BackgroundRecipeV2 => ({
     ...recipe,
     transforms: {
-      background: normalizeSubjectTransform(recipe.transforms.background),
+      background: constrainBackgroundTransform(
+        recipe.transforms.background,
+        recipe.format.width,
+        recipe.format.height,
+      ),
       material: normalizeSubjectTransform(recipe.transforms.material),
     },
   })
@@ -76,6 +84,7 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
 
   return {
     recipe: createDefaultBackgroundRecipe(),
+    mode: 'background',
     historyVersion: 0,
     canUndo: false,
     canRedo: false,
@@ -84,6 +93,7 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
       backgroundHistory.clear()
       set((state) => ({
         recipe,
+        mode: recipe.mode,
         historyVersion: state.historyVersion + 1,
         ...historyFlags(),
       }))
@@ -117,20 +127,26 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
       const before = transactionStart
       transactionStart = null
       if (!before) return
+      const recipe = before.mode === get().mode
+        ? before
+        : { ...before, mode: get().mode }
       set((state) => ({
-        recipe: before,
+        recipe,
         historyVersion: state.historyVersion + 1,
         ...historyFlags(),
       }))
-      syncLab(before)
+      syncLab(recipe)
     },
     undo: () => {
       if (transactionStart) {
         get().cancelTransaction()
         return
       }
-      const recipe = backgroundHistory.undo(get().recipe)
-      if (!recipe) return
+      const previous = backgroundHistory.undo(get().recipe)
+      if (!previous) return
+      const recipe = previous.mode === get().mode
+        ? previous
+        : { ...previous, mode: get().mode }
       set((state) => ({
         recipe,
         historyVersion: state.historyVersion + 1,
@@ -143,8 +159,11 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
         get().cancelTransaction()
         return
       }
-      const recipe = backgroundHistory.redo(get().recipe)
-      if (!recipe) return
+      const next = backgroundHistory.redo(get().recipe)
+      if (!next) return
+      const recipe = next.mode === get().mode
+        ? next
+        : { ...next, mode: get().mode }
       set((state) => ({
         recipe,
         historyVersion: state.historyVersion + 1,
@@ -152,8 +171,17 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
       }))
       syncLab(recipe)
     },
+    setMode: (mode) => {
+      if (transactionStart) get().commitTransaction()
+      set((state) => ({
+        mode,
+        recipe: state.recipe.mode === mode
+          ? state.recipe
+          : { ...state.recipe, mode },
+      }))
+    },
     setFramingMode: (mode) => {
-      commitRecipe(applyFramingPreset(get().recipe, mode))
+      commitRecipe(applyFramingPreset(get().recipe, mode, get().mode))
     },
     newVariation: () => {
       const seed = globalThis.crypto?.getRandomValues
@@ -164,7 +192,7 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
     reset: () => {
       commitRecipe({
         ...createDefaultBackgroundRecipe(),
-        mode: get().recipe.mode,
+        mode: get().mode,
       })
     },
   }

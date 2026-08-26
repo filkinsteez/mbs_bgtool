@@ -18,6 +18,42 @@ describe('background recipe history', () => {
     expect(useBackgroundStore.getState().recipe.look.detail).toBe(0.9)
   })
 
+  it('keeps mode navigation out of recipe history', () => {
+    const store = useBackgroundStore.getState()
+    store.updateRecipe({ look: { detail: 0.9 } })
+    store.setMode('material')
+
+    expect(useBackgroundStore.getState().mode).toBe('material')
+    expect(backgroundHistory.depth.past).toBe(1)
+
+    useBackgroundStore.getState().undo()
+    expect(useBackgroundStore.getState().mode).toBe('material')
+    expect(useBackgroundStore.getState().recipe.mode).toBe('material')
+    expect(useBackgroundStore.getState().recipe.look.detail).toBe(0.5)
+    useBackgroundStore.getState().redo()
+    expect(useBackgroundStore.getState().mode).toBe('material')
+    expect(useBackgroundStore.getState().recipe.mode).toBe('material')
+  })
+
+  it('settles an active edit before changing mode without adding mode history', () => {
+    const store = useBackgroundStore.getState()
+    store.beginTransaction()
+    store.setTransient({ look: { detail: 0.8 } })
+    store.setMode('material')
+
+    expect(backgroundHistory.depth.past).toBe(1)
+    expect(useBackgroundStore.getState()).toMatchObject({
+      mode: 'material',
+      recipe: { mode: 'material', look: { detail: 0.8 } },
+    })
+
+    useBackgroundStore.getState().undo()
+    expect(useBackgroundStore.getState()).toMatchObject({
+      mode: 'material',
+      recipe: { mode: 'material', look: { detail: 0.5 } },
+    })
+  })
+
   it('persists 3D Look overlay selection as recipe history', () => {
     const store = useBackgroundStore.getState()
     store.updateRecipe({

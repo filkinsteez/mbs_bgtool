@@ -1,6 +1,4 @@
-/* Research-lab chrome. Namespaced .lab-* — editor.css is global with
-   flat class names, so the lab adopts the shared .panel-* and
-   .ctl-action classes deliberately and owns everything else. */
+/* Background generator chrome. */
 
 .lab-root {
   --canvas-accent: #4c8dff;
@@ -47,10 +45,62 @@
 }
 
 .lab-title {
+  margin: 0;
   font-size: 11px;
   font-weight: 550;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.lab-save-status {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.lab-save-status.error {
+  color: #ff8d8d;
+}
+
+.ctl-slider {
+  display: grid;
+  grid-template-columns: minmax(72px, 1fr) minmax(120px, 1.4fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 36px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.ctl-slider > label {
+  color: var(--text);
+}
+
+.ctl-slider.no-label {
+  grid-template-columns: 1fr;
+  padding-inline: 0;
+}
+
+.ctl-slider-control {
+  display: grid;
+  grid-template-columns: minmax(64px, 1fr) 48px;
+  align-items: center;
+  gap: 8px;
+}
+
+.ctl-slider input[type='range'] {
+  width: 100%;
+  accent-color: var(--canvas-accent);
+}
+
+.ctl-slider input[type='range']:focus-visible {
+  outline: 2px solid var(--canvas-accent);
+  outline-offset: 2px;
+}
+
+.ctl-slider output {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .lab-mode-switch {
@@ -533,6 +583,9 @@
   z-index: 1;
   width: 32px;
   height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   pointer-events: auto;
   cursor:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath d='M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7' fill='none' stroke='%23000' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") 12 12,
@@ -694,9 +747,14 @@
   font-variant-numeric: tabular-nums;
 }
 
-.lab-canvas-toolbar button:hover {
+.lab-canvas-toolbar button:not(:disabled):hover {
   color: var(--text);
   background: rgb(255 255 255 / 0.07);
+}
+
+.lab-canvas-toolbar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.32;
 }
 
 .lab-canvas-toolbar button.active {
@@ -1027,10 +1085,7 @@
 .lab-material-color-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  color: var(--text-dim);
-  font-size: 10px;
-  text-transform: capitalize;
+  justify-content: flex-end;
 }
 
 .lab-material-swatches {
@@ -1170,4 +1225,285 @@
   color: var(--text);
   background: var(--chrome-2);
   border-color: var(--line-strong);
+}
+
+/* Active generator primitives. These replace the retired editor stylesheet. */
+.panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.panel-section:last-child {
+  border-bottom: 0;
+}
+
+.panel-heading {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.panel-note {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ctl-dial {
+  padding: 0 10px;
+}
+
+.dial-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 4px 0 10px;
+  border-radius: 8px;
+  background: var(--dial-surface);
+}
+
+.dial-row-label {
+  color: var(--dial-text-label);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.dial-segments {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.dial-segment {
+  min-width: 30px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.dial-segment:hover,
+.dial-segment.active {
+  color: var(--text);
+  background: var(--chrome-2);
+}
+
+.panel-section .ctl-action {
+  display: block;
+  width: calc(100% - 20px);
+  margin: 4px 10px;
+}
+
+.ctl-action {
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-align: center;
+}
+
+.ctl-action:hover:not(:disabled) {
+  border-color: var(--text-dim);
+  color: var(--text);
+}
+
+.ctl-action.primary {
+  border-color: var(--text);
+  background: var(--text);
+  color: var(--chrome-0);
+}
+
+.ctl-action:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(8 8 10 / 0.72);
+}
+
+.modal-card {
+  display: flex;
+  width: min(320px, 100%);
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--chrome-1);
+}
+
+.modal-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.modal-body {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.modal-actions .ctl-action {
+  flex: 1;
+  margin: 0;
+}
+
+.lab-palette-roles {
+  display: grid;
+  grid-template-columns: auto 28px auto 28px 1fr;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.lab-palette-roles .lab-chip {
+  justify-self: end;
+}
+
+.lab-role-swatch {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+}
+
+.lab-approved-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.lab-approved-filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.lab-approved-filters input {
+  grid-column: 1 / -1;
+}
+
+.lab-approved-filters input,
+.lab-approved-filters select {
+  min-width: 0;
+  height: 32px;
+  padding: 0 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--chrome-0);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.lab-approved-results {
+  display: flex;
+  max-height: 260px;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.lab-approved-results section {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.lab-approved-results h3 {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.lab-approved-swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(28px, 1fr));
+  gap: 4px;
+}
+
+.lab-approved-swatch {
+  width: 100%;
+  min-width: 28px;
+  height: 28px;
+}
+
+.lab-canvas-toolbar .lab-zoom-readout {
+  display: inline-grid;
+  min-width: 48px;
+  place-items: center;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lab-material-look-error {
+  position: absolute;
+  z-index: 2;
+  left: 10px;
+  bottom: 12px;
+  color: #ffb0b0;
+  font-size: 12px;
+}
+
+.ctl-slider input:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+.lab-material-hue-label {
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.lab-material-color-roles code {
+  color: var(--text-dim);
+}
+
+.lab-mode-tab.active,
+.lab-chip.active,
+.lab-look.active,
+.lab-approved-swatch.active,
+.lab-material-swatches button.active,
+.lab-material-color-roles button.active,
+.lab-canvas-toolbar button.active,
+.dial-segment.active {
+  border-color: var(--text);
+  outline: 1px solid var(--text);
+  outline-offset: 1px;
+}
+
+.lab-root button:focus-visible,
+.lab-root input:focus-visible,
+.lab-root select:focus-visible,
+.modal-card button:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
 }

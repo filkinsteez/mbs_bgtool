@@ -3,7 +3,6 @@ import localFont from 'next/font/local'
 import { DialRoot } from 'dialkit'
 import 'dialkit/styles.css'
 import '@/styles/globals.css'
-import '@/styles/editor.css'
 import '@/styles/lab.css'
 
 // Optimistic is the whole type system: one variable family carrying

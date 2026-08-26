@@ -1,6 +1,6 @@
 'use client'
 
-import { Slider as DialSlider } from 'dialkit'
+import { useId } from 'react'
 import { niceLabel } from './label'
 import { useCommitOnRelease } from './useCommitOnRelease'
 
@@ -13,21 +13,14 @@ export type SliderProps = {
   format?: (v: number) => string
   defaultValue?: number
   unit?: string
+  ariaLabel?: string
+  disabled?: boolean
   onChange: (v: number) => void
   // fires once at the end of a drag / key adjustment — the store commits
   // one history entry there instead of one per pixel of drag
   onCommit?: () => void
 }
 
-// DialKit's slider wired to this app's history model.
-//
-// The kit renders the raw number, so a "display formatter" cannot work:
-// the UNIT has to be real. Percent-formatted params are scaled x100 and
-// radian params to degrees, then inverted on the way back — the panel
-// call sites keep passing their native units untouched.
-//
-// `defaultValue` keeps double-click-to-reset, which the kit does not
-// ship but this tool has relied on since the slider rewrite.
 export function Slider({
   label,
   value,
@@ -37,9 +30,12 @@ export function Slider({
   format,
   defaultValue,
   unit,
+  ariaLabel,
+  disabled = false,
   onChange,
   onCommit,
 }: SliderProps) {
+  const id = useId()
   const { touch, commitNow } = useCommitOnRelease(onCommit)
 
   const isPct = !!format && format(1) === '100'
@@ -47,28 +43,63 @@ export function Slider({
   const k = isPct ? 100 : isDeg ? 180 / Math.PI : 1
   const suffix = unit ?? (isPct ? '%' : isDeg ? '°' : undefined)
   const scaledStep = step ? Math.max(Math.round(step * k * 1000) / 1000, 0.001) : undefined
+  const scaledValue = Math.round(value * k * 1000) / 1000
+  const scaledMin = Math.round(min * k * 1000) / 1000
+  const scaledMax = Math.round(max * k * 1000) / 1000
+  const visibleLabel = niceLabel(label)
+  const accessibleLabel = ariaLabel ?? (visibleLabel || 'Value')
+  const valueText = suffix
+    ? `${scaledValue}${suffix}`
+    : format
+      ? format(value)
+      : String(scaledValue)
 
   return (
     <div
-      className="ctl-dial"
+      className={visibleLabel ? 'ctl-slider' : 'ctl-slider no-label'}
       onDoubleClick={() => {
-        if (defaultValue === undefined) return
+        if (disabled || defaultValue === undefined) return
         onChange(defaultValue)
         commitNow()
       }}
     >
-      <DialSlider
-        label={niceLabel(label)}
-        value={Math.round(value * k * 1000) / 1000}
-        min={Math.round(min * k * 1000) / 1000}
-        max={Math.round(max * k * 1000) / 1000}
-        step={k === 1 ? step : (scaledStep ?? 1)}
-        unit={suffix}
-        onChange={(v) => {
-          touch()
-          onChange(k === 1 ? v : v / k)
-        }}
-      />
+      {visibleLabel ? <label htmlFor={id}>{visibleLabel}</label> : null}
+      <div className="ctl-slider-control">
+        <input
+          id={id}
+          type="range"
+          disabled={disabled}
+          aria-label={visibleLabel ? undefined : accessibleLabel}
+          aria-keyshortcuts={defaultValue === undefined ? undefined : 'R'}
+          aria-valuetext={valueText}
+          title={defaultValue === undefined ? undefined : 'Double-click or press R to reset'}
+          value={scaledValue}
+          min={scaledMin}
+          max={scaledMax}
+          step={k === 1 ? step : (scaledStep ?? 1)}
+          onChange={(event) => {
+            const next = Number(event.currentTarget.value)
+            if (!Number.isFinite(next)) return
+            touch()
+            onChange(k === 1 ? next : next / k)
+          }}
+          onKeyDown={(event) => {
+            if (
+              disabled
+              || defaultValue === undefined
+              || event.key.toLowerCase() !== 'r'
+              || event.ctrlKey
+              || event.metaKey
+              || event.altKey
+            ) return
+            event.preventDefault()
+            onChange(defaultValue)
+            commitNow()
+          }}
+          onBlur={commitNow}
+        />
+        <output htmlFor={id}>{valueText}</output>
+      </div>
     </div>
   )
 }

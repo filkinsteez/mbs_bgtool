@@ -11,6 +11,7 @@ import {
 } from 'react'
 import { Box, Image as ImageIcon } from 'lucide-react'
 import { MaterialModelViewer } from '@/components/background/MaterialModelViewer'
+import { MATERIAL_MODEL_SETTLE_VIEW_EVENT } from '@/components/background/materialModelEvents'
 import { applyMotionAt } from '@/core/lab/motion'
 import { scaleLabForPreview } from '@/core/lab/preview'
 import { renderLabArtwork } from '@/core/lab/render'
@@ -35,6 +36,7 @@ import { useReducedMotion } from '@/features/background-generator/motion/useRedu
 import { useBackgroundStore } from '@/features/background-generator/store'
 import { renderController } from '@/render/renderController'
 import { resolveBankCached } from './bankCache'
+import { CANVAS_FIT_VIEW_EVENT } from './canvasEvents'
 
 type CanvasTool = 'select' | 'hand' | 'crop'
 type Camera = { zoom: number; panX: number; panY: number }
@@ -157,9 +159,9 @@ export function LabCanvas() {
   const sourceNonce = useLabStore((state) => state.ui.sourceNonce)
   const note = useLabStore((state) => state.ui.note)
   const focusedSourceId = useLabStore((state) => state.ui.focusedSourceId)
-  const motionEnabled = useLabStore((state) => state.lab.motion.enabled)
+  const motionEnabled = useLabStore((state) => state.lab.motion.amount > 0)
   const recipe = useBackgroundStore((state) => state.recipe)
-  const mode = recipe.mode
+  const mode = useBackgroundStore((state) => state.mode)
   const transform = recipe.transforms[mode]
   const reducedMotion = useReducedMotion()
 
@@ -178,6 +180,14 @@ export function LabCanvas() {
   const [hud, setHud] = useState<Hud | null>(null)
   const [cropDraft, setCropDraft] = useState<CropRect | null>(null)
   const [artworkSelected, setArtworkSelected] = useState(true)
+  const fitView = useCallback(() => {
+    setCamera({ zoom: 1, panX: 0, panY: 0 })
+  }, [setCamera])
+
+  useEffect(() => {
+    window.addEventListener(CANVAS_FIT_VIEW_EVENT, fitView)
+    return () => window.removeEventListener(CANVAS_FIT_VIEW_EVENT, fitView)
+  }, [fitView])
 
   useEffect(() => {
     const element = wrapRef.current
@@ -194,7 +204,8 @@ export function LabCanvas() {
     (timeMs?: number) => {
       const canvas = canvasRef.current
       if (!canvas) return
-      const liveRecipe = useBackgroundStore.getState().recipe
+      const background = useBackgroundStore.getState()
+      const liveRecipe = background.recipe
       const liveLab = useLabStore.getState().lab
       const viewMode = useLabStore.getState().ui.view
       const activeLab = timeMs !== undefined ? applyMotionAt(liveLab, timeMs) : liveLab
@@ -204,7 +215,7 @@ export function LabCanvas() {
       const context = canvas.getContext('2d')
       if (!context) return
       context.setTransform(1, 0, 0, 1, 0, 0)
-      if (liveRecipe.mode === 'material') {
+      if (background.mode === 'material') {
         context.fillStyle = materialBaseColor(liveRecipe)
         context.fillRect(0, 0, canvas.width, canvas.height)
         return
@@ -226,7 +237,7 @@ export function LabCanvas() {
     cancelAnimationFrame(rafRef.current)
     rafRef.current = requestAnimationFrame(() => draw())
     return () => cancelAnimationFrame(rafRef.current)
-  }, [draw, lab, view, sourceNonce])
+  }, [draw, lab, mode, view, sourceNonce])
 
   useEffect(() => {
     if (mode !== 'background' || !motionEnabled || reducedMotion) return
@@ -502,7 +513,6 @@ export function LabCanvas() {
     } else if (gesture.kind === 'crop') {
       if (!cancelled && cropDraft) {
         const dimensions = dimensionsForRatio(
-          recipe.format.resolution,
           cropDraft.width / Math.max(1, cropDraft.height),
         )
         useBackgroundStore.getState().updateRecipe({
@@ -580,7 +590,26 @@ export function LabCanvas() {
     return true
   }
 
+  const changeMode = (nextMode: GeneratorMode) => {
+    cancelActiveGesture()
+    if (mode === 'material') {
+      window.dispatchEvent(new Event(MATERIAL_MODEL_SETTLE_VIEW_EVENT))
+    }
+    if (keyboardTransactionRef.current) {
+      keyboardTransactionRef.current = false
+      useBackgroundStore.getState().commitTransaction()
+    }
+    setCropDraft(null)
+    setTool(nextMode === 'material' ? 'hand' : 'select')
+    useBackgroundStore.getState().setMode(nextMode)
+  }
+
   useEffect(() => {
+    const finishKeyboardTransaction = () => {
+      if (!keyboardTransactionRef.current) return
+      keyboardTransactionRef.current = false
+      useBackgroundStore.getState().commitTransaction()
+    }
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.isComposing || editableTarget(event.target)) return
       if (event.key === ' ') {
@@ -595,9 +624,9 @@ export function LabCanvas() {
       }
       const key = event.key.toLowerCase()
       if (!event.ctrlKey && !event.metaKey && !event.altKey) {
-        if (key === 'v') setTool('select')
+        if (key === 'v' && mode === 'background') setTool('select')
         else if (key === 'h') setTool('hand')
-        else if (key === 'c') setTool('crop')
+        else if (key === 'c' && mode === 'background') setTool('crop')
         else if (key === '+' || key === '=') {
           setCamera((current) =>
             zoomCameraAt(
@@ -622,18 +651,20 @@ export function LabCanvas() {
               viewportCenterY,
             ),
           )
+        } else if (key === '0') {
+          fitView()
         }
       }
       if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
-      if (mode === 'background' && !artworkSelected) return
+      if (mode !== 'background' || !artworkSelected) return
       event.preventDefault()
       if (!keyboardTransactionRef.current) {
         keyboardTransactionRef.current = true
         useBackgroundStore.getState().beginTransaction()
       }
       const step = event.shiftKey ? 10 : 1
-      const live = useBackgroundStore.getState().recipe
-      const current = live.transforms[live.mode]
+      const live = useBackgroundStore.getState()
+      const current = live.recipe.transforms[live.mode]
       const dx = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0
       const dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0
       const result = moveSubject(
@@ -645,7 +676,7 @@ export function LabCanvas() {
         false,
         !event.ctrlKey,
       )
-      useBackgroundStore.getState().setTransient(transformPatch(live.mode, result.transform))
+      live.setTransient(transformPatch(live.mode, result.transform))
     }
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.key === ' ') setSpaceHeld(false)
@@ -653,15 +684,27 @@ export function LabCanvas() {
         keyboardTransactionRef.current &&
         ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)
       ) {
-        keyboardTransactionRef.current = false
-        useBackgroundStore.getState().commitTransaction()
+        finishKeyboardTransaction()
       }
+    }
+    const onWindowBlur = () => {
+      cancelActiveGesture()
+      finishKeyboardTransaction()
+      setSpaceHeld(false)
+    }
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') onWindowBlur()
     }
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onWindowBlur)
+    document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
+      finishKeyboardTransaction()
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onWindowBlur)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [
     fitScale,
@@ -669,6 +712,7 @@ export function LabCanvas() {
     stackHeight,
     stackWidth,
     artworkSelected,
+    fitView,
     tool,
     viewportCenterX,
     viewportCenterY,
@@ -693,8 +737,39 @@ export function LabCanvas() {
     event.preventDefault()
     event.stopPropagation()
     const next = MODE_OPTIONS[nextIndex]
-    useBackgroundStore.getState().updateRecipe({ mode: next.mode })
+    changeMode(next.mode)
     requestAnimationFrame(() => document.getElementById(`lab-mode-${next.mode}`)?.focus())
+  }
+
+  const resizeCropWithKeyboard = (
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    handle: CropHandle,
+  ) => {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
+    const horizontal = event.key === 'ArrowLeft' || event.key === 'ArrowRight'
+    if (horizontal && !handle.includes('e') && !handle.includes('w')) return
+    if (!horizontal && !handle.includes('n') && !handle.includes('s')) return
+    event.preventDefault()
+    event.stopPropagation()
+    const delta = (event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : -1)
+      * (event.shiftKey ? 50 : 10)
+    const next = { ...cropRect }
+    if (horizontal && handle.includes('w')) {
+      next.left = Math.min(next.left + next.width - 80, next.left + delta)
+      next.width = cropRect.left + cropRect.width - next.left
+    } else if (horizontal) {
+      next.width = Math.max(80, next.width + delta)
+    } else if (handle.includes('n')) {
+      next.top = Math.min(next.top + next.height - 80, next.top + delta)
+      next.height = cropRect.top + cropRect.height - next.top
+    } else {
+      next.height = Math.max(80, next.height + delta)
+    }
+    const dimensions = dimensionsForRatio(next.width / Math.max(1, next.height))
+    useBackgroundStore.getState().updateRecipe({
+      format: { aspect: 'custom', ...dimensions },
+    })
+    setCamera({ zoom: 1, panX: 0, panY: 0 })
   }
 
   return (
@@ -705,7 +780,7 @@ export function LabCanvas() {
         role="application"
         aria-label={`${mode === 'background' ? '2D' : '3D'} design canvas`}
         aria-describedby="lab-canvas-instructions"
-        aria-keyshortcuts="V H C"
+        aria-keyshortcuts="V H C 0"
         tabIndex={0}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -715,7 +790,7 @@ export function LabCanvas() {
         onWheel={onWheel}
       >
         <p id="lab-canvas-instructions" className="lab-visually-hidden">
-          V selects, H pans, and C crops. Click the artwork to select it or empty canvas to
+          V selects, H pans, C changes the output aspect, and 0 fits the artboard. Click the artwork to select it or empty canvas to
           deselect. Drag the selected artwork to move it. Use its corner handles to scale, or drag
           just outside a corner to rotate. Arrow keys nudge; Shift uses larger steps; Escape
           cancels the active gesture.
@@ -724,11 +799,13 @@ export function LabCanvas() {
           ref={stackRef}
           id="lab-generator-artboard"
           className="lab-canvas-stack"
+          data-measured={wrapSize.w > 0 && wrapSize.h > 0 ? 'true' : 'false'}
           style={{
             left: stackLeft,
             top: stackTop,
             width: stackWidth,
             height: stackHeight,
+            visibility: wrapSize.w > 0 && wrapSize.h > 0 ? 'visible' : 'hidden',
           }}
         >
           <canvas
@@ -774,11 +851,23 @@ export function LabCanvas() {
                 />
               ))}
               {(['nw', 'ne', 'sw', 'se'] as const).map((corner) => (
-                <span
+                <button
                   key={`rotate-${corner}`}
+                  type="button"
                   className={`lab-rotation-zone corner-${corner}`}
-                  aria-hidden
+                  aria-label={`Rotate from ${corner.toUpperCase()} corner`}
                   onPointerDown={startRotate}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+                    event.preventDefault()
+                    event.stopPropagation()
+                    const direction = event.key === 'ArrowRight' ? 1 : -1
+                    useBackgroundStore.getState().updateRecipe(transformPatch('background', {
+                      ...transform,
+                      preset: 'free',
+                      rotation: transform.rotation + direction * (event.shiftKey ? 15 : 1),
+                    }))
+                  }}
                 />
               ))}
             </div>
@@ -792,7 +881,7 @@ export function LabCanvas() {
           ) : null}
         </div>
 
-        {tool === 'crop' ? (
+        {mode === 'background' && tool === 'crop' ? (
           <div
             className="lab-crop-frame"
             aria-label="Output crop frame"
@@ -809,12 +898,72 @@ export function LabCanvas() {
                 type="button"
                 className={`lab-crop-handle handle-${handle}`}
                 aria-label={`Resize crop ${handle.toUpperCase()}`}
-                tabIndex={-1}
                 onPointerDown={(event) => startCrop(event, handle)}
+                onKeyDown={(event) => resizeCropWithKeyboard(event, handle)}
               />
             ))}
           </div>
         ) : null}
+
+        <div
+          className="lab-canvas-toolbar"
+          role="group"
+          aria-label="Canvas tools"
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            className={tool === 'select' ? 'active' : ''}
+            aria-pressed={tool === 'select'}
+            disabled={mode !== 'background'}
+            onClick={() => setTool('select')}
+          >
+            Select
+          </button>
+          <button
+            type="button"
+            className={tool === 'hand' ? 'active' : ''}
+            aria-pressed={tool === 'hand'}
+            onClick={() => setTool('hand')}
+          >
+            Pan
+          </button>
+          <button
+            type="button"
+            className={tool === 'crop' ? 'active' : ''}
+            aria-pressed={tool === 'crop'}
+            disabled={mode !== 'background'}
+            onClick={() => setTool('crop')}
+          >
+            Aspect
+          </button>
+          <span className="lab-toolbar-divider" aria-hidden />
+          <button
+            type="button"
+            aria-label="Zoom out"
+            onClick={() => setCamera((current) => ({ ...current, zoom: Math.max(CAMERA_MIN, current.zoom / 1.2) }))}
+          >
+            −
+          </button>
+          <output className="lab-zoom-readout" aria-label="Canvas zoom">
+            {Math.round(camera.zoom * 100)}%
+          </output>
+          <button
+            type="button"
+            aria-label="Zoom in"
+            onClick={() => setCamera((current) => ({ ...current, zoom: Math.min(CAMERA_MAX, current.zoom * 1.2) }))}
+          >
+            +
+          </button>
+          <button
+            type="button"
+            aria-label="Fit view"
+            aria-keyshortcuts="0"
+            onClick={fitView}
+          >
+            Fit
+          </button>
+        </div>
 
         <div
           className="lab-mode-switch"
@@ -839,7 +988,7 @@ export function LabCanvas() {
                 tabIndex={selected ? 0 : -1}
                 title={tooltip}
                 data-mode={optionMode}
-                onClick={() => useBackgroundStore.getState().updateRecipe({ mode: optionMode })}
+                onClick={() => changeMode(optionMode)}
                 onKeyDown={(event) => selectModeWithKeyboard(event, index)}
               >
                 <Icon aria-hidden size={16} strokeWidth={1.8} />

@@ -106,7 +106,7 @@ export function createOrganicMotionWarp(
 // Preview-only runtime phase. The persisted geometry stays untouched, so the
 // animation deforms the generated field rather than translating the symbol.
 export function applyMotionAt(lab: LabState, timeMs: number): LabState {
-  if (!lab.motion.enabled || lab.motion.amount <= 0) return lab
+  if (lab.motion.amount <= 0) return lab
   return {
     ...lab,
     motion: {

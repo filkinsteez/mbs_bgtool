@@ -1,4 +1,5 @@
 import {
+  constrainBackgroundTransform,
   normalizeSubjectTransform,
   type SubjectTransform,
 } from './recipe'
@@ -97,12 +98,19 @@ export function moveSubject(
     else dx = 0
   }
 
-  const moved = normalizeSubjectTransform({
+  const moved = constrainBackgroundTransform({
     ...start,
     preset: 'free',
     x: start.x + (dx * 2) / Math.max(1, artboardWidth),
     y: start.y + (dy * 2) / Math.max(1, artboardHeight),
-  })
+  }, artboardWidth, artboardHeight)
+  if (
+    (dx !== 0 || dy !== 0)
+    &&
+    moved.x === start.x
+    && moved.y === start.y
+    && moved.scale === start.scale
+  ) return { transform: start }
   if (!snap) return { transform: moved }
 
   const bounds = subjectVisualBounds(moved, artboardWidth, artboardHeight)
@@ -123,11 +131,11 @@ export function moveSubject(
   )
 
   return {
-    transform: normalizeSubjectTransform({
+    transform: constrainBackgroundTransform({
       ...moved,
       x: moved.x + ((xSnap?.delta ?? 0) * 2) / Math.max(1, artboardWidth),
       y: moved.y + ((ySnap?.delta ?? 0) * 2) / Math.max(1, artboardHeight),
-    }),
+    }, artboardWidth, artboardHeight),
     guideX: xSnap?.target,
     guideY: ySnap?.target,
   }
@@ -164,7 +172,9 @@ export function scaleSubjectFromCorner(
         preset: 'free' as const,
         scale: start.scale * nextRatio,
       }
-      return normalize ? normalizeSubjectTransform(next) : next
+      return normalize
+        ? constrainBackgroundTransform(next, artboardWidth, artboardHeight)
+        : next
     }
   } else {
     const oppositeOffset = rotate(
@@ -197,12 +207,21 @@ export function scaleSubjectFromCorner(
         y: ((centerY / Math.max(1, artboardHeight)) - 0.5) * 2,
         scale: start.scale * nextRatio,
       }
-      return normalize ? normalizeSubjectTransform(next) : next
+      return normalize
+        ? constrainBackgroundTransform(next, artboardWidth, artboardHeight)
+        : next
     }
   }
 
   ratio = Math.max(0.01, ratio)
   const raw = transformAtRatio(ratio)
+  if (
+    Math.abs(ratio - 1) > 0.000001
+    &&
+    raw.x === start.x
+    && raw.y === start.y
+    && raw.scale === start.scale
+  ) return { transform: start }
   if (!snap) return { transform: raw }
 
   const rawBounds = subjectVisualBounds(raw, artboardWidth, artboardHeight)
