@@ -25,10 +25,14 @@ describe('3D Look processing', () => {
     expect(lab.sourceVisibility).toBe(1)
     expect(lab.motion).toMatchObject({ enabled: false, amount: 0 })
     expect(lab.paint).toBeNull()
-    expect(lab.colors).toEqual({
+    expect(lab.colors).toMatchObject({
       paper: '#111111',
       ink: '#EEEEEE',
       palette: ['#111111', '#EEEEEE'],
     })
+    expect(lab.colors.plan?.swatches.map((swatch) => swatch.hex)).toEqual([
+      '#111111',
+      '#EEEEEE',
+    ])
   })
 })

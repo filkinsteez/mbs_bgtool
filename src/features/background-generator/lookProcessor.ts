@@ -3,6 +3,7 @@ import { scaleLabForPreview } from '@/core/lab/preview'
 import { exportLabPng, renderLab } from '@/core/lab/render'
 import type { LabSource } from '@/core/lab/sourceCache'
 import type { LabFit, LabState } from '@/core/lab/types'
+import { resolveLookColorPlan } from '@/core/lab/colorDirection'
 import {
   backgroundRecipeToLab,
   materialBaseColor,
@@ -30,6 +31,18 @@ export function sourceAwareLabForRecipe(
       fit,
     },
   })
+  const baseColor = materialBaseColor(recipe)
+  const highlightColor = materialHighlightColor(recipe)
+  const colorPlan = resolveLookColorPlan({
+    mix: [
+      { color: baseColor, weight: 72, enabled: true },
+      { color: highlightColor, weight: 28, enabled: true },
+    ],
+    ground: baseColor,
+    ink: highlightColor,
+    lookId: recipe.look.id,
+    complexity: recipe.look.detail,
+  })
   const tone = lab.territory.sources.find((item) => item.kind === 'tone')
   return {
     ...lab,
@@ -42,9 +55,10 @@ export function sourceAwareLabForRecipe(
       frame: undefined,
     },
     colors: {
-      paper: materialBaseColor(recipe),
-      ink: materialHighlightColor(recipe),
-      palette: [materialBaseColor(recipe), materialHighlightColor(recipe)],
+      paper: baseColor,
+      ink: highlightColor,
+      palette: colorPlan.swatches.map((swatch) => swatch.hex),
+      plan: colorPlan,
     },
     territory: {
       ...lab.territory,

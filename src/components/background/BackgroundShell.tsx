@@ -27,7 +27,7 @@ export function BackgroundShell() {
   const mode = useBackgroundStore((state) => state.mode)
   const newVariation = useBackgroundStore((state) => state.newVariation)
   const reset = useBackgroundStore((state) => state.reset)
-  const inspectorRef = useRef<HTMLElement>(null)
+  const inspectorRef = useRef<HTMLDivElement>(null)
   const previousModeRef = useRef(mode)
   const scrollByModeRef = useRef({ background: 0, material: 0 })
   const [confirmReset, setConfirmReset] = useState(false)
@@ -121,11 +121,15 @@ export function BackgroundShell() {
   }, [])
 
   if (!restored) {
-    return <div className="lab-root dialkit-root" data-hydrated="false" aria-busy="true" />
+    return (
+      <div className="lab-root" data-hydrated="false" aria-busy="true">
+        <div className="lab-initial-loading" role="status">Loading</div>
+      </div>
+    )
   }
 
   return (
-    <div className="lab-root dialkit-root" data-hydrated="true">
+    <div className="lab-root" data-hydrated="true">
       <ConfirmDialog
         open={confirmReset}
         title="Reset all?"
@@ -160,27 +164,31 @@ export function BackgroundShell() {
           <LabCanvas />
         </main>
         <aside
-          ref={inspectorRef}
           className="lab-side lab-side-right"
           aria-label={`${mode === 'background' ? '2D' : '3D'} controls`}
-          onScroll={(event) => {
-            scrollByModeRef.current[mode] = event.currentTarget.scrollTop
-          }}
         >
-          <FormatPanel />
-          {mode === 'background' ? (
-            <>
-              <LooksPanel />
-              <ColorsPanel />
-              <MotionPanel />
-            </>
-          ) : (
-            <>
-              <MaterialColorsPanel />
-              <MaterialPanel />
-              <LooksPanel />
-            </>
-          )}
+          <div
+            ref={inspectorRef}
+            className="lab-inspector-body"
+            onScroll={(event) => {
+              scrollByModeRef.current[mode] = event.currentTarget.scrollTop
+            }}
+          >
+            <FormatPanel />
+            {mode === 'background' ? (
+              <>
+                <LooksPanel />
+                <ColorsPanel />
+                <MotionPanel />
+              </>
+            ) : (
+              <>
+                <MaterialColorsPanel />
+                <MaterialPanel />
+                <LooksPanel />
+              </>
+            )}
+          </div>
           <LabExportPanel />
         </aside>
       </div>

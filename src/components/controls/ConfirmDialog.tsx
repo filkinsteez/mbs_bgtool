@@ -6,12 +6,8 @@ import { createPortal } from 'react-dom'
 // A real modal for destructive confirms — one component for every
 // "are you sure", so the answer always arrives the same way.
 //
-// Portaled to <body> so no panel's overflow can clip it, and the portal
-// host carries `dialkit-root` because the --dial-* tokens are scoped to
-// that class (a portal outside it renders unstyled).
-//
 // Keyboard contract, the same as any dialog: Escape cancels, focus
-// lands on the confirm button and returns to whatever
+// lands on Cancel and returns to whatever
 // opened it, and Tab cycles inside the dialog instead of escaping into
 // the page behind.
 
@@ -35,19 +31,24 @@ export function ConfirmDialog({
   onCancel,
 }: ConfirmDialogProps) {
   const cardRef = useRef<HTMLDivElement>(null)
-  const confirmRef = useRef<HTMLButtonElement>(null)
+  const cancelRef = useRef<HTMLButtonElement>(null)
+  const onCancelRef = useRef(onCancel)
   const titleId = useId()
   const bodyId = useId()
 
   useEffect(() => {
+    onCancelRef.current = onCancel
+  }, [onCancel])
+
+  useEffect(() => {
     if (!open) return
     const opener = document.activeElement as HTMLElement | null
-    confirmRef.current?.focus()
+    cancelRef.current?.focus()
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
-        onCancel()
+        onCancelRef.current()
         return
       }
       if (e.key !== 'Tab') return
@@ -71,13 +72,13 @@ export function ConfirmDialog({
       window.removeEventListener('keydown', onKey, true)
       opener?.focus?.()
     }
-  }, [open, onConfirm, onCancel])
+  }, [open])
 
   if (!open || typeof document === 'undefined') return null
 
   return createPortal(
     <div
-      className="dialkit-root modal-scrim"
+      className="modal-scrim"
       onPointerDown={(e) => {
         // click-outside cancels; presses inside the card do not
         if (e.target === e.currentTarget) onCancel()
@@ -94,11 +95,16 @@ export function ConfirmDialog({
         <h2 className="modal-title" id={titleId}>{title}</h2>
         {body ? <div className="modal-body" id={bodyId}>{body}</div> : null}
         <div className="modal-actions">
-          <button type="button" className="ctl-action" onClick={onCancel}>
+          <button
+            ref={cancelRef}
+            type="button"
+            className="ctl-action"
+            autoFocus
+            onClick={onCancel}
+          >
             {cancelLabel}
           </button>
           <button
-            ref={confirmRef}
             type="button"
             className="ctl-action primary"
             onClick={onConfirm}

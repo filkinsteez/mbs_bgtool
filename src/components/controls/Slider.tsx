@@ -1,6 +1,6 @@
 'use client'
 
-import { useId } from 'react'
+import { useId, useRef, useState, type CSSProperties } from 'react'
 import { niceLabel } from './label'
 import { useCommitOnRelease } from './useCommitOnRelease'
 
@@ -15,6 +15,7 @@ export type SliderProps = {
   unit?: string
   ariaLabel?: string
   disabled?: boolean
+  editableValue?: boolean
   onChange: (v: number) => void
   // fires once at the end of a drag / key adjustment — the store commits
   // one history entry there instead of one per pixel of drag
@@ -32,11 +33,14 @@ export function Slider({
   unit,
   ariaLabel,
   disabled = false,
+  editableValue = false,
   onChange,
   onCommit,
 }: SliderProps) {
   const id = useId()
   const { touch, commitNow } = useCommitOnRelease(onCommit)
+  const [valueDraft, setValueDraft] = useState<string | null>(null)
+  const valueOriginRef = useRef(value)
 
   const isPct = !!format && format(1) === '100'
   const isDeg = !!format && format(Math.PI).startsWith('180')
@@ -46,6 +50,9 @@ export function Slider({
   const scaledValue = Math.round(value * k * 1000) / 1000
   const scaledMin = Math.round(min * k * 1000) / 1000
   const scaledMax = Math.round(max * k * 1000) / 1000
+  const rangeProgress = scaledMax === scaledMin
+    ? 0
+    : ((scaledValue - scaledMin) / (scaledMax - scaledMin)) * 100
   const visibleLabel = niceLabel(label)
   const accessibleLabel = ariaLabel ?? (visibleLabel || 'Value')
   const valueText = suffix
@@ -55,14 +62,7 @@ export function Slider({
       : String(scaledValue)
 
   return (
-    <div
-      className={visibleLabel ? 'ctl-slider' : 'ctl-slider no-label'}
-      onDoubleClick={() => {
-        if (disabled || defaultValue === undefined) return
-        onChange(defaultValue)
-        commitNow()
-      }}
-    >
+    <div className={visibleLabel ? 'ctl-slider' : 'ctl-slider no-label'}>
       {visibleLabel ? <label htmlFor={id}>{visibleLabel}</label> : null}
       <div className="ctl-slider-control">
         <input
@@ -77,6 +77,14 @@ export function Slider({
           min={scaledMin}
           max={scaledMax}
           step={k === 1 ? step : (scaledStep ?? 1)}
+          style={{
+            '--range-progress': `${Math.max(0, Math.min(100, rangeProgress))}%`,
+          } as CSSProperties}
+          onDoubleClick={() => {
+            if (disabled || defaultValue === undefined) return
+            onChange(defaultValue)
+            commitNow()
+          }}
           onChange={(event) => {
             const next = Number(event.currentTarget.value)
             if (!Number.isFinite(next)) return
@@ -98,7 +106,49 @@ export function Slider({
           }}
           onBlur={commitNow}
         />
-        <output htmlFor={id}>{valueText}</output>
+        {editableValue ? (
+          <input
+            className="ctl-slider-value"
+            type="number"
+            aria-label={`${accessibleLabel} value`}
+            disabled={disabled}
+            value={valueDraft ?? scaledValue}
+            min={scaledMin}
+            max={scaledMax}
+            step={k === 1 ? step : (scaledStep ?? 1)}
+            onFocus={() => {
+              valueOriginRef.current = value
+              setValueDraft(String(scaledValue))
+            }}
+            onChange={(event) => {
+              const raw = event.currentTarget.value
+              setValueDraft(raw)
+              if (raw.trim() === '') return
+              const parsed = Number(raw)
+              if (!Number.isFinite(parsed)) return
+              const next = Math.max(scaledMin, Math.min(scaledMax, parsed))
+              touch()
+              onChange(k === 1 ? next : next / k)
+            }}
+            onBlur={() => {
+              if (valueDraft === null || valueDraft.trim() === '') {
+                onChange(valueOriginRef.current)
+              }
+              setValueDraft(null)
+              commitNow()
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') event.currentTarget.blur()
+              if (event.key !== 'Escape') return
+              event.preventDefault()
+              onChange(valueOriginRef.current)
+              setValueDraft(null)
+              event.currentTarget.blur()
+            }}
+          />
+        ) : (
+          <output htmlFor={id}>{valueText}</output>
+        )}
       </div>
     </div>
   )

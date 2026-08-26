@@ -1,8 +1,8 @@
 'use client'
 
 import type { ComponentType, SVGProps } from 'react'
-import { SelectControl } from 'dialkit'
 import { niceLabel } from './label'
+import { handleRadioGroupKeyDown } from './radioKeyboard'
 
 export type SegmentedOption<T extends string> = {
   value: T
@@ -11,8 +11,7 @@ export type SegmentedOption<T extends string> = {
 }
 
 // Short option sets are a segmented row you can hit in one click; long
-// ones fall back to DialKit's select. The row is built from the kit's
-// own tokens and row metrics, so it sits in the stack as one of theirs.
+// ones use the browser's accessible select.
 export function SegmentedControl<T extends string>({
   label,
   ariaLabel,
@@ -28,14 +27,20 @@ export function SegmentedControl<T extends string>({
 }) {
   if (options.length > 4) {
     return (
-      <div className="ctl-dial">
-        <SelectControl
-          label={niceLabel(label ?? '')}
+      <label className="ctl-select-row">
+        {label ? <span>{niceLabel(label)}</span> : null}
+        <select
+          aria-label={ariaLabel ?? label}
           value={value}
-          options={options.map((o) => ({ value: o.value, label: niceLabel(o.label) }))}
-          onChange={(v) => onChange(v as T)}
-        />
-      </div>
+          onChange={(event) => onChange(event.currentTarget.value as T)}
+        >
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {niceLabel(option.label)}
+            </option>
+          ))}
+        </select>
+      </label>
     )
   }
 
@@ -43,7 +48,7 @@ export function SegmentedControl<T extends string>({
     <div className="ctl-dial">
       <div className="dial-row">
         {label ? <span className="dial-row-label">{niceLabel(label)}</span> : null}
-        <div className="dial-segments" role="group" aria-label={ariaLabel ?? label}>
+        <div className="dial-segments" role="radiogroup" aria-label={ariaLabel ?? label}>
           {options.map((o) => {
             const Icon = o.icon
             return (
@@ -51,10 +56,13 @@ export function SegmentedControl<T extends string>({
                 type="button"
                 key={o.value}
                 className={o.value === value ? 'dial-segment active' : 'dial-segment'}
-                aria-pressed={o.value === value}
+                role="radio"
+                aria-checked={o.value === value}
                 aria-label={o.label}
                 title={o.label}
+                tabIndex={o.value === value ? 0 : -1}
                 onClick={() => onChange(o.value)}
+                onKeyDown={handleRadioGroupKeyDown}
               >
                 {Icon ? <Icon /> : niceLabel(o.label)}
               </button>

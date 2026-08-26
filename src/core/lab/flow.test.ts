@@ -38,6 +38,28 @@ describe('composeFlow', () => {
     expect(a(50, 50)).not.toEqual(c(50, 50))
   })
 
+  it('animates the field on an exactly closed periodic phase', () => {
+    const state = FLOW({ curl: 0.8 })
+    const start = composeFlow(state, {
+      ...DEPS,
+      motionPhase: 0,
+      motionAmount: 0.8,
+    })
+    const quarter = composeFlow(state, {
+      ...DEPS,
+      motionPhase: 0.25,
+      motionAmount: 0.8,
+    })
+    const end = composeFlow(state, {
+      ...DEPS,
+      motionPhase: 1,
+      motionAmount: 0.8,
+    })
+    expect(end(137, 211)[0]).toBeCloseTo(start(137, 211)[0], 12)
+    expect(end(137, 211)[1]).toBeCloseTo(start(137, 211)[1], 12)
+    expect(quarter(137, 211)).not.toEqual(start(137, 211))
+  })
+
   it('contour basis flows along band edges (perpendicular to the gradient)', () => {
     // T rises with x -> gradient is +x -> flow should be ±y
     const f = composeFlow(FLOW({ basis: 'contour' }), {
@@ -70,16 +92,29 @@ describe('traceStream', () => {
     // x must keep increasing — a naive walker would bounce at 50
     expect(pts[pts.length - 2]).toBeGreaterThan(100)
   })
+
+  it('stops before leaving an accepted territory', () => {
+    const pts = traceStream(
+      () => [1, 0],
+      10,
+      20,
+      10,
+      5,
+      [1, 0],
+      (x) => x <= 22,
+    )
+    expect(pts).toEqual([10, 20, 15, 20, 20, 20])
+  })
 })
 
 describe('buildScanlines', () => {
   const rect = { x: 0, y: 0, w: 400, h: 400 }
 
-  it('lays flat parallel lines with no source', () => {
+  it('builds a complete field of organically modulated parallel lines', () => {
     const lines = buildScanlines({ outW: 400, outH: 120, spacing: 40, warp: 1, maps: null, rect, field: null, bend: 0 })
-    expect(lines).toHaveLength(3)
-    const ys = new Set(lines[0].filter((_, i) => i % 2 === 1))
-    expect(ys.size).toBe(1) // undisplaced
+    expect(lines.length).toBeGreaterThanOrEqual(4)
+    const ys = lines[0].points.filter((_, i) => i % 2 === 1)
+    expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(5)
   })
 
   it('dark image areas displace the lines', () => {
@@ -93,11 +128,18 @@ describe('buildScanlines', () => {
     }
     const maps = analyzeRGBA(rgba, w, 32)
     const lines = buildScanlines({ outW: 400, outH: 400, spacing: 40, warp: 1, maps, rect, field: null, bend: 0 })
-    const line = lines[3]
-    const yAt = (x: number) => line[(Math.round(x / 4) * 2) + 1]
+    const baseline = buildScanlines({ outW: 400, outH: 400, spacing: 40, warp: 1, maps: null, rect, field: null, bend: 0 })
+    const line = lines[3].points
+    const yAt = (points: number[], x: number) => {
+      let closest = 1
+      for (let index = 2; index < points.length; index += 2) {
+        if (Math.abs(points[index] - x) < Math.abs(points[closest - 1] - x)) closest = index + 1
+      }
+      return points[closest]
+    }
     // dark left is pulled off the baseline, bright right stays near it
-    expect(Math.abs(yAt(80) - 140)).toBeGreaterThan(30)
-    expect(Math.abs(yAt(360) - 140)).toBeLessThan(8)
+    expect(Math.abs(yAt(line, 80) - yAt(baseline[3].points, 80))).toBeGreaterThan(10)
+    expect(Math.abs(yAt(line, 360) - yAt(baseline[3].points, 360))).toBeLessThan(8)
   })
 })
 
@@ -134,8 +176,42 @@ describe('dabs and streams', () => {
     const streams = buildStreams({ cells, seed: 3, field: () => [0, 1], outW: 400, outH: 400 })
     expect(streams.length).toBeGreaterThan(0)
     for (const s of streams) {
-      expect(s[0]).toBeGreaterThan(150) // seeded in the right band
-      expect(s.length).toBeGreaterThan(40)
+      expect(s.seedX).toBeGreaterThan(150) // seeded in the right band
+      expect(s.points.length).toBeGreaterThan(40)
     }
+  })
+
+  it('keeps stream IDs, counts, and normalized lengths stable across resolutions', () => {
+    const fullCells = (size: number) => buildCells({
+      T: () => 0.5,
+      territory: { sources: [], bands: ['streams'], boundary: 'hard', gain: 1 },
+      structure: { baseCell: 50, maxLevels: 0, subdivide: 0 },
+      maps: null,
+      rect: { x: 0, y: 0, w: size, h: size },
+      outW: size,
+      outH: size,
+      seed: 9,
+    })
+    const small = buildStreams({
+      cells: fullCells(400),
+      seed: 9,
+      field: () => [1, 0],
+      outW: 400,
+      outH: 400,
+      complexity: 0.8,
+    })
+    const large = buildStreams({
+      cells: fullCells(800),
+      seed: 9,
+      field: () => [1, 0],
+      outW: 800,
+      outH: 800,
+      complexity: 0.8,
+    })
+    expect(large.map((stream) => stream.id)).toEqual(small.map((stream) => stream.id))
+    expect(large[0].seedX / 800).toBeCloseTo(small[0].seedX / 400)
+    const normalizedLength = (stream: (typeof small)[number], size: number) =>
+      (stream.points[stream.points.length - 2] - stream.points[0]) / size
+    expect(normalizedLength(large[0], 800)).toBeCloseTo(normalizedLength(small[0], 400))
   })
 })

@@ -1,8 +1,10 @@
 import type { LookId } from '@/core/lab/looks'
-import { LOOKS, lookPatchFor } from '@/core/lab/looks'
+import { LOOKS, lookComplexityPatch, lookPatchFor } from '@/core/lab/looks'
 import { createDefaultLab } from '@/core/lab/recipe'
 import type { LabState } from '@/core/lab/types'
-import { constrainArtworkCover } from '@/core/lab/artworkTransform'
+import { constrainArtworkToCanvas } from '@/core/lab/artworkTransform'
+import { resolveCompositionPlan } from '@/core/lab/compositionPlan'
+import { resolveLookColorPlan } from '@/core/lab/colorDirection'
 import { mergeDeep, type DeepPartial } from '@/core/state/store'
 import { MATERIAL_BY_ID, type MaterialId } from './material/catalog'
 import {
@@ -15,6 +17,7 @@ import {
 } from './palette/registry'
 
 export const BACKGROUND_RECIPE_VERSION = 2
+export const BACKGROUND_RENDER_REVISION = 1
 export const BACKGROUND_AUTOSAVE_KEY = 'mbs-bg-generator-autosave-v2'
 export const LEGACY_BACKGROUND_AUTOSAVE_KEY = 'mbs-bg-generator-autosave-v1'
 
@@ -50,6 +53,7 @@ export type BackgroundFormat = {
 
 export type BackgroundRecipeV2 = {
   version: 2
+  renderRevision: 1
   mode: GeneratorMode
   seed: number
   format: BackgroundFormat
@@ -155,6 +159,16 @@ export function dimensionsForRatio(
     : { width: Math.max(64, Math.round(edge * safeRatio)), height: edge }
 }
 
+function closestFixedAspect(ratio: number): FixedAspectId {
+  const safeRatio = Number.isFinite(ratio) && ratio > 0 ? ratio : 16 / 9
+  return (Object.entries(ASPECTS) as [FixedAspectId, readonly [number, number]][])
+    .reduce((closest, [aspect, [width, height]]) => {
+      const distance = Math.abs(Math.log(safeRatio / (width / height)))
+      return distance < closest.distance ? { aspect, distance } : closest
+    }, { aspect: '16:9' as FixedAspectId, distance: Number.POSITIVE_INFINITY })
+    .aspect
+}
+
 export function canonicalizeFormat(
   format: Partial<BackgroundFormat>,
 ): BackgroundFormat {
@@ -169,9 +183,12 @@ export function canonicalizeFormat(
     && (format.width ?? 0) > 0
     && (format.height ?? 0) > 0
   ) {
+    const fixedAspect = closestFixedAspect(
+      (format.width ?? 0) / (format.height ?? 1),
+    )
     return {
-      aspect,
-      ...dimensionsForRatio((format.width ?? 0) / (format.height ?? 1)),
+      aspect: fixedAspect,
+      ...dimensionsFor(fixedAspect),
     }
   }
   return { aspect: '16:9', ...dimensionsFor('16:9') }
@@ -190,6 +207,7 @@ export function createDefaultBackgroundRecipe(seed = 1913): BackgroundRecipeV2 {
   const mix = colorMixForPack(pack)
   return {
     version: BACKGROUND_RECIPE_VERSION,
+    renderRevision: BACKGROUND_RENDER_REVISION,
     mode: 'background',
     seed,
     format: { aspect: '16:9', ...dimensionsFor('16:9') },
@@ -255,6 +273,7 @@ export function deserializeBackgroundRecipe(json: string): BackgroundRecipeV2 | 
       )
     }
     const migratedLook = LEGACY_MATERIAL_LOOKS[recipe.material.id as string]
+    if (recipe.renderRevision !== BACKGROUND_RENDER_REVISION) return null
     if (migratedLook) {
       recipe.material.id = 'clean'
       recipe.look.id = migratedLook
@@ -358,7 +377,7 @@ export function constrainBackgroundTransform(
   artboardWidth: number,
   artboardHeight: number,
 ): SubjectTransform {
-  return constrainArtworkCover(
+  return constrainArtworkToCanvas(
     normalizeSubjectTransform(value),
     artboardWidth,
     artboardHeight,
@@ -378,8 +397,16 @@ export function backgroundRecipeToLab(
   const look = LOOKS.find((item) => item.id === recipe.look.id) ?? LOOKS[0]
   const hasSource = options.hasSource === true
   let lab = mergeDeep(base, lookPatchFor(look, hasSource))
+  lab = mergeDeep(lab, lookComplexityPatch(recipe.look.id, recipe.look.detail))
   const curve = lab.territory.sources.find((source) => source.kind === 'curve' && source.curve)
-  const palette = buildWeightedPalette(recipe.palette.mix, 100)
+  const colorPlan = resolveLookColorPlan({
+    mix: recipe.palette.mix,
+    ground: recipe.palette.ground,
+    ink: recipe.palette.ink,
+    lookId: recipe.look.id,
+    complexity: recipe.look.detail,
+  })
+  const palette = colorPlan.swatches.map((swatch) => swatch.hex)
   lab = mergeDeep(lab, {
     seed: recipe.seed,
     output: {
@@ -394,14 +421,18 @@ export function backgroundRecipeToLab(
           fit: 'contain',
         })
       : null,
-    look: { id: recipe.look.id, strength: 1 },
+    look: { id: recipe.look.id, strength: 1, complexity: recipe.look.detail },
+    composition: resolveCompositionPlan({
+      seed: recipe.seed,
+      lookId: recipe.look.id,
+      complexity: recipe.look.detail,
+      aspect: recipe.format.width / Math.max(1, recipe.format.height),
+    }),
     colors: {
       ink: recipe.palette.ink,
       paper: recipe.palette.ground,
       palette,
-    },
-    structure: {
-      baseCell: Math.round(16 + recipe.look.detail * 72),
+      plan: colorPlan,
     },
     territory: {
       sources: lab.territory.sources.map((source) =>

@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
   addColorToMix,
+  APPROVED_COLOR_GROUPS,
   buildWeightedPalette,
   colorMixForPack,
+  CURATED_APPROVED_COLORS,
   META_BLUE,
   normalizeColorRatios,
   PALETTE_PACKS,
 } from './registry'
 import { EXTENDED_APPROVED_COLORS } from './extended'
+import { perceptualLightness } from './hue'
 
 describe('palette registry', () => {
   it('contains primary and secondary packs', () => {
@@ -15,7 +18,7 @@ describe('palette registry', () => {
     expect(PALETTE_PACKS.some((p) => p.tier === 'secondary')).toBe(true)
   })
 
-  it('keeps the approved values and all 391 extended swatches', () => {
+  it('keeps the source archive but exposes a curated 49-color picker', () => {
     expect(META_BLUE).toBe('#0064E0')
     expect(PALETTE_PACKS.find((pack) => pack.id === 'primary-core')?.colors).toEqual([
       META_BLUE, '#0288F9', '#006CE1', '#034AE0', '#093AC7', '#132682',
@@ -24,15 +27,39 @@ describe('palette registry', () => {
       (pack) => pack.colors[0] === META_BLUE,
     )).toBe(true)
     expect(EXTENDED_APPROVED_COLORS).toHaveLength(391)
-    expect(PALETTE_PACKS.find((pack) => pack.tier === 'extended')?.colors).toHaveLength(391)
+    expect(APPROVED_COLOR_GROUPS).toHaveLength(7)
+    expect(CURATED_APPROVED_COLORS).toHaveLength(49)
+    expect(new Set(CURATED_APPROVED_COLORS)).toHaveLength(49)
+    const presetColors = PALETTE_PACKS
+      .filter((pack) => pack.tier !== 'extended')
+      .flatMap((pack) => pack.colors)
+    const approvedSource = new Set<string>([
+      ...EXTENDED_APPROVED_COLORS,
+      ...presetColors,
+    ])
+    expect(CURATED_APPROVED_COLORS.every(
+      (color) => approvedSource.has(color),
+    )).toBe(true)
+    expect(presetColors.every((color) => CURATED_APPROVED_COLORS.includes(color))).toBe(true)
+    expect(PALETTE_PACKS.find((pack) => pack.tier === 'extended')?.colors).toEqual(
+      CURATED_APPROVED_COLORS,
+    )
+  })
+
+  it('orders every curated family from lightest to darkest', () => {
+    for (const group of APPROVED_COLOR_GROUPS) {
+      const lightness = group.colors.map(perceptualLightness)
+      for (let index = 1; index < lightness.length; index += 1) {
+        expect(lightness[index - 1]).toBeGreaterThanOrEqual(lightness[index])
+      }
+    }
   })
 
   it('uses one default mix for initial load and pack selection', () => {
-    expect(colorMixForPack(PALETTE_PACKS[0]).slice(0, 4)).toEqual([
+    expect(colorMixForPack(PALETTE_PACKS[0]).filter((item) => item.enabled)).toEqual([
       { color: META_BLUE, enabled: true, ratio: 60 },
       { color: '#0288F9', enabled: true, ratio: 20 },
-      { color: '#006CE1', enabled: true, ratio: 20 },
-      { color: '#034AE0', enabled: false, ratio: 0 },
+      { color: '#132682', enabled: true, ratio: 20 },
     ])
   })
 

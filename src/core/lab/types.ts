@@ -1,3 +1,6 @@
+import type { CompositionPlan } from './compositionPlan'
+import type { LookColorPlan } from './colorDirection'
+
 // Research-lab state. A LabState IS the recipe: everything needed to
 // regenerate a study except the source pixels themselves, which are
 // matched back by contentHash when a recipe is restored. Bitmaps and
@@ -62,6 +65,7 @@ export type FieldSourceState = {
 
 export type TreatmentId =
   | 'empty'
+  | 'quiet'
   | 'flat'
   | 'mosaic'
   | 'photo'
@@ -172,13 +176,14 @@ export type LabState = {
   // ink = hairline/mark color, paper = ground, palette = the color
   // system every fill treatment deals from — the references are all
   // palette surfaces, not marks on paper
-  colors: { ink: string; paper: string; palette: string[] }
+  colors: { ink: string; paper: string; palette: string[]; plan?: LookColorPlan }
   flow: FlowState
   // shared surface pass over the whole composite
   finish: { grain: number }
   // the applied look and its strength: 1 = full effect, lower blends
   // the photo back over the result (the Lightroom-Amount read)
-  look: { id: string | null; strength: number }
+  look: { id: string | null; strength: number; complexity?: number }
+  composition?: CompositionPlan
   motion: MotionState
 }
 

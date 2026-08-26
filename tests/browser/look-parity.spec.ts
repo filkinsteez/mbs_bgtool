@@ -163,7 +163,7 @@ test('3D export includes the selected Look', async ({ page }) => {
   await page.addInitScript(() => localStorage.clear())
   await page.goto('/')
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
-  await page.getByRole('tab', { name: '3D', exact: true }).click()
+  await page.getByRole('radio', { name: '3D', exact: true }).click()
   await expect(page.locator('[data-mbs-material-model="true"]')).toHaveAttribute(
     'data-model-status',
     'ready',

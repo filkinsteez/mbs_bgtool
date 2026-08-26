@@ -23,6 +23,7 @@ export function MaterialPanel() {
         {MATERIALS.map((item) => (
           <button
             key={item.id}
+            type="button"
             className={material.id === item.id ? 'lab-chip active' : 'lab-chip'}
             role="radio"
             aria-checked={material.id === item.id}
@@ -34,9 +35,7 @@ export function MaterialPanel() {
           </button>
         ))}
       </div>
-      {material.id === 'clean' ? null : (
-        <>
-          <Slider
+      <Slider
             label="Intensity"
             value={material.intensity}
             min={0}
@@ -46,19 +45,19 @@ export function MaterialPanel() {
             defaultValue={0.65}
             onChange={(intensity) => setTransient({ material: { intensity } })}
             onCommit={commit}
-          />
-          <Slider
+      />
+      <Slider
             label="Light"
             value={material.light}
             min={0}
             max={1}
             step={0.01}
             format={pct}
-            defaultValue={0.55}
+            defaultValue={0.5}
             onChange={(light) => setTransient({ material: { light } })}
             onCommit={commit}
-          />
-          <Slider
+      />
+      <Slider
             label="Depth"
             value={material.depth}
             min={0}
@@ -68,9 +67,7 @@ export function MaterialPanel() {
             defaultValue={0.35}
             onChange={(depth) => setTransient({ material: { depth } })}
             onCommit={commit}
-          />
-        </>
-      )}
+      />
     </div>
   )
 }

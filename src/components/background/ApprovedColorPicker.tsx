@@ -1,8 +1,12 @@
 'use client'
 
-import { useMemo, useRef, useState } from 'react'
-import { groupColorsByHue, type HueGroupId } from '@/features/background-generator/palette/hue'
+import { useId, useMemo, useState } from 'react'
+import { Check } from 'lucide-react'
 import { APPROVED_COLOR_GROUPS } from '@/features/background-generator/palette/registry'
+import {
+  handleRadioGroupKeyDown,
+  handleRovingGridKeyDown,
+} from '@/components/controls/radioKeyboard'
 
 type ApprovedColorPickerProps = {
   selected: readonly string[]
@@ -10,85 +14,57 @@ type ApprovedColorPickerProps = {
   action: 'Add' | 'Use'
 }
 
-const PAGE_SIZE = 96
-const ALL_COLORS = APPROVED_COLOR_GROUPS.flatMap((group) => group.colors)
-const HUE_GROUPS = groupColorsByHue(ALL_COLORS)
-const HUE_BY_COLOR = new Map(
-  HUE_GROUPS.flatMap((group) => group.colors.map((color) => [color, group.id] as const)),
-)
-
 export function ApprovedColorPicker({
   selected,
   onSelect,
   action,
 }: ApprovedColorPickerProps) {
+  const searchId = useId()
   const [query, setQuery] = useState('')
-  const [source, setSource] = useState('all')
-  const [hue, setHue] = useState<'all' | HueGroupId>('all')
-  const [limit, setLimit] = useState(PAGE_SIZE)
-  const resultsRef = useRef<HTMLDivElement>(null)
   const selectedSet = useMemo(
     () => new Set(selected.map((color) => color.toUpperCase())),
     [selected],
   )
   const normalizedQuery = query.trim().replace('#', '').toUpperCase()
-  const matches = APPROVED_COLOR_GROUPS.flatMap((group) =>
-    group.colors
-      .filter(() => source === 'all' || source === group.id)
-      .filter((color) => hue === 'all' || HUE_BY_COLOR.get(color) === hue)
-      .filter((color) => !normalizedQuery || color.includes(normalizedQuery))
-      .map((color) => ({ color, groupId: group.id, groupLabel: group.label })),
-  )
-  const visible = matches.slice(0, limit)
-  const visibleGroups = APPROVED_COLOR_GROUPS.map((group) => ({
-    ...group,
-    colors: visible
-      .filter((item) => item.groupId === group.id)
-      .map((item) => item.color),
-  })).filter((group) => group.colors.length > 0)
-  const resetLimit = () => setLimit(PAGE_SIZE)
+  const visibleGroups = APPROVED_COLOR_GROUPS.map((group) => {
+    const familyMatches = group.label.toUpperCase().includes(normalizedQuery)
+      || group.id.toUpperCase().includes(normalizedQuery)
+    return {
+      ...group,
+      colors: group.colors.filter(
+        (color) => !normalizedQuery || familyMatches || color.includes(normalizedQuery),
+      ),
+    }
+  }).filter((group) => group.colors.length > 0)
+  const matchCount = visibleGroups.reduce((total, group) => total + group.colors.length, 0)
+  const hasVisibleSelection = visibleGroups.some((group) =>
+    group.colors.some((color) => selectedSet.has(color.toUpperCase())))
+  const firstVisibleColor = visibleGroups[0]?.colors[0]
+  const firstAvailableColor = visibleGroups
+    .flatMap((group) => group.colors)
+    .find((color) => !selectedSet.has(color.toUpperCase()))
 
   return (
     <div className="lab-approved-picker">
       <div className="lab-approved-filters">
+        <label htmlFor={searchId}>Search approved colors</label>
         <input
+          id={searchId}
           type="search"
-          aria-label="Search approved colors"
-          placeholder="Search hex"
+          placeholder="Hex or family"
           value={query}
-          onChange={(event) => {
-            setQuery(event.target.value)
-            resetLimit()
-          }}
+          onChange={(event) => setQuery(event.target.value)}
         />
-        <select
-          aria-label="Approved color source"
-          value={source}
-          onChange={(event) => {
-            setSource(event.target.value)
-            resetLimit()
-          }}
-        >
-          <option value="all">All ramps</option>
-          {APPROVED_COLOR_GROUPS.map((group) => (
-            <option key={group.id} value={group.id}>{group.label}</option>
-          ))}
-        </select>
-        <select
-          aria-label="Approved color hue"
-          value={hue}
-          onChange={(event) => {
-            setHue(event.target.value as 'all' | HueGroupId)
-            resetLimit()
-          }}
-        >
-          <option value="all">All hues</option>
-          {HUE_GROUPS.map((group) => (
-            <option key={group.id} value={group.id}>{group.label}</option>
-          ))}
-        </select>
+        <output role="status" aria-live="polite">
+          {matchCount} {matchCount === 1 ? 'color' : 'colors'}
+        </output>
       </div>
-      <div className="lab-approved-results" ref={resultsRef}>
+      <div
+        className="lab-approved-results"
+        role={action === 'Use' ? 'radiogroup' : undefined}
+        aria-label={action === 'Use' ? 'Approved color' : undefined}
+        data-roving-grid={action === 'Add' ? 'true' : undefined}
+      >
         {visibleGroups.map((group) => (
           <section key={group.id} aria-labelledby={`approved-${group.id}`}>
             <h3 id={`approved-${group.id}`}>{group.label}</h3>
@@ -100,41 +76,56 @@ export function ApprovedColorPicker({
                     key={`${group.id}-${color}-${index}`}
                     type="button"
                     className={active ? 'lab-approved-swatch active' : 'lab-approved-swatch'}
-                    aria-label={`${action} approved color ${color}`}
-                    aria-pressed={active}
+                    role={action === 'Use' ? 'radio' : undefined}
+                    aria-checked={action === 'Use' ? active : undefined}
+                    tabIndex={
+                      action === 'Use'
+                        ? (active || (!hasVisibleSelection && color === firstVisibleColor) ? 0 : -1)
+                        : (color === firstAvailableColor ? 0 : -1)
+                    }
+                    aria-label={
+                      action === 'Add' && active
+                        ? `Approved color ${color} added`
+                        : `${action} approved color ${color}`
+                    }
+                    disabled={action === 'Add' && active}
                     title={color}
                     style={{ backgroundColor: color }}
-                    onClick={() => onSelect(color)}
-                  />
+                    onClick={(event) => {
+                      const grid = event.currentTarget.closest<HTMLElement>('[data-roving-grid]')
+                      const available = Array.from(
+                        grid?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [],
+                      )
+                      const currentIndex = available.indexOf(event.currentTarget)
+                      onSelect(color)
+                      if (action === 'Add' && currentIndex >= 0) {
+                        requestAnimationFrame(() => {
+                          const next = Array.from(
+                            grid?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [],
+                          )
+                          next[Math.min(currentIndex, next.length - 1)]?.focus()
+                        })
+                      }
+                    }}
+                    onKeyDown={
+                      action === 'Use'
+                        ? handleRadioGroupKeyDown
+                        : handleRovingGridKeyDown
+                    }
+                  >
+                    {active ? <Check aria-hidden="true" /> : null}
+                  </button>
                 )
               })}
             </div>
           </section>
         ))}
-        {matches.length === 0 ? (
-          <div className="panel-note" role="status" aria-live="polite">
+        {matchCount === 0 ? (
+          <div className="panel-note">
             No approved colors match
           </div>
         ) : null}
       </div>
-      {limit < matches.length ? (
-        <button
-          type="button"
-          className="lab-chip"
-          onClick={() => {
-            const firstNewIndex = visible.length
-            setLimit((current) => current + PAGE_SIZE)
-            requestAnimationFrame(() => {
-              resultsRef.current
-                ?.querySelectorAll<HTMLButtonElement>('.lab-approved-swatch')
-                [firstNewIndex]
-                ?.focus()
-            })
-          }}
-        >
-          Show more
-        </button>
-      ) : null}
     </div>
   )
 }

@@ -1,7 +1,5 @@
 import type { Metadata } from 'next'
 import localFont from 'next/font/local'
-import { DialRoot } from 'dialkit'
-import 'dialkit/styles.css'
 import '@/styles/globals.css'
 import '@/styles/lab.css'
 
@@ -29,7 +27,6 @@ export default function RootLayout({
     <html lang="en" className={optimistic.variable}>
       <body>
         {children}
-        <DialRoot />
       </body>
     </html>
   )

@@ -16,7 +16,7 @@ describe('background recipe', () => {
     expect(dimensionsFor('4:5')).toEqual({ width: 3072, height: 3840 })
   })
 
-  it('keeps every output corner inside the transformed 2D artwork', () => {
+  it('keeps small artwork inside the canvas and large artwork covering it', () => {
     for (const [width, height] of [[3840, 2160], [2160, 3840], [3840, 3840]]) {
       for (const rotation of [-135, -45, 0, 30, 90, 175]) {
         for (const [x, y, scale] of [[-2, 2, 0.1], [0.8, -0.7, 1], [0, 0, 4]]) {
@@ -26,19 +26,31 @@ describe('background recipe', () => {
             height,
           )
           const angle = (transform.rotation * Math.PI) / 180
-          const cos = Math.cos(angle)
-          const sin = Math.sin(angle)
-          const centerX = width * transform.x / 2
-          const centerY = height * transform.y / 2
-          for (const cornerX of [-width / 2, width / 2]) {
-            for (const cornerY of [-height / 2, height / 2]) {
-              const dx = cornerX - centerX
-              const dy = cornerY - centerY
-              const localX = dx * cos + dy * sin
-              const localY = -dx * sin + dy * cos
-              expect(Math.abs(localX)).toBeLessThanOrEqual(width * transform.scale / 2 + 0.001)
-              expect(Math.abs(localY)).toBeLessThanOrEqual(height * transform.scale / 2 + 0.001)
-            }
+          const cos = Math.abs(Math.cos(angle))
+          const sin = Math.abs(Math.sin(angle))
+          const centerX = width * (0.5 + transform.x / 2)
+          const centerY = height * (0.5 + transform.y / 2)
+          const halfWidth = transform.scale * (cos * width / 2 + sin * height / 2)
+          const halfHeight = transform.scale * (sin * width / 2 + cos * height / 2)
+          const bounds = {
+            left: centerX - halfWidth,
+            right: centerX + halfWidth,
+            top: centerY - halfHeight,
+            bottom: centerY + halfHeight,
+          }
+          if (halfWidth <= width / 2) {
+            expect(bounds.left).toBeGreaterThanOrEqual(-0.001)
+            expect(bounds.right).toBeLessThanOrEqual(width + 0.001)
+          } else {
+            expect(bounds.left).toBeLessThanOrEqual(0.001)
+            expect(bounds.right).toBeGreaterThanOrEqual(width - 0.001)
+          }
+          if (halfHeight <= height / 2) {
+            expect(bounds.top).toBeGreaterThanOrEqual(-0.001)
+            expect(bounds.bottom).toBeLessThanOrEqual(height + 0.001)
+          } else {
+            expect(bounds.top).toBeLessThanOrEqual(0.001)
+            expect(bounds.bottom).toBeGreaterThanOrEqual(height - 0.001)
           }
         }
       }
@@ -79,7 +91,7 @@ describe('background recipe', () => {
       },
       {
         format: { aspect: 'custom', resolution: '1080', width: 100, height: 200 },
-        expected: { aspect: 'custom', width: 1920, height: 3840 },
+        expected: { aspect: '9:16', width: 2160, height: 3840 },
       },
       {
         format: { aspect: 'custom', resolution: '8k', width: 100, height: 0 },
@@ -173,7 +185,7 @@ describe('background recipe', () => {
     expect(backgroundRecipeToLab(recipe)).toEqual(backgroundRecipeToLab(recipe))
   })
 
-  it('preserves no-source Looks and enables photo bands for explicit raster sources', () => {
+  it('preserves each Look carrier when an explicit raster source is present', () => {
     const recipe = createDefaultBackgroundRecipe(42)
     const withoutSource = backgroundRecipeToLab(recipe)
     const withSource = backgroundRecipeToLab(recipe, {
@@ -194,7 +206,7 @@ describe('background recipe', () => {
       height: 180,
       contentHash: 'abc123',
     })
-    expect(withSource.territory.bands).toContain('photo')
+    expect(withSource.territory.bands).toEqual(withoutSource.territory.bands)
   })
 
   it('keeps canonical Look generation stable across 2D artwork transforms', () => {

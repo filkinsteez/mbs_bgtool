@@ -32,6 +32,7 @@ import {
 import {
   MATERIAL_MODEL_RESET_VIEW_EVENT,
   MATERIAL_MODEL_SETTLE_VIEW_EVENT,
+  reportMaterialModelStatus,
 } from './materialModelEvents'
 
 type ViewerConfig = {
@@ -298,6 +299,7 @@ export function MaterialModelViewer() {
   const processedCanvasRef = useRef<HTMLCanvasElement>(null)
   const runtimeRef = useRef<ViewerRuntime | null>(null)
   const controlsFlushRef = useRef<(() => void) | null>(null)
+  const keyboardViewRef = useRef<((event: ReactKeyboardEvent<HTMLDivElement>) => boolean) | null>(null)
   const interactedRef = useRef(false)
   const lookFailedRef = useRef(false)
   const lookConfigKeyRef = useRef(`${lookOverlayEnabled}:${lookId}`)
@@ -313,6 +315,12 @@ export function MaterialModelViewer() {
     lookOverlayEnabled,
   })
   const recipeRef = useRef<BackgroundRecipeV2>(recipe)
+
+  useEffect(() => {
+    reportMaterialModelStatus(status)
+  }, [status])
+
+  useEffect(() => () => reportMaterialModelStatus('loading'), [])
 
   useEffect(
     () => registerMaterialFrameCapture(async (width, height) => {
@@ -504,6 +512,54 @@ export function MaterialModelViewer() {
         invalidateSource,
       }
       runtimeRef.current = runtime
+      const adjustViewFromKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+        if (!runtime) return false
+        const key = event.key
+        const arrow = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(key)
+        const zoom = key === '+' || key === '=' || key === '-'
+        if (!arrow && !zoom) return false
+
+        onControlsStart()
+        if (zoom) {
+          const factor = key === '-' ? 1 / 1.12 : 1.12
+          runtime.camera.zoom = THREE.MathUtils.clamp(
+            runtime.camera.zoom * factor,
+            runtime.controls.minZoom,
+            runtime.controls.maxZoom,
+          )
+          runtime.camera.updateProjectionMatrix()
+        } else if (event.altKey) {
+          runtime.camera.updateMatrixWorld()
+          const distance = runtime.camera.position.distanceTo(runtime.controls.target)
+          const amount = distance * (event.shiftKey ? 0.08 : 0.025)
+          const right = new THREE.Vector3().setFromMatrixColumn(runtime.camera.matrixWorld, 0)
+          const up = new THREE.Vector3().setFromMatrixColumn(runtime.camera.matrixWorld, 1)
+          const delta = new THREE.Vector3()
+          if (key === 'ArrowLeft') delta.addScaledVector(right, -amount)
+          if (key === 'ArrowRight') delta.addScaledVector(right, amount)
+          if (key === 'ArrowUp') delta.addScaledVector(up, amount)
+          if (key === 'ArrowDown') delta.addScaledVector(up, -amount)
+          runtime.camera.position.add(delta)
+          runtime.controls.target.add(delta)
+        } else {
+          const offset = runtime.camera.position.clone().sub(runtime.controls.target)
+          const spherical = new THREE.Spherical().setFromVector3(offset)
+          const amount = event.shiftKey ? 0.15 : 0.05
+          if (key === 'ArrowLeft') spherical.theta -= amount
+          if (key === 'ArrowRight') spherical.theta += amount
+          if (key === 'ArrowUp') spherical.phi -= amount
+          if (key === 'ArrowDown') spherical.phi += amount
+          spherical.makeSafe()
+          runtime.camera.position
+            .copy(runtime.controls.target)
+            .add(offset.setFromSpherical(spherical))
+          runtime.camera.lookAt(runtime.controls.target)
+        }
+        runtime.controls.update()
+        onControlsEnd()
+        return true
+      }
+      keyboardViewRef.current = adjustViewFromKeyboard
       renderer.domElement.addEventListener('pointercancel', flushControls)
       window.addEventListener('blur', flushControls)
       window.addEventListener('pagehide', flushControls)
@@ -656,6 +712,7 @@ export function MaterialModelViewer() {
       clearTimeout(controlsSettleTimer)
       resizeObserver?.disconnect()
       if (controlsFlushRef.current === flushControls) controlsFlushRef.current = null
+      if (keyboardViewRef.current) keyboardViewRef.current = null
       if (!runtime) return
       flushControls()
       runtime.renderer.domElement.removeEventListener('pointercancel', flushControls)
@@ -706,10 +763,15 @@ export function MaterialModelViewer() {
   }
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key.toLowerCase() !== 'r') return
+    if (event.key.toLowerCase() === 'r') {
+      event.preventDefault()
+      event.stopPropagation()
+      resetView()
+      return
+    }
+    if (!keyboardViewRef.current?.(event)) return
     event.preventDefault()
     event.stopPropagation()
-    resetView()
   }
 
   const retryModel = () => {
@@ -745,11 +807,15 @@ export function MaterialModelViewer() {
           ? 'canvas2d-look'
           : 'raw'
       }
-      role="application"
+      role="region"
       aria-label="Interactive 3D Meta symbol"
       aria-describedby="lab-material-model-help"
+      aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown + - R"
       tabIndex={0}
-      onPointerDown={stopPointer}
+      onPointerDown={(event) => {
+        stopPointer(event)
+        containerRef.current?.focus({ preventScroll: true })
+      }}
       onPointerMove={stopPointer}
       onPointerUp={stopPointer}
       onPointerCancel={stopPointer}
@@ -759,7 +825,8 @@ export function MaterialModelViewer() {
     >
       <p id="lab-material-model-help" className="lab-visually-hidden">
         Left drag to orbit the model, middle drag to pan, scroll to zoom, and double click or press
-        R to reset the view.
+        R to reset the view. With the viewer focused, use arrow keys to orbit, Alt plus arrow keys
+        to pan, and plus or minus to zoom.
       </p>
       <canvas
         ref={processedCanvasRef}
@@ -768,14 +835,22 @@ export function MaterialModelViewer() {
         aria-hidden
       />
       {status === 'loading' ? (
-        <div className="lab-material-model-status" role="status">
+        <div className="lab-material-model-status">
           <span className="lab-material-model-spinner" aria-hidden />
           Loading 3D symbol{progress === null ? '…' : ` · ${Math.round(progress * 100)}%`}
         </div>
       ) : null}
+      {status === 'ready' ? (
+        <span className="lab-visually-hidden" role="status">3D model ready</span>
+      ) : null}
       {status === 'error' ? (
         <div className="lab-material-model-status error" role="alert">
           3D model unavailable
+        </div>
+      ) : null}
+      {status === 'ready' && lookOverlayEnabled && lookStatus === 'processing' ? (
+        <div className="lab-material-model-status" role="status">
+          Applying Look…
         </div>
       ) : null}
       {lookOverlayEnabled && lookStatus === 'error' ? (
@@ -783,7 +858,8 @@ export function MaterialModelViewer() {
           Look failed
         </div>
       ) : null}
-      <div className="lab-material-model-actions">
+      {status !== 'loading' || (lookOverlayEnabled && lookStatus === 'error') ? (
+        <div className="lab-material-model-actions">
         {status === 'error' ? (
           <button type="button" onClick={retryModel}>Retry 3D</button>
         ) : null}
@@ -798,7 +874,8 @@ export function MaterialModelViewer() {
             Reset view
           </button>
         ) : null}
-      </div>
+        </div>
+      ) : null}
     </div>
   )
 }

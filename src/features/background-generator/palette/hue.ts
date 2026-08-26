@@ -39,6 +39,36 @@ function compareColorMetric(first: number, second: number): number {
   return Math.round(first * 1_000_000) - Math.round(second * 1_000_000)
 }
 
+export function perceptualLightness(hex: string): number {
+  const value = hex.replace('#', '')
+  const linearize = (channel: string) => {
+    const srgb = Number.parseInt(channel, 16) / 255
+    return srgb <= 0.04045
+      ? srgb / 12.92
+      : ((srgb + 0.055) / 1.055) ** 2.4
+  }
+  const red = linearize(value.slice(0, 2))
+  const green = linearize(value.slice(2, 4))
+  const blue = linearize(value.slice(4, 6))
+  const l = Math.cbrt(0.4122214708 * red + 0.5363325363 * green + 0.0514459929 * blue)
+  const m = Math.cbrt(0.2119034982 * red + 0.6806995451 * green + 0.1073969566 * blue)
+  const s = Math.cbrt(0.0883024619 * red + 0.2817188376 * green + 0.6299787005 * blue)
+  return 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s
+}
+
+export function sortColorsLightToDark(colors: readonly string[]): string[] {
+  return colors
+    .map((color, sourceIndex) => ({
+      color,
+      sourceIndex,
+      lightness: perceptualLightness(color),
+    }))
+    .sort((first, second) =>
+      compareColorMetric(second.lightness, first.lightness)
+      || first.sourceIndex - second.sourceIndex)
+    .map(({ color }) => color)
+}
+
 const GROUPS: readonly { id: HueGroupId; label: string }[] = [
   ...[...CHROMATIC_GROUPS]
     .sort((a, b) =>

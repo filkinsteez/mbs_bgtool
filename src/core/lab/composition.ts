@@ -5,6 +5,10 @@ import type { Field, FitRect } from './field'
 import { coherenceField } from './field'
 import { bandAt } from './territory'
 import type { MarkParams, StructureState, TerritoryState, TreatmentId } from './types'
+import {
+  sampleCompositionPlan,
+  type CompositionPlan,
+} from './compositionPlan'
 
 // The multiscale carrier + per-cell law assignment. Base cells read the
 // territory and take a band; cells whose image detail (times SUBDIVIDE)
@@ -34,6 +38,7 @@ export type MarkStamp = {
   tone: number
   mx: number // analysis-space coords for paint-time color sampling
   my: number
+  hierarchy: number
 }
 
 export function cellId(level: number, ix: number, iy: number): number {
@@ -65,9 +70,21 @@ export function buildCells(opts: {
   const rows = Math.max(1, Math.ceil(outH / cell))
   const bands = territory.bands.length
   const out: CellNode[] = []
+  const proceduralDetail = maps
+    ? null
+    : coherenceField(
+        seed,
+        { x: 0, y: 0, w: outW, h: outH },
+        7 + structure.maxLevels * 2,
+        'lab.structure.detail',
+      )
 
   const detailAt = (x: number, y: number): number => {
-    if (!maps) return 0
+    if (!maps) {
+      const e = Math.max(2, cell * 0.2)
+      const gradient = Math.hypot(T(x + e, y) - T(x - e, y), T(x, y + e) - T(x, y - e))
+      return Math.min(1, (proceduralDetail?.(x, y) ?? 0) * 0.36 + gradient * 1.6)
+    }
     const u = (x - rect.x) / rect.w
     const v = (y - rect.y) / rect.h
     if (u < 0 || u > 1 || v < 0 || v > 1) return 0
@@ -87,6 +104,7 @@ export function buildCells(opts: {
     const canSplit =
       level < structure.maxLevels &&
       treatment !== 'empty' &&
+      treatment !== 'quiet' &&
       treatment !== 'flat' &&
       detailAt(cx, cy) * structure.subdivide > 0.16 / (level + 1)
     if (canSplit) {
@@ -118,8 +136,22 @@ export function buildCellMarks(opts: {
   seed: number
   bankSize: number
   flowField: ((x: number, y: number) => number) | null // angle, radians
+  composition?: CompositionPlan
+  outW?: number
+  outH?: number
 }): MarkStamp[] {
-  const { cells, params: p, maps, rect, seed, bankSize, flowField } = opts
+  const {
+    cells,
+    params: p,
+    maps,
+    rect,
+    seed,
+    bankSize,
+    flowField,
+    composition,
+    outW = rect.w,
+    outH = rect.h,
+  } = opts
   const region = coherenceField(
     seed,
     rect,
@@ -153,9 +185,24 @@ export function buildCellMarks(opts: {
     const structure = Math.min(1, edge * 0.7 + detail * 0.65)
     const value = tone * (1 - p.evidenceMix) + structure * p.evidenceMix
 
-    const presence = Math.min(1, p.occupancy * (0.15 + 0.85 * value) * 1.35)
+    const planSample = composition && p.bank !== 'brand'
+      ? sampleCompositionPlan(composition, x, y, outW, outH)
+      : null
+    const planActivity = planSample
+      ? (0.46 + planSample.focus * 0.75)
+        * (1 - planSample.quiet * 0.9)
+        * (planSample.pulse ? 1.14 : 0.72)
+      : 1
+    const presence = Math.min(1, p.occupancy * (0.15 + 0.85 * value) * 1.35 * planActivity)
     if (chan(seed, id, 'lab.cull') >= presence) continue
 
+    const hero = (planSample?.focus ?? 0) > 0.52
+      && chan(seed, id, 'lab.mark.hero') > 0.78
+    const hierarchy = hero
+      ? 1
+      : planSample?.pulse
+        ? 0.58
+        : 0.24 + chan(seed, id, 'lab.mark.hierarchy') * 0.16
     const coh = region(x, y)
     let protoIndex = 0
     if (bankSize > 1) {
@@ -165,7 +212,9 @@ export function buildCellMarks(opts: {
       protoIndex = Math.max(0, Math.min(bankSize - 1, protoIndex))
     }
 
-    const size = cell.size * (p.minScale + (p.maxScale - p.minScale) * Math.pow(tone, 0.85))
+    const size = cell.size
+      * (p.minScale + (p.maxScale - p.minScale) * Math.pow(tone, 0.85))
+      * (p.bank === 'brand' ? 1 : 0.68 + hierarchy * 0.82)
     if (size < 0.75) continue
 
     // Orientations are mod-π: blending them as scalars cancels at the
@@ -189,7 +238,7 @@ export function buildCellMarks(opts: {
     }
     const rot = p.rotationInfluence * 0.5 * Math.atan2(vy, vx)
 
-    out.push({ x, y, size, rot: rot || 0, protoIndex, tone, mx, my })
+    out.push({ x, y, size, rot: rot || 0, protoIndex, tone, mx, my, hierarchy })
   }
   return out
 }

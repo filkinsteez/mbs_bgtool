@@ -18,27 +18,6 @@ const BASE: SubjectTransform = {
 }
 const COVERED: SubjectTransform = { ...BASE, scale: 1.5 }
 
-function expectArtboardCovered(
-  transform: SubjectTransform,
-  width: number,
-  height: number,
-): void {
-  const box = subjectBox(transform, width, height)
-  const angle = (transform.rotation * Math.PI) / 180
-  for (const x of [0, width]) {
-    for (const y of [0, height]) {
-      const cos = Math.cos(angle)
-      const sin = Math.sin(angle)
-      const dx = x - box.centerX
-      const dy = y - box.centerY
-      const localX = dx * cos + dy * sin
-      const localY = -dx * sin + dy * cos
-      expect(Math.abs(localX)).toBeLessThanOrEqual(box.width / 2 + 0.001)
-      expect(Math.abs(localY)).toBeLessThanOrEqual(box.height / 2 + 0.001)
-    }
-  }
-}
-
 describe('canvas geometry', () => {
   it('maps normalized transforms to an artboard box', () => {
     expect(subjectBox({ ...BASE, x: 0.5, y: -0.5 }, 1000, 500)).toEqual({
@@ -60,7 +39,7 @@ describe('canvas geometry', () => {
     expect(snapped.guideX).toBe(500)
   })
 
-  it('keeps a full-frame artwork unchanged when a gesture would expose canvas', () => {
+  it('keeps full-frame movement covered but allows scaling down for breathing room', () => {
     const full: SubjectTransform = {
       preset: 'full',
       x: 0,
@@ -70,9 +49,8 @@ describe('canvas geometry', () => {
     }
 
     expect(moveSubject(full, 200, 100, 1000, 500, false).transform).toBe(full)
-    expect(
-      scaleSubjectFromCorner(full, 'se', 1000, 500, 700, 350, true).transform,
-    ).toBe(full)
+    expect(scaleSubjectFromCorner(full, 'se', 1000, 500, 700, 350, true).transform)
+      .toMatchObject({ preset: 'free', x: 0, y: 0, scale: 0.4 })
   })
 
   it('snaps all four artwork edges in screen space while moving', () => {
@@ -94,7 +72,7 @@ describe('canvas geometry', () => {
     expect(sameEightPixelsAtTwoX.guideX).toBe(0)
   })
 
-  it('clamps rotated movement before it exposes the artboard', () => {
+  it('clamps oversized rotated visual bounds around the artboard', () => {
     const rotated = { ...BASE, scale: 2, rotation: 30 }
     const result = moveSubject(
       rotated,
@@ -105,7 +83,11 @@ describe('canvas geometry', () => {
       false,
       true,
     )
-    expectArtboardCovered(result.transform, 1000, 500)
+    const bounds = subjectVisualBounds(result.transform, 1000, 500)
+    expect(bounds.left).toBeLessThanOrEqual(0)
+    expect(bounds.right).toBeGreaterThanOrEqual(1000)
+    expect(bounds.top).toBeLessThanOrEqual(0)
+    expect(bounds.bottom).toBeGreaterThanOrEqual(500)
   })
 
   it('hit-tests the complete transformed artwork rectangle', () => {

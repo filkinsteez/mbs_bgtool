@@ -5,16 +5,26 @@
   color-scheme: dark;
 
   /* Instrument chrome — near-monochrome, no gradients, no glass. */
-  --chrome-0: #101012;
-  --chrome-1: #161618;
-  --chrome-2: #1d1d20;
-  --line: #2a2a2e;
-  --line-strong: #3a3a40;
-  --text: #e8e6e1;
-  --text-dim: #8f8d86;
-  --text-faint: #5c5b56;
+  --chrome-0: #0d0e10;
+  --chrome-1: #15161a;
+  --chrome-2: #1c1e23;
+  --chrome-hover: #24272d;
+  --line: #353942;
+  --line-strong: #626772;
+  --text: #f2f0eb;
+  --text-dim: #a1a3aa;
+  --text-faint: #858891;
   --paper: #f4f2ed;
   --ink: #141412;
+  --control-sm: 28px;
+  --control-md: 32px;
+  --control-lg: 36px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --duration-fast: 120ms;
+  --duration-ui: 200ms;
+  --ease-ui: cubic-bezier(0.22, 1, 0.36, 1);
 
   /* Construction geometry (setup overlay, drawn over paper) */
   --overlay-curve: rgba(20, 20, 18, 0.16);

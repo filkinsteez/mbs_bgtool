@@ -8,6 +8,8 @@ import { resolveBankCached } from './bankCache'
 import { useBackgroundStore } from '@/features/background-generator/store'
 import { createDefaultBackgroundRecipe } from '@/features/background-generator/recipe'
 import { renderBackground2DCanvas } from '@/features/background-generator/render2d'
+import { handleRadioGroupKeyDown } from '@/components/controls/radioKeyboard'
+import { Slider } from '@/components/controls/Slider'
 import {
   renderRecipeLookToCanvas,
   sourceAwareLabForRecipe,
@@ -61,6 +63,7 @@ function createGenericMaterialFrame(): HTMLCanvasElement {
 export function LooksPanel() {
   const mode = useBackgroundStore((state) => state.mode)
   const lookId = useBackgroundStore((state) => state.recipe.look.id)
+  const lookDetail = useBackgroundStore((state) => state.recipe.look.detail)
   const materialOverlayEnabled = useBackgroundStore(
     (state) => state.recipe.materialLookOverlay.enabled,
   )
@@ -78,8 +81,11 @@ export function LooksPanel() {
     ].join('|')
   })
   const updateRecipe = useBackgroundStore((state) => state.updateRecipe)
+  const setTransient = useBackgroundStore((state) => state.setTransient)
+  const commitTransaction = useBackgroundStore((state) => state.commitTransaction)
   const stripRef = useRef<HTMLDivElement>(null)
   const rafRef = useRef(0)
+  const redrawTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   // Direct artwork transforms intentionally do not invalidate all ten
   // thumbnails on every pointer sample.
@@ -87,64 +93,82 @@ export function LooksPanel() {
     ? 'generic-3d-look-preview-v1'
     : thumbnailRecipeKey
   useEffect(() => {
+    clearTimeout(redrawTimerRef.current)
     cancelAnimationFrame(rafRef.current)
-    rafRef.current = requestAnimationFrame(() => {
-      const strip = stripRef.current
-      if (!strip) return
-      const generic = mode === 'material'
-      const genericFrame = generic ? createGenericMaterialFrame() : null
-      const genericSource = genericFrame
-        ? createLabSourceFromCanvas(genericFrame, { filename: 'generic-3d-look-preview.rgba' })
-        : null
-      const canvases = strip.querySelectorAll('canvas')
-      const liveRecipe = useBackgroundStore.getState().recipe
-      LOOKS.forEach((look, i) => {
-        const canvas = canvases[i]
-        if (!canvas) return
-        if (genericSource) {
-          const recipe = mergeDeep(GENERIC_3D_RECIPE, {
-            look: { id: look.id, detail: 0.5 },
-            materialLookOverlay: { enabled: true },
+    redrawTimerRef.current = setTimeout(() => {
+      rafRef.current = requestAnimationFrame(() => {
+        const strip = stripRef.current
+        if (!strip) return
+        const generic = mode === 'material'
+        const genericFrame = generic ? createGenericMaterialFrame() : null
+        const genericSource = genericFrame
+          ? createLabSourceFromCanvas(genericFrame, { filename: 'generic-3d-look-preview.rgba' })
+          : null
+        const canvases = strip.querySelectorAll('canvas')
+        const liveRecipe = useBackgroundStore.getState().recipe
+        LOOKS.forEach((look, i) => {
+          const canvas = canvases[i]
+          if (!canvas) return
+          if (genericSource) {
+            const recipe = mergeDeep(GENERIC_3D_RECIPE, {
+              look: { id: look.id, detail: 0.5 },
+              materialLookOverlay: { enabled: true },
+            })
+            const lookLab = sourceAwareLabForRecipe(recipe, genericSource, 'cover')
+            renderRecipeLookToCanvas(
+              canvas,
+              recipe,
+              genericSource,
+              resolveBankCached(lookLab.mark.bank),
+              { fit: 'cover', maxLongEdge: 128 },
+            )
+            return
+          }
+          renderBackground2DCanvas(canvas, liveRecipe, {
+            phase: 'thumbnail',
+            maxLongEdge: 128,
+            lookId: look.id,
+            grain: 0,
           })
-          const lookLab = sourceAwareLabForRecipe(recipe, genericSource, 'cover')
-          renderRecipeLookToCanvas(
-            canvas,
-            recipe,
-            genericSource,
-            resolveBankCached(lookLab.mark.bank),
-            { fit: 'cover', maxLongEdge: 128 },
-          )
-          return
-        }
-        renderBackground2DCanvas(canvas, liveRecipe, {
-          phase: 'thumbnail',
-          maxLongEdge: 128,
-          lookId: look.id,
-          grain: 0,
         })
       })
-    })
-    return () => cancelAnimationFrame(rafRef.current)
+    }, 80)
+    return () => {
+      clearTimeout(redrawTimerRef.current)
+      cancelAnimationFrame(rafRef.current)
+    }
   }, [mode, thumbKey])
 
   return (
     <div className="panel-section">
-      <h2 className="panel-heading">Looks</h2>
-      {mode === 'material' ? (
-        <div className="panel-note" data-mbs-look-scope="3d-full-frame">
-          Generic effect previews
-        </div>
-      ) : null}
-      <div className="lab-looks" ref={stripRef}>
+      <div className="panel-heading-row">
+        <h2 className="panel-heading">Looks</h2>
+        {mode === 'material' ? (
+          <span className="lab-status-badge" data-mbs-look-scope="3d-full-frame">
+            Generic previews
+          </span>
+        ) : null}
+      </div>
+      <div
+        className="lab-looks"
+        ref={stripRef}
+        role={mode === 'background' ? 'radiogroup' : 'group'}
+        aria-label={mode === 'background' ? '2D Look' : '3D Looks'}
+      >
         {LOOKS.map((look) => {
           const active = lookId === look.id
             && (mode === 'background' || materialOverlayEnabled)
           return (
             <button
               key={look.id}
+              type="button"
               className={active ? 'lab-look active' : 'lab-look'}
+              role={mode === 'background' ? 'radio' : undefined}
               title={mode === 'material' ? `${look.label} · generic effect preview` : look.label}
-              aria-pressed={active}
+              aria-checked={mode === 'background' ? active : undefined}
+              aria-pressed={mode === 'material' ? active : undefined}
+              tabIndex={mode === 'background' ? (active ? 0 : -1) : undefined}
+              onKeyDown={mode === 'background' ? handleRadioGroupKeyDown : undefined}
               onClick={() => {
                 if (mode === 'background') {
                   updateRecipe({ look: { id: look.id } })
@@ -167,6 +191,17 @@ export function LooksPanel() {
           )
         })}
       </div>
+      <Slider
+        label="Complexity"
+        value={lookDetail}
+        min={0}
+        max={1}
+        step={0.01}
+        format={(value) => `${Math.round(value * 100)}`}
+        defaultValue={0.5}
+        onChange={(detail) => setTransient({ look: { detail } })}
+        onCommit={commitTransaction}
+      />
     </div>
   )
 }

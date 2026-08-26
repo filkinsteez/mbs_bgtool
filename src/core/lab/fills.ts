@@ -1,6 +1,11 @@
 import { chan } from '@/core/organic/random'
 import type { CellNode } from './composition'
 import { cellId } from './composition'
+import {
+  distinctColorIndex,
+  weightedColorIndex,
+  type LookColorPlan,
+} from './colorDirection'
 
 // Per-cell fill decisions for the palette treatments. All pure specs —
 // the render layer turns them into paint. The references' sophistication
@@ -9,7 +14,16 @@ import { cellId } from './composition'
 // as woven shingles. Randomness only ever breaks a rule locally.
 
 export type BlockFill = { cell: CellNode; color: number; accent: number | null }
-export type BeadFill = { cell: CellNode; active: boolean; color: number; inner: number | null }
+export type BeadFill = {
+  cell: CellNode
+  active: boolean
+  color: number
+  inner: number | null
+  radius: number
+  offsetX: number
+  offsetY: number
+  relief: number
+}
 export type ShingleFill = { cell: CellNode; a: number; b: number; angle: number }
 
 // coarse region index shared by neighbors — quantized smooth noise, so
@@ -38,8 +52,9 @@ export function buildBlockFills(opts: {
   cells: CellNode[]
   paletteSize: number
   seed: number
+  colorPlan?: LookColorPlan
 }): BlockFill[] {
-  const { cells, paletteSize, seed } = opts
+  const { cells, paletteSize, seed, colorPlan } = opts
   const out: BlockFill[] = []
   for (const cell of cells) {
     if (cell.treatment !== 'blocks') continue
@@ -48,13 +63,17 @@ export function buildBlockFills(opts: {
     const cy = cell.y + cell.size / 2
     // stretched region lattice: wider than tall, so blocks run in bands
     const r = regionValue(seed, cx * 0.55, cy, cell.size * 2.6, 'lab.block')
-    const color = Math.min(paletteSize - 1, Math.floor(r * paletteSize))
+    const color = colorPlan
+      ? weightedColorIndex(colorPlan, r)
+      : Math.min(paletteSize - 1, Math.floor(r * paletteSize))
     // occasional nested square in a contrasting palette slot
     const accentRoll = chan(seed, id, 'lab.block.accent')
     const accent =
       accentRoll > 0.94
-        ? (color + 1 + Math.floor(chan(seed, id, 'lab.block.accent2') * (paletteSize - 1))) %
-          paletteSize
+        ? colorPlan
+          ? distinctColorIndex(colorPlan, color, chan(seed, id, 'lab.block.accent2'))
+          : (color + 1 + Math.floor(chan(seed, id, 'lab.block.accent2') * (paletteSize - 1))) %
+            paletteSize
         : null
     out.push({ cell, color, accent })
   }
@@ -69,8 +88,9 @@ export function buildBeadFills(opts: {
   cells: CellNode[]
   paletteSize: number
   seed: number
+  colorPlan?: LookColorPlan
 }): BeadFill[] {
-  const { cells, paletteSize, seed } = opts
+  const { cells, paletteSize, seed, colorPlan } = opts
   const out: BeadFill[] = []
   for (const cell of cells) {
     if (cell.treatment !== 'beads') continue
@@ -81,18 +101,40 @@ export function buildBeadFills(opts: {
     const runLen = 3 + Math.floor(chan(seed, ix + cell.level * 8192, 'lab.bead.len') * 9)
     const run = Math.floor(iy / runLen)
     const runRoll = chan(seed, ix * 4096 + run, 'lab.bead.run')
-    const active = runRoll < colActivity * 0.85
-    const color = Math.min(
-      paletteSize - 1,
-      Math.floor(chan(seed, ix * 4096 + run, 'lab.bead.color') * paletteSize),
-    )
     const id = cellId(cell.level, ix, iy)
+    const hero = chan(seed, id, 'lab.bead.hero') > 0.955
+    const active = hero || runRoll < 0.16 + colActivity * 0.54 + cell.t * 0.2
+    const colorSample = chan(seed, ix * 4096 + run, 'lab.bead.color')
+    const color = colorPlan
+      ? weightedColorIndex(colorPlan, colorSample)
+      : Math.min(paletteSize - 1, Math.floor(colorSample * paletteSize))
     const innerRoll = chan(seed, id, 'lab.bead.inner')
     const inner =
-      active && innerRoll > 0.7
-        ? Math.min(paletteSize - 1, Math.floor(chan(seed, id, 'lab.bead.inner2') * paletteSize))
+      active && (hero || innerRoll > 0.7)
+        ? colorPlan
+          ? distinctColorIndex(colorPlan, color, chan(seed, id, 'lab.bead.inner2'))
+          : Math.min(paletteSize - 1, Math.floor(chan(seed, id, 'lab.bead.inner2') * paletteSize))
         : null
-    out.push({ cell, active, color, inner })
+    const radius = cell.size * (
+      hero
+        ? 0.55 + chan(seed, id, 'lab.bead.hero.radius') * 0.13
+        : active
+        ? 0.32 + chan(seed, id, 'lab.bead.radius') * 0.14
+        : 0.17 + chan(seed, id, 'lab.bead.radius.quiet') * 0.08
+    )
+    out.push({
+      cell,
+      active,
+      color,
+      inner,
+      radius,
+      offsetX: ((iy & 1) === 0 ? -0.1 : 0.1) * cell.size
+        + (chan(seed, ix + cell.level * 8192, 'lab.bead.column.drift') - 0.5)
+          * cell.size * 0.065,
+      offsetY: (chan(seed, iy + cell.level * 8192, 'lab.bead.row.drift') - 0.5)
+        * cell.size * 0.075,
+      relief: hero ? 1 : chan(seed, id, 'lab.bead.relief'),
+    })
   }
   return out
 }
@@ -105,8 +147,9 @@ export function buildShingleFills(opts: {
   paletteSize: number
   seed: number
   lean: number // radians added to every shingle
+  colorPlan?: LookColorPlan
 }): ShingleFill[] {
-  const { cells, paletteSize, seed, lean } = opts
+  const { cells, paletteSize, seed, lean, colorPlan } = opts
   const out: ShingleFill[] = []
   for (const cell of cells) {
     if (cell.treatment !== 'shingle') continue
@@ -114,8 +157,12 @@ export function buildShingleFills(opts: {
     const cy = cell.y + cell.size / 2
     // one palette pair per broad region so areas read as one material
     const r = regionValue(seed, cx, cy, cell.size * 3.2, 'lab.shingle')
-    const a = Math.min(paletteSize - 1, Math.floor(r * paletteSize))
-    const b = (a + 1) % Math.max(1, paletteSize)
+    const a = colorPlan
+      ? weightedColorIndex(colorPlan, r)
+      : Math.min(paletteSize - 1, Math.floor(r * paletteSize))
+    const b = colorPlan
+      ? distinctColorIndex(colorPlan, a, chan(seed, cellId(cell.level, cell.ix, cell.iy), 'lab.shingle.pair'))
+      : (a + 1) % Math.max(1, paletteSize)
     // alternate direction by row parity, flip some columns for weave
     const flip = (cell.iy & 1) === 1 !== ((cell.ix & 3) === 3)
     out.push({ cell, a, b, angle: (flip ? Math.PI : 0) + lean })

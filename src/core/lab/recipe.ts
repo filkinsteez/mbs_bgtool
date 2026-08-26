@@ -40,7 +40,7 @@ export function createDefaultLab(seed = 1913): LabState {
     colors: { ink: META_BLUE, paper: PAPER, palette: [...PALETTES[0].colors] },
     flow: { ...FLOW_DEFAULTS },
     finish: { grain: 0.12 },
-    look: { id: null, strength: 1 },
+    look: { id: null, strength: 1, complexity: 0.5 },
     motion: { enabled: false, amount: 0.35, speed: 0.12, loopSeconds: 8 },
   }
 }

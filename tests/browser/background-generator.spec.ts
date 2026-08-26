@@ -1,6 +1,9 @@
 import { readFile } from 'node:fs/promises'
 import { expect, test, type Page } from '@playwright/test'
-import { createDefaultBackgroundRecipe } from '../../src/features/background-generator/recipe'
+import {
+  createDefaultBackgroundRecipe,
+  deserializeBackgroundRecipe,
+} from '../../src/features/background-generator/recipe'
 
 const LOOKS = [
   'Frame',
@@ -267,7 +270,7 @@ async function enlargeArtworkFromCenter(page: Page, ratio = 1.5): Promise<void> 
   await waitForAnimationFrames(page, 2)
 }
 
-test('rewrites legacy resolution metadata before exposing the generator', async ({ page }) => {
+test('rewrites legacy format metadata before exposing the generator', async ({ page }) => {
   const legacy = createDefaultBackgroundRecipe(42) as ReturnType<
     typeof createDefaultBackgroundRecipe
   > & {
@@ -291,7 +294,25 @@ test('rewrites legacy resolution metadata before exposing the generator', async 
   expect(await page.evaluate(() => {
     const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
     return recipe.format
-  })).toEqual({ aspect: 'custom', width: 1920, height: 3840 })
+  })).toEqual({ aspect: '9:16', width: 2160, height: 3840 })
+})
+
+test('falls back to the v1 autosave when the current autosave is invalid', async ({ page }) => {
+  const legacy = createDefaultBackgroundRecipe(31415)
+  legacy.palette.packId = 'bold'
+  await page.addInitScript((raw) => {
+    localStorage.setItem('mbs-bg-generator-autosave-v2', '{invalid json')
+    localStorage.setItem('mbs-bg-generator-autosave-v1', raw)
+  }, JSON.stringify(legacy))
+
+  await page.goto('/')
+  await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
+  await expect(page.getByRole('radio', { name: 'Bold', exact: true }))
+    .toHaveAttribute('aria-checked', 'true')
+  expect(await page.evaluate(() => {
+    const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
+    return { seed: recipe.seed, packId: recipe.palette?.packId }
+  })).toEqual({ seed: 31415, packId: 'bold' })
 })
 
 test('renders every curated look and keeps autosave isolated', async ({ page }) => {
@@ -312,7 +333,7 @@ test('renders every curated look and keeps autosave isolated', async ({ page }) 
   await expect(page.getByText('MBS Background Generator', { exact: true })).toBeVisible()
 
   for (const look of LOOKS) {
-    const button = page.getByRole('button', { name: look, exact: true })
+    const button = page.getByRole('radio', { name: look, exact: true })
     await expect(button).toBeVisible()
     await button.click()
   }
@@ -331,15 +352,77 @@ test('renders every curated look and keeps autosave isolated', async ({ page }) 
   expect(errors).toEqual([])
 })
 
+test('selects, undoes, and persists 2D Looks through the route UI', async ({ page }) => {
+  await page.goto('/')
+  await page.evaluate(() => localStorage.clear())
+  await page.reload()
+  await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
+  const canvas = page.locator('.lab-canvas')
+  await waitForAnimationFrames(page, 3)
+  const before = await canvas.screenshot()
+
+  const pixels = page.getByRole('radio', { name: 'Pixels', exact: true })
+  const scanlines = page.getByRole('radio', { name: 'Scanlines', exact: true })
+  await pixels.click()
+  await expect(pixels).toHaveAttribute('aria-checked', 'true')
+  await waitForAnimationFrames(page, 3)
+  expect(await canvas.evaluate((element) =>
+    (element as HTMLCanvasElement).toDataURL(),
+  )).not.toBe(before)
+
+  await pixels.focus()
+  await page.keyboard.press('ArrowRight')
+  await expect(scanlines).toBeFocused()
+  await expect(scanlines).toHaveAttribute('aria-checked', 'true')
+  await expect.poll(() => page.evaluate(() =>
+    JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}').look?.id,
+  )).toBe('scanlines')
+
+  await pressUndo(page)
+  await expect(pixels).toHaveAttribute('aria-checked', 'true')
+  await pressRedo(page)
+  await expect(scanlines).toHaveAttribute('aria-checked', 'true')
+  await expect.poll(() => page.evaluate(() =>
+    JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}').look?.id,
+  )).toBe('scanlines')
+  const saved = await page.evaluate(() =>
+    localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '',
+  )
+  expect(deserializeBackgroundRecipe(saved)?.look.id).toBe('scanlines')
+  await page.reload()
+  await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
+  await expect(page.getByRole('radio', { name: 'Scanlines', exact: true }))
+    .toHaveAttribute('aria-checked', 'true')
+})
+
+test('controls Look complexity with one shared undoable slider', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear())
+  await page.goto('/')
+  await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
+  const complexity = page.getByRole('slider', { name: 'Complexity', exact: true })
+  await complexity.focus()
+  await page.keyboard.press('End')
+  await expect(complexity).toHaveValue('100')
+  await complexity.evaluate((element) => (element as HTMLInputElement).blur())
+  await expect.poll(() => page.evaluate(() =>
+    JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}').look?.detail,
+  )).toBe(1)
+
+  await pressUndo(page)
+  await expect(complexity).toHaveValue('50')
+  await page.getByRole('radio', { name: '3D', exact: true }).click()
+  await expect(page.getByRole('slider', { name: 'Complexity', exact: true })).toHaveValue('50')
+})
+
 test('pins the accessible mode switch to the stage and keeps mode-specific controls', async ({
   page,
 }) => {
   await page.goto('/')
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
 
-  const modeSwitch = page.getByRole('tablist', { name: 'Canvas mode', exact: true })
-  const backgroundTab = page.getByRole('tab', { name: '2D', exact: true })
-  const materialTab = page.getByRole('tab', { name: '3D', exact: true })
+  const modeSwitch = page.getByRole('radiogroup', { name: 'Canvas mode', exact: true })
+  const backgroundTab = page.getByRole('radio', { name: '2D', exact: true })
+  const materialTab = page.getByRole('radio', { name: '3D', exact: true })
   const stage = page.locator('.lab-canvas-wrap')
   const artboard = page.locator('.lab-canvas-stack')
   const toolbar = page.getByRole('group', { name: 'Canvas tools', exact: true })
@@ -347,13 +430,12 @@ test('pins the accessible mode switch to the stage and keeps mode-specific contr
   await expect(toolbar).toBeVisible()
   await expect(toolbar.getByRole('button', { name: 'Select', exact: true })).toBeEnabled()
   await expect(toolbar.getByRole('button', { name: 'Hand', exact: true })).toBeEnabled()
-  await expect(toolbar.getByRole('button', { name: 'Aspect', exact: true })).toBeEnabled()
   await expect(toolbar.getByRole('button', { name: 'Fit view', exact: true })).toBeEnabled()
-  await expect(page.locator('.lab-topbar').getByRole('tablist')).toHaveCount(0)
-  await expect(page.locator('.lab-canvas-wrap').getByRole('tablist')).toHaveCount(1)
+  await expect(page.locator('.lab-topbar').getByRole('radiogroup')).toHaveCount(0)
+  await expect(page.locator('.lab-canvas-wrap').getByRole('radiogroup')).toHaveCount(1)
   await expect(backgroundTab.locator('svg.lucide-image')).toBeVisible()
   await expect(materialTab.locator('svg.lucide-box')).toBeVisible()
-  await expect(backgroundTab).toHaveAttribute('aria-selected', 'true')
+  await expect(backgroundTab).toHaveAttribute('aria-checked', 'true')
   await expect(backgroundTab).toHaveAttribute('tabindex', '0')
   await expect(materialTab).toHaveAttribute('tabindex', '-1')
   await backgroundTab.hover()
@@ -402,14 +484,14 @@ test('pins the accessible mode switch to the stage and keeps mode-specific contr
   await expect(toolbar.getByLabel('Canvas zoom')).toHaveText(`${actualScale}%`)
   await toolbar.getByRole('button', { name: 'Fit view', exact: true }).click()
   const formatRegion = page.getByRole('region', { name: 'Format', exact: true })
-  await expect(formatRegion.getByRole('status', { name: 'Export dimensions' })).toHaveText(
-    '3840 × 2160',
-  )
-  await formatRegion.getByRole('button', { name: 'Custom aspect…', exact: true }).click()
-  await expect(page.locator('.lab-aspect-frame')).toBeVisible()
-  await stage.press('Escape')
+  const aspectPresets = formatRegion.getByRole('radiogroup', { name: 'Aspect' })
+  await expect(aspectPresets).toBeVisible()
+  await expect(aspectPresets.getByRole('radio')).toHaveCount(4)
+  await expect(formatRegion.getByText('3840 × 2160', { exact: true })).toHaveCount(0)
+  await expect(formatRegion.getByRole('button', { name: 'Edit aspect' })).toHaveCount(0)
+  await expect(formatRegion.getByRole('button', { name: 'Reset framing' })).toHaveCount(0)
 
-  await expect(page.getByRole('application', {
+  await expect(page.getByRole('region', {
     name: '2D design canvas',
     exact: true,
   })).toBeVisible()
@@ -423,37 +505,37 @@ test('pins the accessible mode switch to the stage and keeps mode-specific contr
   await backgroundTab.focus()
   await page.keyboard.press('ArrowRight')
   await expect(materialTab).toBeFocused()
-  await expect(materialTab).toHaveAttribute('aria-selected', 'true')
-  await expect(page.getByRole('application', {
+  await expect(materialTab).toHaveAttribute('aria-checked', 'true')
+  await expect(page.getByRole('region', {
     name: '3D design canvas',
     exact: true,
   })).toBeVisible()
   await expect(page.locator('[data-renderer="material"]')).toBeVisible()
   await expect(toolbar.getByRole('button', { name: 'Select', exact: true })).toBeDisabled()
-  await expect(toolbar.getByRole('button', { name: 'Aspect', exact: true })).toBeEnabled()
-  await stage.press('a')
-  await expect(page.locator('.lab-aspect-frame')).toBeVisible()
-  await expect(page.locator('.panel-heading', { hasText: /^Color$/ })).toBeVisible()
+  await expect(toolbar.getByRole('button', { name: 'Aspect', exact: true })).toHaveCount(0)
+  await expect(page.locator('.panel-heading', { hasText: /^Colors$/ })).toBeVisible()
   await expect(page.locator('.panel-heading', { hasText: /^Materials$/ })).toBeVisible()
   await expect(page.locator('.panel-heading', { hasText: /^Looks$/ })).toBeVisible()
   await expect(page.locator('.lab-side-right .panel-heading')).toHaveText([
     'Format',
-    'Color',
+    'Colors',
     'Materials',
     'Looks',
   ])
   await expect(page.locator('[data-mbs-look-scope="3d-full-frame"]')).toHaveText(
-    'Generic effect previews',
+    'Generic previews',
   )
-  await expect(page.getByRole('radio', { name: 'Background', exact: true })).toBeVisible()
-  await expect(page.getByRole('radio', { name: 'Highlight', exact: true })).toBeVisible()
-  const highlightRole = page.getByRole('radio', { name: 'Highlight', exact: true })
-  await highlightRole.focus()
-  await page.keyboard.press('ArrowLeft')
-  await expect(page.getByRole('radio', { name: 'Background', exact: true }))
-    .toHaveAttribute('aria-checked', 'true')
-  await page.keyboard.press('ArrowRight')
-  await expect(highlightRole).toHaveAttribute('aria-checked', 'true')
+  const backgroundRole = page.getByRole('button', { name: 'Background', exact: true })
+  const highlightRole = page.getByRole('button', { name: 'Highlight', exact: true })
+  await expect(backgroundRole).toBeVisible()
+  await expect(highlightRole).toBeVisible()
+  await backgroundRole.click()
+  await expect(backgroundRole).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('dialog', { name: 'Material background color' })).toBeVisible()
+  await page.getByRole('button', { name: 'Close color picker' }).click()
+  await highlightRole.click()
+  await expect(highlightRole).toHaveAttribute('aria-pressed', 'true')
+  await page.getByRole('button', { name: 'Close color picker' }).click()
   const cleanSurface = page.getByRole('radio', { name: 'Clean', exact: true })
   await cleanSurface.focus()
   await page.keyboard.press('ArrowRight')
@@ -482,10 +564,8 @@ test('pins the accessible mode switch to the stage and keeps mode-specific contr
   })
   await expect(stainlessSteel).toBeVisible()
   await expect(page.getByRole('button', { name: 'Metal', exact: true })).toHaveCount(0)
-  await expect(
-    page.locator('.lab-material-hue-groups').first().locator('.lab-material-hue-label'),
-  ).toHaveText(['Blues', 'Cyans', 'Purples', 'Oranges', 'Yellows', 'Neutrals'])
-  await page.getByRole('button', {
+  await expect(page.locator('.lab-material-quick-colors').getByRole('radio')).toHaveCount(14)
+  await page.getByRole('radio', {
     name: 'Use #FF5001 for material highlight',
     exact: true,
   }).click()
@@ -496,7 +576,7 @@ test('pins the accessible mode switch to the stage and keeps mode-specific contr
     }),
   ).toEqual({ mode: 'background', highlight: '#FF5001' })
   await resetAll(page)
-  await expect(materialTab).toHaveAttribute('aria-selected', 'true')
+  await expect(materialTab).toHaveAttribute('aria-checked', 'true')
   const viewer = page.locator('[data-mbs-material-model="true"]')
   const modelCanvas = viewer.locator('.lab-material-model-canvas')
   await expect(viewer).toHaveAttribute('data-model-status', 'ready')
@@ -538,7 +618,7 @@ test('pins the accessible mode switch to the stage and keeps mode-specific contr
 
 test('keeps the canvas toolbar clear of the mode switch', async ({ page }) => {
   await page.addInitScript(() => localStorage.clear())
-  for (const width of [1024, 1440]) {
+  for (const width of [1024, 1041, 1080, 1105, 1106, 1440]) {
     await page.setViewportSize({ width, height: 900 })
     await page.goto('/')
     await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
@@ -546,7 +626,7 @@ test('keeps the canvas toolbar clear of the mode switch', async ({ page }) => {
       name: 'Canvas tools',
       exact: true,
     }).boundingBox()
-    const modeSwitch = await page.getByRole('tablist', {
+    const modeSwitch = await page.getByRole('radiogroup', {
       name: 'Canvas mode',
       exact: true,
     }).boundingBox()
@@ -557,6 +637,9 @@ test('keeps the canvas toolbar clear of the mode switch', async ({ page }) => {
       || toolbar!.y + toolbar!.height <= modeSwitch!.y
       || modeSwitch!.y + modeSwitch!.height <= toolbar!.y
     expect(separated).toBe(true)
+    for (const name of ['Select', 'Hand', 'Fit view']) {
+      await expect(page.getByRole('button', { name, exact: true }).locator('svg')).toHaveCount(1)
+    }
   }
 })
 
@@ -564,7 +647,7 @@ test('keeps 3D Look thumbnails generic when the live material changes', async ({
   await page.addInitScript(() => localStorage.clear())
   await page.goto('/')
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
-  await page.getByRole('tab', { name: '3D', exact: true }).click()
+  await page.getByRole('radio', { name: '3D', exact: true }).click()
 
   const thumbnails = page.locator('.lab-look-thumb[data-preview-mode="generic"]')
   await expect(thumbnails).toHaveCount(LOOKS.length)
@@ -591,36 +674,37 @@ test('redraws the deterministic 2D artwork after editing 3D', async ({ page }) =
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
   const canvas = page.locator('.lab-canvas')
   await waitForAnimationFrames(page, 3)
-  const before = await canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL())
+  const before = await canvas.screenshot()
 
-  await page.getByRole('tab', { name: '3D', exact: true }).click()
+  await page.getByRole('radio', { name: '3D', exact: true }).click()
   await page.getByRole('radio', { name: 'Glass', exact: true }).click()
-  await page.getByRole('tab', { name: '2D', exact: true }).click()
+  await page.getByRole('radio', { name: '2D', exact: true }).click()
   await waitForAnimationFrames(page, 3)
 
-  expect(await canvas.evaluate((element) =>
-    (element as HTMLCanvasElement).toDataURL(),
-  )).toBe(before)
+  const after = await canvas.screenshot()
+  const difference = await pixelDifference(page, before, after)
+  expect(difference.mean).toBeLessThan(0.01)
+  expect(difference.changedFraction).toBe(0)
 })
 
 test('preserves independent 2D and 3D inspector scroll positions', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 640 })
   await page.goto('/')
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
-  const inspector = page.locator('.lab-side-right')
+  const inspector = page.locator('.lab-inspector-body')
 
   await inspector.evaluate((element) => {
     element.scrollTop = 260
   })
-  await page.getByRole('tab', { name: '3D', exact: true }).click()
+  await page.getByRole('radio', { name: '3D', exact: true }).click()
   await expect.poll(() => inspector.evaluate((element) => element.scrollTop)).toBe(0)
 
   await inspector.evaluate((element) => {
     element.scrollTop = 180
   })
-  await page.getByRole('tab', { name: '2D', exact: true }).click()
+  await page.getByRole('radio', { name: '2D', exact: true }).click()
   await expect.poll(() => inspector.evaluate((element) => element.scrollTop)).toBe(260)
-  await page.getByRole('tab', { name: '3D', exact: true }).click()
+  await page.getByRole('radio', { name: '3D', exact: true }).click()
   await expect.poll(() => inspector.evaluate((element) => element.scrollTop)).toBe(180)
 })
 
@@ -629,17 +713,17 @@ test('uses color weights as off state and adds swatches without replacing the mi
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
 
   const colorSection = page.locator('.panel-section').filter({
-    has: page.locator('.panel-heading', { hasText: /^Color$/ }),
+    has: page.locator('.panel-heading', { hasText: /^Colors$/ }),
   }).first()
   await expect(colorSection.getByRole('button', { name: /^(On|Off)$/ })).toHaveCount(0)
   const primaryPack = colorSection.getByRole('radio', { name: 'Primary', exact: true })
+  await expect(colorSection.getByRole('radio', { name: 'Custom', exact: true })).toHaveCount(0)
   await primaryPack.focus()
   await page.keyboard.press('ArrowRight')
   await expect(colorSection.getByRole('radio', { name: 'Neutrals', exact: true }))
     .toHaveAttribute('aria-checked', 'true')
   await page.keyboard.press('Home')
   await expect(primaryPack).toHaveAttribute('aria-checked', 'true')
-
   const ratioInputs = colorSection.getByRole('spinbutton', { name: /weight/ })
   await ratioInputs.first().fill('0')
   await expect.poll(async () =>
@@ -648,23 +732,43 @@ test('uses color weights as off state and adds swatches without replacing the mi
       return recipe.palette?.mix?.[0]
     }),
   ).toMatchObject({ enabled: false, ratio: 0 })
-
-  await ratioInputs.first().fill('30')
+  await expect(colorSection.getByText('Custom mix', { exact: true })).toBeVisible()
+  await expect(ratioInputs).toHaveCount(3)
+  await expect(ratioInputs.first()).toHaveValue('0')
+  await ratioInputs.first().fill('10')
   await expect.poll(async () =>
     page.evaluate(() => {
       const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
-      return recipe.palette?.mix?.[0]?.enabled
+      return recipe.palette?.mix?.[0]
     }),
-  ).toBe(true)
+  ).toMatchObject({ enabled: true, ratio: 10 })
+  await ratioInputs.first().fill('0')
+  await expect(ratioInputs).toHaveCount(3)
 
   const before = await page.evaluate(() => {
     const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
     return recipe.palette.mix as { color: string }[]
   })
-  await colorSection.locator('summary', { hasText: 'More approved colors' }).click()
-  const swatch = colorSection.locator('.lab-approved-swatch[aria-pressed="false"]').first()
+  await colorSection.locator('summary', { hasText: 'Add color' }).click()
+  await expect(colorSection.locator('.lab-approved-swatch')).toHaveCount(49)
+  await expect(colorSection.locator('.lab-approved-results h3')).toHaveText([
+    'Blues',
+    'Cyans & teals',
+    'Greens',
+    'Yellows & oranges',
+    'Reds & pinks',
+    'Purples',
+    'Neutrals',
+  ])
+  await expect(colorSection.getByRole('combobox')).toHaveCount(0)
+  await expect(colorSection.getByRole('button', { name: 'Show more' })).toHaveCount(0)
+  const swatch = colorSection.locator('.lab-approved-swatch:not(:disabled)').first()
   const addedColor = await swatch.getAttribute('title')
   await swatch.click()
+  await expect(colorSection.getByRole('button', {
+    name: `Approved color ${addedColor} added`,
+    exact: true,
+  })).toBeDisabled()
 
   await expect.poll(async () =>
     page.evaluate(() => {
@@ -693,7 +797,81 @@ test('uses color weights as off state and adds swatches without replacing the mi
     packId: 'custom',
     colors: [...before.map((item) => item.color), addedColor],
   })
-  await expect(colorSection.getByText('Custom', { exact: true })).toBeVisible()
+  await expect(colorSection.getByText('Custom mix', { exact: true })).toBeVisible()
+})
+
+test('changes a 2D role color without replacing the weighted mix', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear())
+  await page.goto('/')
+  await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
+  const colorSection = page.locator('.panel-section').filter({
+    has: page.locator('.panel-heading', { hasText: /^Colors$/ }),
+  }).first()
+  const beforeMix = createDefaultBackgroundRecipe(0).palette.mix
+
+  const backgroundColor = colorSection.getByRole('button', {
+    name: /^Change background color/,
+  })
+  await backgroundColor.click()
+  const picker = page.getByRole('dialog', { name: 'Background color', exact: true })
+  await expect(picker).toBeVisible()
+  await expect(picker.getByRole('searchbox', { name: 'Search approved colors' })).toBeFocused()
+  await picker.getByRole('radio', {
+    name: 'Use approved color #FFFFFF',
+    exact: true,
+  }).click()
+  await expect(picker).toHaveCount(0)
+  await expect(backgroundColor).toBeFocused()
+
+  await expect.poll(async () =>
+    page.evaluate(() => {
+      const palette = JSON.parse(
+        localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}',
+      ).palette
+      return {
+        packId: palette?.packId,
+        ground: palette?.ground,
+        mix: palette?.mix,
+      }
+    }),
+  ).toEqual({
+    packId: 'custom',
+    ground: '#FFFFFF',
+    mix: beforeMix,
+  })
+})
+
+test('opens a picker from a mix swatch and preserves its weight', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear())
+  await page.goto('/')
+  await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
+  const mixSwatch = page.getByRole('button', { name: /^Change mix color/ }).first()
+  await mixSwatch.click()
+  const picker = page.getByRole('dialog', { name: 'Mix color', exact: true })
+  await expect(picker).toBeVisible()
+  await picker.getByRole('radio', {
+    name: 'Use approved color #FF5001',
+    exact: true,
+  }).click()
+
+  await expect(picker).toHaveCount(0)
+  await expect(mixSwatch).toBeFocused()
+  await expect.poll(() => page.evaluate(() => {
+    const palette = JSON.parse(
+      localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}',
+    ).palette
+    return {
+      packId: palette?.packId,
+      color: palette?.mix?.[0]?.color,
+      ratio: palette?.mix?.[0]?.ratio,
+    }
+  })).toEqual({ packId: 'custom', color: '#FF5001', ratio: 60 })
+
+  await pressUndo(page)
+  await expect.poll(() => page.evaluate(() =>
+    JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
+      .palette?.mix?.[0]?.color,
+  )).toBe('#0064E0')
 })
 
 test('supports keyboard slider control, reset, and immediate pagehide saves', async ({ page }) => {
@@ -756,6 +934,51 @@ test('settles slider history on pointer cancellation and window blur', async ({ 
   await expect(amount).toHaveValue('0')
 })
 
+test('respects reduced motion without discarding the saved motion settings', async ({ page }) => {
+  const recipe = createDefaultBackgroundRecipe(2026)
+  recipe.motion = {
+    ...recipe.motion,
+    enabled: true,
+    amount: 0.8,
+    speed: 1.2,
+    loopSeconds: 6,
+  }
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.addInitScript((savedRecipe) => {
+    localStorage.setItem('mbs-bg-generator-autosave-v2', JSON.stringify(savedRecipe))
+  }, recipe)
+  await page.goto('/')
+  await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
+
+  await expect(page.getByText('Reduce Motion is on', { exact: true })).toBeVisible()
+  const amount = page.getByRole('slider', { name: 'Amount', exact: true })
+  const energy = page.getByRole('slider', { name: 'Energy', exact: true })
+  const loop = page.getByRole('slider', { name: 'Loop', exact: true })
+  await expect(amount).toBeDisabled()
+  await expect(energy).toBeDisabled()
+  await expect(loop).toBeDisabled()
+
+  const canvas = page.locator('.lab-canvas')
+  const pausedFrame = await canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL())
+  await page.waitForTimeout(250)
+  expect(await canvas.evaluate((element) =>
+    (element as HTMLCanvasElement).toDataURL(),
+  )).toBe(pausedFrame)
+
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await expect(page.getByText('Reduce Motion is on', { exact: true })).toHaveCount(0)
+  await expect(amount).toBeEnabled()
+  await expect(energy).toBeEnabled()
+  await expect(loop).toBeEnabled()
+  await expect.poll(async () =>
+    canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL()),
+  ).not.toBe(pausedFrame)
+
+  expect(await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}').motion,
+  )).toMatchObject({ enabled: true, amount: 0.8, speed: 1.2, loopSeconds: 6 })
+})
+
 test('announces persistent storage failures', async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(Storage.prototype, 'setItem', {
@@ -796,47 +1019,42 @@ test('keeps Reset all cancelled when Enter is pressed on Cancel', async ({ page 
   await expect(dialog).toHaveAccessibleDescription(
     'Resets format, colors, Looks, motion, 2D framing, and 3D view.',
   )
-  await page.keyboard.press('Shift+Tab')
   await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused()
   await page.keyboard.press('Enter')
   await expect(dialog).toHaveCount(0)
   await expect(bold).toHaveAttribute('aria-checked', 'true')
 })
 
-test('groups and orders Material swatches by chroma', async ({ page }) => {
+test('offers a compact 3D palette and grouped approved colors', async ({ page }) => {
   await page.addInitScript(() => localStorage.clear())
   await page.goto('/')
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
-  await page.getByRole('tab', { name: '3D', exact: true }).click()
+  await page.getByRole('radio', { name: '3D', exact: true }).click()
 
-  const materialHueGroups = page.locator('.lab-material-hue-groups')
+  const quickColors = page.locator('.lab-material-quick-colors')
+  await expect(quickColors.getByRole('radio')).toHaveCount(14)
   await expect(
-    materialHueGroups.first().locator('.lab-material-hue-label'),
-  ).toHaveText(['Blues', 'Cyans', 'Purples', 'Oranges', 'Yellows', 'Neutrals'])
-  await expect.poll(async () =>
-    materialHueGroups
-      .first()
-      .locator('.lab-material-hue-group')
-      .first()
-      .locator('button')
-      .evaluateAll((buttons) => buttons.map((button) => button.getAttribute('title'))),
-  ).toEqual([
-    '#0288F9',
-    '#006CE1',
-    '#0064E0',
-    '#034AE0',
-    '#4F43FF',
-    '#093AC7',
-    '#132682',
-    '#7CA0B8',
-  ])
+    quickColors.getByRole('radio').first(),
+  ).toHaveAttribute('title', '#0064E0')
 
-  await page.locator('summary', { hasText: 'More approved colors' }).click()
-  const approvedPicker = page.locator('.lab-approved-picker')
+  await page.getByRole('button', { name: 'Highlight', exact: true }).click()
+  const approvedPicker = page.getByRole('dialog', {
+    name: 'Material highlight color',
+    exact: true,
+  })
   await expect(approvedPicker).toBeVisible()
-  await approvedPicker.getByRole('searchbox', { name: 'Search approved colors' }).fill('#FAFAFA')
+  await expect(approvedPicker.locator('.lab-approved-results h3')).toHaveText([
+    'Blues',
+    'Cyans & teals',
+    'Greens',
+    'Yellows & oranges',
+    'Reds & pinks',
+    'Purples',
+    'Neutrals',
+  ])
+  await approvedPicker.getByRole('searchbox', { name: 'Search approved colors' }).fill('#FFFFFF')
   await expect(
-    approvedPicker.getByRole('button', { name: 'Use approved color #FAFAFA' }),
+    approvedPicker.getByRole('radio', { name: 'Use approved color #FFFFFF' }),
   ).toBeVisible()
 })
 
@@ -855,7 +1073,7 @@ test('processes the live 3D frame through canonical Canvas2D Looks and supports 
   await page.setViewportSize({ width: 1440, height: 1400 })
   await page.goto('/')
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
-  const materialTab = page.getByRole('tab', { name: '3D', exact: true })
+  const materialTab = page.getByRole('radio', { name: '3D', exact: true })
   await materialTab.click()
 
   const viewer = page.locator('[data-mbs-material-model="true"]')
@@ -965,6 +1183,14 @@ test('processes the live 3D frame through canonical Canvas2D Looks and supports 
       }
     }),
   ).toEqual({ enabled: true, look: 'trails' })
+  const weaveButton = page.getByRole('button', { name: 'Weave', exact: true })
+  await weaveButton.click()
+  await expect(viewer).toHaveAttribute('data-look', 'weave')
+  await expect(processedCanvas).toHaveAttribute('data-look', 'weave')
+  await expect(processedCanvas).toHaveAttribute('data-render-status', 'ready')
+  const weaveDifference = await pixelDifference(page, rawFrame, await screenshotView())
+  expect(weaveDifference.mean).toBeGreaterThan(1)
+  expect(weaveDifference.changedFraction).toBeGreaterThan(0.02)
   await resetAll(page)
   await expect(viewer).toHaveAttribute('data-material', 'clean')
   await expect(viewer).toHaveAttribute('data-look', 'off')
@@ -1007,7 +1233,7 @@ test('recovers from a failed 3D model load and preserves focus', async ({ page }
   })
   await page.goto('/')
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
-  await page.getByRole('tab', { name: '3D', exact: true }).click()
+  await page.getByRole('radio', { name: '3D', exact: true }).click()
   const viewer = page.locator('[data-mbs-material-model="true"]')
   await expect(viewer).toHaveAttribute('data-model-status', 'error')
 
@@ -1020,7 +1246,7 @@ test('recovers from a failed 3D model load and preserves focus', async ({ page }
 test('middle-drags pan the 3D viewer without taking over outer canvas panning', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
-  await page.getByRole('tab', { name: '3D', exact: true }).click()
+  await page.getByRole('radio', { name: '3D', exact: true }).click()
 
   const viewer = page.locator('[data-mbs-material-model="true"]')
   const canvas = viewer.locator('.lab-material-model-canvas')
@@ -1089,10 +1315,10 @@ test('middle-drags pan the 3D viewer without taking over outer canvas panning', 
   expect(stackBoxAfterOuterPan!.y).toBeCloseTo(initialStackBox!.y + 18, 0)
 })
 
-test('orbit and wheel release 3D framing without spamming history', async ({ page }) => {
+test('pointer, wheel, and keyboard 3D framing each create one history entry', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
-  await page.getByRole('tab', { name: '3D', exact: true }).click()
+  await page.getByRole('radio', { name: '3D', exact: true }).click()
 
   const viewer = page.locator('[data-mbs-material-model="true"]')
   const canvas = viewer.locator('.lab-material-model-canvas')
@@ -1151,12 +1377,21 @@ test('orbit and wheel release 3D framing without spamming history', async ({ pag
     Math.abs(zoomResetBounds.top - initialBounds.top),
     Math.abs(zoomResetBounds.bottom - initialBounds.bottom),
   )).toBeLessThanOrEqual(2)
+
+  await viewer.focus()
+  await page.keyboard.press('ArrowRight')
+  await waitForAnimationFrames(page, 40)
+  await expect.poll(materialPreset).toBe('free')
+  expect((await screenshotView()).equals(initialView)).toBe(false)
+
+  await pressUndo(page)
+  await expect.poll(materialPreset).toBe('full')
 })
 
 test('restores the same orthographic camera framing after reload', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
-  await page.getByRole('tab', { name: '3D', exact: true }).click()
+  await page.getByRole('radio', { name: '3D', exact: true }).click()
   let viewer = page.locator('[data-mbs-material-model="true"]')
   await expect(viewer).toHaveAttribute('data-model-status', 'ready')
   const viewerBox = await viewer.boundingBox()
@@ -1184,9 +1419,9 @@ test('restores the same orthographic camera framing after reload', async ({ page
 
   await page.reload()
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
-  await expect(page.getByRole('tab', { name: '2D', exact: true }))
-    .toHaveAttribute('aria-selected', 'true')
-  await page.getByRole('tab', { name: '3D', exact: true }).click()
+  await expect(page.getByRole('radio', { name: '2D', exact: true }))
+    .toHaveAttribute('aria-checked', 'true')
+  await page.getByRole('radio', { name: '3D', exact: true }).click()
   viewer = page.locator('[data-mbs-material-model="true"]')
   await expect(viewer).toHaveAttribute('data-model-status', 'ready')
   await waitForAnimationFrames(page, 3)
@@ -1296,8 +1531,8 @@ test('cancels an active 2D gesture before switching to 3D', async ({ page }) => 
     (element as HTMLButtonElement).click(),
   )
   await page.mouse.up()
-  await expect(page.getByRole('tab', { name: '3D', exact: true }))
-    .toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('radio', { name: '3D', exact: true }))
+    .toHaveAttribute('aria-checked', 'true')
   await expect.poll(async () =>
     page.evaluate(() =>
       JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}').mode,
@@ -1351,22 +1586,16 @@ test('deselects and reselects the 2D artwork without recipe edits', async ({ pag
   await selectTool.focus()
   await page.keyboard.press('Escape')
   await expect(frame).toHaveCount(0)
-  await page.mouse.click(artworkCenter.x, artworkCenter.y)
-  await wrap.press('a')
-  const aspectHandle = page.getByRole('button', {
-    name: 'Resize centered aspect from E edge',
-    exact: true,
-  })
-  await aspectHandle.focus()
-  await page.keyboard.press('Escape')
-  await expect(page.locator('.lab-aspect-frame')).toHaveCount(0)
+  await wrap.press('v')
   await expect(frame).toBeVisible()
+  await page.getByRole('button', { name: 'Hand', exact: true }).click()
+  await wrap.press('ArrowRight')
+  await selectTool.click()
 
   // Clicking blank canvas only changes ephemeral selection: it does not pan,
-  // enter Aspect, push history, or write a deterministic recipe.
+  // push history, or write a deterministic recipe.
   await page.mouse.click(artboardBox!.x - 12, artboardBox!.y + 20)
   await expect(frame).toHaveCount(0)
-  await expect(page.locator('.lab-aspect-frame')).toHaveCount(0)
   const afterBlankBox = await artboard.boundingBox()
   expect(afterBlankBox?.x).toBeCloseTo(artboardBox!.x, 1)
   expect(afterBlankBox?.y).toBeCloseTo(artboardBox!.y, 1)
@@ -1543,6 +1772,7 @@ test('snaps scaled artwork corners to all canvas edges at multiple zoom levels',
     }
     for (const item of corners) {
       const artboard = await page.locator('.lab-canvas-stack').boundingBox()
+      const beforeScale = await frame.boundingBox()
       const handle = await page
         .locator(`.lab-transform-handle.corner-${item.corner}`)
         .boundingBox()
@@ -1581,11 +1811,16 @@ test('snaps scaled artwork corners to all canvas edges at multiple zoom levels',
       if (zoomLevel > 0) await page.keyboard.up('Shift')
       await pressUndo(page)
       await waitForAnimationFrames(page, 1)
+      const restored = await frame.boundingBox()
+      expect(restored?.x).toBeCloseTo(beforeScale!.x, 1)
+      expect(restored?.y).toBeCloseTo(beforeScale!.y, 1)
+      expect(restored?.width).toBeCloseTo(beforeScale!.width, 1)
+      expect(restored?.height).toBeCloseTo(beforeScale!.height, 1)
     }
   }
 })
 
-test('directly moves and changes aspect while keeping mode transforms independent', async ({ page }) => {
+test('directly moves artwork while keeping mode transforms independent', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
   await enlargeArtworkFromCenter(page)
@@ -1637,7 +1872,7 @@ test('directly moves and changes aspect while keeping mode transforms independen
     }),
   ).toBeGreaterThan(1)
 
-  await page.getByRole('tab', { name: '3D', exact: true }).click()
+  await page.getByRole('radio', { name: '3D', exact: true }).click()
   await page.getByRole('radio', { name: 'Glass', exact: true }).click()
   await expect.poll(async () =>
     page.evaluate(() => {
@@ -1649,50 +1884,32 @@ test('directly moves and changes aspect while keeping mode transforms independen
     }),
   ).toMatchObject({ material: 0 })
 
-  await page.getByRole('tab', { name: '2D', exact: true }).click()
-  await page.locator('.lab-canvas-wrap').press('a')
-  const aspectFrame = page.locator('.lab-aspect-frame')
-  const aspectBox = await aspectFrame.boundingBox()
-  const aspectHandle = page.locator('.lab-aspect-handle.handle-e')
-  const handleBox = await aspectHandle.boundingBox()
-  expect(aspectBox).not.toBeNull()
-  expect(handleBox).not.toBeNull()
-  await page.mouse.move(handleBox!.x + handleBox!.width / 2, handleBox!.y + handleBox!.height / 2)
-  await page.mouse.down()
-  await page.mouse.move(handleBox!.x - 80, handleBox!.y + handleBox!.height / 2, { steps: 3 })
-  const draftBox = await aspectFrame.boundingBox()
-  expect(draftBox).not.toBeNull()
-  expect(draftBox!.x + draftBox!.width / 2).toBeCloseTo(
-    aspectBox!.x + aspectBox!.width / 2,
-    0,
-  )
-  expect(draftBox!.y + draftBox!.height / 2).toBeCloseTo(
-    aspectBox!.y + aspectBox!.height / 2,
-    0,
-  )
-  await page.mouse.up()
-
+  await page.getByRole('radio', { name: '2D', exact: true }).click()
   await expect.poll(async () =>
-    page.evaluate(() =>
-      JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}').format?.aspect,
-    ),
-  ).toBe('custom')
-
-  await pressUndo(page)
-  await expect.poll(async () =>
-    page.evaluate(() =>
-      JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}').format?.aspect,
-    ),
-  ).toBe('16:9')
+    page.evaluate(() => {
+      const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
+      return recipe.transforms?.background?.x
+    }),
+  ).not.toBe(0)
 })
 
-test('supports keyboard rotation and custom aspect resizing', async ({ page }) => {
+test('supports undoable keyboard scale and rotation', async ({ page }) => {
   await page.addInitScript(() => localStorage.clear())
   await page.goto('/')
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
-  const wrap = page.locator('.lab-canvas-wrap')
 
-  const rotate = page.getByRole('button', { name: 'Rotate from NW corner', exact: true })
+  const scale = page.getByRole('slider', { name: 'Artwork scale', exact: true })
+  const originalScale = await scale.getAttribute('aria-valuenow')
+  await scale.focus()
+  await page.keyboard.down('ArrowUp')
+  await page.waitForTimeout(50)
+  await scale.dispatchEvent('keydown', { key: 'ArrowUp', repeat: true })
+  await page.keyboard.up('ArrowUp')
+  await expect(scale).not.toHaveAttribute('aria-valuenow', originalScale ?? '')
+  await pressUndo(page)
+  await expect(scale).toHaveAttribute('aria-valuenow', originalScale ?? '')
+
+  const rotate = page.getByRole('slider', { name: 'Artwork rotation', exact: true })
   await rotate.focus()
   await page.keyboard.press('ArrowRight')
   await expect.poll(async () =>
@@ -1703,52 +1920,6 @@ test('supports keyboard rotation and custom aspect resizing', async ({ page }) =
   ).toBe(1)
   await rotate.evaluate((element) => (element as HTMLButtonElement).blur())
   await pressUndo(page)
-
-  await wrap.press('a')
-  const aspect = page.getByRole('button', {
-    name: 'Resize centered aspect from E edge',
-    exact: true,
-  })
-  await aspect.focus()
-  await page.keyboard.press('ArrowLeft')
-  await expect.poll(async () =>
-    page.evaluate(() =>
-      JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}').format?.aspect,
-    ),
-  ).toBe('custom')
-  await aspect.evaluate((element) => (element as HTMLButtonElement).blur())
-  await pressUndo(page)
-  await expect.poll(async () =>
-    page.evaluate(() =>
-      JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}').format?.aspect,
-    ),
-  ).toBe('16:9')
-})
-
-test('resets 2D framing without resetting the full recipe', async ({ page }) => {
-  await page.addInitScript(() => localStorage.clear())
-  await page.goto('/')
-  await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
-  await enlargeArtworkFromCenter(page)
-
-  const format = page.getByRole('region', { name: 'Format', exact: true })
-  const resetFraming = format.getByRole('button', { name: 'Reset framing', exact: true })
-  await expect(resetFraming).toBeEnabled()
-  await resetFraming.click()
-  await expect.poll(async () =>
-    page.evaluate(() => {
-      const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
-      return recipe.transforms?.background
-    }),
-  ).toMatchObject({ preset: 'full', x: 0, y: 0, scale: 1, rotation: 0 })
-
-  await pressUndo(page)
-  await expect.poll(async () =>
-    page.evaluate(() =>
-      JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
-        .transforms?.background?.scale,
-    ),
-  ).toBeCloseTo(1.5)
 })
 
 test('exports both modes as exact 4K PNGs', async ({ page }) => {
@@ -1758,7 +1929,7 @@ test('exports both modes as exact 4K PNGs', async ({ page }) => {
   const formatSection = page.getByRole('region', { name: 'Format', exact: true })
   const exportSection = page.getByRole('region', { name: 'Export', exact: true })
   await expect(page.getByRole('button', { name: 'Export', exact: true })).toHaveCount(1)
-  await expect(formatSection.getByRole('group', { name: 'Aspect', exact: true })).toBeVisible()
+  await expect(formatSection.getByRole('radiogroup', { name: 'Aspect', exact: true })).toBeVisible()
   await expect(
     formatSection.getByRole('group', { name: 'Export resolution', exact: true }),
   ).toHaveCount(0)
@@ -1777,7 +1948,7 @@ test('exports both modes as exact 4K PNGs', async ({ page }) => {
   expect(backgroundDownload.suggestedFilename()).toContain('mbs-background-')
   const backgroundPng = await readFile(backgroundPath!)
 
-  await page.getByRole('tab', { name: '3D', exact: true }).click()
+  await page.getByRole('radio', { name: '3D', exact: true }).click()
   await expect(page.locator('[data-mbs-material-model="true"]'))
     .toHaveAttribute('data-model-status', 'ready')
   const materialDownloadPromise = page.waitForEvent('download')
@@ -1853,7 +2024,7 @@ test('exports both modes as exact 4K PNGs', async ({ page }) => {
   })
   expect(cleanPixels.hasSymbol).toBe(true)
 
-  await formatSection.getByRole('button', { name: '9:16', exact: true }).click()
+  await formatSection.getByRole('radio', { name: '9:16', exact: true }).click()
   await waitForAnimationFrames(page, 3)
   const portraitExportUrl = await page.evaluate(async () => {
     const exportPng = (window as unknown as {
@@ -1865,44 +2036,6 @@ test('exports both modes as exact 4K PNGs', async ({ page }) => {
   const portraitPng = Buffer.from(portraitExportUrl.split(',')[1], 'base64')
   expect(portraitPng.readUInt32BE(16)).toBe(2160)
   expect(portraitPng.readUInt32BE(20)).toBe(3840)
-
-  await page.getByRole('tab', { name: '2D', exact: true }).click()
-  await formatSection.getByRole('button', { name: 'Custom aspect…', exact: true }).click()
-  const aspectHandle = page.getByRole('button', {
-    name: 'Resize centered aspect from E edge',
-    exact: true,
-  })
-  await aspectHandle.focus()
-  await page.keyboard.press('ArrowLeft')
-  await expect.poll(async () =>
-    page.evaluate(() => {
-      const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
-      return recipe.format
-    }),
-  ).toMatchObject({ aspect: 'custom' })
-  const savedCustomFormat = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}').format as {
-      width: number
-      height: number
-    },
-  )
-  const exportDataUrl = () => page.evaluate(async () => {
-    const exportPng = (window as unknown as {
-      __lbsLabExportPng?: () => Promise<string>
-    }).__lbsLabExportPng
-    if (!exportPng) throw new Error('Dev export hook unavailable')
-    return exportPng()
-  })
-  const custom2dPng = Buffer.from((await exportDataUrl()).split(',')[1], 'base64')
-  await page.getByRole('tab', { name: '3D', exact: true }).click()
-  await expect(page.locator('[data-mbs-material-model="true"]'))
-    .toHaveAttribute('data-model-status', 'ready')
-  const custom3dPng = Buffer.from((await exportDataUrl()).split(',')[1], 'base64')
-  for (const png of [custom2dPng, custom3dPng]) {
-    expect(png.readUInt32BE(16)).toBe(savedCustomFormat.width)
-    expect(png.readUInt32BE(20)).toBe(savedCustomFormat.height)
-    expect(Math.max(savedCustomFormat.width, savedCustomFormat.height)).toBe(3840)
-  }
 })
 
 test('exports the shared WebGL 3D scene without WebGPU', async ({ page }) => {
@@ -1910,7 +2043,7 @@ test('exports the shared WebGL 3D scene without WebGPU', async ({ page }) => {
   page.on('pageerror', (error) => errors.push(error.message))
   await page.goto('/')
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
-  await page.getByRole('tab', { name: '3D', exact: true }).click()
+  await page.getByRole('radio', { name: '3D', exact: true }).click()
   await page.getByRole('radio', { name: 'Stainless Steel', exact: true }).click()
   const viewer = page.locator('[data-mbs-material-model="true"]')
   await expect(viewer).toHaveAttribute('data-model-status', 'ready')

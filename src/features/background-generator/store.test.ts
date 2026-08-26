@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { createDefaultBackgroundRecipe } from './recipe'
+import { createDefaultBackgroundRecipe, deserializeBackgroundRecipe } from './recipe'
 import { backgroundHistory, useBackgroundStore } from './store'
 
 describe('background recipe history', () => {
@@ -17,6 +17,18 @@ describe('background recipe history', () => {
     expect(useBackgroundStore.getState().recipe.look.detail).toBe(0.5)
     useBackgroundStore.getState().redo()
     expect(useBackgroundStore.getState().recipe.look.detail).toBe(0.9)
+  })
+
+  it('keeps a redone Look recipe valid for autosave restore', () => {
+    const store = useBackgroundStore.getState()
+    store.updateRecipe({ look: { id: 'pixels' } })
+    useBackgroundStore.getState().updateRecipe({ look: { id: 'scanlines' } })
+    useBackgroundStore.getState().undo()
+    useBackgroundStore.getState().redo()
+
+    const recipe = useBackgroundStore.getState().recipe
+    expect(recipe.look.id).toBe('scanlines')
+    expect(deserializeBackgroundRecipe(JSON.stringify(recipe))?.look.id).toBe('scanlines')
   })
 
   it('keeps mode navigation out of recipe history', () => {

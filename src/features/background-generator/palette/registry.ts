@@ -1,11 +1,5 @@
-import {
-  EXTENDED_APPROVED_COLORS,
-  EXTENDED_CORE,
-  EXTENDED_DEEP_BLUES,
-  EXTENDED_NEUTRALS,
-  EXTENDED_PRODUCT_BLUES,
-} from './extended'
 import { META_BLUE } from '@/core/color/brand'
+import { sortColorsLightToDark } from './hue'
 
 export type PaletteTier = 'primary' | 'secondary' | 'extended'
 
@@ -17,17 +11,68 @@ export type PalettePack = {
   hue: string
   tone: string
   colors: readonly string[]
+  defaultMix: readonly number[]
 }
 
 export { META_BLUE }
 export const CUSTOM_PALETTE_ID = 'custom'
 
 export const APPROVED_COLOR_GROUPS = [
-  { id: 'core', label: 'Core ramps', colors: EXTENDED_CORE },
-  { id: 'neutral', label: 'Neutrals', colors: EXTENDED_NEUTRALS },
-  { id: 'product-blue', label: 'Product blues', colors: EXTENDED_PRODUCT_BLUES },
-  { id: 'deep-blue', label: 'Deep blues', colors: EXTENDED_DEEP_BLUES },
+  {
+    id: 'blue',
+    label: 'Blues',
+    colors: sortColorsLightToDark([
+      META_BLUE, '#56A8FE', '#0288F9', '#006CE1', '#034AE0', '#093AC7', '#132682', '#060F2C',
+    ]),
+  },
+  {
+    id: 'cyan',
+    label: 'Cyans & teals',
+    colors: sortColorsLightToDark([
+      '#B9E9F3', '#26C8EE', '#1CC5EE', '#25C8F1', '#20C3B8', '#058382', '#043F4D',
+    ]),
+  },
+  {
+    id: 'green',
+    label: 'Greens',
+    colors: sortColorsLightToDark([
+      '#C0ECC9', '#86E59F', '#24D366', '#153B21',
+    ]),
+  },
+  {
+    id: 'warm',
+    label: 'Yellows & oranges',
+    colors: sortColorsLightToDark([
+      '#FCEBA6', '#FFE7CF', '#FED61F', '#FF5001', '#8C4F00',
+    ]),
+  },
+  {
+    id: 'red',
+    label: 'Reds & pinks',
+    colors: sortColorsLightToDark([
+      '#FFD8DB', '#FF9CA6', '#FF5766', '#E2193D', '#FD96DB', '#E638B5',
+    ]),
+  },
+  {
+    id: 'purple',
+    label: 'Purples',
+    colors: sortColorsLightToDark([
+      '#E7DCFE', '#AE4FC3', '#824DFF', '#4F43FF', '#7852FF', '#3D2A83',
+    ]),
+  },
+  {
+    id: 'neutral',
+    label: 'Neutrals',
+    colors: sortColorsLightToDark([
+      '#FFFFFF', '#DAE3EA', '#D6E7EE', '#D1D4DB', '#8D9DAC', '#8B9BAA',
+      '#7CA0B8', '#526069', '#506171', '#27353E', '#1C2B32', '#1C2A33', '#000000',
+    ]),
+  },
 ] as const
+
+export const CURATED_APPROVED_COLORS = APPROVED_COLOR_GROUPS.flatMap(
+  (group) => group.colors,
+)
 
 export const PALETTE_PACKS: readonly PalettePack[] = [
   {
@@ -38,6 +83,7 @@ export const PALETTE_PACKS: readonly PalettePack[] = [
     hue: 'blue',
     tone: 'full ramp',
     colors: [META_BLUE, '#0288F9', '#006CE1', '#034AE0', '#093AC7', '#132682'],
+    defaultMix: [0, 1, 5],
   },
   {
     id: 'primary-neutrals',
@@ -47,6 +93,7 @@ export const PALETTE_PACKS: readonly PalettePack[] = [
     hue: 'neutral',
     tone: 'light to dark',
     colors: [META_BLUE, '#FFFFFF', '#D1D4DB', '#8B9BAA', '#506171', '#27353E', '#000000'],
+    defaultMix: [0, 1, 6],
   },
   {
     id: 'bold',
@@ -56,6 +103,7 @@ export const PALETTE_PACKS: readonly PalettePack[] = [
     hue: 'cyan, yellow, orange',
     tone: 'vivid',
     colors: [META_BLUE, '#26C8EE', '#FED61F', '#FF5001'],
+    defaultMix: [0, 1, 2],
   },
   {
     id: 'harmonious',
@@ -65,6 +113,7 @@ export const PALETTE_PACKS: readonly PalettePack[] = [
     hue: 'violet and cyan',
     tone: 'vivid',
     colors: [META_BLUE, '#AE4FC3', '#824DFF', '#1CC5EE', '#4F43FF'],
+    defaultMix: [0, 1, 3],
   },
   {
     id: 'atmospheric',
@@ -74,6 +123,7 @@ export const PALETTE_PACKS: readonly PalettePack[] = [
     hue: 'blue grey',
     tone: 'soft',
     colors: [META_BLUE, '#D6E7EE', '#7CA0B8', '#526069', '#1C2A33'],
+    defaultMix: [0, 1, 4],
   },
   {
     id: 'neutral-flex',
@@ -83,15 +133,17 @@ export const PALETTE_PACKS: readonly PalettePack[] = [
     hue: 'neutral',
     tone: 'light to dark',
     colors: [META_BLUE, '#FFFFFF', '#DAE3EA', '#8D9DAC', '#526069', '#1C2B32', '#000000'],
+    defaultMix: [0, 1, 6],
   },
   {
     id: 'extended-approved',
-    label: 'More approved colors',
+    label: 'Approved colors',
     tier: 'extended',
     source: 'extended-palette-reference.png',
-    hue: 'full approved spectrum',
-    tone: '24-step ramps',
-    colors: EXTENDED_APPROVED_COLORS,
+    hue: 'curated spectrum',
+    tone: 'light to dark',
+    colors: CURATED_APPROVED_COLORS,
+    defaultMix: [0, 7, CURATED_APPROVED_COLORS.length - 1],
   },
 ]
 
@@ -102,11 +154,14 @@ export type ColorMix = {
 }
 
 export function colorMixForPack(pack: PalettePack): ColorMix[] {
-  return pack.colors.map((color, index) => ({
-    color,
-    enabled: index < 3,
-    ratio: index === 0 ? 60 : index < 3 ? 20 : 0,
-  }))
+  return pack.colors.map((color, index) => {
+    const position = pack.defaultMix.indexOf(index)
+    return {
+      color,
+      enabled: position >= 0,
+      ratio: position === 0 ? 60 : position > 0 ? 20 : 0,
+    }
+  })
 }
 
 export function normalizeColorRatios(values: readonly number[], enabled: readonly boolean[]): number[] {
