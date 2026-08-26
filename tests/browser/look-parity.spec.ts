@@ -241,14 +241,15 @@ test('trails keeps exact parity across complexity and aspect', async ({ page }, 
   })
 })
 
-test('pixels remains byte-exact across complexity, seeds, and portrait output', async ({
+test('pixels remains byte-exact across complexity, seeds, and audited aspects', async ({
   page,
 }, testInfo) => {
   await openHarness(page)
   const cases = [
     { width: 320, height: 180, seed: 42, detail: 0.15 },
-    { width: 320, height: 180, seed: 1913, detail: 0.5 },
-    { width: 180, height: 320, seed: 8675309, detail: 0.85 },
+    { width: 180, height: 320, seed: 1913, detail: 0.5 },
+    { width: 240, height: 240, seed: 8675309, detail: 0.85 },
+    { width: 240, height: 300, seed: 42, detail: 0.85 },
   ] as const
   const results: LookParityResult[] = []
   for (const input of cases) {

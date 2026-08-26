@@ -7,12 +7,12 @@ import { chan } from '@/core/organic/random'
 import type { LookColorPlan } from './colorDirection'
 import type { CompositionPlan } from './compositionPlan'
 
-// Pixels owns a normalized, source-independent topology. Complexity chooses
-// the canonical grid once; output resolution only scales it, and motion never
-// enters this planner. That keeps preview/export geometry aligned and lets the
-// painter animate a few bounded overlays without reshuffling the field.
+// Pixels owns a normalized, source-independent topology. Every complexity uses
+// the same coarse attached masses; higher values add fine edge stairs without
+// moving those masses. Output resolution only scales the plan, and motion never
+// enters it, so preview/export geometry and animated topology stay aligned.
 const TAU = Math.PI * 2
-const PLAN_REVISION = 1
+const PLAN_REVISION = 2
 
 export type PixelBlockScale = 'macro' | 'meso' | 'micro'
 export type PixelColorRole = 'dominant' | 'support' | 'accent'
@@ -27,6 +27,16 @@ export type PixelGlitch = {
   phase: number
   secondaryPhase: number
   colorIndex: number
+}
+
+export type PixelAttachment = {
+  angle: number
+  startX: number
+  startY: number
+  endX: number
+  endY: number
+  startRadius: number
+  endRadius: number
 }
 
 export type PixelFieldTile = {
@@ -54,15 +64,19 @@ export type PixelFieldPlan = {
   tiles: readonly PixelFieldTile[]
   masks: {
     active: Uint8Array
+    base: Uint8Array
+    mass: Uint8Array
     protected: Uint8Array
     quiet: Uint8Array
   }
+  attachments: readonly PixelAttachment[]
   quietZone: {
     x: number
     y: number
     radiusX: number
     radiusY: number
     rotation: number
+    attachment: number
   }
   colorHierarchy: {
     ground: number
@@ -77,6 +91,7 @@ export type PixelFieldPlan = {
     quietCellCount: number
     accentArea: number
     glitchArea: number
+    maxGlitchDisplacement: number
     scaleCounts: Record<PixelBlockScale, number>
   }
 }
@@ -178,25 +193,27 @@ function paletteHierarchy(
   }
 }
 
-function gridDimensions(complexity: number, aspect: number): {
+function gridDimensions(aspect: number): {
   columns: number
   rows: number
 } {
-  const longCells = 40 + Math.round(clamp01(complexity) * 40)
+  const longCells = 72
+  const even = (value: number) => Math.max(24, Math.round(value / 2) * 2)
   if (aspect >= 1) {
     return {
       columns: longCells,
-      rows: Math.max(20, Math.round(longCells / aspect)),
+      rows: even(longCells / aspect),
     }
   }
   return {
-    columns: Math.max(20, Math.round(longCells * aspect)),
+    columns: even(longCells * aspect),
     rows: longCells,
   }
 }
 
 function metaSample(u: number, v: number, aspect: number) {
-  const symbolScale = 0.86 * Math.min(
+  const fit = aspect < 0.75 ? 0.8 : 0.86
+  const symbolScale = fit * Math.min(
     aspect / META_SYMBOL_WIDTH,
     1 / META_SYMBOL_HEIGHT,
   )
@@ -207,6 +224,127 @@ function metaSample(u: number, v: number, aspect: number) {
     inside: sample.inside,
     distance: sample.distance * symbolScale,
   }
+}
+
+function movePhysical(
+  point: { x: number; y: number },
+  angle: number,
+  distance: number,
+  aspect: number,
+): { x: number; y: number } {
+  return {
+    x: point.x + Math.cos(angle) * distance / aspect,
+    y: point.y + Math.sin(angle) * distance,
+  }
+}
+
+function metaBoundaryAlong(angle: number, aspect: number): { x: number; y: number } {
+  let boundary = { x: 0.5, y: 0.5 }
+  let found = metaSample(boundary.x, boundary.y, aspect).inside
+  const maximum = Math.hypot(aspect / 2, 0.5)
+  for (let step = 1; step <= 180; step += 1) {
+    const radius = maximum * step / 180
+    const point = movePhysical({ x: 0.5, y: 0.5 }, angle, radius, aspect)
+    if (point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1) break
+    if (!metaSample(point.x, point.y, aspect).inside) continue
+    boundary = point
+    found = true
+  }
+  return found ? boundary : { x: 0.5, y: 0.5 }
+}
+
+function clampPoint(
+  point: { x: number; y: number },
+  margin = 0.025,
+): { x: number; y: number } {
+  return {
+    x: Math.max(margin, Math.min(1 - margin, point.x)),
+    y: Math.max(margin, Math.min(1 - margin, point.y)),
+  }
+}
+
+function buildAttachments(input: PixelFieldInput, aspect: number): PixelAttachment[] {
+  const { seed, composition } = input
+  const fieldAngle = composition?.field.angle
+    ?? chan(seed, 0, 'lab.pixel.field.angle') * TAU
+  const portrait = aspect < 0.72
+  const squareish = aspect >= 0.72 && aspect < 1.15
+  const lean = (chan(seed, 0, 'lab.pixel.attach.lean') - 0.5) * 0.42
+  const angles = portrait
+    ? [-Math.PI / 2 + lean, Math.PI / 2 - lean * 0.72]
+    : squareish
+      ? [fieldAngle, fieldAngle + TAU / 3, fieldAngle + TAU * 2 / 3]
+      : [fieldAngle + lean * 0.4, fieldAngle + Math.PI - lean * 0.55]
+
+  return angles.map((angle, index) => {
+    const boundary = metaBoundaryAlong(angle, aspect)
+    const length = portrait
+      ? 0.235 + chan(seed, index, 'lab.pixel.attach.length') * 0.055
+      : squareish
+        ? 0.075 + chan(seed, index, 'lab.pixel.attach.length') * 0.045
+        : 0.075 + chan(seed, index, 'lab.pixel.attach.length') * 0.05
+    const startRadius = (
+      portrait ? 0.028 : squareish ? 0.034 : 0.038
+    ) + chan(seed, index, 'lab.pixel.attach.radius') * (
+      portrait ? 0.012 : 0.014
+    )
+    const endRadius = startRadius * (
+      0.48 + chan(seed, index, 'lab.pixel.attach.taper') * 0.14
+    )
+    const start = movePhysical(boundary, angle, -startRadius * 0.62, aspect)
+    const end = movePhysical(boundary, angle, length, aspect)
+    const clampedStart = clampPoint(start)
+    const clampedEnd = clampPoint(end)
+    return {
+      angle,
+      startX: clampedStart.x,
+      startY: clampedStart.y,
+      endX: clampedEnd.x,
+      endY: clampedEnd.y,
+      startRadius,
+      endRadius,
+    }
+  })
+}
+
+function attachmentMassAt(
+  attachment: PixelAttachment,
+  u: number,
+  v: number,
+  aspect: number,
+): number {
+  const px = u * aspect
+  const py = v
+  const startX = attachment.startX * aspect
+  const startY = attachment.startY
+  const endX = attachment.endX * aspect
+  const endY = attachment.endY
+  const dx = endX - startX
+  const dy = endY - startY
+  const denominator = dx * dx + dy * dy
+  const progress = denominator > 0
+    ? clamp01(((px - startX) * dx + (py - startY) * dy) / denominator)
+    : 0
+  const closestX = startX + dx * progress
+  const closestY = startY + dy * progress
+  const distance = Math.hypot(px - closestX, py - closestY)
+  const radius = attachment.startRadius
+    + (attachment.endRadius - attachment.startRadius) * progress
+  const normalized = distance / Math.max(0.001, radius)
+  return Math.exp(-(normalized * normalized) * 1.7)
+}
+
+function attachmentInfluence(
+  attachments: readonly PixelAttachment[],
+  u: number,
+  v: number,
+  aspect: number,
+): number {
+  let influence = 0
+  for (const attachment of attachments) {
+    influence = Math.max(influence, attachmentMassAt(attachment, u, v, aspect))
+  }
+  return influence
 }
 
 function floodExterior(
@@ -249,87 +387,52 @@ function floodExterior(
   return exterior
 }
 
-function quietZoneCandidates(
+function resolveQuietZone(
   input: PixelFieldInput,
   aspect: number,
-): QuietZone[] {
-  const { seed, composition } = input
-  const radiusY = 0.12 + chan(seed, 0, 'lab.pixel.quiet.radius') * 0.055
-  const stretch = 1.15 + chan(seed, 1, 'lab.pixel.quiet.radius') * 0.48
-  const radiusX = Math.min(0.26, radiusY * stretch / Math.max(0.62, aspect))
-  const rotation = (composition?.field.angle ?? chan(seed, 0, 'lab.pixel.quiet.angle') * TAU)
-    + Math.PI / 2
-  const candidates: QuietZone[] = []
-
-  for (const shape of composition?.quietShapes ?? []) {
-    candidates.push({
-      x: shape.x,
-      y: shape.y,
-      radiusX: Math.max(radiusX, Math.min(0.28, shape.radiusX * 0.82)),
-      radiusY: Math.max(radiusY, Math.min(0.22, shape.radiusY * 0.9)),
-      rotation: shape.rotation,
-    })
+  attachments: readonly PixelAttachment[],
+): QuietZone {
+  const { seed } = input
+  const attachmentIndex = Math.min(
+    attachments.length - 1,
+    Math.floor(chan(seed, 0, 'lab.pixel.quiet.attachment') * attachments.length),
+  )
+  const attachment = attachments[Math.max(0, attachmentIndex)]
+  const progress = 0.5 + chan(seed, 0, 'lab.pixel.quiet.progress') * 0.18
+  const center = {
+    x: attachment.startX + (attachment.endX - attachment.startX) * progress,
+    y: attachment.startY + (attachment.endY - attachment.startY) * progress,
   }
-
-  const angle = composition?.field.angle ?? chan(seed, 0, 'lab.pixel.quiet.angle') * TAU
-  for (let index = 0; index < 8; index += 1) {
-    const theta = angle + index * TAU / 8
-    const distance = 0.29 + (index % 2) * 0.055
-    candidates.push({
-      x: 0.5 + Math.cos(theta) * distance / Math.max(1, aspect * 0.86),
-      y: 0.5 + Math.sin(theta) * distance,
-      radiusX,
-      radiusY,
-      rotation,
-    })
+  const side = chan(seed, 0, 'lab.pixel.quiet.side') < 0.5 ? -1 : 1
+  const physicalRadius = (
+    0.075 + chan(seed, 0, 'lab.pixel.quiet.radius') * 0.02
+  ) * Math.min(1, aspect)
+  const offsetCenter = movePhysical(
+    center,
+    attachment.angle + side * Math.PI / 2,
+    physicalRadius * 0.88,
+    aspect,
+  )
+  const radiusX = physicalRadius / aspect
+  const radiusY = physicalRadius * (
+    0.68 + chan(seed, 1, 'lab.pixel.quiet.radius') * 0.14
+  )
+  return {
+    x: Math.max(radiusX + 0.02, Math.min(1 - radiusX - 0.02, offsetCenter.x)),
+    y: Math.max(radiusY + 0.02, Math.min(1 - radiusY - 0.02, offsetCenter.y)),
+    radiusX,
+    radiusY,
+    rotation: attachment.angle,
+    attachment: Math.max(0, attachmentIndex),
   }
-  return candidates
 }
 
-function quietZoneScore(zone: QuietZone, aspect: number, seed: number, id: number): number {
-  let overlap = 0
-  const samples = 24
-  for (let index = 0; index < samples; index += 1) {
-    const theta = index * TAU / samples
-    const cos = Math.cos(zone.rotation)
-    const sin = Math.sin(zone.rotation)
-    const localX = Math.cos(theta) * zone.radiusX * 0.72
-    const localY = Math.sin(theta) * zone.radiusY * 0.72
-    const x = zone.x + localX * cos - localY * sin
-    const y = zone.y + localX * sin + localY * cos
-    if (metaSample(x, y, aspect).inside) overlap += 1
-  }
-  const edgePenalty = (
-    Math.max(0, zone.radiusX + 0.025 - zone.x)
-    + Math.max(0, zone.x + zone.radiusX + 0.025 - 1)
-    + Math.max(0, zone.radiusY + 0.025 - zone.y)
-    + Math.max(0, zone.y + zone.radiusY + 0.025 - 1)
-  ) * 20
-  return overlap / samples + edgePenalty + chan(seed, id, 'lab.pixel.quiet.tie') * 0.015
-}
-
-function resolveQuietZone(input: PixelFieldInput, aspect: number): QuietZone {
-  const candidates = quietZoneCandidates(input, aspect)
-  return candidates
-    .map((zone, index) => ({
-      zone: {
-        ...zone,
-        x: Math.max(zone.radiusX + 0.025, Math.min(1 - zone.radiusX - 0.025, zone.x)),
-        y: Math.max(zone.radiusY + 0.025, Math.min(1 - zone.radiusY - 0.025, zone.y)),
-      },
-      index,
-    }))
-    .sort((a, b) =>
-      quietZoneScore(a.zone, aspect, input.seed, a.index)
-      - quietZoneScore(b.zone, aspect, input.seed, b.index))[0].zone
-}
-
-function inQuietZone(u: number, v: number, zone: QuietZone): boolean {
+function inQuietZone(u: number, v: number, zone: QuietZone, aspect: number): boolean {
   const cos = Math.cos(zone.rotation)
   const sin = Math.sin(zone.rotation)
-  const dx = u - zone.x
+  const dx = (u - zone.x) * aspect
   const dy = v - zone.y
-  const x = (dx * cos + dy * sin) / zone.radiusX
+  const x = (dx * cos + dy * sin) / (zone.radiusX * aspect)
   const y = (-dx * sin + dy * cos) / zone.radiusY
   return x * x + y * y <= 1
 }
@@ -338,33 +441,14 @@ function massAt(
   input: PixelFieldInput,
   u: number,
   v: number,
-  quietZone: QuietZone,
+  attachments: readonly PixelAttachment[],
 ): number {
   const { seed, composition } = input
   const aspect = Math.max(0.25, Math.min(4, input.aspect))
   const meta = metaSample(u, v, aspect)
-  const halo = meta.inside ? 1 : Math.exp(-((meta.distance / 0.075) ** 2))
-  let cluster = 0
-  const anchors = composition?.anchors ?? [{
-    x: 0.5,
-    y: 0.5,
-    radius: 0.3,
-    strength: 1,
-    angle: 0,
-  }]
-  for (const anchor of anchors) {
-    const dx = (u - anchor.x) * aspect
-    const dy = v - anchor.y
-    const radius = 0.18 + anchor.radius * 0.72
-    const distance = (dx * dx + dy * dy) / Math.max(0.001, radius * radius)
-    cluster = Math.max(cluster, Math.exp(-distance * 1.65) * anchor.strength)
-  }
-
-  const quietDx = (u - quietZone.x) * aspect
-  const quietDy = v - quietZone.y
-  const quietRingDistance = Math.hypot(quietDx, quietDy)
-  const quietRingOffset = (quietRingDistance - 0.2) / 0.105
-  const quietRing = Math.exp(-(quietRingOffset * quietRingOffset)) * 0.72
+  const haloScale = aspect < 0.72 ? 0.034 : aspect < 1.15 ? 0.042 : 0.047
+  const halo = meta.inside ? 1 : Math.exp(-((meta.distance / haloScale) ** 2))
+  const attached = attachmentInfluence(attachments, u, v, aspect)
   const angle = composition?.field.angle ?? chan(seed, 0, 'lab.pixel.field.angle') * TAU
   const phase = composition?.field.phase ?? chan(seed, 0, 'lab.pixel.field.phase') * TAU
   const along = (u - 0.5) * Math.cos(angle) + (v - 0.5) * Math.sin(angle)
@@ -373,7 +457,7 @@ function massAt(
     Math.sin((along * 1.7 + across * 0.72) * TAU + phase)
     + Math.sin((along * -0.63 + across * 2.15) * TAU - phase * 0.61) * 0.45
   ) / 1.45
-  return Math.max(halo * 0.96, cluster, quietRing) + wave * 0.105
+  return Math.max(halo * 0.96, attached) * (0.95 + wave * 0.05)
 }
 
 function fullyActive(
@@ -398,12 +482,14 @@ function candidateLists(
   columns: number,
   rows: number,
   seed: number,
+  complexity: number,
 ): Map<number, GridCandidate[]> {
   const result = new Map<number, GridCandidate[]>()
+  const step = complexity < 0.34 ? 2 : 1
   for (const size of [6, 4, 2]) {
     const candidates: GridCandidate[] = []
-    for (let row = 0; row <= rows - size; row += 1) {
-      for (let column = 0; column <= columns - size; column += 1) {
+    for (let row = 0; row <= rows - size; row += step) {
+      for (let column = 0; column <= columns - size; column += step) {
         if (!fullyActive(active, columns, rows, column, row, size)) continue
         const id = row * columns + column + size * 0x10000
         candidates.push({
@@ -422,9 +508,7 @@ function candidateLists(
 
 function forcedScaleCandidates(
   lists: Map<number, GridCandidate[]>,
-  complexity: number,
 ): GridCandidate[] {
-  if (complexity < 0.34) return []
   const forced: GridCandidate[] = []
   for (const size of [6, 4, 2]) {
     const candidate = lists.get(size)?.find((item) =>
@@ -518,15 +602,16 @@ function buildTiles(
   hierarchy: PixelFieldPlan['colorHierarchy'],
 ): PixelFieldTile[] {
   const covered = new Uint8Array(active.length)
-  const lists = candidateLists(active, columns, rows, input.seed)
-  const forced = forcedScaleCandidates(lists, input.complexity)
+  const lists = candidateLists(active, columns, rows, input.seed, input.complexity)
+  const forced = forcedScaleCandidates(lists)
   const forcedKeys = new Set(forced.map((item) =>
     `${item.column}:${item.row}:${item.size}`))
   const tiles: PixelFieldTile[] = []
+  const complexity = clamp01(input.complexity)
   const sizeChances: Record<number, number> = {
-    6: 0.6 - clamp01(input.complexity) * 0.2,
-    4: 0.62 - clamp01(input.complexity) * 0.14,
-    2: 0.72 - clamp01(input.complexity) * 0.12,
+    6: 0.72 - complexity * 0.44,
+    4: 0.86 - complexity * 0.3,
+    2: complexity < 0.34 ? 1 : 0.82,
   }
 
   const available = (candidate: GridCandidate) => {
@@ -641,15 +726,13 @@ function alternateColor(
 function applyGlitches(
   tiles: PixelFieldTile[],
   input: PixelFieldInput,
-  columns: number,
-  rows: number,
   hierarchy: PixelFieldPlan['colorHierarchy'],
-): number {
-  const targetCount = 1 + Math.round(clamp01(input.complexity) * 5)
+): { area: number; maxDisplacement: number } {
+  const complexity = clamp01(input.complexity)
+  const targetCount = complexity < 0.34 ? 0 : complexity < 0.67 ? 2 : 5
   const candidates = tiles
     .filter((tile) =>
       !tile.protected
-      && tile.role !== 'accent'
       && tile.scale !== 'macro'
       && tile.edgeExposure > 0)
     .map((tile) => ({
@@ -659,17 +742,28 @@ function applyGlitches(
     }))
     .sort((a, b) => b.score - a.score || a.tile.id - b.tile.id)
   let area = 0
-  for (const { tile } of candidates.slice(0, targetCount)) {
+  let maxDisplacement = 0
+  let count = 0
+  for (const { tile } of candidates) {
+    if (count >= targetCount) break
     const horizontal = chan(input.seed, tile.id, 'lab.pixel.glitch.axis') >= 0.5
     const direction = chan(input.seed, tile.id, 'lab.pixel.glitch.direction') >= 0.5 ? 1 : -1
-    const unit = horizontal ? 1 / columns : 1 / rows
-    const maxOffset = unit * (0.55 + chan(input.seed, tile.id, 'lab.pixel.glitch.offset') * 0.7)
+    const aspect = Math.max(0.25, Math.min(4, input.aspect))
+    const normalizedLimit = horizontal
+      ? 0.0078 / Math.max(1, aspect)
+      : 0.0078 / Math.max(1, 1 / aspect)
+    const maxOffset = normalizedLimit * (
+      0.55 + chan(input.seed, tile.id, 'lab.pixel.glitch.offset') * 0.4
+    )
+    const bandSize = 0.24 + chan(input.seed, tile.id, 'lab.pixel.glitch.size') * 0.28
+    const glitchArea = tile.width * tile.height * bandSize
+    if (area + glitchArea > 0.035) continue
     tile.glitch = {
       axis: horizontal ? 'x' : 'y',
       direction,
       maxOffset,
       bandStart: 0.12 + chan(input.seed, tile.id, 'lab.pixel.glitch.band') * 0.42,
-      bandSize: 0.24 + chan(input.seed, tile.id, 'lab.pixel.glitch.size') * 0.28,
+      bandSize,
       harmonic: (1 + Math.floor(
         chan(input.seed, tile.id, 'lab.pixel.glitch.harmonic') * 3,
       )) as 1 | 2 | 3,
@@ -677,9 +771,16 @@ function applyGlitches(
       secondaryPhase: chan(input.seed, tile.id, 'lab.pixel.glitch.secondary') * TAU,
       colorIndex: alternateColor(hierarchy, tile.colorIndex, input.seed, tile.id),
     }
-    area += tile.width * tile.height * tile.glitch.bandSize
+    area += glitchArea
+    maxDisplacement = Math.max(
+      maxDisplacement,
+      horizontal
+        ? maxOffset * Math.max(1, aspect)
+        : maxOffset * Math.max(1, 1 / aspect),
+    )
+    count += 1
   }
-  return area
+  return { area, maxDisplacement }
 }
 
 export function resolvePixelGlitchFrame(
@@ -706,28 +807,113 @@ export function resolvePixelGlitchFrame(
   }
 }
 
+function hasNeighbor(
+  mask: Uint8Array,
+  columns: number,
+  rows: number,
+  column: number,
+  row: number,
+): boolean {
+  for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+    for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+      if (offsetX === 0 && offsetY === 0) continue
+      const x = column + offsetX
+      const y = row + offsetY
+      if (x >= 0 && x < columns && y >= 0 && y < rows && mask[y * columns + x]) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+function retainAttached(
+  active: Uint8Array,
+  protectedMask: Uint8Array,
+  columns: number,
+  rows: number,
+): void {
+  const attached = new Uint8Array(active.length)
+  const queue = new Int32Array(active.length)
+  let read = 0
+  let write = 0
+  for (let index = 0; index < active.length; index += 1) {
+    if (!active[index] || !protectedMask[index]) continue
+    attached[index] = 1
+    queue[write] = index
+    write += 1
+  }
+  while (read < write) {
+    const index = queue[read]
+    read += 1
+    const column = index % columns
+    const row = Math.floor(index / columns)
+    for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+      for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+        if (offsetX === 0 && offsetY === 0) continue
+        const x = column + offsetX
+        const y = row + offsetY
+        if (x < 0 || x >= columns || y < 0 || y >= rows) continue
+        const neighbor = y * columns + x
+        if (!active[neighbor] || attached[neighbor]) continue
+        attached[neighbor] = 1
+        queue[write] = neighbor
+        write += 1
+      }
+    }
+  }
+  for (let index = 0; index < active.length; index += 1) {
+    if (!attached[index]) active[index] = 0
+  }
+}
+
+function expandCoarseMask(
+  coarse: Uint8Array,
+  coarseColumns: number,
+  coarseRows: number,
+  columns: number,
+): Uint8Array {
+  const expanded = new Uint8Array(columns * coarseRows * 2)
+  for (let row = 0; row < coarseRows; row += 1) {
+    for (let column = 0; column < coarseColumns; column += 1) {
+      if (!coarse[row * coarseColumns + column]) continue
+      const x = column * 2
+      const y = row * 2
+      expanded[y * columns + x] = 1
+      expanded[y * columns + x + 1] = 1
+      expanded[(y + 1) * columns + x] = 1
+      expanded[(y + 1) * columns + x + 1] = 1
+    }
+  }
+  return expanded
+}
+
 export function planPixelField(input: PixelFieldInput): PixelFieldPlan {
   const complexity = clamp01(input.complexity)
   const aspect = Math.max(0.25, Math.min(4, input.aspect))
   const normalizedInput = { ...input, complexity, aspect }
-  const { columns, rows } = gridDimensions(complexity, aspect)
-  const quietZone = resolveQuietZone(normalizedInput, aspect)
-  const protectedMask = new Uint8Array(columns * rows)
-  const quietMask = new Uint8Array(columns * rows)
-  const active = new Uint8Array(columns * rows)
+  const { columns, rows } = gridDimensions(aspect)
+  const attachments = buildAttachments(normalizedInput, aspect)
+  const quietZone = resolveQuietZone(normalizedInput, aspect, attachments)
+  const coarseColumns = columns / 2
+  const coarseRows = rows / 2
+  const coarseProtected = new Uint8Array(coarseColumns * coarseRows)
+  const coarseMass = new Uint8Array(coarseProtected.length)
+  const coarseBase = new Uint8Array(coarseProtected.length)
+  const coarseQuiet = new Uint8Array(coarseProtected.length)
 
-  for (let row = 0; row < rows; row += 1) {
-    for (let column = 0; column < columns; column += 1) {
-      const index = row * columns + column
-      const u = (column + 0.5) / columns
-      const v = (row + 0.5) / rows
-      if (metaSample(u, v, aspect).inside) protectedMask[index] = 1
+  for (let row = 0; row < coarseRows; row += 1) {
+    for (let column = 0; column < coarseColumns; column += 1) {
+      const index = row * coarseColumns + column
+      const u = (column + 0.5) / coarseColumns
+      const v = (row + 0.5) / coarseRows
+      if (metaSample(u, v, aspect).inside) coarseProtected[index] = 1
     }
   }
-  const exterior = floodExterior(protectedMask, columns, rows)
-  const silhouetteVoid = new Uint8Array(active.length)
-  for (let index = 0; index < silhouetteVoid.length; index += 1) {
-    silhouetteVoid[index] = protectedMask[index] || exterior[index] ? 0 : 1
+  const exterior = floodExterior(coarseProtected, coarseColumns, coarseRows)
+  const coarseVoid = new Uint8Array(coarseProtected.length)
+  for (let index = 0; index < coarseVoid.length; index += 1) {
+    coarseVoid[index] = coarseProtected[index] || exterior[index] ? 0 : 1
   }
 
   const neighborProtected = (column: number, row: number) => {
@@ -737,35 +923,87 @@ export function planPixelField(input: PixelFieldInput): PixelFieldPlan {
         const y = row + offsetY
         if (
           x >= 0
-          && x < columns
+          && x < coarseColumns
           && y >= 0
-          && y < rows
-          && protectedMask[y * columns + x]
+          && y < coarseRows
+          && coarseProtected[y * coarseColumns + x]
         ) return true
       }
     }
     return false
   }
 
-  for (let row = 0; row < rows; row += 1) {
-    for (let column = 0; column < columns; column += 1) {
-      const index = row * columns + column
-      const u = (column + 0.5) / columns
-      const v = (row + 0.5) / rows
-      const protectedCell = protectedMask[index] === 1
+  for (let row = 0; row < coarseRows; row += 1) {
+    for (let column = 0; column < coarseColumns; column += 1) {
+      const index = row * coarseColumns + column
+      const u = (column + 0.5) / coarseColumns
+      const v = (row + 0.5) / coarseRows
+      const protectedCell = coarseProtected[index] === 1
+      const attachment = attachmentInfluence(attachments, u, v, aspect)
       const guardedVoid = !protectedCell && (
-        silhouetteVoid[index] === 1 || neighborProtected(column, row)
+        coarseVoid[index] === 1
+        || (neighborProtected(column, row) && attachment < 0.48)
       )
-      const quiet = !protectedCell && inQuietZone(u, v, quietZone)
-      if (quiet) quietMask[index] = 1
+      const quiet = !protectedCell
+        && attachment < 0.4
+        && inQuietZone(u, v, quietZone, aspect)
       if (protectedCell) {
-        active[index] = 1
+        coarseMass[index] = 1
+        coarseBase[index] = 1
         continue
       }
-      if (guardedVoid || quiet) continue
-      const threshold = 0.31 + (1 - complexity) * 0.04
-      if (massAt(normalizedInput, u, v, quietZone) >= threshold) active[index] = 1
+      if (quiet) {
+        coarseQuiet[index] = 1
+        coarseMass[index] = 1
+        continue
+      }
+      if (guardedVoid) continue
+      if (massAt(normalizedInput, u, v, attachments) < 0.34) continue
+      coarseMass[index] = 1
+      if (!quiet) coarseBase[index] = 1
     }
+  }
+
+  const protectedMask = expandCoarseMask(
+    coarseProtected,
+    coarseColumns,
+    coarseRows,
+    columns,
+  )
+  const massMask = expandCoarseMask(coarseMass, coarseColumns, coarseRows, columns)
+  const quietMask = expandCoarseMask(coarseQuiet, coarseColumns, coarseRows, columns)
+  const voidMask = expandCoarseMask(coarseVoid, coarseColumns, coarseRows, columns)
+  const base = expandCoarseMask(coarseBase, coarseColumns, coarseRows, columns)
+  retainAttached(base, protectedMask, columns, rows)
+  const active = base.slice()
+  const detailAmount = clamp01((complexity - 0.28) / 0.57)
+  if (detailAmount > 0) {
+    const coarseSnapshot = active.slice()
+    for (let row = 0; row < rows; row += 1) {
+      for (let column = 0; column < columns; column += 1) {
+        const index = row * columns + column
+        if (
+          active[index]
+          || quietMask[index]
+          || voidMask[index]
+          || !hasNeighbor(coarseSnapshot, columns, rows, column, row)
+        ) continue
+        const u = (column + 0.5) / columns
+        const v = (row + 0.5) / rows
+        const meta = metaSample(u, v, aspect)
+        const score = massAt(normalizedInput, u, v, attachments)
+        const exactEdge = meta.inside || score >= 0.34
+        const nearEdge = score >= 0.275
+        if (!exactEdge && !nearEdge) continue
+        const chance = exactEdge
+          ? 0.28 + detailAmount * 0.7
+          : detailAmount * 0.2
+        if (chan(input.seed, index, 'lab.pixel.edge.stair') >= chance) continue
+        active[index] = 1
+        if (meta.inside) protectedMask[index] = 1
+      }
+    }
+    retainAttached(active, protectedMask, columns, rows)
   }
 
   const hierarchy = paletteHierarchy(input.paletteSize, input.colorPlan)
@@ -778,13 +1016,7 @@ export function planPixelField(input: PixelFieldInput): PixelFieldPlan {
     hierarchy,
   )
   const accentArea = applyEdgeAccents(tiles, normalizedInput, hierarchy)
-  const glitchArea = applyGlitches(
-    tiles,
-    normalizedInput,
-    columns,
-    rows,
-    hierarchy,
-  )
+  const glitches = applyGlitches(tiles, normalizedInput, hierarchy)
   const scaleCounts: Record<PixelBlockScale, number> = {
     macro: 0,
     meso: 0,
@@ -797,7 +1029,14 @@ export function planPixelField(input: PixelFieldInput): PixelFieldPlan {
     columns,
     rows,
     tiles,
-    masks: { active, protected: protectedMask, quiet: quietMask },
+    masks: {
+      active,
+      base,
+      mass: massMask,
+      protected: protectedMask,
+      quiet: quietMask,
+    },
+    attachments,
     quietZone,
     colorHierarchy: hierarchy,
     diagnostics: {
@@ -805,7 +1044,8 @@ export function planPixelField(input: PixelFieldInput): PixelFieldPlan {
       protectedCellCount: protectedMask.reduce((sum, value) => sum + value, 0),
       quietCellCount: quietMask.reduce((sum, value) => sum + value, 0),
       accentArea,
-      glitchArea,
+      glitchArea: glitches.area,
+      maxGlitchDisplacement: glitches.maxDisplacement,
       scaleCounts,
     },
   }

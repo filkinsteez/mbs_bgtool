@@ -1,10 +1,11 @@
 import { expect, test, type Page } from '@playwright/test'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import {
   BACKGROUND_AUTOSAVE_KEY,
   createDefaultBackgroundRecipe,
   dimensionsFor,
   type BackgroundRecipeV2,
+  type FixedAspectId,
 } from '../../src/features/background-generator/recipe'
 
 const ARTIFACT_DIR = '/tmp/mbs-pixels-audit'
@@ -17,7 +18,7 @@ const COMPLEXITIES = [
 function pixelRecipe(
   seed: number,
   detail = 0.5,
-  aspect: '16:9' | '9:16' = '16:9',
+  aspect: FixedAspectId = '16:9',
 ): BackgroundRecipeV2 {
   const recipe = createDefaultBackgroundRecipe(seed)
   recipe.look = { id: 'pixels', detail }
@@ -86,65 +87,76 @@ test('Pixels motion varies while closing its loop exactly', async ({ page }) => 
 test('renders the Pixels visual and 4K performance audit', async ({
   browser,
 }, testInfo) => {
+  test.setTimeout(180_000)
   test.skip(
     process.env.PIXELS_LOOK_AUDIT !== '1',
     'Run explicitly with PIXELS_LOOK_AUDIT=1 for visual and performance artifacts.',
   )
+  await rm(ARTIFACT_DIR, { recursive: true, force: true })
   await mkdir(ARTIFACT_DIR, { recursive: true })
-  const variants = [
-    { seed: 42, aspect: '16:9' as const },
-    { seed: 1913, aspect: '16:9' as const },
-    { seed: 8675309, aspect: '9:16' as const },
-  ]
-  const samples: { label: string; src: string }[] = []
+  const aspects = ['16:9', '9:16', '1:1', '4:5'] as const
+  const seeds = [42, 1913, 8675309] as const
+  const samples: { aspect: FixedAspectId; label: string; src: string }[] = []
 
-  for (const variant of variants) {
-    for (const complexity of COMPLEXITIES) {
-      const recipe = pixelRecipe(variant.seed, complexity.value, variant.aspect)
-      const context = await browser.newContext()
-      const page = await context.newPage()
-      await page.addInitScript(({ savedRecipe, autosaveKey }) => {
-        localStorage.clear()
-        localStorage.setItem(autosaveKey, JSON.stringify(savedRecipe))
-      }, { savedRecipe: recipe, autosaveKey: BACKGROUND_AUTOSAVE_KEY })
-      await page.goto('/')
-      const canvas = await waitForPixelCanvas(page)
-      const src = await canvas.evaluate(
-        (element: HTMLCanvasElement) => element.toDataURL('image/png'),
-      )
-      const label = `seed-${variant.seed}-${variant.aspect.replace(':', 'x')}-${complexity.label}`
-      await writeFile(
-        `${ARTIFACT_DIR}/pixels-${label}.png`,
-        Buffer.from(src.split(',')[1], 'base64'),
-      )
-      samples.push({ label, src })
-      await context.close()
+  for (const aspect of aspects) {
+    for (const seed of seeds) {
+      for (const complexity of COMPLEXITIES) {
+        const recipe = pixelRecipe(seed, complexity.value, aspect)
+        const context = await browser.newContext()
+        const page = await context.newPage()
+        await page.addInitScript(({ savedRecipe, autosaveKey }) => {
+          localStorage.clear()
+          localStorage.setItem(autosaveKey, JSON.stringify(savedRecipe))
+        }, { savedRecipe: recipe, autosaveKey: BACKGROUND_AUTOSAVE_KEY })
+        await page.goto('/')
+        const canvas = await waitForPixelCanvas(page)
+        const src = await canvas.evaluate(
+          (element: HTMLCanvasElement) => element.toDataURL('image/png'),
+        )
+        const fileLabel = `seed-${seed}-${aspect.replace(':', 'x')}-${complexity.label}`
+        await writeFile(
+          `${ARTIFACT_DIR}/pixels-${fileLabel}.png`,
+          Buffer.from(src.split(',')[1], 'base64'),
+        )
+        samples.push({
+          aspect,
+          label: `seed ${seed} · ${complexity.label} · ${aspect}`,
+          src,
+        })
+        await context.close()
+      }
     }
   }
 
   const sheetContext = await browser.newContext()
   const sheetPage = await sheetContext.newPage()
-  const sheetUrl = await sheetPage.evaluate(async (items) => {
+  const renderSheet = async (
+    items: { label: string; src: string }[],
+    adaptiveHeight: boolean,
+  ) => sheetPage.evaluate(async ({ entries, adaptive }) => {
     const load = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => {
       const image = new Image()
       image.onload = () => resolve(image)
       image.onerror = reject
       image.src = src
     })
-    const images = await Promise.all(items.map((item) => load(item.src)))
+    const images = await Promise.all(entries.map((item) => load(item.src)))
     const columns = 3
-    const tileWidth = 480
-    const tileHeight = 340
+    const tileWidth = adaptive ? 400 : 360
+    const imageHeight = adaptive
+      ? Math.round(tileWidth * images[0].height / images[0].width)
+      : 270
     const titleHeight = 30
+    const tileHeight = imageHeight + titleHeight
     const output = document.createElement('canvas')
     output.width = columns * tileWidth
-    output.height = Math.ceil(items.length / columns) * tileHeight
+    output.height = Math.ceil(entries.length / columns) * tileHeight
     const context = output.getContext('2d')!
     context.fillStyle = '#101114'
     context.fillRect(0, 0, output.width, output.height)
     context.font = '600 15px system-ui, sans-serif'
     context.textBaseline = 'middle'
-    items.forEach((item, index) => {
+    entries.forEach((item, index) => {
       const column = index % columns
       const row = Math.floor(index / columns)
       const x = column * tileWidth
@@ -152,26 +164,39 @@ test('renders the Pixels visual and 4K performance audit', async ({
       context.fillStyle = '#FFFFFF'
       context.fillText(item.label, x + 12, y + titleHeight / 2)
       const image = images[index]
-      const scale = Math.min(
-        tileWidth / image.width,
-        (tileHeight - titleHeight) / image.height,
-      )
+      const scale = Math.min(tileWidth / image.width, imageHeight / image.height)
       const width = image.width * scale
       const height = image.height * scale
       context.drawImage(
         image,
         x + (tileWidth - width) / 2,
-        y + titleHeight + (tileHeight - titleHeight - height) / 2,
+        y + titleHeight + (imageHeight - height) / 2,
         width,
         height,
       )
     })
     return output.toDataURL('image/png')
-  }, samples)
-  const sheet = Buffer.from(sheetUrl.split(',')[1], 'base64')
-  await writeFile(`${ARTIFACT_DIR}/pixels-contact-sheet.png`, sheet)
+  }, { entries: items, adaptive: adaptiveHeight })
+
+  for (const aspect of aspects) {
+    const aspectItems = samples.filter((sample) => sample.aspect === aspect)
+    const sheetUrl = await renderSheet(aspectItems, true)
+    const sheet = Buffer.from(sheetUrl.split(',')[1], 'base64')
+    const aspectLabel = aspect.replace(':', 'x')
+    await writeFile(
+      `${ARTIFACT_DIR}/pixels-contact-sheet-${aspectLabel}.png`,
+      sheet,
+    )
+    await testInfo.attach(`pixels-contact-sheet-${aspectLabel}`, {
+      body: sheet,
+      contentType: 'image/png',
+    })
+  }
+  const overviewUrl = await renderSheet(samples, false)
+  const overview = Buffer.from(overviewUrl.split(',')[1], 'base64')
+  await writeFile(`${ARTIFACT_DIR}/pixels-contact-sheet.png`, overview)
   await testInfo.attach('pixels-contact-sheet', {
-    body: sheet,
+    body: overview,
     contentType: 'image/png',
   })
   await sheetContext.close()

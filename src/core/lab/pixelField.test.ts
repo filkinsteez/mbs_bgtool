@@ -71,6 +71,53 @@ function largestConnectedRegion(mask: Uint8Array, columns: number, rows: number)
   return largest
 }
 
+function everyRegionTouches(
+  mask: Uint8Array,
+  target: Uint8Array,
+  columns: number,
+  rows: number,
+): boolean {
+  const visited = new Uint8Array(mask.length)
+  for (let start = 0; start < mask.length; start += 1) {
+    if (!mask[start] || visited[start]) continue
+    const queue = [start]
+    visited[start] = 1
+    let touches = false
+    for (let read = 0; read < queue.length; read += 1) {
+      const index = queue[read]
+      if (target[index]) touches = true
+      const column = index % columns
+      const row = Math.floor(index / columns)
+      for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+        for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+          if (offsetX === 0 && offsetY === 0) continue
+          const x = column + offsetX
+          const y = row + offsetY
+          if (x < 0 || x >= columns || y < 0 || y >= rows) continue
+          const neighbor = y * columns + x
+          if (!mask[neighbor] || visited[neighbor]) continue
+          visited[neighbor] = 1
+          queue.push(neighbor)
+        }
+      }
+    }
+    if (!touches) return false
+  }
+  return true
+}
+
+function rowBounds(mask: Uint8Array, columns: number): { minimum: number; maximum: number } {
+  let minimum = Number.POSITIVE_INFINITY
+  let maximum = Number.NEGATIVE_INFINITY
+  for (let index = 0; index < mask.length; index += 1) {
+    if (!mask[index]) continue
+    const row = Math.floor(index / columns)
+    minimum = Math.min(minimum, row)
+    maximum = Math.max(maximum, row)
+  }
+  return { minimum, maximum }
+}
+
 describe('adaptive pixel field', () => {
   it('is deterministic, seeded, and resolution-independent', () => {
     const first = planPixelField(input(1913, 0.5, 3840 / 2160))
@@ -93,14 +140,38 @@ describe('adaptive pixel field', () => {
   })
 
   it('builds connected macro masses instead of scattered mosaic noise', () => {
+    for (const aspect of [16 / 9, 9 / 16, 1, 4 / 5]) {
+      for (const seed of [42, 1913, 8675309]) {
+        const plan = planPixelField(input(seed, 0.5, aspect))
+        expect(everyRegionTouches(
+          plan.masks.active,
+          plan.masks.protected,
+          plan.columns,
+          plan.rows,
+        )).toBe(true)
+        if (aspect === 16 / 9) {
+          const largest = largestConnectedRegion(
+            plan.masks.active,
+            plan.columns,
+            plan.rows,
+          )
+          expect(largest / plan.diagnostics.activeCellCount).toBeGreaterThan(0.55)
+        }
+      }
+    }
+  })
+
+  it('extends attached portrait structure vertically while keeping the whole mark visible', () => {
     for (const seed of [42, 1913, 8675309]) {
-      const plan = planPixelField(input(seed, 0.5))
-      const largest = largestConnectedRegion(
-        plan.masks.active,
-        plan.columns,
-        plan.rows,
-      )
-      expect(largest / plan.diagnostics.activeCellCount).toBeGreaterThan(0.55)
+      const plan = planPixelField(input(seed, 0.85, 9 / 16))
+      const active = rowBounds(plan.masks.active, plan.columns)
+      const protectedRows = rowBounds(plan.masks.protected, plan.columns)
+
+      expect(protectedRows.minimum).toBeGreaterThan(0)
+      expect(protectedRows.maximum).toBeLessThan(plan.rows - 1)
+      expect(active.minimum).toBeLessThanOrEqual(protectedRows.minimum - 6)
+      expect(active.maximum).toBeGreaterThanOrEqual(protectedRows.maximum + 6)
+      expect(active.maximum - active.minimum).toBeGreaterThan(plan.rows * 0.5)
     }
   })
 
@@ -119,39 +190,55 @@ describe('adaptive pixel field', () => {
   })
 
   it('reserves one deliberate contiguous negative-space region', () => {
-    const plan = planPixelField(input(42, 0.5))
-    const largest = largestConnectedRegion(
-      plan.masks.quiet,
-      plan.columns,
-      plan.rows,
-    )
+    for (const aspect of [16 / 9, 9 / 16, 1, 4 / 5]) {
+      const plan = planPixelField(input(42, 0.5, aspect))
+      const largest = largestConnectedRegion(
+        plan.masks.quiet,
+        plan.columns,
+        plan.rows,
+      )
+      let massOverlap = 0
 
-    expect(plan.diagnostics.quietCellCount).toBeGreaterThan(20)
-    expect(largest / plan.diagnostics.quietCellCount).toBeGreaterThan(0.88)
-    for (let index = 0; index < plan.masks.quiet.length; index += 1) {
-      if (plan.masks.quiet[index]) expect(plan.masks.active[index]).toBe(0)
+      expect(plan.diagnostics.quietCellCount).toBeGreaterThan(8)
+      expect(largest / plan.diagnostics.quietCellCount).toBeGreaterThan(0.7)
+      expect(plan.quietZone.attachment).toBeLessThan(plan.attachments.length)
+      for (let index = 0; index < plan.masks.quiet.length; index += 1) {
+        if (!plan.masks.quiet[index]) continue
+        expect(plan.masks.active[index]).toBe(0)
+        if (plan.masks.mass[index]) massOverlap += 1
+      }
+      expect(massOverlap).toBeGreaterThan(0)
     }
   })
 
   it('keeps accents sparse and glitches bounded to exposed small blocks', () => {
-    const plan = planPixelField(input(8675309, 0.85))
+    const planInput = input(8675309, 0.85)
+    const plan = planPixelField(planInput)
     const accents = plan.tiles.filter((tile) => tile.role === 'accent')
-    const glitches = plan.tiles.filter((tile) => tile.glitch)
 
     expect(accents.length).toBeGreaterThan(0)
     expect(plan.diagnostics.accentArea).toBeLessThanOrEqual(
-      input(8675309, 0.85).colorPlan!.accentAreaLimit,
+      planInput.colorPlan!.accentAreaLimit,
     )
     expect(accents.every((tile) => tile.edgeExposure > 0 && tile.scale !== 'macro')).toBe(true)
-    expect(glitches.length).toBeGreaterThan(0)
-    expect(glitches.length).toBeLessThanOrEqual(6)
-    expect(glitches.every((tile) =>
-      !tile.protected && tile.edgeExposure > 0 && tile.scale !== 'macro')).toBe(true)
     expect(plan.tiles.every((tile) =>
       tile.colorIndex !== plan.colorHierarchy.ground)).toBe(true)
     expect(plan.colorHierarchy.visible.length).toBeLessThanOrEqual(
-      input(8675309, 0.85).colorPlan!.localColorLimit,
+      planInput.colorPlan!.localColorLimit,
     )
+
+    for (const aspect of [16 / 9, 9 / 16, 1, 4 / 5]) {
+      for (const seed of [42, 1913, 8675309]) {
+        const boundedPlan = planPixelField(input(seed, 0.85, aspect))
+        const glitches = boundedPlan.tiles.filter((tile) => tile.glitch)
+        expect(glitches.length).toBeGreaterThan(0)
+        expect(glitches.length).toBeLessThanOrEqual(5)
+        expect(glitches.every((tile) =>
+          !tile.protected && tile.edgeExposure > 0 && tile.scale !== 'macro')).toBe(true)
+        expect(boundedPlan.diagnostics.glitchArea).toBeLessThan(0.035)
+        expect(boundedPlan.diagnostics.maxGlitchDisplacement).toBeLessThan(0.008)
+      }
+    }
   })
 
   it('loops glitch motion exactly without changing planned topology', () => {
@@ -170,14 +257,30 @@ describe('adaptive pixel field', () => {
     expect(planPixelField(input(1913, 0.5)).tiles).toEqual(plan.tiles)
   })
 
-  it('uses complexity to add finer normalized topology', () => {
+  it('adds fine stairs and glitches without moving low-complexity masses', () => {
     const low = planPixelField(input(1913, 0.15))
+    const medium = planPixelField(input(1913, 0.5))
     const high = planPixelField(input(1913, 0.85))
 
-    expect(high.columns * high.rows).toBeGreaterThan(low.columns * low.rows)
+    expect(high.columns).toBe(low.columns)
+    expect(high.rows).toBe(low.rows)
+    expect(medium.masks.base).toEqual(low.masks.base)
+    expect(high.masks.base).toEqual(low.masks.base)
+    for (let index = 0; index < low.masks.base.length; index += 1) {
+      if (low.masks.base[index]) expect(high.masks.active[index]).toBe(1)
+    }
     expect(high.tiles.length).toBeGreaterThan(low.tiles.length)
-    expect(high.diagnostics.scaleCounts.micro).toBeGreaterThan(
-      low.diagnostics.scaleCounts.micro,
+    expect(low.diagnostics.scaleCounts.micro).toBe(0)
+    expect(medium.diagnostics.scaleCounts.micro).toBeGreaterThan(0)
+    expect(high.diagnostics.scaleCounts.micro).toBeGreaterThan(0)
+    expect(medium.diagnostics.activeCellCount).toBeGreaterThan(
+      low.diagnostics.activeCellCount,
     )
+    expect(high.diagnostics.activeCellCount).toBeGreaterThan(
+      medium.diagnostics.activeCellCount,
+    )
+    expect(low.tiles.filter((tile) => tile.glitch)).toHaveLength(0)
+    expect(medium.tiles.filter((tile) => tile.glitch)).toHaveLength(2)
+    expect(high.tiles.filter((tile) => tile.glitch)).toHaveLength(5)
   })
 })

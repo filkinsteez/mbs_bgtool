@@ -35,7 +35,7 @@ type PixelRect = {
 
 function planKey(options: PaintPixelFieldOptions): string {
   return JSON.stringify({
-    revision: 1,
+    revision: 2,
     seed: options.seed,
     complexity: Math.round(options.complexity * 10000) / 10000,
     aspect: Math.round((options.width / Math.max(1, options.height)) * 100000) / 100000,
