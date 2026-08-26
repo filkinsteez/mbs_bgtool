@@ -21,6 +21,7 @@ import { constrainArtworkToCanvas } from './artworkTransform'
 import { artDirectTerritory, sampleCompositionPlan } from './compositionPlan'
 import { weightedColorIndex } from './colorDirection'
 import { renderQuilt } from './quilt'
+import { renderFrameLook } from './frameRenderer'
 
 // One painter for preview AND export. The ctx arrives pre-scaled and
 // everything draws in output units. Per-render work is lazy: the
@@ -125,10 +126,24 @@ export function renderLab(
   const restore: Field | null = paintField
     ? (x: number, y: number) => Math.max(0, paintField(x, y))
     : null
+  const isFrameLook = lab.look?.id === 'frame'
   const compiledTerritory = compileTerritoryCached(lab, rect, outW, outH, maps, paintField)
-  const directedTerritory = lab.composition
-    ? artDirectTerritory(lab.composition, compiledTerritory, outW, outH)
+  // Frame owns a fixed contour topology and animates those points after
+  // extraction. Sampling the shared domain-warped field here would add and
+  // remove loops while it moved.
+  const frameTerritory = isFrameLook && lab.motion.frame
+    ? compileTerritoryCached(
+        { ...lab, motion: { ...lab.motion, frame: undefined } },
+        rect,
+        outW,
+        outH,
+        maps,
+        paintField,
+      )
     : compiledTerritory
+  const directedTerritory = lab.composition
+    ? artDirectTerritory(lab.composition, frameTerritory, outW, outH)
+    : frameTerritory
   const preserveSilhouette = lab.look?.id != null
     && ['pixels', 'streams', 'beads', 'quilt'].includes(lab.look.id)
   const T: Field = preserveSilhouette
@@ -271,7 +286,7 @@ export function renderLab(
 
   // BLOCKS — generic flat fills, except Quilt: its focused renderer owns
   // the patch topology, role-led color groups, and textile seam hierarchy.
-  if (cells.some((c) => c.treatment === 'blocks')) {
+  if (!isFrameLook && cells.some((c) => c.treatment === 'blocks')) {
     if (lab.look?.id === 'quilt') {
       const curve = lab.territory.sources.find(
         (source) => source.kind === 'curve' && source.enabled && source.curve,
@@ -291,33 +306,19 @@ export function renderLab(
         motionAmount: lab.motion.amount,
         motionSpeed: lab.motion.speed,
       })
-    } else for (const f of buildBlockFills({
-      cells,
-      paletteSize: K,
-      seed: lab.seed,
-      colorPlan,
-    })) {
-      const { cell } = f
-      ctx.fillStyle = palette[f.color]
-      const quilt = lab.look?.id === 'quilt'
-      const gap = quilt ? Math.max(0.7, cell.size * 0.025) : 0
-      ctx.fillRect(
-        cell.x + gap,
-        cell.y + gap,
-        cell.size - gap * 2 + (quilt ? 0 : 0.35),
-        cell.size - gap * 2 + (quilt ? 0 : 0.35),
-      )
-      if (f.accent !== null) {
-        const inset = cell.size * 0.3
-        ctx.fillStyle = palette[f.accent]
-        if (quilt) {
-          ctx.beginPath()
-          ctx.moveTo(cell.x + gap, cell.y + gap)
-          ctx.lineTo(cell.x + cell.size - gap, cell.y + gap)
-          ctx.lineTo(cell.x + cell.size - gap, cell.y + cell.size - gap)
-          ctx.closePath()
-          ctx.fill()
-        } else {
+    } else {
+      for (const f of buildBlockFills({
+        cells,
+        paletteSize: K,
+        seed: lab.seed,
+        colorPlan,
+      })) {
+        const { cell } = f
+        ctx.fillStyle = palette[f.color]
+        ctx.fillRect(cell.x, cell.y, cell.size + 0.35, cell.size + 0.35)
+        if (f.accent !== null) {
+          const inset = cell.size * 0.3
+          ctx.fillStyle = palette[f.accent]
           ctx.lineWidth = Math.max(1, cell.size * 0.055)
           ctx.strokeStyle = palette[f.accent]
           ctx.strokeRect(
@@ -514,26 +515,32 @@ export function renderLab(
     ctx.restore()
   }
 
-  if (lab.look?.id === 'frame') {
-    const grid = territoryGrid(T, outW, outH, 160)
-    const levels = 10 + Math.round((lab.look.complexity ?? 0.5) * 10)
-    ctx.save()
-    ctx.lineJoin = 'round'
-    ctx.lineCap = 'round'
-    for (let index = 0; index < levels; index += 1) {
-      const level = 0.12 + (index / Math.max(1, levels - 1)) * 0.76
-      const pathData = contourAtLevel(grid, level)
-      if (!pathData) continue
-      const path = new Path2D(pathData)
-      const paletteIndex = colorPlan
-        ? colorPlan.depthOrder[index % colorPlan.depthOrder.length]
-        : index % palette.length
-      ctx.globalAlpha = index % 4 === 0 ? 0.92 : 0.56
-      ctx.lineWidth = index % 4 === 0 ? 2.2 : 0.85
-      ctx.strokeStyle = palette[paletteIndex]
-      ctx.stroke(path)
-    }
-    ctx.restore()
+  if (isFrameLook) {
+    renderFrameLook(ctx, {
+      field: T,
+      width: outW,
+      height: outH,
+      seed: lab.seed,
+      complexity: lab.look?.complexity ?? 0.5,
+      palette,
+      colorPlan,
+      motion: {
+        phase: lab.motion.frame?.phase,
+        amount: lab.motion.amount,
+        speed: lab.motion.speed,
+      },
+      topologyKey: source
+        ? undefined
+        : JSON.stringify([
+            lab.seed,
+            outW,
+            outH,
+            lab.look?.complexity ?? 0.5,
+            lab.territory,
+            lab.composition,
+            colorPlan,
+          ]),
+    })
   }
 
   // the process treatments share one composed vector field
