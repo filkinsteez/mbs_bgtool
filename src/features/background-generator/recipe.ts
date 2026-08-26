@@ -2,10 +2,12 @@ import type { LookId } from '@/core/lab/looks'
 import { LOOKS, lookPatchFor } from '@/core/lab/looks'
 import { createDefaultLab } from '@/core/lab/recipe'
 import type { LabState } from '@/core/lab/types'
+import { constrainArtworkCover } from '@/core/lab/artworkTransform'
 import { mergeDeep, type DeepPartial } from '@/core/state/store'
 import { MATERIAL_BY_ID, type MaterialId } from './material/catalog'
 import {
   buildWeightedPalette,
+  colorMixForPack,
   CUSTOM_PALETTE_ID,
   META_BLUE,
   PALETTE_PACKS,
@@ -154,11 +156,7 @@ function presetTransform(
 
 export function createDefaultBackgroundRecipe(seed = 1913): BackgroundRecipeV2 {
   const pack = PALETTE_PACKS[0]
-  const mix = pack.colors.map((color, index) => ({
-    color,
-    enabled: index < 3,
-    ratio: index === 0 ? 60 : index < 3 ? 20 : 0,
-  }))
+  const mix = colorMixForPack(pack)
   return {
     version: BACKGROUND_RECIPE_VERSION,
     mode: 'background',
@@ -334,62 +332,11 @@ export function constrainBackgroundTransform(
   artboardWidth: number,
   artboardHeight: number,
 ): SubjectTransform {
-  const normalized = normalizeSubjectTransform(value)
-  const width = Math.max(1, artboardWidth)
-  const height = Math.max(1, artboardHeight)
-  const angle = (normalized.rotation * Math.PI) / 180
-  const cos = Math.cos(angle)
-  const sin = Math.sin(angle)
-  const absCos = Math.abs(cos)
-  const absSin = Math.abs(sin)
-  const minimumScale = Math.max(
-    absCos + absSin * (height / width),
-    absCos + absSin * (width / height),
+  return constrainArtworkCover(
+    normalizeSubjectTransform(value),
+    artboardWidth,
+    artboardHeight,
   )
-  const scale = Math.max(normalized.scale, minimumScale)
-  const halfSourceWidth = width * scale / 2
-  const halfSourceHeight = height * scale / 2
-  const corners = [
-    { x: -width / 2, y: -height / 2 },
-    { x: width / 2, y: -height / 2 },
-    { x: width / 2, y: height / 2 },
-    { x: -width / 2, y: height / 2 },
-  ].map(({ x, y }) => ({
-    x: x * cos + y * sin,
-    y: -x * sin + y * cos,
-  }))
-  const minX = Math.min(...corners.map((corner) => corner.x))
-  const maxX = Math.max(...corners.map((corner) => corner.x))
-  const minY = Math.min(...corners.map((corner) => corner.y))
-  const maxY = Math.max(...corners.map((corner) => corner.y))
-  const desiredCenter = {
-    x: normalized.x * width / 2,
-    y: normalized.y * height / 2,
-  }
-  const desiredRotatedCenter = {
-    x: desiredCenter.x * cos + desiredCenter.y * sin,
-    y: -desiredCenter.x * sin + desiredCenter.y * cos,
-  }
-  const centerX = clampToInterval(
-    desiredRotatedCenter.x,
-    maxX - halfSourceWidth,
-    minX + halfSourceWidth,
-  )
-  const centerY = clampToInterval(
-    desiredRotatedCenter.y,
-    maxY - halfSourceHeight,
-    minY + halfSourceHeight,
-  )
-  const worldCenter = {
-    x: centerX * cos - centerY * sin,
-    y: centerX * sin + centerY * cos,
-  }
-  return {
-    ...normalized,
-    x: (worldCenter.x * 2) / width,
-    y: (worldCenter.y * 2) / height,
-    scale,
-  }
 }
 
 export type BackgroundRecipeToLabOptions = {
@@ -463,11 +410,6 @@ export function materialHighlightColor(recipe: BackgroundRecipeV2): string {
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0))
-}
-
-function clampToInterval(value: number, min: number, max: number): number {
-  if (min > max) return (min + max) / 2
-  return Math.max(min, Math.min(max, value))
 }
 
 function normalizeHexColor(value: string | undefined, fallback: string): string {

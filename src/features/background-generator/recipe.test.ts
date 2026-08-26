@@ -150,7 +150,7 @@ describe('background recipe', () => {
     expect(migrated?.transforms.material).toEqual(migrated?.transforms.background)
   })
 
-  it('derives custom crop dimensions from the selected long edge', () => {
+  it('derives custom aspect dimensions from the selected long edge', () => {
     expect(dimensionsForRatio(2)).toEqual({ width: 3840, height: 1920 })
     expect(dimensionsForRatio(0.5)).toEqual({ width: 1920, height: 3840 })
   })

@@ -59,8 +59,8 @@ describe('shuffleLab', () => {
       expect(p.structure!.baseCell).toBeGreaterThanOrEqual(16)
       expect(p.structure!.baseCell).toBeLessThanOrEqual(44)
       expect(p.mark!.occupancy).toBeGreaterThanOrEqual(0.55)
-      expect(p.colors!.ink).toMatch(/^#[0-9a-f]{6}$/)
-      expect(p.colors!.paper).toMatch(/^#[0-9a-f]{6}$/)
+      expect(p.colors!.ink).toMatch(/^#[0-9a-f]{6}$/i)
+      expect(p.colors!.paper).toMatch(/^#[0-9a-f]{6}$/i)
     }
   })
 

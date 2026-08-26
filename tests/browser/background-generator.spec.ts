@@ -318,7 +318,7 @@ test('pins the accessible mode switch to the stage and keeps mode-specific contr
   await expect(modeSwitch).toBeVisible()
   await expect(toolbar).toBeVisible()
   await expect(toolbar.getByRole('button', { name: 'Select', exact: true })).toBeEnabled()
-  await expect(toolbar.getByRole('button', { name: 'Pan', exact: true })).toBeEnabled()
+  await expect(toolbar.getByRole('button', { name: 'Hand', exact: true })).toBeEnabled()
   await expect(toolbar.getByRole('button', { name: 'Aspect', exact: true })).toBeEnabled()
   await expect(toolbar.getByRole('button', { name: 'Fit view', exact: true })).toBeEnabled()
   await expect(page.locator('.lab-topbar').getByRole('tablist')).toHaveCount(0)
@@ -353,6 +353,7 @@ test('pins the accessible mode switch to the stage and keeps mode-specific contr
   await expect.poll(async () => (await artboard.boundingBox())?.width ?? 0).toBeGreaterThan(
     artboardBox!.width,
   )
+  const keyboardZoomWidth = (await artboard.boundingBox())!.width
   const zoomedSwitchBox = await modeSwitch.boundingBox()
   expect(zoomedSwitchBox).not.toBeNull()
   expect(zoomedSwitchBox!.x).toBeCloseTo(switchBox!.x, 0)
@@ -364,6 +365,21 @@ test('pins the accessible mode switch to the stage and keeps mode-specific contr
     artboardBox!.width,
     0,
   )
+  await toolbar.getByRole('button', { name: 'Zoom in', exact: true }).click()
+  await expect.poll(async () => (await artboard.boundingBox())?.width ?? 0).toBeCloseTo(
+    keyboardZoomWidth,
+    0,
+  )
+  const actualScale = Math.round(keyboardZoomWidth / 3840 * 100)
+  await expect(toolbar.getByLabel('Canvas zoom')).toHaveText(`${actualScale}%`)
+  await toolbar.getByRole('button', { name: 'Fit view', exact: true }).click()
+  const formatRegion = page.getByRole('region', { name: 'Format', exact: true })
+  await expect(formatRegion.getByRole('status', { name: 'Export dimensions' })).toHaveText(
+    '3840 × 2160',
+  )
+  await formatRegion.getByRole('button', { name: 'Custom aspect…', exact: true }).click()
+  await expect(page.locator('.lab-aspect-frame')).toBeVisible()
+  await stage.press('Escape')
 
   await expect(page.getByRole('application', {
     name: '2D design canvas',
@@ -386,9 +402,9 @@ test('pins the accessible mode switch to the stage and keeps mode-specific contr
   })).toBeVisible()
   await expect(page.locator('[data-renderer="material"]')).toBeVisible()
   await expect(toolbar.getByRole('button', { name: 'Select', exact: true })).toBeDisabled()
-  await expect(toolbar.getByRole('button', { name: 'Aspect', exact: true })).toBeDisabled()
-  await stage.press('c')
-  await expect(page.locator('.lab-crop-frame')).toHaveCount(0)
+  await expect(toolbar.getByRole('button', { name: 'Aspect', exact: true })).toBeEnabled()
+  await stage.press('a')
+  await expect(page.locator('.lab-aspect-frame')).toBeVisible()
   await expect(page.locator('.panel-heading', { hasText: /^Color$/ })).toBeVisible()
   await expect(page.locator('.panel-heading', { hasText: /^Materials$/ })).toBeVisible()
   await expect(page.locator('.panel-heading', { hasText: /^Looks$/ })).toBeVisible()
@@ -450,7 +466,7 @@ test('pins the accessible mode switch to the stage and keeps mode-specific contr
       const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
       return { mode: recipe.mode, highlight: recipe.material?.highlightColor }
     }),
-  ).toEqual({ mode: 'material', highlight: '#FF5001' })
+  ).toEqual({ mode: 'background', highlight: '#FF5001' })
   await resetAll(page)
   await expect(materialTab).toHaveAttribute('aria-selected', 'true')
   const viewer = page.locator('[data-mbs-material-model="true"]')
@@ -490,6 +506,30 @@ test('pins the accessible mode switch to the stage and keeps mode-specific contr
   await backgroundTab.click()
   await expect(page.locator('[data-renderer="looks"]')).toBeVisible()
   await expect(page.locator('[data-mbs-shader="true"]')).toHaveCount(0)
+})
+
+test('keeps the canvas toolbar clear of the mode switch', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear())
+  for (const width of [1024, 1440]) {
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto('/')
+    await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
+    const toolbar = await page.getByRole('group', {
+      name: 'Canvas tools',
+      exact: true,
+    }).boundingBox()
+    const modeSwitch = await page.getByRole('tablist', {
+      name: 'Canvas mode',
+      exact: true,
+    }).boundingBox()
+    expect(toolbar).not.toBeNull()
+    expect(modeSwitch).not.toBeNull()
+    const separated = toolbar!.x + toolbar!.width <= modeSwitch!.x
+      || modeSwitch!.x + modeSwitch!.width <= toolbar!.x
+      || toolbar!.y + toolbar!.height <= modeSwitch!.y
+      || modeSwitch!.y + modeSwitch!.height <= toolbar!.y
+    expect(separated).toBe(true)
+  }
 })
 
 test('keeps 3D Look thumbnails generic when the live material changes', async ({ page }) => {
@@ -726,7 +766,7 @@ test('keeps Reset all cancelled when Enter is pressed on Cancel', async ({ page 
   await page.getByRole('button', { name: 'Reset all', exact: true }).click()
   const dialog = page.getByRole('alertdialog', { name: 'Reset all?', exact: true })
   await expect(dialog).toHaveAccessibleDescription(
-    'This resets 2D and 3D settings.',
+    'Resets format, colors, Looks, motion, 2D framing, and 3D view.',
   )
   await page.keyboard.press('Shift+Tab')
   await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused()
@@ -755,6 +795,7 @@ test('groups and orders Material swatches by chroma', async ({ page }) => {
   ).toEqual([
     '#0288F9',
     '#006CE1',
+    '#0064E0',
     '#034AE0',
     '#4F43FF',
     '#093AC7',
@@ -1030,7 +1071,7 @@ test('orbit and wheel release 3D framing without spamming history', async ({ pag
   const resetView = viewer.getByRole('button', { name: 'Reset view', exact: true })
   const materialPreset = () => page.evaluate(() => {
     const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
-    return recipe.transforms?.material?.preset
+      return recipe.transforms?.material?.preset ?? 'full'
   })
   const screenshotView = () => canvas.screenshot({
     style: '.lab-material-model-actions { visibility: hidden !important; }',
@@ -1115,6 +1156,9 @@ test('restores the same orthographic camera framing after reload', async ({ page
 
   await page.reload()
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
+  await expect(page.getByRole('tab', { name: '2D', exact: true }))
+    .toHaveAttribute('aria-selected', 'true')
+  await page.getByRole('tab', { name: '3D', exact: true }).click()
   viewer = page.locator('[data-mbs-material-model="true"]')
   await expect(viewer).toHaveAttribute('data-model-status', 'ready')
   await waitForAnimationFrames(page, 3)
@@ -1230,7 +1274,7 @@ test('cancels an active 2D gesture before switching to 3D', async ({ page }) => 
     page.evaluate(() =>
       JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}').mode,
     ),
-  ).toBe('material')
+  ).toBe('background')
   expect(await page.evaluate(() => {
     const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
     return {
@@ -1275,12 +1319,26 @@ test('deselects and reselects the 2D artwork without recipe edits', async ({ pag
   }
   await page.mouse.click(artworkCenter.x, artworkCenter.y)
   await expect(frame).toBeVisible()
+  const selectTool = page.getByRole('button', { name: 'Select', exact: true })
+  await selectTool.focus()
+  await page.keyboard.press('Escape')
+  await expect(frame).toHaveCount(0)
+  await page.mouse.click(artworkCenter.x, artworkCenter.y)
+  await wrap.press('a')
+  const aspectHandle = page.getByRole('button', {
+    name: 'Resize centered aspect from E edge',
+    exact: true,
+  })
+  await aspectHandle.focus()
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.lab-aspect-frame')).toHaveCount(0)
+  await expect(frame).toBeVisible()
 
   // Clicking blank canvas only changes ephemeral selection: it does not pan,
-  // enter crop, push history, or write a deterministic recipe.
+  // enter Aspect, push history, or write a deterministic recipe.
   await page.mouse.click(artboardBox!.x - 12, artboardBox!.y + 20)
   await expect(frame).toHaveCount(0)
-  await expect(page.locator('.lab-crop-frame')).toHaveCount(0)
+  await expect(page.locator('.lab-aspect-frame')).toHaveCount(0)
   const afterBlankBox = await artboard.boundingBox()
   expect(afterBlankBox?.x).toBeCloseTo(artboardBox!.x, 1)
   expect(afterBlankBox?.y).toBeCloseTo(artboardBox!.y, 1)
@@ -1499,7 +1557,7 @@ test('snaps scaled artwork corners to all canvas edges at multiple zoom levels',
   }
 })
 
-test('directly moves and crops while keeping mode transforms independent', async ({ page }) => {
+test('directly moves and changes aspect while keeping mode transforms independent', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
   await enlargeArtworkFromCenter(page)
@@ -1564,13 +1622,26 @@ test('directly moves and crops while keeping mode transforms independent', async
   ).toMatchObject({ material: 0 })
 
   await page.getByRole('tab', { name: '2D', exact: true }).click()
-  await page.locator('.lab-canvas-wrap').press('c')
-  const cropHandle = page.locator('.lab-crop-handle.handle-e')
-  const handleBox = await cropHandle.boundingBox()
+  await page.locator('.lab-canvas-wrap').press('a')
+  const aspectFrame = page.locator('.lab-aspect-frame')
+  const aspectBox = await aspectFrame.boundingBox()
+  const aspectHandle = page.locator('.lab-aspect-handle.handle-e')
+  const handleBox = await aspectHandle.boundingBox()
+  expect(aspectBox).not.toBeNull()
   expect(handleBox).not.toBeNull()
   await page.mouse.move(handleBox!.x + handleBox!.width / 2, handleBox!.y + handleBox!.height / 2)
   await page.mouse.down()
   await page.mouse.move(handleBox!.x - 80, handleBox!.y + handleBox!.height / 2, { steps: 3 })
+  const draftBox = await aspectFrame.boundingBox()
+  expect(draftBox).not.toBeNull()
+  expect(draftBox!.x + draftBox!.width / 2).toBeCloseTo(
+    aspectBox!.x + aspectBox!.width / 2,
+    0,
+  )
+  expect(draftBox!.y + draftBox!.height / 2).toBeCloseTo(
+    aspectBox!.y + aspectBox!.height / 2,
+    0,
+  )
   await page.mouse.up()
 
   await expect.poll(async () =>
@@ -1605,16 +1676,19 @@ test('supports keyboard rotation and custom aspect resizing', async ({ page }) =
   await rotate.evaluate((element) => (element as HTMLButtonElement).blur())
   await pressUndo(page)
 
-  await wrap.press('c')
-  const crop = page.getByRole('button', { name: 'Resize crop E', exact: true })
-  await crop.focus()
+  await wrap.press('a')
+  const aspect = page.getByRole('button', {
+    name: 'Resize centered aspect from E edge',
+    exact: true,
+  })
+  await aspect.focus()
   await page.keyboard.press('ArrowLeft')
   await expect.poll(async () =>
     page.evaluate(() =>
       JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}').format?.aspect,
     ),
   ).toBe('custom')
-  await crop.evaluate((element) => (element as HTMLButtonElement).blur())
+  await aspect.evaluate((element) => (element as HTMLButtonElement).blur())
   await pressUndo(page)
   await expect.poll(async () =>
     page.evaluate(() =>
@@ -1623,13 +1697,39 @@ test('supports keyboard rotation and custom aspect resizing', async ({ page }) =
   ).toBe('16:9')
 })
 
+test('resets 2D framing without resetting the full recipe', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear())
+  await page.goto('/')
+  await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
+  await enlargeArtworkFromCenter(page)
+
+  const format = page.getByRole('region', { name: 'Format', exact: true })
+  const resetFraming = format.getByRole('button', { name: 'Reset framing', exact: true })
+  await expect(resetFraming).toBeEnabled()
+  await resetFraming.click()
+  await expect.poll(async () =>
+    page.evaluate(() => {
+      const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
+      return recipe.transforms?.background
+    }),
+  ).toMatchObject({ preset: 'full', x: 0, y: 0, scale: 1, rotation: 0 })
+
+  await pressUndo(page)
+  await expect.poll(async () =>
+    page.evaluate(() =>
+      JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
+        .transforms?.background?.scale,
+    ),
+  ).toBeCloseTo(1.5)
+})
+
 test('exports both modes as exact 4K PNGs', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
 
   const formatSection = page.getByRole('region', { name: 'Format', exact: true })
   const exportSection = page.getByRole('region', { name: 'Export', exact: true })
-  await expect(formatSection.getByRole('button', { name: /^Aspect / })).toBeVisible()
+  await expect(formatSection.getByRole('group', { name: 'Aspect', exact: true })).toBeVisible()
   await expect(
     formatSection.getByRole('group', { name: 'Export resolution', exact: true }),
   ).toHaveCount(0)
@@ -1724,8 +1824,7 @@ test('exports both modes as exact 4K PNGs', async ({ page }) => {
   })
   expect(cleanPixels.hasSymbol).toBe(true)
 
-  await formatSection.locator('button.dialkit-select-trigger').click()
-  await page.getByText('9:16', { exact: true }).click()
+  await formatSection.getByRole('button', { name: '9:16', exact: true }).click()
   await waitForAnimationFrames(page, 3)
   const portraitExportUrl = await page.evaluate(async () => {
     const exportPng = (window as unknown as {

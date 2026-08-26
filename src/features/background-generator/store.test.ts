@@ -4,6 +4,7 @@ import { backgroundHistory, useBackgroundStore } from './store'
 
 describe('background recipe history', () => {
   beforeEach(() => {
+    useBackgroundStore.getState().setMode('background')
     useBackgroundStore.getState().replaceRecipe(createDefaultBackgroundRecipe(42))
   })
 
@@ -24,15 +25,16 @@ describe('background recipe history', () => {
     store.setMode('material')
 
     expect(useBackgroundStore.getState().mode).toBe('material')
+    expect(useBackgroundStore.getState().recipe.mode).toBe('background')
     expect(backgroundHistory.depth.past).toBe(1)
 
     useBackgroundStore.getState().undo()
     expect(useBackgroundStore.getState().mode).toBe('material')
-    expect(useBackgroundStore.getState().recipe.mode).toBe('material')
+    expect(useBackgroundStore.getState().recipe.mode).toBe('background')
     expect(useBackgroundStore.getState().recipe.look.detail).toBe(0.5)
     useBackgroundStore.getState().redo()
     expect(useBackgroundStore.getState().mode).toBe('material')
-    expect(useBackgroundStore.getState().recipe.mode).toBe('material')
+    expect(useBackgroundStore.getState().recipe.mode).toBe('background')
   })
 
   it('settles an active edit before changing mode without adding mode history', () => {
@@ -44,14 +46,38 @@ describe('background recipe history', () => {
     expect(backgroundHistory.depth.past).toBe(1)
     expect(useBackgroundStore.getState()).toMatchObject({
       mode: 'material',
-      recipe: { mode: 'material', look: { detail: 0.8 } },
+      recipe: { mode: 'background', look: { detail: 0.8 } },
     })
 
     useBackgroundStore.getState().undo()
     expect(useBackgroundStore.getState()).toMatchObject({
       mode: 'material',
-      recipe: { mode: 'material', look: { detail: 0.5 } },
+      recipe: { mode: 'background', look: { detail: 0.5 } },
     })
+  })
+
+  it('does not restore the workspace mode from a saved recipe', () => {
+    const saved = { ...createDefaultBackgroundRecipe(42), mode: 'material' as const }
+    useBackgroundStore.getState().replaceRecipe(saved)
+
+    expect(useBackgroundStore.getState().mode).toBe('background')
+    expect(useBackgroundStore.getState().recipe.mode).toBe('material')
+  })
+
+  it('settles an active edit before a discrete edit', () => {
+    const store = useBackgroundStore.getState()
+    store.beginTransaction()
+    store.setTransient({ look: { detail: 0.8 } })
+    store.updateRecipe({ look: { id: 'trails' } })
+
+    expect(backgroundHistory.depth.past).toBe(2)
+    useBackgroundStore.getState().undo()
+    expect(useBackgroundStore.getState().recipe.look).toMatchObject({
+      id: 'frame',
+      detail: 0.8,
+    })
+    useBackgroundStore.getState().undo()
+    expect(useBackgroundStore.getState().recipe.look.detail).toBe(0.5)
   })
 
   it('persists 3D Look overlay selection as recipe history', () => {

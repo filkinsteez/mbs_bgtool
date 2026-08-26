@@ -1,4 +1,5 @@
 import { chan } from '@/core/organic/random'
+import { META_BLUE } from '@/core/color/brand'
 import type { Field } from './field'
 
 // The generated COLOR FIELD — the content the fill treatments sample
@@ -86,35 +87,35 @@ export const PALETTES: { id: string; label: string; ground: string; ink: string;
     id: 'primary',
     label: 'Primary',
     ground: '#ffffff',
-    ink: '#0064e0',
+    ink: META_BLUE,
     colors: ['#0288f9', '#006ce1', '#034ae0', '#093ac7', '#132682', '#d1d4db', '#8b9baa', '#27353e'],
   },
   {
     id: 'bold',
     label: 'Bold',
     ground: '#ffffff',
-    ink: '#0064e0',
-    colors: ['#0064e0', '#26c8ee', '#fed61f', '#ff5001'],
+    ink: META_BLUE,
+    colors: [META_BLUE, '#26c8ee', '#fed61f', '#ff5001'],
   },
   {
     id: 'harmonious',
     label: 'Harmonious',
     ground: '#ffffff',
-    ink: '#0064e0',
-    colors: ['#0064e0', '#ae4fc3', '#824dff', '#1cc5ee', '#4f43ff'],
+    ink: META_BLUE,
+    colors: [META_BLUE, '#ae4fc3', '#824dff', '#1cc5ee', '#4f43ff'],
   },
   {
     id: 'atmospheric',
     label: 'Atmospheric',
     ground: '#ffffff',
-    ink: '#0064e0',
-    colors: ['#0064e0', '#d6e7ee', '#7ca0b8', '#526069', '#1c2a33'],
+    ink: META_BLUE,
+    colors: [META_BLUE, '#d6e7ee', '#7ca0b8', '#526069', '#1c2a33'],
   },
   {
     id: 'neutrals',
     label: 'Neutrals',
     ground: '#ffffff',
-    ink: '#0064e0',
-    colors: ['#0064e0', '#ffffff', '#dae3ea', '#8d9dac', '#526069', '#1c2b32', '#000000'],
+    ink: META_BLUE,
+    colors: [META_BLUE, '#ffffff', '#dae3ea', '#8d9dac', '#526069', '#1c2b32', '#000000'],
   },
 ]

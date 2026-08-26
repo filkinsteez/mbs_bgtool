@@ -1,4 +1,5 @@
 import type { ShapeProto } from '@/core/canvas/shapeProtos'
+import { META_BLUE } from '@/core/color/brand'
 import { INK, PAPER } from '@/core/state/defaults'
 import { contourAtLevel } from '@/core/cloner/contours'
 import { sampleCurve } from '@/core/lissajous/sampler'
@@ -15,6 +16,7 @@ import { getPaintRaster, reconcilePaint } from './paintRuntime'
 import { sampleRGB } from './analysis'
 import { stampProto } from './stamp'
 import { createOrganicMotionWarp } from './motion'
+import { constrainArtworkCover } from './artworkTransform'
 
 // One painter for preview AND export. The ctx arrives pre-scaled and
 // everything draws in output units. Per-render work is lazy: the
@@ -475,6 +477,12 @@ export function renderLabArtwork(
   focusedSourceId?: string | null,
 ): void {
   const { width: outW, height: outH } = lab.output
+  const renderTransform = constrainArtworkCover(
+    transform,
+    outW,
+    outH,
+    Math.max(outW, outH) / 3840,
+  )
   const artwork = artworkCanvas(outW, outH)
   artwork.setTransform(1, 0, 0, 1, 0, 0)
   artwork.globalAlpha = 1
@@ -499,11 +507,11 @@ export function renderLabArtwork(
   ctx.rect(0, 0, outW, outH)
   ctx.clip()
   ctx.translate(
-    outW * (0.5 + transform.x * 0.5),
-    outH * (0.5 + transform.y * 0.5),
+    outW * (0.5 + renderTransform.x * 0.5),
+    outH * (0.5 + renderTransform.y * 0.5),
   )
-  ctx.rotate((transform.rotation * Math.PI) / 180)
-  ctx.scale(transform.scale, transform.scale)
+  ctx.rotate((renderTransform.rotation * Math.PI) / 180)
+  ctx.scale(renderTransform.scale, renderTransform.scale)
   ctx.translate(-outW / 2, -outH / 2)
   ctx.imageSmoothingEnabled = true
   ctx.drawImage(artwork.canvas, 0, 0)
@@ -692,7 +700,7 @@ export function renderSourceOverlay(
     ctx.strokeStyle = 'rgba(255,255,255,0.8)'
     ctx.lineWidth = 3
     ctx.stroke(p)
-    ctx.strokeStyle = '#0668e1'
+    ctx.strokeStyle = META_BLUE
     ctx.lineWidth = 1.4
     ctx.stroke(p)
   }

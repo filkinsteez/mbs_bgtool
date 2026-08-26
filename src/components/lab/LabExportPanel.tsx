@@ -26,7 +26,6 @@ async function renderCurrentPng(): Promise<Blob> {
     : dimensionsFor(recipe.format.aspect)
   const exportRecipe = {
     ...recipe,
-    mode,
     format: {
       ...recipe.format,
       ...dimensions,

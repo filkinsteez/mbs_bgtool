@@ -22,6 +22,9 @@ describe('3D Look processing', () => {
     expect(lab.territory.sources).toHaveLength(1)
     expect(lab.territory.sources[0].kind).toBe('tone')
     expect(lab.territory.sources.some((item) => item.kind === 'curve')).toBe(false)
+    expect(lab.sourceVisibility).toBe(1)
+    expect(lab.motion).toMatchObject({ enabled: false, amount: 0 })
+    expect(lab.paint).toBeNull()
     expect(lab.colors).toEqual({
       paper: '#111111',
       ink: '#EEEEEE',

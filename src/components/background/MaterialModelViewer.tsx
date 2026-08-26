@@ -794,7 +794,7 @@ export function MaterialModelViewer() {
           </>
         ) : null}
         {status === 'ready' ? (
-          <button type="button" onClick={() => resetView()}>
+          <button type="button" aria-keyshortcuts="R" onClick={() => resetView()}>
             Reset view
           </button>
         ) : null}

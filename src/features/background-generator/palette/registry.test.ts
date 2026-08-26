@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   addColorToMix,
   buildWeightedPalette,
+  colorMixForPack,
   META_BLUE,
   normalizeColorRatios,
   PALETTE_PACKS,
@@ -17,10 +18,22 @@ describe('palette registry', () => {
   it('keeps the approved values and all 391 extended swatches', () => {
     expect(META_BLUE).toBe('#0064E0')
     expect(PALETTE_PACKS.find((pack) => pack.id === 'primary-core')?.colors).toEqual([
-      '#0288F9', '#006CE1', '#034AE0', '#093AC7', '#132682',
+      META_BLUE, '#0288F9', '#006CE1', '#034AE0', '#093AC7', '#132682',
     ])
+    expect(PALETTE_PACKS.filter((pack) => pack.tier !== 'extended').every(
+      (pack) => pack.colors[0] === META_BLUE,
+    )).toBe(true)
     expect(EXTENDED_APPROVED_COLORS).toHaveLength(391)
     expect(PALETTE_PACKS.find((pack) => pack.tier === 'extended')?.colors).toHaveLength(391)
+  })
+
+  it('uses one default mix for initial load and pack selection', () => {
+    expect(colorMixForPack(PALETTE_PACKS[0]).slice(0, 4)).toEqual([
+      { color: META_BLUE, enabled: true, ratio: 60 },
+      { color: '#0288F9', enabled: true, ratio: 20 },
+      { color: '#006CE1', enabled: true, ratio: 20 },
+      { color: '#034AE0', enabled: false, ratio: 0 },
+    ])
   })
 
   it('normalizes enabled ratios to 100', () => {

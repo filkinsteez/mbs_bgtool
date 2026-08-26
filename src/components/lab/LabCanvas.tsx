@@ -36,14 +36,14 @@ import { useReducedMotion } from '@/features/background-generator/motion/useRedu
 import { useBackgroundStore } from '@/features/background-generator/store'
 import { renderController } from '@/render/renderController'
 import { resolveBankCached } from './bankCache'
-import { CANVAS_FIT_VIEW_EVENT } from './canvasEvents'
+import { CANVAS_ASPECT_TOOL_EVENT, CANVAS_FIT_VIEW_EVENT } from './canvasEvents'
 
-type CanvasTool = 'select' | 'hand' | 'crop'
+type CanvasTool = 'select' | 'hand' | 'aspect'
 type Camera = { zoom: number; panX: number; panY: number }
 type SnapGuides = { x?: number; y?: number }
 type Hud = { x: number; y: number; text: string }
-type CropHandle = 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'nw'
-type CropRect = { left: number; top: number; width: number; height: number }
+type AspectHandle = 'n' | 'e' | 's' | 'w'
+type AspectRect = { left: number; top: number; width: number; height: number }
 
 type Gesture =
   | {
@@ -80,12 +80,12 @@ type Gesture =
       startY: number
     }
   | {
-      kind: 'crop'
+      kind: 'aspect'
       pointerId: number
-      handle: CropHandle
+      handle: AspectHandle
       startX: number
       startY: number
-      rect: CropRect
+      rect: AspectRect
     }
 
 const CAMERA_MIN = 0.1
@@ -178,7 +178,8 @@ export function LabCanvas() {
   const [spaceHeld, setSpaceHeld] = useState(false)
   const [guides, setGuides] = useState<SnapGuides>({})
   const [hud, setHud] = useState<Hud | null>(null)
-  const [cropDraft, setCropDraft] = useState<CropRect | null>(null)
+  const [aspectDraft, setAspectDraft] = useState<AspectRect | null>(null)
+  const aspectDraftRef = useRef<AspectRect | null>(null)
   const [artworkSelected, setArtworkSelected] = useState(true)
   const fitView = useCallback(() => {
     setCamera({ zoom: 1, panX: 0, panY: 0 })
@@ -188,6 +189,12 @@ export function LabCanvas() {
     window.addEventListener(CANVAS_FIT_VIEW_EVENT, fitView)
     return () => window.removeEventListener(CANVAS_FIT_VIEW_EVENT, fitView)
   }, [fitView])
+
+  useEffect(() => {
+    const activateAspect = () => setTool('aspect')
+    window.addEventListener(CANVAS_ASPECT_TOOL_EVENT, activateAspect)
+    return () => window.removeEventListener(CANVAS_ASPECT_TOOL_EVENT, activateAspect)
+  }, [])
 
   useEffect(() => {
     const element = wrapRef.current
@@ -266,7 +273,7 @@ export function LabCanvas() {
   const stackLeft = viewportCenterX - stackWidth * 0.5 + camera.panX
   const stackTop = viewportCenterY - stackHeight * 0.5 + camera.panY
   const box = subjectBox(transform, stackWidth, stackHeight)
-  const cropRect = cropDraft ?? {
+  const aspectRect = aspectDraft ?? {
     left: stackLeft,
     top: stackTop,
     width: stackWidth,
@@ -358,15 +365,15 @@ export function LabCanvas() {
     })
   }
 
-  const startCrop = (event: ReactPointerEvent, handle: CropHandle) => {
+  const startAspectResize = (event: ReactPointerEvent, handle: AspectHandle) => {
     if (event.button !== 0) return
     beginGesture(event, {
-      kind: 'crop',
+      kind: 'aspect',
       pointerId: event.pointerId,
       handle,
       startX: event.clientX,
       startY: event.clientY,
-      rect: cropRect,
+      rect: aspectRect,
     }, false)
   }
 
@@ -389,7 +396,7 @@ export function LabCanvas() {
     if (event.button !== 0 || mode !== 'background' || tool !== 'select') return
 
     const target = event.target as Element
-    if (target.closest('.lab-canvas-toolbar, .lab-mode-switch, .lab-crop-frame')) return
+    if (target.closest('.lab-canvas-toolbar, .lab-mode-switch, .lab-aspect-frame')) return
     const rect = stackRef.current?.getBoundingClientRect()
     const hitArtwork = !!rect && artworkContainsPoint(
       transform,
@@ -473,29 +480,21 @@ export function LabCanvas() {
     const dx = event.clientX - gesture.startX
     const dy = event.clientY - gesture.startY
     const next = { ...gesture.rect }
-    const right = gesture.rect.left + gesture.rect.width
-    const bottom = gesture.rect.top + gesture.rect.height
-    if (gesture.handle.includes('w')) {
-      next.left = Math.min(right - 80, gesture.rect.left + dx)
-      next.width = right - next.left
+    const centerX = gesture.rect.left + gesture.rect.width / 2
+    const centerY = gesture.rect.top + gesture.rect.height / 2
+    if (gesture.handle === 'w' || gesture.handle === 'e') {
+      const direction = gesture.handle === 'e' ? 1 : -1
+      next.width = Math.max(80, gesture.rect.width + dx * direction * 2)
+      next.left = centerX - next.width / 2
+    } else {
+      const direction = gesture.handle === 's' ? 1 : -1
+      next.height = Math.max(80, gesture.rect.height + dy * direction * 2)
+      next.top = centerY - next.height / 2
     }
-    if (gesture.handle.includes('e')) {
-      next.width = Math.max(80, gesture.rect.width + dx)
-    }
-    if (gesture.handle.includes('n')) {
-      next.top = Math.min(bottom - 80, gesture.rect.top + dy)
-      next.height = bottom - next.top
-    }
-    if (gesture.handle.includes('s')) {
-      next.height = Math.max(80, gesture.rect.height + dy)
-    }
-    if (event.shiftKey) {
-      const ratio = gesture.rect.width / Math.max(1, gesture.rect.height)
-      if (Math.abs(dx) >= Math.abs(dy)) next.height = next.width / ratio
-      else next.width = next.height * ratio
-    }
-    setCropDraft(next)
-    showHud(event, `${Math.round(next.width)} × ${Math.round(next.height)}`)
+    const dimensions = dimensionsForRatio(next.width / Math.max(1, next.height))
+    aspectDraftRef.current = next
+    setAspectDraft(next)
+    showHud(event, `${dimensions.width} × ${dimensions.height}`)
   }
 
   const finishPointer = (event: ReactPointerEvent<HTMLDivElement>, cancelled: boolean) => {
@@ -510,17 +509,19 @@ export function LabCanvas() {
       else useBackgroundStore.getState().commitTransaction()
     } else if (gesture.kind === 'pan' && cancelled) {
       setCamera(gesture.camera)
-    } else if (gesture.kind === 'crop') {
-      if (!cancelled && cropDraft) {
+    } else if (gesture.kind === 'aspect') {
+      const draft = aspectDraftRef.current
+      if (!cancelled && draft) {
         const dimensions = dimensionsForRatio(
-          cropDraft.width / Math.max(1, cropDraft.height),
+          draft.width / Math.max(1, draft.height),
         )
         useBackgroundStore.getState().updateRecipe({
           format: { aspect: 'custom', ...dimensions },
         })
         setCamera({ zoom: 1, panX: 0, panY: 0 })
       }
-      setCropDraft(null)
+      aspectDraftRef.current = null
+      setAspectDraft(null)
     }
 
     try {
@@ -585,7 +586,8 @@ export function LabCanvas() {
     } else if (gesture.kind === 'pan') {
       setCamera(gesture.camera)
     } else {
-      setCropDraft(null)
+      aspectDraftRef.current = null
+      setAspectDraft(null)
     }
     return true
   }
@@ -599,7 +601,8 @@ export function LabCanvas() {
       keyboardTransactionRef.current = false
       useBackgroundStore.getState().commitTransaction()
     }
-    setCropDraft(null)
+    aspectDraftRef.current = null
+    setAspectDraft(null)
     setTool(nextMode === 'material' ? 'hand' : 'select')
     useBackgroundStore.getState().setMode(nextMode)
   }
@@ -611,22 +614,30 @@ export function LabCanvas() {
       useBackgroundStore.getState().commitTransaction()
     }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.isComposing || editableTarget(event.target)) return
+      if (event.isComposing) return
+      if (event.key === 'Escape') {
+        const target = event.target as HTMLElement | null
+        const canvasButton = target?.tagName === 'BUTTON' && !!wrapRef.current?.contains(target)
+        if (editableTarget(target) && !canvasButton) return
+        if (cancelActiveGesture()) return
+        if (tool === 'aspect') {
+          setTool(mode === 'background' ? 'select' : 'hand')
+          return
+        }
+        if (mode === 'background' && artworkSelected) setArtworkSelected(false)
+        return
+      }
+      if (editableTarget(event.target)) return
       if (event.key === ' ') {
         event.preventDefault()
         setSpaceHeld(true)
-        return
-      }
-      if (event.key === 'Escape') {
-        if (cancelActiveGesture()) return
-        if (tool === 'crop') setTool('select')
         return
       }
       const key = event.key.toLowerCase()
       if (!event.ctrlKey && !event.metaKey && !event.altKey) {
         if (key === 'v' && mode === 'background') setTool('select')
         else if (key === 'h') setTool('hand')
-        else if (key === 'c' && mode === 'background') setTool('crop')
+        else if (key === 'a') setTool('aspect')
         else if (key === '+' || key === '=') {
           setCamera((current) =>
             zoomCameraAt(
@@ -741,32 +752,38 @@ export function LabCanvas() {
     requestAnimationFrame(() => document.getElementById(`lab-mode-${next.mode}`)?.focus())
   }
 
-  const resizeCropWithKeyboard = (
+  const resizeAspectWithKeyboard = (
     event: ReactKeyboardEvent<HTMLButtonElement>,
-    handle: CropHandle,
+    handle: AspectHandle,
   ) => {
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
     const horizontal = event.key === 'ArrowLeft' || event.key === 'ArrowRight'
-    if (horizontal && !handle.includes('e') && !handle.includes('w')) return
-    if (!horizontal && !handle.includes('n') && !handle.includes('s')) return
+    if (horizontal !== (handle === 'e' || handle === 'w')) return
     event.preventDefault()
     event.stopPropagation()
-    const delta = (event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : -1)
-      * (event.shiftKey ? 50 : 10)
-    const next = { ...cropRect }
-    if (horizontal && handle.includes('w')) {
-      next.left = Math.min(next.left + next.width - 80, next.left + delta)
-      next.width = cropRect.left + cropRect.width - next.left
-    } else if (horizontal) {
+    const outward = event.key === (
+      handle === 'e' ? 'ArrowRight'
+        : handle === 'w' ? 'ArrowLeft'
+          : handle === 'n' ? 'ArrowUp'
+            : 'ArrowDown'
+    )
+    const delta = (outward ? 1 : -1) * (event.shiftKey ? 50 : 10) * 2
+    const next = { ...aspectRect }
+    const centerX = next.left + next.width / 2
+    const centerY = next.top + next.height / 2
+    if (horizontal) {
       next.width = Math.max(80, next.width + delta)
-    } else if (handle.includes('n')) {
-      next.top = Math.min(next.top + next.height - 80, next.top + delta)
-      next.height = cropRect.top + cropRect.height - next.top
+      next.left = centerX - next.width / 2
     } else {
       next.height = Math.max(80, next.height + delta)
+      next.top = centerY - next.height / 2
     }
     const dimensions = dimensionsForRatio(next.width / Math.max(1, next.height))
-    useBackgroundStore.getState().updateRecipe({
+    if (!keyboardTransactionRef.current) {
+      keyboardTransactionRef.current = true
+      useBackgroundStore.getState().beginTransaction()
+    }
+    useBackgroundStore.getState().setTransient({
       format: { aspect: 'custom', ...dimensions },
     })
     setCamera({ zoom: 1, panX: 0, panY: 0 })
@@ -780,7 +797,7 @@ export function LabCanvas() {
         role="application"
         aria-label={`${mode === 'background' ? '2D' : '3D'} design canvas`}
         aria-describedby="lab-canvas-instructions"
-        aria-keyshortcuts="V H C 0"
+        aria-keyshortcuts="V H A 0"
         tabIndex={0}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -790,7 +807,7 @@ export function LabCanvas() {
         onWheel={onWheel}
       >
         <p id="lab-canvas-instructions" className="lab-visually-hidden">
-          V selects, H pans, C changes the output aspect, and 0 fits the artboard. Click the artwork to select it or empty canvas to
+          V selects, H pans, A changes the output aspect, and 0 fits the artboard. Click the artwork to select it or empty canvas to
           deselect. Drag the selected artwork to move it. Use its corner handles to scale, or drag
           just outside a corner to rotate. Arrow keys nudge; Shift uses larger steps; Escape
           cancels the active gesture.
@@ -818,7 +835,7 @@ export function LabCanvas() {
             <MaterialModelViewer />
           ) : null}
 
-          {mode === 'background' && artworkSelected ? (
+          {mode === 'background' && tool === 'select' && artworkSelected ? (
             <div
               className="lab-subject-frame"
               aria-label="2D artwork selected"
@@ -881,25 +898,25 @@ export function LabCanvas() {
           ) : null}
         </div>
 
-        {mode === 'background' && tool === 'crop' ? (
+        {tool === 'aspect' ? (
           <div
-            className="lab-crop-frame"
-            aria-label="Output crop frame"
+            className="lab-aspect-frame"
+            aria-label="Centered output aspect frame"
             style={{
-              left: cropRect.left,
-              top: cropRect.top,
-              width: cropRect.width,
-              height: cropRect.height,
+              left: aspectRect.left,
+              top: aspectRect.top,
+              width: aspectRect.width,
+              height: aspectRect.height,
             }}
           >
-            {(['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'] as const).map((handle) => (
+            {(['n', 'e', 's', 'w'] as const).map((handle) => (
               <button
                 key={handle}
                 type="button"
-                className={`lab-crop-handle handle-${handle}`}
-                aria-label={`Resize crop ${handle.toUpperCase()}`}
-                onPointerDown={(event) => startCrop(event, handle)}
-                onKeyDown={(event) => resizeCropWithKeyboard(event, handle)}
+                className={`lab-aspect-handle handle-${handle}`}
+                aria-label={`Resize centered aspect from ${handle.toUpperCase()} edge`}
+                onPointerDown={(event) => startAspectResize(event, handle)}
+                onKeyDown={(event) => resizeAspectWithKeyboard(event, handle)}
               />
             ))}
           </div>
@@ -915,43 +932,48 @@ export function LabCanvas() {
             type="button"
             className={tool === 'select' ? 'active' : ''}
             aria-pressed={tool === 'select'}
+            aria-label="Select"
+            aria-keyshortcuts="V"
             disabled={mode !== 'background'}
             onClick={() => setTool('select')}
           >
-            Select
+            <span className="lab-toolbar-label">Select</span>
           </button>
           <button
             type="button"
             className={tool === 'hand' ? 'active' : ''}
             aria-pressed={tool === 'hand'}
+            aria-label="Hand"
+            aria-keyshortcuts="H"
             onClick={() => setTool('hand')}
           >
-            Pan
+            <span className="lab-toolbar-label">Hand</span>
           </button>
           <button
             type="button"
-            className={tool === 'crop' ? 'active' : ''}
-            aria-pressed={tool === 'crop'}
-            disabled={mode !== 'background'}
-            onClick={() => setTool('crop')}
+            className={tool === 'aspect' ? 'active' : ''}
+            aria-pressed={tool === 'aspect'}
+            aria-label="Aspect"
+            aria-keyshortcuts="A"
+            onClick={() => setTool('aspect')}
           >
-            Aspect
+            <span className="lab-toolbar-label">Aspect</span>
           </button>
           <span className="lab-toolbar-divider" aria-hidden />
           <button
             type="button"
             aria-label="Zoom out"
-            onClick={() => setCamera((current) => ({ ...current, zoom: Math.max(CAMERA_MIN, current.zoom / 1.2) }))}
+            onClick={() => zoomAt(camera.zoom / 1.2)}
           >
             −
           </button>
           <output className="lab-zoom-readout" aria-label="Canvas zoom">
-            {Math.round(camera.zoom * 100)}%
+            {Math.round(displayScale * 100)}%
           </output>
           <button
             type="button"
             aria-label="Zoom in"
-            onClick={() => setCamera((current) => ({ ...current, zoom: Math.min(CAMERA_MAX, current.zoom * 1.2) }))}
+            onClick={() => zoomAt(camera.zoom * 1.2)}
           >
             +
           </button>
@@ -961,7 +983,7 @@ export function LabCanvas() {
             aria-keyshortcuts="0"
             onClick={fitView}
           >
-            Fit
+            <span className="lab-toolbar-label">Fit</span>
           </button>
         </div>
 

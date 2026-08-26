@@ -5,6 +5,7 @@ import {
   EXTENDED_NEUTRALS,
   EXTENDED_PRODUCT_BLUES,
 } from './extended'
+import { META_BLUE } from '@/core/color/brand'
 
 export type PaletteTier = 'primary' | 'secondary' | 'extended'
 
@@ -18,7 +19,7 @@ export type PalettePack = {
   colors: readonly string[]
 }
 
-export const META_BLUE = '#0064E0'
+export { META_BLUE }
 export const CUSTOM_PALETTE_ID = 'custom'
 
 export const APPROVED_COLOR_GROUPS = [
@@ -36,7 +37,7 @@ export const PALETTE_PACKS: readonly PalettePack[] = [
     source: 'primary-palette-reference.png',
     hue: 'blue',
     tone: 'full ramp',
-    colors: ['#0288F9', '#006CE1', '#034AE0', '#093AC7', '#132682'],
+    colors: [META_BLUE, '#0288F9', '#006CE1', '#034AE0', '#093AC7', '#132682'],
   },
   {
     id: 'primary-neutrals',
@@ -45,7 +46,7 @@ export const PALETTE_PACKS: readonly PalettePack[] = [
     source: 'primary-palette-reference.png',
     hue: 'neutral',
     tone: 'light to dark',
-    colors: ['#FFFFFF', '#D1D4DB', '#8B9BAA', '#506171', '#27353E', '#000000'],
+    colors: [META_BLUE, '#FFFFFF', '#D1D4DB', '#8B9BAA', '#506171', '#27353E', '#000000'],
   },
   {
     id: 'bold',
@@ -54,7 +55,7 @@ export const PALETTE_PACKS: readonly PalettePack[] = [
     source: 'bold-palette-reference.png',
     hue: 'cyan, yellow, orange',
     tone: 'vivid',
-    colors: ['#26C8EE', '#FED61F', '#FF5001'],
+    colors: [META_BLUE, '#26C8EE', '#FED61F', '#FF5001'],
   },
   {
     id: 'harmonious',
@@ -63,7 +64,7 @@ export const PALETTE_PACKS: readonly PalettePack[] = [
     source: 'harmonious-palette-reference.png',
     hue: 'violet and cyan',
     tone: 'vivid',
-    colors: ['#AE4FC3', '#824DFF', '#1CC5EE', '#4F43FF'],
+    colors: [META_BLUE, '#AE4FC3', '#824DFF', '#1CC5EE', '#4F43FF'],
   },
   {
     id: 'atmospheric',
@@ -72,7 +73,7 @@ export const PALETTE_PACKS: readonly PalettePack[] = [
     source: 'atmospheric-palette-reference.png',
     hue: 'blue grey',
     tone: 'soft',
-    colors: ['#D6E7EE', '#7CA0B8', '#526069', '#1C2A33'],
+    colors: [META_BLUE, '#D6E7EE', '#7CA0B8', '#526069', '#1C2A33'],
   },
   {
     id: 'neutral-flex',
@@ -81,7 +82,7 @@ export const PALETTE_PACKS: readonly PalettePack[] = [
     source: 'neutral-palette-reference.png',
     hue: 'neutral',
     tone: 'light to dark',
-    colors: ['#FFFFFF', '#DAE3EA', '#8D9DAC', '#526069', '#1C2B32', '#000000'],
+    colors: [META_BLUE, '#FFFFFF', '#DAE3EA', '#8D9DAC', '#526069', '#1C2B32', '#000000'],
   },
   {
     id: 'extended-approved',
@@ -98,6 +99,14 @@ export type ColorMix = {
   color: string
   ratio: number
   enabled: boolean
+}
+
+export function colorMixForPack(pack: PalettePack): ColorMix[] {
+  return pack.colors.map((color, index) => ({
+    color,
+    enabled: index < 3,
+    ratio: index === 0 ? 60 : index < 3 ? 20 : 0,
+  }))
 }
 
 export function normalizeColorRatios(values: readonly number[], enabled: readonly boolean[]): number[] {

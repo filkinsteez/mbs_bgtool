@@ -6,6 +6,7 @@ import { useCommitOnRelease } from '@/components/controls/useCommitOnRelease'
 import { ApprovedColorPicker } from '@/components/background/ApprovedColorPicker'
 import {
   addColorToMix,
+  colorMixForPack,
   CUSTOM_PALETTE_ID,
   PALETTE_PACKS,
 } from '@/features/background-generator/palette/registry'
@@ -31,11 +32,7 @@ export function ColorsPanel() {
 
   const setPack = (packId: string) => {
     const nextPack = PALETTE_PACKS.find((p) => p.id === packId) ?? PALETTE_PACKS[0]
-    const nextMix = nextPack.colors.map((color, i) => ({
-      color,
-      ratio: i === 0 ? 70 : Math.round(30 / Math.max(1, nextPack.colors.length - 1)),
-      enabled: i < Math.min(4, nextPack.colors.length),
-    }))
+    const nextMix = colorMixForPack(nextPack)
     const enabled = nextMix.filter((item) => item.enabled)
     updateRecipe({
       palette: {

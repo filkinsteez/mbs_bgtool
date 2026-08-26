@@ -136,7 +136,7 @@ export function BackgroundShell() {
       <ConfirmDialog
         open={confirmReset}
         title="Reset all?"
-        body="This resets 2D and 3D settings."
+        body="Resets format, colors, Looks, motion, 2D framing, and 3D view."
         confirmLabel="Reset all"
         onConfirm={() => {
           resetAll()

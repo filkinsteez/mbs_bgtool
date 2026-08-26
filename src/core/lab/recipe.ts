@@ -1,5 +1,6 @@
 import { mergeDeep } from '@/core/state/store'
 import { PAPER } from '@/core/state/defaults'
+import { META_BLUE } from '@/core/color/brand'
 import type { LabState } from './types'
 import { LAB_VERSION } from './types'
 import { MARK_DEFAULTS } from './composition'
@@ -44,8 +45,7 @@ export function createDefaultLab(seed = 1913): LabState {
   }
 }
 
-// Meta's primary brand blue — the lab's default shape color
-export const META_BLUE = '#0668e1'
+export { META_BLUE }
 
 // A clean start that keeps the loaded source: with an image present the
 // near band is the PHOTO (the image must never silently vanish into a

@@ -2,9 +2,7 @@
 
 import { useCallback, useEffect, useRef } from 'react'
 
-// DialKit's controls emit a continuous onChange; this app's history wants
-// transient-while-dragging plus ONE commit on release. The kit captures
-// the pointer, so the release is caught on the window.
+// Continuous controls update transiently, then create one history entry.
 //
 // Refs are only ever touched inside effects and event handlers — never
 // during render — so this stays clean under React 19's rules.
@@ -36,6 +34,7 @@ export function useCommitOnRelease(onCommit?: () => void) {
     window.addEventListener('pointercancel', done)
     window.addEventListener('keyup', done)
     window.addEventListener('blur', done)
+    window.addEventListener('pagehide', done)
     document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
       done()
@@ -43,6 +42,7 @@ export function useCommitOnRelease(onCommit?: () => void) {
       window.removeEventListener('pointercancel', done)
       window.removeEventListener('keyup', done)
       window.removeEventListener('blur', done)
+      window.removeEventListener('pagehide', done)
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [])
@@ -51,6 +51,7 @@ export function useCommitOnRelease(onCommit?: () => void) {
   const touch = useCallback(() => {
     clearTimeout(pointerTimer.current)
     pointerTimer.current = undefined
+    if (!dirty.current) latest.current?.()
     dirty.current = true
   }, [])
 

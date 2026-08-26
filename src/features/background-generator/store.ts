@@ -71,8 +71,12 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
   const commitRecipe = (recipe: BackgroundRecipeV2) => {
     recipe = normalizeRecipe(recipe)
     const before = get().recipe
-    if (!changed(before, recipe)) return
+    const transientStart = transactionStart
     transactionStart = null
+    if (transientStart && changed(transientStart, before)) {
+      backgroundHistory.push(transientStart)
+    }
+    if (!changed(before, recipe)) return
     backgroundHistory.push(before)
     set((state) => ({
       recipe,
@@ -93,7 +97,6 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
       backgroundHistory.clear()
       set((state) => ({
         recipe,
-        mode: recipe.mode,
         historyVersion: state.historyVersion + 1,
         ...historyFlags(),
       }))
@@ -115,8 +118,9 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
     commitTransaction: () => {
       const before = transactionStart
       transactionStart = null
+      if (!before) return
       const recipe = get().recipe
-      if (before && changed(before, recipe)) backgroundHistory.push(before)
+      if (changed(before, recipe)) backgroundHistory.push(before)
       set((state) => ({
         historyVersion: state.historyVersion + 1,
         ...historyFlags(),
@@ -127,15 +131,12 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
       const before = transactionStart
       transactionStart = null
       if (!before) return
-      const recipe = before.mode === get().mode
-        ? before
-        : { ...before, mode: get().mode }
       set((state) => ({
-        recipe,
+        recipe: before,
         historyVersion: state.historyVersion + 1,
         ...historyFlags(),
       }))
-      syncLab(recipe)
+      syncLab(before)
     },
     undo: () => {
       if (transactionStart) {
@@ -144,15 +145,12 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
       }
       const previous = backgroundHistory.undo(get().recipe)
       if (!previous) return
-      const recipe = previous.mode === get().mode
-        ? previous
-        : { ...previous, mode: get().mode }
       set((state) => ({
-        recipe,
+        recipe: previous,
         historyVersion: state.historyVersion + 1,
         ...historyFlags(),
       }))
-      syncLab(recipe)
+      syncLab(previous)
     },
     redo: () => {
       if (transactionStart) {
@@ -161,24 +159,16 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
       }
       const next = backgroundHistory.redo(get().recipe)
       if (!next) return
-      const recipe = next.mode === get().mode
-        ? next
-        : { ...next, mode: get().mode }
       set((state) => ({
-        recipe,
+        recipe: next,
         historyVersion: state.historyVersion + 1,
         ...historyFlags(),
       }))
-      syncLab(recipe)
+      syncLab(next)
     },
     setMode: (mode) => {
       if (transactionStart) get().commitTransaction()
-      set((state) => ({
-        mode,
-        recipe: state.recipe.mode === mode
-          ? state.recipe
-          : { ...state.recipe, mode },
-      }))
+      set({ mode })
     },
     setFramingMode: (mode) => {
       commitRecipe(applyFramingPreset(get().recipe, mode, get().mode))
@@ -190,10 +180,7 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
       commitRecipe(mergeDeep(get().recipe, { seed }))
     },
     reset: () => {
-      commitRecipe({
-        ...createDefaultBackgroundRecipe(),
-        mode: get().mode,
-      })
+      commitRecipe(createDefaultBackgroundRecipe())
     },
   }
 })

@@ -33,6 +33,14 @@ export function sourceAwareLabForRecipe(
   const tone = lab.territory.sources.find((item) => item.kind === 'tone')
   return {
     ...lab,
+    sourceVisibility: 1,
+    paint: null,
+    motion: {
+      ...lab.motion,
+      enabled: false,
+      amount: 0,
+      frame: undefined,
+    },
     colors: {
       paper: materialBaseColor(recipe),
       ink: materialHighlightColor(recipe),
