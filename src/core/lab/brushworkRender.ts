@@ -41,8 +41,8 @@ function clamp01(value: number): number {
 }
 
 function quietWidth(role: BrushworkRole, quiet: number): number {
-  const carve = role === 'hero' ? 0.78 : role === 'support' ? 0.92 : 0.97
-  return Math.max(0.045, 1 - clamp01(quiet) * carve)
+  const carve = role === 'hero' ? 0.68 : role === 'support' ? 0.76 : 0.84
+  return Math.max(0.08, 1 - clamp01(quiet) * carve)
 }
 
 function validIndex(index: number | null | undefined, palette: readonly string[]): index is number {
@@ -60,6 +60,8 @@ export function resolveBrushworkColorIndex(
     if (stroke.colorRole === 'accent') return Math.min(palette.length - 1, 2)
     return 0
   }
+  const tonalIndex = resolveTonalHierarchyIndex(stroke, palette, plan)
+  if (tonalIndex != null) return tonalIndex
   const targetByRole: Record<BrushworkPaletteRole, number | null | undefined> = {
     dominant: plan.roles.dominant,
     support: plan.roles.support[stroke.supportSlot % Math.max(1, plan.roles.support.length)],
@@ -81,6 +83,44 @@ export function resolveBrushworkColorIndex(
   return fallback ?? 0
 }
 
+function circularHueDistance(a: number, b: number): number {
+  const distance = Math.abs(a - b) % (Math.PI * 2)
+  return Math.min(distance, Math.PI * 2 - distance)
+}
+
+function resolveTonalHierarchyIndex(
+  stroke: BrushworkStroke,
+  palette: readonly string[],
+  plan: LookColorPlan,
+): number | null {
+  const approved = [
+    plan.roles.dominant,
+    ...plan.roles.support,
+    plan.roles.accent,
+    plan.roles.ink,
+  ].filter((index): index is number =>
+    validIndex(index, palette) && index !== plan.roles.ground)
+  const candidates = [...new Set(approved)]
+  if (candidates.length < 2) return null
+  const chromatic = candidates.filter((index) => plan.swatches[index].chroma > 0.025)
+  const tonal = chromatic.every((index, offset) =>
+    chromatic.slice(offset + 1).every((other) =>
+      circularHueDistance(plan.swatches[index].hue, plan.swatches[other].hue) < 0.5))
+  if (!tonal) return null
+  const groundLightness = plan.swatches[plan.roles.ground]?.lightness ?? 0.5
+  const hierarchy = candidates.sort((a, b) =>
+    Math.abs(plan.swatches[b].lightness - groundLightness)
+      - Math.abs(plan.swatches[a].lightness - groundLightness)
+    || a - b)
+  if (stroke.role === 'hero') {
+    return hierarchy[Math.min(stroke.id - 1000, hierarchy.length - 1)]
+  }
+  if (stroke.role === 'support') {
+    return hierarchy[(stroke.id - 2000) % hierarchy.length]
+  }
+  return hierarchy[(stroke.id - 3000) % hierarchy.length]
+}
+
 function inkIndexFor(palette: readonly string[], plan?: LookColorPlan): number {
   if (!palette.length) return 0
   if (plan && validIndex(plan.roles.ink, palette)) return plan.roles.ink
@@ -100,7 +140,31 @@ function strokeCoverage(
     const point = points[index]
     return sum + clamp01(territory(point.x * width, point.y * height))
   }, 0) / sampleIndices.length
-  return 0.48 + Math.pow(average, 0.72) * 0.52
+  return 0.58 + Math.pow(average, 0.72) * 0.42
+}
+
+function fillOpacity(role: BrushworkRole): number {
+  if (role === 'hero') return 0.82
+  if (role === 'support') return 0.68
+  return 0.5
+}
+
+function centerOpacity(role: BrushworkRole): number {
+  if (role === 'hero') return 0.3
+  if (role === 'support') return 0.19
+  return 0.1
+}
+
+function bristleOpacity(role: BrushworkRole): number {
+  if (role === 'hero') return 1
+  if (role === 'support') return 0.86
+  return 0.64
+}
+
+function washOpacity(role: BrushworkRole): number {
+  if (role === 'hero') return 0.16
+  if (role === 'support') return 0.12
+  return 0
 }
 
 function pixelPoints(
@@ -222,6 +286,7 @@ function renderBristles(
         * coverage
         * bristle.alpha
         * (bristle.pigment === 'ink' ? 0.34 : 0.74)
+        * bristleOpacity(stroke.role)
       ctx.stroke(path)
     }
   }
@@ -269,11 +334,22 @@ export function renderBrushwork(
     const coverage = strokeCoverage(stroke, territory, width, height)
     const geometry = buildRibbon(stroke, points, width, height)
     ctx.fillStyle = color
-    ctx.globalAlpha = stroke.opacity * coverage * 0.68
+    if (stroke.role !== 'filler') {
+      const wash = buildRibbon(
+        stroke,
+        points,
+        width,
+        height,
+        stroke.role === 'hero' ? 2.05 : 1.8,
+      )
+      ctx.globalAlpha = stroke.opacity * coverage * washOpacity(stroke.role)
+      ctx.fill(wash.ribbon)
+    }
+    ctx.globalAlpha = stroke.opacity * coverage * fillOpacity(stroke.role)
     ctx.fill(geometry.ribbon)
 
     const loadedCenter = buildRibbon(stroke, points, width, height, 0.5)
-    ctx.globalAlpha = stroke.opacity * coverage * 0.24
+    ctx.globalAlpha = stroke.opacity * coverage * centerOpacity(stroke.role)
     ctx.fill(loadedCenter.ribbon)
 
     renderBristles(ctx, stroke, geometry, color, inkColor, coverage)

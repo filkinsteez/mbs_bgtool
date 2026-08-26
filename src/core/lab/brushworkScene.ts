@@ -1,4 +1,5 @@
 import { chan, chanGauss } from '@/core/organic/random'
+import { META_PHASE, unitPos, unitVel } from '@/core/lissajous/equation'
 import {
   sampleCompositionPlan,
   type CompositionAnchor,
@@ -70,6 +71,20 @@ type Point = {
   y: number
 }
 
+type FlowTransform = {
+  center: Point
+  cosine: number
+  sine: number
+  longScale: number
+  crossScale: number
+}
+
+type FlowPoint = {
+  point: Point
+  tangent: Point
+  normal: Point
+}
+
 type StrokeSpec = {
   id: number
   index: number
@@ -91,6 +106,29 @@ const FALLBACK_ANCHOR: CompositionAnchor = {
   strength: 1,
   angle: 0,
 }
+
+const META_FLOW = {
+  a: 1,
+  b: 2,
+  phase: META_PHASE,
+  kind: 'meta' as const,
+}
+
+const CROSSING_A = Math.PI - META_PHASE
+const CROSSING_B = TAU - META_PHASE
+const HERO_FLOW_POSITIONS = [2.2, 5.34, CROSSING_A] as const
+const SUPPORT_FLOW_POSITIONS = [
+  CROSSING_A,
+  CROSSING_B,
+  2.22,
+  5.36,
+  3.72,
+  0.66,
+  2.86,
+  4.82,
+  1.72,
+] as const
+const EARLY_FILLER_POSITIONS = [1.06, 4.2, 2.52, 5.58] as const
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))
@@ -127,21 +165,69 @@ function add(point: Point, vector: Point, scale = 1): Point {
   }
 }
 
-function cubicPoint(
-  start: Point,
-  controlA: Point,
-  controlB: Point,
-  end: Point,
-  t: number,
-): Point {
-  const inverse = 1 - t
-  const a = inverse * inverse * inverse
-  const b = 3 * inverse * inverse * t
-  const c = 3 * inverse * t * t
-  const d = t * t * t
+function foldAroundAxis(angle: number, axis: number): number {
+  let delta = angle - axis
+  while (delta > Math.PI / 2) delta -= Math.PI
+  while (delta < -Math.PI / 2) delta += Math.PI
+  return delta
+}
+
+function buildFlowTransform(
+  composition: CompositionPlan,
+  space: BrushSpace,
+): FlowTransform {
+  const primary = composition.anchors[0] ?? FALLBACK_ANCHOR
+  const normalizedCenter = {
+    x: 0.5 + (primary.x - 0.5) * 0.14,
+    y: 0.5 + (primary.y - 0.5) * 0.14,
+  }
+  const center = toBrushPoint(normalizedCenter, space)
+  const longAxis = space.width >= space.height ? 0 : Math.PI / 2
+  const directionalLean = clamp(
+    foldAroundAxis(composition.field.angle, longAxis),
+    -0.62,
+    0.62,
+  )
+  const angle = longAxis + directionalLean * 0.48
   return {
-    x: start.x * a + controlA.x * b + controlB.x * c + end.x * d,
-    y: start.y * a + controlA.y * b + controlB.y * c + end.y * d,
+    center,
+    cosine: Math.cos(angle),
+    sine: Math.sin(angle),
+    longScale: clamp(Math.max(space.width, space.height) * 0.4, 0.58, 0.67),
+    crossScale: 0.5,
+  }
+}
+
+function sampleFlow(transform: FlowTransform, time: number): FlowPoint {
+  const [unitX, unitY] = unitPos(META_FLOW, time)
+  const [velocityX, velocityY] = unitVel(META_FLOW, time)
+  const localX = unitX * transform.longScale
+  const localY = unitY * transform.crossScale
+  const localVelocityX = velocityX * transform.longScale
+  const localVelocityY = velocityY * transform.crossScale
+  const point = {
+    x: transform.center.x
+      + localX * transform.cosine
+      - localY * transform.sine,
+    y: transform.center.y
+      + localX * transform.sine
+      + localY * transform.cosine,
+  }
+  const rotatedVelocity = {
+    x: localVelocityX * transform.cosine
+      - localVelocityY * transform.sine,
+    y: localVelocityX * transform.sine
+      + localVelocityY * transform.cosine,
+  }
+  const length = Math.hypot(rotatedVelocity.x, rotatedVelocity.y) || 1
+  const tangent = {
+    x: rotatedVelocity.x / length,
+    y: rotatedVelocity.y / length,
+  }
+  return {
+    point,
+    tangent,
+    normal: { x: -tangent.y, y: tangent.x },
   }
 }
 
@@ -191,72 +277,77 @@ function escapeQuietSpace(
   }
 }
 
-function roleLength(seed: number, spec: StrokeSpec): number {
-  const roll = chan(seed, spec.id, 'lab.brushwork.length')
-  if (spec.role === 'hero') {
-    return [0.94, 0.72, 0.58][spec.index] * (0.9 + roll * 0.18)
-  }
-  if (spec.role === 'support') return 0.27 + roll * 0.25
-  return 0.09 + roll * 0.15
-}
-
 function roleWidth(seed: number, spec: StrokeSpec): number {
   const roll = chan(seed, spec.id, 'lab.brushwork.width')
   if (spec.role === 'hero') {
-    return [0.094, 0.066, 0.048][spec.index] * (0.88 + roll * 0.18)
+    return [0.135, 0.11, 0.078][spec.index] * (0.9 + roll * 0.16)
   }
-  if (spec.role === 'support') return 0.021 + roll * 0.026
-  return 0.0065 + roll * 0.012
+  if (spec.role === 'support') return 0.06 + roll * 0.07
+  return 0.018 + roll * 0.022
 }
 
 function rolePointCount(role: BrushworkRole): number {
-  if (role === 'hero') return 19
-  if (role === 'support') return 13
+  if (role === 'hero') return 25
+  if (role === 'support') return 15
   return 9
 }
 
-function roleAngle(
+function flowPosition(
   seed: number,
   spec: StrokeSpec,
-  composition: CompositionPlan,
-  anchor: CompositionAnchor,
 ): number {
-  const variation = chanGauss(seed, spec.id, 'lab.brushwork.angle')
   if (spec.role === 'hero') {
-    return composition.field.angle + [0, 0.72, -0.58][spec.index] + variation * 0.18
+    return HERO_FLOW_POSITIONS[spec.index]
   }
   if (spec.role === 'support') {
-    const cadence = ((spec.index % 3) - 1) * 0.3
-    return composition.field.angle
-      + cadence
-      + (anchor.angle - composition.field.angle) * 0.12
-      + variation * 0.34
+    return SUPPORT_FLOW_POSITIONS[spec.index]
   }
-  const fan = [-0.92, -0.38, 0.18, 0.68][spec.index % 4]
-  return composition.field.angle + fan + variation * 0.44
+  if (spec.index < EARLY_FILLER_POSITIONS.length) {
+    return EARLY_FILLER_POSITIONS[spec.index]
+  }
+  const goldenTurn = 0.6180339887498948
+  const turn = (
+    (spec.index - EARLY_FILLER_POSITIONS.length) * goldenTurn
+    + chan(seed, spec.id, 'lab.brushwork.flow.position') * 0.11
+  ) % 1
+  return turn * TAU
 }
 
-function roleCenter(
+function flowSpan(seed: number, spec: StrokeSpec): number {
+  const roll = chan(seed, spec.id, 'lab.brushwork.flow.span')
+  if (spec.role === 'hero') return [2.14, 2.08, 1.22][spec.index] * (0.94 + roll * 0.1)
+  if (spec.role === 'support') return 0.65 + roll * 0.4
+  return 0.24 + roll * 0.31
+}
+
+function flowOffset(seed: number, spec: StrokeSpec): number {
+  const offset = chanGauss(seed, spec.id, 'lab.brushwork.flow.offset')
+  if (spec.role === 'hero') return [0.02, -0.026, 0.012][spec.index] + offset * 0.022
+  if (spec.role === 'support') {
+    const lane = [-0.13, 0.13, -0.08, 0.08, -0.18, 0.18, -0.04, 0.04, 0.21][spec.index]
+    return lane + offset * 0.028
+  }
+  const lane = ((spec.index % 5) - 2) * 0.062
+  return lane + offset * 0.035
+}
+
+function anchoredCenter(
   seed: number,
   spec: StrokeSpec,
   composition: CompositionPlan,
   anchor: CompositionAnchor,
   space: BrushSpace,
+  flow: FlowTransform,
 ): Point {
-  if (spec.role === 'hero' && spec.index === 0) return { x: anchor.x, y: anchor.y }
-  const angle = composition.field.angle
-    + chan(seed, spec.id, 'lab.brushwork.center.angle') * TAU
-  const radius = spec.role === 'hero'
-    ? 0.035 + spec.index * 0.018
-    : spec.role === 'support'
-      ? 0.055 + chan(seed, spec.id, 'lab.brushwork.center.radius') * 0.14
-      : 0.11 + chan(seed, spec.id, 'lab.brushwork.center.radius') * 0.27
-  const center = add(
-    toBrushPoint(anchor, space),
-    { x: Math.cos(angle), y: Math.sin(angle) },
-    radius,
-  )
-  return escapeQuietSpace(fromBrushPoint(center, space), composition)
+  const sample = sampleFlow(flow, flowPosition(seed, spec))
+  const flowCenter = fromBrushPoint(sample.point, space)
+  const anchorPull = (
+    spec.role === 'hero' ? 0.08 : spec.role === 'support' ? 0.11 : 0.07
+  ) * anchor.strength
+  return escapeQuietSpace({
+    x: flowCenter.x + (anchor.x - flowCenter.x) * anchorPull,
+    y: flowCenter.y + (anchor.y - flowCenter.y) * anchorPull,
+  }, composition)
 }
 
 function pressureFor(
@@ -308,7 +399,7 @@ export function brushworkPressureAt(
 
 function paletteRoleFor(spec: StrokeSpec): BrushworkPaletteRole {
   if (spec.role === 'hero') {
-    return (['dominant', 'support', 'accent'] as const)[spec.index]
+    return (['support', 'dominant', 'accent'] as const)[spec.index]
   }
   if (spec.role === 'support') {
     return spec.index % 4 === 3 ? 'ink' : spec.index % 2 === 0 ? 'support' : 'dominant'
@@ -376,51 +467,58 @@ function buildStroke(
     ? Math.min(spec.index, anchors.length - 1)
     : spec.index % anchors.length
   const anchor = anchors[anchorIndex] ?? anchors[0] ?? FALLBACK_ANCHOR
-  const normalizedCenter = roleCenter(seed, spec, composition, anchor, space)
-  const center = toBrushPoint(normalizedCenter, space)
-  const angle = roleAngle(seed, spec, composition, anchor)
-  const direction = { x: Math.cos(angle), y: Math.sin(angle) }
-  const normal = { x: -direction.y, y: direction.x }
-  const length = roleLength(seed, spec)
-  const startReach = 0.42 + chan(seed, spec.id, 'lab.brushwork.reach.start') * 0.12
-  const endReach = 0.48 + chan(seed, spec.id, 'lab.brushwork.reach.end') * 0.16
-  const bendSign = chan(seed, spec.id, 'lab.brushwork.bend.sign') > 0.5 ? 1 : -1
-  const bend = length
-    * (spec.role === 'hero' ? 0.1 : spec.role === 'support' ? 0.08 : 0.055)
-    * (0.55 + chan(seed, spec.id, 'lab.brushwork.bend') * 0.9)
-    * bendSign
-  const start = add(
-    add(center, direction, -length * startReach),
-    normal,
-    length * chanGauss(seed, spec.id, 'lab.brushwork.start.cross') * 0.035,
+  const flow = buildFlowTransform(composition, space)
+  const position = flowPosition(seed, spec)
+  const span = flowSpan(seed, spec)
+  const normalizedCenter = anchoredCenter(
+    seed,
+    spec,
+    composition,
+    anchor,
+    space,
+    flow,
   )
-  const end = add(
-    add(center, direction, length * endReach),
-    normal,
-    length * chanGauss(seed, spec.id, 'lab.brushwork.end.cross') * 0.065,
-  )
-  const controlA = add(
-    add(start, direction, length * (0.27 + chan(seed, spec.id, 'lab.brushwork.control.a') * 0.09)),
-    normal,
-    bend,
-  )
-  const controlB = add(
-    add(end, direction, -length * (0.24 + chan(seed, spec.id, 'lab.brushwork.control.b') * 0.12)),
-    normal,
-    bend * (-0.2 + chanGauss(seed, spec.id, 'lab.brushwork.bend.return') * 0.45),
-  )
+  const rawCenter = sampleFlow(flow, position).point
+  const desiredCenter = toBrushPoint(normalizedCenter, space)
+  const centerShift = {
+    x: desiredCenter.x - rawCenter.x,
+    y: desiredCenter.y - rawCenter.y,
+  }
+  const centerFlowPoint = sampleFlow(flow, position)
+  const baseOffset = flowOffset(seed, spec)
   const pointCount = rolePointCount(spec.role)
   const spatialPhase = chan(seed, spec.id, 'lab.brushwork.wobble.phase') * TAU
-  const wobbleScale = spec.role === 'hero' ? 0.012 : spec.role === 'support' ? 0.009 : 0.005
+  const wobbleScale = spec.role === 'hero' ? 0.026 : spec.role === 'support' ? 0.018 : 0.009
   const points = Array.from({ length: pointCount }, (_, pointIndex): BrushworkPoint => {
     const progress = pointIndex / Math.max(1, pointCount - 1)
-    const point = cubicPoint(start, controlA, controlB, end, progress)
+    const flowPoint = spec.role === 'hero'
+      ? sampleFlow(flow, position + (progress - 0.5) * span)
+      : {
+          point: add(
+            centerFlowPoint.point,
+            centerFlowPoint.tangent,
+            (progress - 0.5) * span,
+          ),
+          tangent: centerFlowPoint.tangent,
+          normal: centerFlowPoint.normal,
+        }
     const envelope = Math.sin(Math.PI * progress)
-    const wobble = envelope * length * wobbleScale * (
-      Math.sin(progress * TAU * 1.7 + spatialPhase)
-      + Math.sin(progress * TAU * 3.4 - spatialPhase * 0.63) * 0.28
+    const wobble = envelope * wobbleScale * (
+      Math.sin(progress * TAU * 1.25 + spatialPhase)
+      + Math.sin(progress * TAU * 2.7 - spatialPhase * 0.63) * 0.34
     )
-    const normalized = fromBrushPoint(add(point, normal, wobble), space)
+    const along = envelope * wobbleScale * 0.24
+      * Math.sin(progress * TAU * 1.8 - spatialPhase)
+    const point = add(
+      add(
+        add(flowPoint.point, centerShift),
+        flowPoint.normal,
+        baseOffset + wobble,
+      ),
+      flowPoint.tangent,
+      along,
+    )
+    const normalized = fromBrushPoint(point, space)
     return {
       x: normalized.x,
       y: normalized.y,
@@ -441,10 +539,10 @@ function buildStroke(
     points,
     baseWidth: roleWidth(seed, spec),
     opacity: spec.role === 'hero'
-      ? 0.72 + chan(seed, spec.id, 'lab.brushwork.opacity') * 0.18
+      ? 0.76 + chan(seed, spec.id, 'lab.brushwork.opacity') * 0.18
       : spec.role === 'support'
-        ? 0.56 + chan(seed, spec.id, 'lab.brushwork.opacity') * 0.2
-        : 0.38 + chan(seed, spec.id, 'lab.brushwork.opacity') * 0.26,
+        ? 0.64 + chan(seed, spec.id, 'lab.brushwork.opacity') * 0.2
+        : 0.5 + chan(seed, spec.id, 'lab.brushwork.opacity') * 0.22,
     pressure: pressureFor(seed, spec),
     colorRole: paletteRoleFor(spec),
     supportSlot: spec.index % 2,
@@ -461,30 +559,34 @@ function catalogSpecs(seed: number): StrokeSpec[] {
   const heroCount = 3
   const supportCount = 9
   const fillerCount = 32
+  const supportReveal = [0.015, 0.04, 0.075, 0.115, 0.24, 0.36, 0.48, 0.64, 0.76]
+  const earlyFillerReveal = [0.04, 0.075, 0.11, 0.14]
   const heroes = Array.from({ length: heroCount }, (_, index): StrokeSpec => ({
     id: 1000 + index,
     index,
     count: heroCount,
     role: 'hero',
-    revealAt: [0, 0.07, 0.58][index],
+    revealAt: [0, 0.055, 0.56][index],
   }))
   const supports = Array.from({ length: supportCount }, (_, index): StrokeSpec => ({
     id: 2000 + index,
     index,
     count: supportCount,
     role: 'support',
-    revealAt: 0.08 + (index / Math.max(1, supportCount - 1)) * 0.7,
+    revealAt: supportReveal[index],
   }))
   const fillers = Array.from({ length: fillerCount }, (_, index): StrokeSpec => ({
     id: 3000 + index,
     index,
     count: fillerCount,
     role: 'filler',
-    revealAt: 0.18
-      + (
-        index
-        + chan(seed, 3000 + index, 'lab.brushwork.reveal') * 0.35
-      ) / fillerCount * 0.78,
+    revealAt: index < earlyFillerReveal.length
+      ? earlyFillerReveal[index]
+      : 0.18
+        + (
+          index - earlyFillerReveal.length
+          + chan(seed, 3000 + index, 'lab.brushwork.reveal') * 0.35
+        ) / (fillerCount - earlyFillerReveal.length) * 0.76,
   }))
   return [...fillers, ...supports, ...heroes]
 }

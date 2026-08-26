@@ -30,6 +30,61 @@ function scene(complexity: number) {
   })
 }
 
+function distance(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  return Math.hypot((a.x - b.x) * ASPECT, a.y - b.y)
+}
+
+function distanceToSegment(
+  point: { x: number; y: number },
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+): number {
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  const lengthSquared = dx * dx + dy * dy
+  if (lengthSquared === 0) return Math.hypot(point.x - start.x, point.y - start.y)
+  const progress = Math.max(0, Math.min(
+    1,
+    ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared,
+  ))
+  return Math.hypot(
+    point.x - (start.x + dx * progress),
+    point.y - (start.y + dy * progress),
+  )
+}
+
+function quietGroundFraction(complexity: number): number {
+  const strokes = scene(complexity).strokes
+  let quiet = 0
+  let samples = 0
+  for (let row = 0; row < 24; row += 1) {
+    for (let column = 0; column < 42; column += 1) {
+      const point = {
+        x: ((column + 0.5) / 42) * ASPECT,
+        y: (row + 0.5) / 24,
+      }
+      const active = strokes.some((stroke) => {
+        const influence = stroke.baseWidth
+          * (stroke.role === 'hero' ? 0.62 : stroke.role === 'support' ? 0.54 : 0.48)
+          + 0.012
+        const points = stroke.points.map((candidate) => ({
+          x: candidate.x * ASPECT,
+          y: candidate.y,
+        }))
+        for (let index = 1; index < points.length; index += 1) {
+          if (distanceToSegment(point, points[index - 1], points[index]) <= influence) {
+            return true
+          }
+        }
+        return false
+      })
+      if (!active) quiet += 1
+      samples += 1
+    }
+  }
+  return quiet / samples
+}
+
 describe('Brushwork stroke scene', () => {
   it('is deterministic and changes with the recipe seed', () => {
     const first = scene(0.5)
@@ -59,6 +114,8 @@ describe('Brushwork stroke scene', () => {
     expect(low.strokes.length).toBeLessThan(mid.strokes.length)
     expect(mid.strokes.length).toBeLessThan(high.strokes.length)
     expect(low.strokes.filter((stroke) => stroke.role === 'hero')).toHaveLength(2)
+    expect(low.strokes.filter((stroke) => stroke.role === 'support')).toHaveLength(4)
+    expect(low.strokes.filter((stroke) => stroke.role === 'filler')).toHaveLength(4)
     expect(high.strokes.some((stroke) => stroke.role === 'support')).toBe(true)
     expect(high.strokes.some((stroke) => stroke.role === 'filler')).toBe(true)
     for (const id of lowIds) {
@@ -84,10 +141,25 @@ describe('Brushwork stroke scene', () => {
       expect(brushworkQuietAt(composition, stroke.center.x, stroke.center.y)).toBeLessThan(0.45)
     }
     const primaryHero = high.strokes.find((stroke) => stroke.id === 1000)
-    expect(primaryHero?.center).toEqual({
-      x: composition.anchors[0].x,
-      y: composition.anchors[0].y,
-    })
+    expect(primaryHero?.anchorIndex).toBe(0)
+  })
+
+  it('forms two separated lobes with a central crossover and planned quiet ground', () => {
+    const high = scene(0.85)
+    const left = high.strokes.find((stroke) => stroke.id === 1000)!
+    const right = high.strokes.find((stroke) => stroke.id === 1001)!
+    const crossover = high.strokes.find((stroke) => stroke.id === 1002)!
+    const midpoint = {
+      x: (left.center.x + right.center.x) / 2,
+      y: (left.center.y + right.center.y) / 2,
+    }
+
+    expect(distance(left.center, right.center)).toBeGreaterThan(0.55)
+    expect(distance(crossover.center, midpoint)).toBeLessThan(0.48)
+    expect(quietGroundFraction(0.5)).toBeGreaterThanOrEqual(0.25)
+    expect(quietGroundFraction(0.5)).toBeLessThanOrEqual(0.45)
+    expect(quietGroundFraction(0.85)).toBeGreaterThanOrEqual(0.25)
+    expect(quietGroundFraction(0.85)).toBeLessThanOrEqual(0.45)
   })
 
   it('gives broad strokes an early pressure load and a long asymmetric taper', () => {
@@ -138,6 +210,57 @@ describe('Brushwork stroke scene', () => {
       expect(approvedRoles.has(index)).toBe(true)
       expect(index).not.toBe(colorPlan.roles.ground)
     }
+  })
+
+  it('uses lightness and opacity hierarchy for the default blue palette', () => {
+    const colorPlan = resolveLookColorPlan({
+      mix: [
+        { color: '#0064E0', weight: 60, enabled: true },
+        { color: '#0288F9', weight: 20, enabled: true },
+        { color: '#132682', weight: 20, enabled: true },
+      ],
+      ground: '#132682',
+      ink: '#0064E0',
+      lookId: 'brushwork',
+      complexity: 0.85,
+    })
+    const palette = colorPlan.swatches.map((swatch) => swatch.hex)
+    const high = scene(0.85)
+    const firstHero = high.strokes.find((stroke) => stroke.id === 1000)!
+    const secondHero = high.strokes.find((stroke) => stroke.id === 1001)!
+    const firstIndex = resolveBrushworkColorIndex(firstHero, palette, colorPlan)
+    const secondIndex = resolveBrushworkColorIndex(secondHero, palette, colorPlan)
+
+    expect(firstIndex).not.toBe(secondIndex)
+    expect(colorPlan.swatches[firstIndex].lightness).toBeGreaterThan(
+      colorPlan.swatches[secondIndex].lightness,
+    )
+    expect(firstHero.opacity).toBeGreaterThan(
+      high.strokes.find((stroke) => stroke.role === 'filler')!.opacity,
+    )
+  })
+
+  it('keeps the directional flow legible in a 9:16 frame', () => {
+    const aspect = 9 / 16
+    const portrait = buildBrushworkScene({
+      seed: SEED,
+      complexity: 0.85,
+      aspect,
+      composition: resolveCompositionPlan({
+        seed: SEED,
+        lookId: 'brushwork',
+        complexity: 0.85,
+        aspect,
+      }),
+    })
+    const points = portrait.strokes.flatMap((stroke) => stroke.points)
+    const width = Math.max(...points.map((point) => point.x))
+      - Math.min(...points.map((point) => point.x))
+    const height = Math.max(...points.map((point) => point.y))
+      - Math.min(...points.map((point) => point.y))
+
+    expect(width).toBeGreaterThan(0.7)
+    expect(height).toBeGreaterThan(0.9)
   })
 
   it('deforms a fixed topology on an exactly closed motion loop', () => {
