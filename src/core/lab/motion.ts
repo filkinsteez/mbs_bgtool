@@ -1,16 +1,19 @@
-import type { LabState } from './types'
+import { chan } from '@/core/organic/random'
+import type { Field } from './field'
+import type { LabState, MotionState } from './types'
 
-function wave(t: number, phase = 0): number {
-  return Math.sin(t * Math.PI * 2 + phase)
-}
+const TAU = Math.PI * 2
 
-function circularNoise(t: number, phase: number, speed: number): number {
-  const detail = Math.max(0, Math.min(1, (speed - 0.1) / 1.9))
-  return (
-    wave(t, phase) * (0.72 - detail * 0.18) +
-    wave(t * 2, phase * 1.7) * (0.2 + detail * 0.08) +
-    wave(t * 3, phase * 2.3) * (0.08 + detail * 0.1)
-  )
+const WARP_MODES = [
+  { xFrequency: 0.58, yFrequency: 0.31, temporalHarmonic: 1, baseWeight: 1, energyWeight: 0 },
+  { xFrequency: -0.37, yFrequency: 0.92, temporalHarmonic: 2, baseWeight: 0.22, energyWeight: 0.5 },
+  { xFrequency: 1.08, yFrequency: 0.66, temporalHarmonic: 3, baseWeight: 0.04, energyWeight: 0.32 },
+] as const
+
+export type OrganicMotionWarp = {
+  active: boolean
+  field: (source: Field) => Field
+  point: (x: number, y: number) => { x: number; y: number }
 }
 
 export function motionPhase(timeMs: number, loopSeconds: number): number {
@@ -18,38 +21,99 @@ export function motionPhase(timeMs: number, loopSeconds: number): number {
   return ((timeMs % loopMs) + loopMs) % loopMs / loopMs
 }
 
-// Preview-only motion transform. Keeps persisted recipes deterministic and
-// leaves export static unless a specific frame time is requested.
+// Builds one low-frequency, divergence-like domain warp per frame. Every
+// spatial basis is odd around the canvas center, so the symbol stays anchored
+// while its lobes and boundaries flex. Integer temporal harmonics guarantee a
+// seamless loop; speed adds higher-frequency motion without changing the seam.
+export function createOrganicMotionWarp(
+  motion: MotionState,
+  seed: number,
+  width: number,
+  height: number,
+): OrganicMotionWarp {
+  const phase = motion.frame?.phase
+  const amount = Math.max(0, Math.min(1, motion.amount))
+  if (phase === undefined || amount <= 0 || width <= 0 || height <= 0) {
+    return {
+      active: false,
+      field: (source) => source,
+      point: (x, y) => ({ x, y }),
+    }
+  }
+
+  const energy = Math.max(0, Math.min(1, (motion.speed - 0.1) / 1.9))
+  const theta = phase * TAU
+  const halfMin = Math.max(1, Math.min(width, height) / 2)
+  const centerX = width / 2
+  const centerY = height / 2
+  const strength = Math.min(width, height) * 0.052 * amount ** 0.82
+  const breathStrength = Math.min(width, height) * 0.012 * amount ** 0.9
+  const modes = WARP_MODES.map((mode, index) => {
+    const temporalPhase = (
+      theta * mode.temporalHarmonic
+      + chan(seed, index, 'motion.organic.phase') * TAU
+    )
+    return {
+      ...mode,
+      cosine: Math.cos(temporalPhase),
+      sine: Math.sin(temporalPhase),
+      weight: mode.baseWeight + mode.energyWeight * energy,
+    }
+  })
+  const totalWeight = modes.reduce((sum, mode) => sum + mode.weight, 0)
+  const breathPhaseX = theta + chan(seed, 0, 'motion.organic.breath') * TAU
+  const breathPhaseY = theta * 2 + chan(seed, 1, 'motion.organic.breath') * TAU
+  const stretchX = Math.cos(breathPhaseX) * 0.72 + Math.cos(breathPhaseY) * 0.28
+  const stretchY = Math.sin(breathPhaseX) * 0.68 - Math.sin(breathPhaseY) * 0.32
+  const shear = Math.sin(theta + chan(seed, 2, 'motion.organic.breath') * TAU) * 0.28
+  let warpedX = 0
+  let warpedY = 0
+
+  const resolve = (x: number, y: number) => {
+    const u = (x - centerX) / halfMin
+    const v = (y - centerY) / halfMin
+    let dx = 0
+    let dy = 0
+
+    for (const mode of modes) {
+      const along = Math.sin(TAU * (mode.xFrequency * u + mode.yFrequency * v))
+      const across = Math.sin(TAU * (-mode.yFrequency * u + mode.xFrequency * v))
+      dx += mode.weight * (along * mode.cosine + across * mode.sine)
+      dy += mode.weight * (across * mode.cosine - along * mode.sine)
+    }
+
+    warpedX = x
+      + (dx / totalWeight) * strength
+      + (u * stretchX + v * shear) * breathStrength
+    warpedY = y
+      + (dy / totalWeight) * strength
+      + (v * stretchY - u * shear) * breathStrength
+  }
+
+  return {
+    active: true,
+    field: (source) => (x, y) => {
+      resolve(x, y)
+      return source(warpedX, warpedY)
+    },
+    point: (x, y) => {
+      resolve(x, y)
+      return { x: warpedX, y: warpedY }
+    },
+  }
+}
+
+// Preview-only runtime phase. The persisted geometry stays untouched, so the
+// animation deforms the generated field rather than translating the symbol.
 export function applyMotionAt(lab: LabState, timeMs: number): LabState {
   if (!lab.motion.enabled || lab.motion.amount <= 0) return lab
-  const t = motionPhase(timeMs, lab.motion.loopSeconds)
-  const a = lab.motion.amount
-  const speed = lab.motion.speed
-  const curveShiftX = 0.18 * a * circularNoise(t, 0.2, speed)
-  const curveShiftY = 0.12 * a * circularNoise(t, 1.4, speed)
-  const gainPulse = 1 + 0.2 * a * circularNoise(t, 0.8, speed)
-  const angleDrift = 0.25 * a * circularNoise(t, 2.1, speed)
   return {
     ...lab,
-    territory: {
-      ...lab.territory,
-      gain: Math.max(0.2, Math.min(1.6, (lab.territory.gain ?? 1) * gainPulse)),
-      sources: lab.territory.sources.map((src) =>
-        src.kind === 'curve' && src.curve
-          ? {
-              ...src,
-              curve: {
-                ...src.curve,
-                offsetX: src.curve.offsetX + curveShiftX,
-                offsetY: src.curve.offsetY + curveShiftY,
-              },
-            }
-          : src,
-      ),
-    },
-    flow: {
-      ...lab.flow,
-      angle: lab.flow.angle + angleDrift,
+    motion: {
+      ...lab.motion,
+      frame: {
+        phase: motionPhase(timeMs, lab.motion.loopSeconds),
+      },
     },
   }
 }

@@ -152,8 +152,10 @@ export type MarkParams = {
 export type MotionState = {
   enabled: boolean
   amount: number // 0..1
-  speed: number // cycles per second
+  speed: number // 0.1..2, blends in faster temporal harmonics
   loopSeconds: number // loop duration for deterministic previews
+  // Runtime-only phase injected by applyMotionAt. Persisted recipes omit it.
+  frame?: { phase: number }
 }
 
 export type LabState = {

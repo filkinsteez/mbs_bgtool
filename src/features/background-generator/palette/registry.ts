@@ -13,6 +13,7 @@ export type PalettePack = {
 }
 
 export const META_BLUE = '#0064E0'
+export const CUSTOM_PALETTE_ID = 'custom'
 
 export const PALETTE_PACKS: readonly PalettePack[] = [
   {
@@ -100,6 +101,28 @@ export function normalizeColorRatios(values: readonly number[], enabled: readonl
     normalized[last] = 100 - normalized.reduce((acc, v, i) => (i === last ? acc : acc + v), 0)
   }
   return normalized
+}
+
+export function addColorToMix(mix: readonly ColorMix[], color: string): ColorMix[] {
+  const existingIndex = mix.findIndex(
+    (item) => item.color.toUpperCase() === color.toUpperCase(),
+  )
+  if (existingIndex >= 0 && mix[existingIndex].enabled) return [...mix]
+
+  const enabled = mix.filter((item) => item.enabled)
+  const newShare = 100 / (enabled.length + 1)
+  const currentTotal = enabled.reduce((sum, item) => sum + item.ratio, 0)
+  const retainedShare = 100 - newShare
+  const next = mix.map((item) => ({
+    ...item,
+    ratio: item.enabled && currentTotal > 0
+      ? (item.ratio / currentTotal) * retainedShare
+      : 0,
+  }))
+  const added = { color, enabled: true, ratio: newShare }
+  if (existingIndex >= 0) next[existingIndex] = added
+  else next.push(added)
+  return next
 }
 
 export function buildWeightedPalette(mix: readonly ColorMix[], slots = 10): string[] {

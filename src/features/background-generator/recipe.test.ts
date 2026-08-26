@@ -31,6 +31,20 @@ describe('background recipe', () => {
     expect(deserializeBackgroundRecipe(JSON.stringify({ ...recipe, mode: 'combined' }))).toBeNull()
   })
 
+  it('round-trips a custom palette without reverting to defaults', () => {
+    const recipe = createDefaultBackgroundRecipe(42)
+    const mix = [
+      { color: '#0288F9', enabled: true, ratio: 75 },
+      { color: '#24D366', enabled: true, ratio: 25 },
+    ]
+    const restored = deserializeBackgroundRecipe(JSON.stringify({
+      ...recipe,
+      palette: { packId: 'custom', mix },
+    }))
+
+    expect(restored?.palette).toEqual({ packId: 'custom', mix })
+  })
+
   it('defaults older recipes to a disabled 3D Look overlay', () => {
     const recipe = createDefaultBackgroundRecipe(42)
     const { materialLookOverlay: _overlay, ...withoutOverlay } = recipe

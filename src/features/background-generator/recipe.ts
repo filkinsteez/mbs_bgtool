@@ -6,6 +6,7 @@ import { mergeDeep, type DeepPartial } from '@/core/state/store'
 import { MATERIAL_BY_ID, type MaterialId } from './material/shadersCatalog'
 import {
   buildWeightedPalette,
+  CUSTOM_PALETTE_ID,
   META_BLUE,
   PALETTE_PACKS,
   type ColorMix,
@@ -212,8 +213,16 @@ export function deserializeBackgroundRecipe(json: string): BackgroundRecipeV2 | 
     }
     const allowedLook = LOOKS.some((look) => look.id === recipe.look.id)
     const pack = PALETTE_PACKS.find((item) => item.id === recipe.palette.packId)
+    const customPalette = recipe.palette.packId === CUSTOM_PALETTE_ID
+      && Array.isArray(recipe.palette.mix)
+      && recipe.palette.mix.length > 0
     const allowedMode = recipe.mode === 'background' || recipe.mode === 'material'
-    if (!allowedMode || !allowedLook || !pack || !MATERIAL_BY_ID[recipe.material.id]) return null
+    if (
+      !allowedMode
+      || !allowedLook
+      || (!pack && !customPalette)
+      || !MATERIAL_BY_ID[recipe.material.id]
+    ) return null
     recipe.seed = clampInt(recipe.seed, 0, 0x7fffffff)
     recipe.format.width = clampInt(recipe.format.width, 64, 8192)
     recipe.format.height = clampInt(recipe.format.height, 64, 8192)

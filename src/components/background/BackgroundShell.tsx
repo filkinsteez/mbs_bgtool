@@ -30,10 +30,6 @@ export function BackgroundShell() {
     getServerHydration,
   )
   const mode = useBackgroundStore((state) => state.recipe.mode)
-  const canUndo = useBackgroundStore((state) => state.canUndo)
-  const canRedo = useBackgroundStore((state) => state.canRedo)
-  const undo = useBackgroundStore((state) => state.undo)
-  const redo = useBackgroundStore((state) => state.redo)
   const newVariation = useBackgroundStore((state) => state.newVariation)
   const reset = useBackgroundStore((state) => state.reset)
 
@@ -93,28 +89,6 @@ export function BackgroundShell() {
     <div className="lab-root dialkit-root" data-hydrated={hydrated ? 'true' : 'false'}>
       <header className="lab-topbar">
         <span className="lab-title">MBS Background Generator</span>
-        <div className="lab-history-controls" role="group" aria-label="History">
-          <button
-            type="button"
-            className="lab-chip"
-            aria-label="Undo"
-            aria-keyshortcuts="Meta+Z Control+Z"
-            disabled={!canUndo}
-            onClick={undo}
-          >
-            ↶
-          </button>
-          <button
-            type="button"
-            className="lab-chip"
-            aria-label="Redo"
-            aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z"
-            disabled={!canRedo}
-            onClick={redo}
-          >
-            ↷
-          </button>
-        </div>
         <div className="lab-topbar-actions">
           {mode === 'background' ? (
             <button type="button" className="lab-chip" onClick={newVariation}>

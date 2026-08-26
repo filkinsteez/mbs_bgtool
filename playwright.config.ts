@@ -1,6 +1,8 @@
 import { defineConfig } from '@playwright/test'
+import { existsSync } from 'node:fs'
 
 const externalBaseUrl = process.env.PLAYWRIGHT_BASE_URL
+const systemChrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const noProxyHosts = new Set(
   (process.env.NO_PROXY ?? process.env.no_proxy ?? '')
     .split(',')
@@ -25,7 +27,10 @@ export default defineConfig({
       name: 'chromium-fallback',
       use: {
         browserName: 'chromium',
-        launchOptions: { args: ['--disable-features=WebGPU'] },
+        launchOptions: {
+          args: ['--disable-features=WebGPU'],
+          ...(existsSync(systemChrome) ? { executablePath: systemChrome } : {}),
+        },
       },
     },
   ],

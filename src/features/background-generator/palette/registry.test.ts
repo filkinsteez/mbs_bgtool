@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  addColorToMix,
   buildWeightedPalette,
   META_BLUE,
   normalizeColorRatios,
@@ -26,6 +27,30 @@ describe('palette registry', () => {
     const out = normalizeColorRatios([90, 10, 0], [true, true, false])
     expect(Math.round(out.reduce((acc, v) => acc + v, 0))).toBe(100)
     expect(out[2]).toBe(0)
+  })
+
+  it('adds approved colors without replacing the existing mix', () => {
+    const original = [{ color: '#22C55E', ratio: 100, enabled: true }]
+    const next = addColorToMix(original, '#FF5001')
+
+    expect(next).toEqual([
+      { color: '#22C55E', ratio: 50, enabled: true },
+      { color: '#FF5001', ratio: 50, enabled: true },
+    ])
+    expect(original).toEqual([{ color: '#22C55E', ratio: 100, enabled: true }])
+  })
+
+  it('re-enables an existing color instead of duplicating it', () => {
+    const next = addColorToMix([
+      { color: '#0064E0', ratio: 100, enabled: true },
+      { color: '#ff5001', ratio: 0, enabled: false },
+    ], '#FF5001')
+
+    expect(next).toHaveLength(2)
+    expect(next).toEqual([
+      { color: '#0064E0', ratio: 50, enabled: true },
+      { color: '#FF5001', ratio: 50, enabled: true },
+    ])
   })
 
   it('builds a weighted palette from mix ratios', () => {

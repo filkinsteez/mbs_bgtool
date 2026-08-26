@@ -223,6 +223,14 @@ async function waitForAnimationFrames(page: Page, count: number): Promise<void> 
   }), count)
 }
 
+async function pressUndo(page: Page): Promise<void> {
+  await page.keyboard.press('ControlOrMeta+z')
+}
+
+async function pressRedo(page: Page): Promise<void> {
+  await page.keyboard.press('ControlOrMeta+Shift+z')
+}
+
 async function shrinkArtworkFromCenter(page: Page, ratio = 0.6): Promise<void> {
   const artboard = await page.locator('.lab-canvas-stack').boundingBox()
   const frame = page.locator('.lab-subject-frame')
@@ -354,8 +362,6 @@ test('pins the accessible mode switch to the stage and keeps mode-specific contr
     'Color',
     'Materials',
     'Looks',
-    'Export',
-    'Export resolution',
   ])
   await expect(page.locator('[data-mbs-look-scope="3d-full-frame"]')).toHaveText(
     'Processes the live 3D frame. Click the active Look to turn it off.',
@@ -430,6 +436,71 @@ test('pins the accessible mode switch to the stage and keeps mode-specific contr
   await backgroundTab.click()
   await expect(page.locator('[data-renderer="looks"]')).toBeVisible()
   await expect(page.locator('[data-mbs-shader="true"]')).toHaveCount(0)
+})
+
+test('uses color percentages as off state and adds swatches without replacing the mix', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
+
+  const colorSection = page.locator('.panel-section').filter({
+    has: page.locator('.panel-heading', { hasText: /^Color$/ }),
+  }).first()
+  await expect(colorSection.getByRole('button', { name: /^(On|Off)$/ })).toHaveCount(0)
+
+  const ratioInputs = colorSection.getByRole('spinbutton', { name: /percentage/ })
+  await ratioInputs.first().fill('0')
+  await expect.poll(async () =>
+    page.evaluate(() => {
+      const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
+      return recipe.palette?.mix?.[0]
+    }),
+  ).toMatchObject({ enabled: false, ratio: 0 })
+
+  await ratioInputs.first().fill('30')
+  await expect.poll(async () =>
+    page.evaluate(() => {
+      const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
+      return recipe.palette?.mix?.[0]?.enabled
+    }),
+  ).toBe(true)
+
+  const before = await page.evaluate(() => {
+    const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
+    return recipe.palette.mix as { color: string }[]
+  })
+  await colorSection.locator('summary', { hasText: 'More approved colors' }).click()
+  const swatch = colorSection.locator('.lab-approved-swatch[aria-pressed="false"]').first()
+  const addedColor = await swatch.getAttribute('title')
+  await swatch.click()
+
+  await expect.poll(async () =>
+    page.evaluate(() => {
+      const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
+      return {
+        packId: recipe.palette?.packId,
+        colors: recipe.palette?.mix?.map((item: { color: string }) => item.color),
+      }
+    }),
+  ).toEqual({
+    packId: 'custom',
+    colors: [...before.map((item) => item.color), addedColor],
+  })
+
+  await page.reload()
+  await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
+  await expect.poll(async () =>
+    page.evaluate(() => {
+      const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
+      return {
+        packId: recipe.palette?.packId,
+        colors: recipe.palette?.mix?.map((item: { color: string }) => item.color),
+      }
+    }),
+  ).toEqual({
+    packId: 'custom',
+    colors: [...before.map((item) => item.color), addedColor],
+  })
+  await expect(colorSection.getByText('Custom', { exact: true })).toBeVisible()
 })
 
 test('orders Material swatches from low to high saturation', async ({ page }) => {
@@ -726,7 +797,6 @@ test('orbit and wheel release 3D framing without spamming history', async ({ pag
   const viewer = page.locator('[data-mbs-material-model="true"]')
   const canvas = viewer.locator('.lab-material-model-canvas')
   const resetView = viewer.getByRole('button', { name: 'Reset view', exact: true })
-  const undo = page.getByRole('button', { name: 'Undo', exact: true })
   const materialPreset = () => page.evaluate(() => {
     const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
     return recipe.transforms?.material?.preset
@@ -753,7 +823,7 @@ test('orbit and wheel release 3D framing without spamming history', async ({ pag
   await expect.poll(materialPreset).toBe('free')
   expect((await screenshotView()).equals(initialView)).toBe(false)
 
-  await undo.click()
+  await pressUndo(page)
   await expect.poll(materialPreset).toBe('full')
   await resetView.click()
   await waitForAnimationFrames(page, 2)
@@ -770,7 +840,7 @@ test('orbit and wheel release 3D framing without spamming history', async ({ pag
   await expect.poll(materialPreset).toBe('free')
   expect((await screenshotView()).equals(initialView)).toBe(false)
 
-  await undo.click()
+  await pressUndo(page)
   await expect.poll(materialPreset).toBe('full')
   await resetView.click()
   await waitForAnimationFrames(page, 2)
@@ -857,7 +927,6 @@ test('deselects and reselects the 2D artwork without recipe edits', async ({ pag
   const wrap = page.locator('.lab-canvas-wrap')
   const artboard = page.locator('.lab-canvas-stack')
   const frame = page.locator('.lab-subject-frame')
-  const undo = page.getByRole('button', { name: 'Undo', exact: true })
   const frameBox = await frame.boundingBox()
   const artboardBox = await artboard.boundingBox()
   expect(frameBox).not.toBeNull()
@@ -867,7 +936,8 @@ test('deselects and reselects the 2D artwork without recipe edits', async ({ pag
   // artboard is blank selection space, while its center reselects the artwork.
   await page.mouse.click(artboardBox!.x - 12, artboardBox!.y + 20)
   await expect(frame).toHaveCount(0)
-  await expect(undo).toBeDisabled()
+  await pressUndo(page)
+  await expect(frame).toHaveCount(0)
 
   const artworkCenter = {
     x: frameBox!.x + frameBox!.width / 2,
@@ -881,14 +951,12 @@ test('deselects and reselects the 2D artwork without recipe edits', async ({ pag
   await page.mouse.click(artboardBox!.x - 12, artboardBox!.y + 20)
   await expect(frame).toHaveCount(0)
   await expect(page.locator('.lab-crop-frame')).toHaveCount(0)
-  await expect(undo).toBeDisabled()
   const afterBlankBox = await artboard.boundingBox()
   expect(afterBlankBox?.x).toBeCloseTo(artboardBox!.x, 1)
   expect(afterBlankBox?.y).toBeCloseTo(artboardBox!.y, 1)
 
   await wrap.press('ArrowRight')
   await page.waitForTimeout(450)
-  await expect(undo).toBeDisabled()
   expect(await page.evaluate(() =>
     localStorage.getItem('mbs-bg-generator-autosave-v2'),
   )).toBeNull()
@@ -896,13 +964,19 @@ test('deselects and reselects the 2D artwork without recipe edits', async ({ pag
   await page.mouse.click(artworkCenter.x, artworkCenter.y)
   await expect(frame).toBeVisible()
   await wrap.press('Shift+ArrowRight')
-  await expect(undo).toBeEnabled()
   await expect.poll(async () =>
     page.evaluate(() => {
       const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
       return recipe.transforms?.background?.x ?? 0
     }),
   ).toBeGreaterThan(0)
+  await pressUndo(page)
+  await expect.poll(async () =>
+    page.evaluate(() => {
+      const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
+      return recipe.transforms?.background?.x ?? 0
+    }),
+  ).toBe(0)
 })
 
 test('translates the complete 2D artwork identically in preview and PNG export', async ({ page }) => {
@@ -971,10 +1045,10 @@ test('translates the complete 2D artwork identically in preview and PNG export',
   expect(exportShift).toEqual({ mismatchedFraction: 0, maxDelta: 0 })
   expect(exportAfter).not.toBe(exportBefore)
 
-  await page.getByRole('button', { name: 'Undo', exact: true }).click()
+  await pressUndo(page)
   await waitForAnimationFrames(page, 2)
   expect(await exportPng()).toBe(exportBefore)
-  await page.getByRole('button', { name: 'Redo', exact: true }).click()
+  await pressRedo(page)
   await waitForAnimationFrames(page, 2)
   expect(await exportPng()).toBe(exportAfter)
 })
@@ -989,7 +1063,6 @@ test('snaps moved artwork to all canvas edges at multiple zoom levels', async ({
   await shrinkArtworkFromCenter(page)
 
   const frame = page.locator('.lab-subject-frame')
-  const undo = page.getByRole('button', { name: 'Undo', exact: true })
   const cases = [
     { edge: 'left' as const, axis: 'x' as const, side: -1 },
     { edge: 'right' as const, axis: 'x' as const, side: 1 },
@@ -1041,7 +1114,7 @@ test('snaps moved artwork to all canvas edges at multiple zoom levels', async ({
       await expect(page.locator(`.lab-snap-guide.${item.axis === 'x' ? 'horizontal' : 'vertical'}`))
         .toHaveCount(0)
       await page.mouse.up()
-      await undo.click()
+      await pressUndo(page)
       await waitForAnimationFrames(page, 1)
     }
   }
@@ -1057,7 +1130,6 @@ test('snaps scaled artwork corners to all canvas edges at multiple zoom levels',
   await shrinkArtworkFromCenter(page)
 
   const frame = page.locator('.lab-subject-frame')
-  const undo = page.getByRole('button', { name: 'Undo', exact: true })
   const corners = [
     { corner: 'nw', xEdge: 'left' as const, yEdge: 'top' as const },
     { corner: 'ne', xEdge: 'right' as const, yEdge: 'top' as const },
@@ -1108,7 +1180,7 @@ test('snaps scaled artwork corners to all canvas edges at multiple zoom levels',
       await expect(page.locator('.lab-snap-guide.horizontal')).toHaveCount(1)
       await page.mouse.up()
       if (zoomLevel > 0) await page.keyboard.up('Shift')
-      await undo.click()
+      await pressUndo(page)
       await waitForAnimationFrames(page, 1)
     }
   }
@@ -1193,7 +1265,7 @@ test('directly moves and crops while keeping mode transforms independent', async
     ),
   ).toBe('custom')
 
-  await page.getByRole('button', { name: 'Undo', exact: true }).click()
+  await pressUndo(page)
   await expect.poll(async () =>
     page.evaluate(() =>
       JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}').format?.aspect,
@@ -1201,40 +1273,25 @@ test('directly moves and crops while keeping mode transforms independent', async
   ).toBe('16:9')
 })
 
-test('keeps preset-only resolution controls with exact PNG export dimensions', async ({ page }) => {
+test('exports both modes as exact 4K PNGs', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
 
   const formatSection = page.getByRole('region', { name: 'Format', exact: true })
   const exportSection = page.getByRole('region', { name: 'Export', exact: true })
-  const resolutionControl = exportSection.getByRole('group', {
-    name: 'Export resolution',
-    exact: true,
-  })
   await expect(formatSection.getByRole('button', { name: /^Aspect / })).toBeVisible()
   await expect(
     formatSection.getByRole('group', { name: 'Export resolution', exact: true }),
   ).toHaveCount(0)
   await expect(formatSection.getByText(/^Current output:/)).toHaveCount(0)
-  await expect(resolutionControl).toBeVisible()
+  await expect(
+    exportSection.getByRole('group', { name: 'Export resolution', exact: true }),
+  ).toHaveCount(0)
   await expect(exportSection.locator('input')).toHaveCount(0)
   await expect(exportSection.getByRole('spinbutton')).toHaveCount(0)
 
-  const gated8kOptions = await resolutionControl.getByRole('button', {
-    name: '8K',
-    exact: true,
-  }).count()
-  const gated8kMessages = await exportSection.getByText(/^8K unavailable:/).count()
-  expect(gated8kOptions + gated8kMessages).toBe(1)
-
-  for (const preset of ['2K', '4K', '1080'] as const) {
-    const button = resolutionControl.getByRole('button', { name: preset, exact: true })
-    await button.click()
-    await expect(button).toHaveAttribute('aria-pressed', 'true')
-  }
-
   const backgroundDownloadPromise = page.waitForEvent('download')
-  await exportSection.getByRole('button', { name: 'Export PNG', exact: true }).click()
+  await exportSection.getByRole('button', { name: 'Export', exact: true }).click()
   const backgroundDownload = await backgroundDownloadPromise
   const backgroundPath = await backgroundDownload.path()
   expect(backgroundPath).not.toBeNull()
@@ -1243,7 +1300,7 @@ test('keeps preset-only resolution controls with exact PNG export dimensions', a
 
   await page.getByRole('tab', { name: '3D', exact: true }).click()
   const materialDownloadPromise = page.waitForEvent('download')
-  await exportSection.getByRole('button', { name: 'Export PNG', exact: true }).click()
+  await exportSection.getByRole('button', { name: 'Export', exact: true }).click()
   const materialDownload = await materialDownloadPromise
   const materialPath = await materialDownload.path()
   expect(materialPath).not.toBeNull()
@@ -1252,8 +1309,8 @@ test('keeps preset-only resolution controls with exact PNG export dimensions', a
 
   for (const png of [backgroundPng, materialPng]) {
     expect(png.subarray(1, 4).toString()).toBe('PNG')
-    expect(png.readUInt32BE(16)).toBe(1080)
-    expect(png.readUInt32BE(20)).toBe(608)
+    expect(png.readUInt32BE(16)).toBe(3840)
+    expect(png.readUInt32BE(20)).toBe(2160)
   }
   expect(materialPng.equals(backgroundPng)).toBe(false)
 
@@ -1302,7 +1359,7 @@ test('keeps the canvas usable when WebGPU is unavailable', async ({ page }) => {
   await expect(viewer).toHaveAttribute('data-postprocess', 'raw')
   await expect(viewer.locator('.lab-material-model-canvas')).toBeVisible()
   await expect(page.getByText('GPU effect unavailable · choose Clean')).toHaveCount(0)
-  await page.getByRole('button', { name: 'Export PNG', exact: true }).click()
+  await page.getByRole('button', { name: 'Export', exact: true }).click()
   await expect(page.getByText(/Export failed: .*choose Clean to export/)).toBeVisible()
   expect(errors).toEqual([])
 })

@@ -2,6 +2,8 @@
 
 import { Slider } from '@/components/controls/Slider'
 import {
+  addColorToMix,
+  CUSTOM_PALETTE_ID,
   normalizeColorRatios,
   PALETTE_PACKS,
   type ColorMix,
@@ -18,7 +20,7 @@ export function ColorsPanel() {
   const updateRecipe = useBackgroundStore((state) => state.updateRecipe)
   const setTransient = useBackgroundStore((state) => state.setTransient)
   const commitTransaction = useBackgroundStore((state) => state.commitTransaction)
-  const activePack = PALETTE_PACKS.find((pack) => pack.id === palette.packId) ?? PALETTE_PACKS[0]
+  const activePack = PALETTE_PACKS.find((pack) => pack.id === palette.packId)
   const mix = palette.mix
 
   const setPack = (packId: string) => {
@@ -42,7 +44,7 @@ export function ColorsPanel() {
       nextMix.map((m) => m.enabled),
     )
     const remixed = nextMix.map((m, i) => ({ ...m, ratio: normalized[i] }))
-    updateRecipe({ palette: { mix: remixed } })
+    updateRecipe({ palette: { packId: CUSTOM_PALETTE_ID, mix: remixed } })
   }
 
   const commitTransientMix = () => {
@@ -53,10 +55,20 @@ export function ColorsPanel() {
     )
     setTransient({
       palette: {
+        packId: CUSTOM_PALETTE_ID,
         mix: current.map((item, index) => ({ ...item, ratio: normalized[index] })),
       },
     })
     commitTransaction()
+  }
+
+  const addApprovedColor = (color: string) => {
+    updateRecipe({
+      palette: {
+        packId: CUSTOM_PALETTE_ID,
+        mix: addColorToMix(mix, color),
+      },
+    })
   }
 
   return (
@@ -67,38 +79,35 @@ export function ColorsPanel() {
         {PALETTE_PACKS.filter((pack) => pack.tier !== 'extended').map((p) => (
           <button
             key={p.id}
-            className={activePack.id === p.id ? 'lab-chip active' : 'lab-chip'}
+            className={activePack?.id === p.id ? 'lab-chip active' : 'lab-chip'}
             onClick={() => setPack(p.id)}
           >
             {p.label}
           </button>
         ))}
+        {!activePack ? <span className="lab-chip active">Custom</span> : null}
       </div>
       {mix.map((m, i) => (
         <div key={`${m.color}-${i}`} className="lab-zone-row">
-          <button
-            className={m.enabled ? 'lab-chip active' : 'lab-chip'}
-            onClick={() => {
-              const next = [...mix]
-              next[i] = { ...next[i], enabled: !next[i].enabled }
-              commitMix(next)
-            }}
-          >
-            {m.enabled ? 'On' : 'Off'}
-          </button>
-          <span className="lab-zone-label">{m.color}</span>
+          <span
+            className="lab-color-preview"
+            role="img"
+            aria-label={`Color ${m.color}`}
+            title={m.color}
+            style={{ backgroundColor: m.color }}
+          />
           <div style={{ flex: 1 }}>
             <Slider
               label=""
-              value={m.ratio}
+              value={m.enabled ? m.ratio : 0}
               min={0}
               max={100}
               step={1}
               format={pct}
               onChange={(ratio) => {
                 const next = [...mix]
-                next[i] = { ...next[i], ratio }
-                setTransient({ palette: { mix: next } })
+                next[i] = { ...next[i], enabled: ratio > 0, ratio }
+                setTransient({ palette: { packId: CUSTOM_PALETTE_ID, mix: next } })
               }}
               onCommit={commitTransientMix}
             />
@@ -109,34 +118,36 @@ export function ColorsPanel() {
             type="number"
             min={0}
             max={100}
-            value={Math.round(m.ratio)}
+            value={Math.round(m.enabled ? m.ratio : 0)}
             onChange={(event) => {
               const next = [...mix]
-              next[i] = { ...next[i], ratio: Number(event.target.value) }
+              const ratio = Number(event.target.value)
+              next[i] = { ...next[i], enabled: ratio > 0, ratio }
               commitMix(next)
             }}
           />
         </div>
       ))}
-      <div className="panel-note">Ratios normalize to 100% across enabled colors.</div>
       <details>
         <summary>More approved colors ({PALETTE_PACKS.at(-1)?.colors.length ?? 0})</summary>
         <div className="lab-approved-swatches">
           {PALETTE_PACKS.at(-1)?.colors.map((color, index) => (
             <button
               key={`${color}-${index}`}
-              className="lab-approved-swatch"
-              aria-label={`Use approved color ${color}`}
+              className={
+                mix.some(
+                  (item) => item.enabled && item.color.toUpperCase() === color.toUpperCase(),
+                )
+                  ? 'lab-approved-swatch active'
+                  : 'lab-approved-swatch'
+              }
+              aria-label={`Add approved color ${color} to mix`}
+              aria-pressed={mix.some(
+                (item) => item.enabled && item.color.toUpperCase() === color.toUpperCase(),
+              )}
               title={color}
               style={{ background: color }}
-              onClick={() =>
-                updateRecipe({
-                  palette: {
-                    packId: 'extended-approved',
-                    mix: [{ color, enabled: true, ratio: 100 }],
-                  },
-                })
-              }
+              onClick={() => addApprovedColor(color)}
             />
           ))}
         </div>

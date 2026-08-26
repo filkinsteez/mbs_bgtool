@@ -1,0 +1,18 @@
+---
+description: Keep communication concise, plain, and concrete
+alwaysApply: true
+---
+
+# Plain, Direct Communication
+
+- Answer the question directly and keep the default response short.
+- Use plain language and name specific behavior.
+- Avoid inflated, faux-authoritative phrases such as “stable contracts,” “systemic architecture,” or “product truth” when concrete wording works.
+- Avoid marketing language, trendy labels, and phrases such as “always-on.”
+- Do not pad explanations with generic strategy language.
+- When describing a plan, state exactly what will change and what the user will observe.
+- Add technical detail only when it helps make a decision or the user requests it.
+
+Prefer: “Make exports match the preview.”
+
+Avoid: “Establish a canonical rendering contract.”

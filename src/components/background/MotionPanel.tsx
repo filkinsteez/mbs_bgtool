@@ -18,11 +18,11 @@ export function MotionPanel() {
     <div className="panel-section">
       <div className="panel-heading">Motion</div>
       <Toggle
-        label="Animate preview"
+        label="Motion"
         value={motion.enabled && !reducedMotion}
         onChange={(enabled) => update({ motion: { enabled: reducedMotion ? false : enabled } })}
       />
-      {reducedMotion ? <div className="panel-note">Preview motion follows your reduced-motion setting.</div> : null}
+      {reducedMotion ? <div className="panel-note">Disabled by Reduce Motion.</div> : null}
       {motion.enabled && !reducedMotion ? (
         <>
           <Slider

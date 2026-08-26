@@ -49,7 +49,7 @@ describe('material hue groups', () => {
     ])
   })
 
-  it('sorts chromatic swatches from low to high saturation with perceptual tie-breakers', () => {
+  it('puts vivid chromatic swatches first and moves muted greys to neutrals', () => {
     const blue = groupColorsByHue([
       '#3399FF',
       '#333399',
@@ -63,24 +63,24 @@ describe('material hue groups', () => {
     ]).find((group) => group.id === 'blue')
 
     expect(blue?.colors).toEqual([
-      '#7890A8',
-      '#80A0C0',
-      '#3a6998',
-      '#3A6998',
+      '#3399FF',
       '#6699CC',
       '#6666CC',
       '#336699',
       '#333399',
-      '#3399FF',
+      '#3a6998',
+      '#3A6998',
+      '#80A0C0',
     ])
+    expect(groupColorsByHue(['#7890A8'])[0].id).toBe('neutral')
   })
 
-  it('orders zero-saturation neutrals by lightness before source order', () => {
+  it('orders neutrals from light to dark regardless of their subtle tint', () => {
     const groups = groupColorsByHue(['#8B9BAA', '#000000', '#FFFFFF', '#808080'])
     expect(groups).toEqual([{
       id: 'neutral',
       label: 'Neutrals',
-      colors: ['#FFFFFF', '#808080', '#000000', '#8B9BAA'],
+      colors: ['#FFFFFF', '#8B9BAA', '#808080', '#000000'],
     }])
   })
 })

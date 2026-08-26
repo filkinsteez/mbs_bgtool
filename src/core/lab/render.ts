@@ -14,6 +14,7 @@ import { buildBlockFills, buildBeadFills, buildShingleFills, regionValue } from 
 import { getPaintRaster, reconcilePaint } from './paintRuntime'
 import { sampleRGB } from './analysis'
 import { stampProto } from './stamp'
+import { createOrganicMotionWarp } from './motion'
 
 // One painter for preview AND export. The ctx arrives pre-scaled and
 // everything draws in output units. Per-render work is lazy: the
@@ -550,12 +551,18 @@ function compileTerritoryCached(
   // weight/invert/combine semantics (an earlier version re-added curve
   // fields with forced 'add' and silently contradicted the engine)
   const fieldOverrides = new Map<string, Field>()
+  const motionWarp = createOrganicMotionWarp(lab.motion, lab.seed, outW, outH)
   for (const src of lab.territory.sources) {
     if (src.kind !== 'curve' || !src.enabled || !src.curve) continue
     const key = `${JSON.stringify(src.curve)}|${outW}x${outH}|${src.softness.toFixed(3)}`
+    const staticField = cached(
+      curveFieldCache,
+      key,
+      () => buildCurveField(src.curve!, outW, outH, src.softness),
+    )
     fieldOverrides.set(
       src.id,
-      cached(curveFieldCache, key, () => buildCurveField(src.curve!, outW, outH, src.softness)),
+      motionWarp.field(staticField),
     )
   }
   return compileTerritory(lab.territory, { rect, outW, outH, maps, paintField, fieldOverrides })

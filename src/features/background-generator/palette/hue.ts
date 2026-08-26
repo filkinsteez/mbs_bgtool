@@ -54,12 +54,13 @@ export function groupColorsByHue(colors: readonly string[]): HueGroup[] {
     color: string
     hue: number
     saturation: number
+    chroma: number
     lightness: number
     sourceIndex: number
   }[]>()
   colors.forEach((color, sourceIndex) => {
     const hsl = hexToHsl(color)
-    const id = hueGroupFor(hsl.hue, hsl.saturation)
+    const id = hueGroupFor(hsl.hue, hsl.saturation, hsl.chroma)
     const values = groups.get(id) ?? []
     values.push({ color, sourceIndex, ...hsl })
     groups.set(id, values)
@@ -69,17 +70,23 @@ export function groupColorsByHue(colors: readonly string[]): HueGroup[] {
     const values = groups.get(id)
     if (!values?.length) return []
     values.sort((a, b) =>
-      compareColorMetric(a.saturation, b.saturation) ||
-      compareColorMetric(b.lightness, a.lightness) ||
-      compareColorMetric(a.hue, b.hue) ||
-      a.sourceIndex - b.sourceIndex
+      id === 'neutral'
+        ? compareColorMetric(b.lightness, a.lightness) || a.sourceIndex - b.sourceIndex
+        : compareColorMetric(b.chroma, a.chroma) ||
+          compareColorMetric(b.saturation, a.saturation) ||
+          compareColorMetric(b.lightness, a.lightness) ||
+          compareColorMetric(a.hue, b.hue) ||
+          a.sourceIndex - b.sourceIndex
     )
     return [{ id, label, colors: values.map((value) => value.color) }]
   })
 }
 
-function hueGroupFor(hue: number, saturation: number): HueGroupId {
-  if (saturation < 0.2) return 'neutral'
+function hueGroupFor(hue: number, saturation: number, chroma: number): HueGroupId {
+  // HSL calls near-white pastels "100% saturated", which is useless for a
+  // visual picker. Brightness-weighted RGB chroma plus HSV saturation keeps
+  // tinted greys and almost-white colors in Neutrals while true colors stay chromatic.
+  if (chroma < 0.13 || saturation < 0.2) return 'neutral'
   if (hue < 15 || hue >= 345) return 'red'
   if (hue < 45) return 'orange'
   if (hue < 70) return 'yellow'
@@ -91,7 +98,9 @@ function hueGroupFor(hue: number, saturation: number): HueGroupId {
   return 'red'
 }
 
-function hexToHsl(hex: string): { hue: number; saturation: number; lightness: number } {
+function hexToHsl(
+  hex: string,
+): { hue: number; saturation: number; chroma: number; lightness: number } {
   const value = hex.replace('#', '')
   const red = Number.parseInt(value.slice(0, 2), 16) / 255
   const green = Number.parseInt(value.slice(2, 4), 16) / 255
@@ -100,13 +109,13 @@ function hexToHsl(hex: string): { hue: number; saturation: number; lightness: nu
   const min = Math.min(red, green, blue)
   const delta = max - min
   const lightness = (max + min) / 2
-  if (delta === 0) return { hue: 0, saturation: 0, lightness }
+  if (delta === 0) return { hue: 0, saturation: 0, chroma: 0, lightness }
 
-  const saturation = delta / (1 - Math.abs(2 * lightness - 1))
+  const saturation = max === 0 ? 0 : delta / max
   let hue: number
   if (max === red) hue = 60 * (((green - blue) / delta) % 6)
   else if (max === green) hue = 60 * ((blue - red) / delta + 2)
   else hue = 60 * ((red - green) / delta + 4)
   if (hue < 0) hue += 360
-  return { hue, saturation, lightness }
+  return { hue, saturation, chroma: delta * max, lightness }
 }

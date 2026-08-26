@@ -5,9 +5,11 @@ import { useLabStore } from '@/core/lab/labStore'
 import { getLabSource } from '@/core/lab/sourceCache'
 import { exportLabPng } from '@/core/lab/render'
 import { resolveBankCached } from './bankCache'
-import { ExportResolutionControl } from '@/components/background/ExportResolutionControl'
-import { inspect8kCapability } from '@/features/background-generator/capabilities'
 import { exportMaterialAtTarget } from '@/features/background-generator/material/exportMaterial'
+import {
+  dimensionsFor,
+  dimensionsForRatio,
+} from '@/features/background-generator/recipe'
 import { useBackgroundStore } from '@/features/background-generator/store'
 
 // Export is WYSIWYG: the PNG is the preview's exact painter at full
@@ -17,12 +19,29 @@ async function renderCurrentPng(): Promise<Blob> {
   const recipe = useBackgroundStore.getState().recipe
   const state = useLabStore.getState()
   const protos = resolveBankCached(state.lab.mark.bank)
-  if (recipe.mode === 'material') return exportMaterialAtTarget(recipe, protos)
+  const dimensions = recipe.format.aspect === 'custom'
+    ? dimensionsForRatio('4k', recipe.format.width / recipe.format.height)
+    : dimensionsFor('4k', recipe.format.aspect)
+  const exportRecipe = {
+    ...recipe,
+    format: {
+      ...recipe.format,
+      resolution: '4k' as const,
+      ...dimensions,
+    },
+  }
+  if (recipe.mode === 'material') return exportMaterialAtTarget(exportRecipe, protos)
   return exportLabPng(
-    state.lab,
+    {
+      ...state.lab,
+      output: {
+        ...state.lab.output,
+        ...dimensions,
+      },
+    },
     getLabSource(),
     protos,
-    recipe.transforms.background,
+    exportRecipe.transforms.background,
   )
 }
 
@@ -40,14 +59,10 @@ export function LabExportPanel() {
   const doExport = async () => {
     setBusy(true)
     try {
-      if (recipe.format.resolution === '8k') {
-        const capability = inspect8kCapability(
-          recipe.format.aspect,
-          recipe.mode === 'material' ? recipe.material.id : 'clean',
-        )
-        if (!capability.supported) throw new Error(capability.reason ?? '8K unsupported')
-      }
-      setNote(`Rendering ${output.width} × ${output.height}…`)
+      const dimensions = output.aspect === 'custom'
+        ? dimensionsForRatio('4k', output.width / output.height)
+        : dimensionsFor('4k', output.aspect)
+      setNote(`Rendering ${dimensions.width} × ${dimensions.height}…`)
       const blob = await renderCurrentPng()
       const a = document.createElement('a')
       a.href = URL.createObjectURL(blob)
@@ -81,15 +96,10 @@ export function LabExportPanel() {
   }, [])
 
   return (
-    <div className="panel-section" role="region" aria-labelledby="export-heading">
-      <div className="panel-heading" id="export-heading">Export</div>
-      <ExportResolutionControl />
+    <div className="panel-section" role="region" aria-label="Export">
       <button type="button" className="ctl-action primary" disabled={busy} onClick={doExport}>
-        {busy ? 'Rendering…' : 'Export PNG'}
+        {busy ? 'Rendering…' : 'Export'}
       </button>
-      <div className="panel-note">
-        Static PNG at exact output dimensions. Materials render offscreen at target size.
-      </div>
       {note ? (
         <div className="panel-note" role="status" aria-live="polite">
           {note}
