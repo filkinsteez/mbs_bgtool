@@ -24,6 +24,7 @@ import { renderQuilt } from './quilt'
 import { renderFrameLook } from './frameRenderer'
 import { renderTrails } from './renderTrails'
 import { renderBrushwork } from './brushworkRender'
+import { paintPixelField } from './pixelFieldPainter'
 
 // One painter for preview AND export. The ctx arrives pre-scaled and
 // everything draws in output units. Per-render work is lazy: the
@@ -160,17 +161,20 @@ export function renderLab(
     return
   }
 
-  const cells = buildCells({
-    T,
-    territory: lab.territory,
-    structure: lab.structure,
-    maps,
-    rect,
-    outW,
-    outH,
-    seed: lab.seed,
-    restore,
-  })
+  const pixelComposite = view === 'composite' && lab.look?.id === 'pixels'
+  const cells = pixelComposite
+    ? []
+    : buildCells({
+        T,
+        territory: lab.territory,
+        structure: lab.structure,
+        maps,
+        rect,
+        outW,
+        outH,
+        seed: lab.seed,
+        restore,
+      })
 
   if (view === 'bands') {
     const n = Math.max(1, lab.territory.bands.length - 1)
@@ -231,6 +235,33 @@ export function renderLab(
       ? weightedColorIndex(colorPlan, sample)
       : Math.min(K - 1, Math.floor(sample * K))
     return palette[index]
+  }
+
+  if (pixelComposite) {
+    paintPixelField(ctx, {
+      width: outW,
+      height: outH,
+      seed: lab.seed,
+      complexity: lab.look?.complexity ?? 0.5,
+      palette,
+      colorPlan,
+      composition: lab.composition,
+      motionPhase: lab.motion.frame?.phase ?? 0,
+      motionAmount: lab.motion.amount,
+      motionSpeed: lab.motion.speed,
+      sourceSample: maps
+        ? (u, v) => {
+            const sourceU = (u * outW - rect.x) / rect.w
+            const sourceV = (v * outH - rect.y) / rect.h
+            if (sourceU < 0 || sourceU > 1 || sourceV < 0 || sourceV > 1) return null
+            return sampleRGB(
+              maps,
+              sourceU * maps.w - 0.5,
+              sourceV * maps.h - 0.5,
+            )
+          }
+        : undefined,
+    })
   }
 
   // mosaic: the source quantized to the cell grid — or, with no photo,

@@ -241,6 +241,31 @@ test('trails keeps exact parity across complexity and aspect', async ({ page }, 
   })
 })
 
+test('pixels remains byte-exact across complexity, seeds, and portrait output', async ({
+  page,
+}, testInfo) => {
+  await openHarness(page)
+  const cases = [
+    { width: 320, height: 180, seed: 42, detail: 0.15 },
+    { width: 320, height: 180, seed: 1913, detail: 0.5 },
+    { width: 180, height: 320, seed: 8675309, detail: 0.85 },
+  ] as const
+  const results: LookParityResult[] = []
+  for (const input of cases) {
+    const result = await runLook(page, { lookId: 'pixels', ...input })
+    results.push(result)
+    expect.soft(result.diff.alphaMismatchCount).toBe(0)
+    expect.soft(result.diff.mismatchedPixelFraction).toBe(0)
+    expect.soft(result.diff.maxAbsoluteError).toBe(0)
+    expect.soft(result.twoDimensionalHash).toBe(result.threeDimensionalHash)
+  }
+  expect(new Set(results.map((result) => result.twoDimensionalHash)).size).toBe(cases.length)
+  await testInfo.attach('pixels-parity-matrix.json', {
+    body: Buffer.from(`${JSON.stringify(results, null, 2)}\n`),
+    contentType: 'application/json',
+  })
+})
+
 test('trails material follows a translated non-Meta source frame', async ({
   page,
 }, testInfo) => {
