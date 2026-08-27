@@ -85,6 +85,20 @@ export type Trails4kResult = {
   pngBytes: number
 }
 
+export type TranslatedPixelsFixtureResult = {
+  screenshot: string
+  sourceHash: string
+  outputHash: string
+  changedPixelCount: number
+  ghostPixelCount: number
+  changedBounds: {
+    left: number
+    top: number
+    right: number
+    bottom: number
+  } | null
+}
+
 const DEFAULT_INPUT = {
   width: 320,
   height: 180,
@@ -193,6 +207,34 @@ function translatedTrailsRaster(width: number, height: number): {
       pixelCount,
     },
   }
+}
+
+function translatedNonMetaRaster(width: number, height: number): ImageData {
+  const image = new ImageData(width, height)
+  const centerX = width * 0.76
+  const centerY = height * 0.36
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4
+      const circle = Math.hypot(
+        (x - centerX) / (width * 0.105),
+        (y - centerY) / (height * 0.16),
+      ) <= 1
+      const stem = (
+        x >= width * 0.72
+        && x <= width * 0.83
+        && y >= height * 0.35
+        && y <= height * 0.78
+      )
+      const notch = x > width * 0.76 && y > height * 0.47 && y < height * 0.58
+      const foreground = (circle || stem) && !notch
+      image.data[offset] = foreground ? 242 : 9
+      image.data[offset + 1] = foreground ? 96 : 17
+      image.data[offset + 2] = foreground ? 38 : 31
+      image.data[offset + 3] = 255
+    }
+  }
+  return image
 }
 
 function sourceFromRaster(raster: ImageData): LabSource {
@@ -528,6 +570,86 @@ async function renderTranslatedTrails4k(): Promise<Trails4kResult> {
   }
 }
 
+function renderTranslatedPixelsFixture(): TranslatedPixelsFixtureResult {
+  const width = 320
+  const height = 240
+  const raster = translatedNonMetaRaster(width, height)
+  const source = sourceFromRaster(raster)
+  const recipe = recipeForInput({
+    ...DEFAULT_INPUT,
+    width,
+    height,
+    seed: 1913,
+    lookId: 'pixels',
+    detail: 0.5,
+    palette: [...DEFAULT_INPUT.palette],
+  })
+  const lab = {
+    ...sourceAwareLabForRecipe(recipe, source),
+    finish: { grain: 0 },
+  }
+  const output = document.createElement('canvas')
+  output.width = width
+  output.height = height
+  const outputContext = output.getContext('2d', { willReadFrequently: true })
+  if (!outputContext) throw new Error('Translated fixture output unavailable')
+  renderLab(outputContext, lab, source, resolveBank(lab.mark.bank), 'composite', null)
+  const pixels = outputContext.getImageData(0, 0, width, height).data
+  let changedPixelCount = 0
+  let ghostPixelCount = 0
+  let left = width
+  let top = height
+  let right = -1
+  let bottom = -1
+  for (let offset = 0; offset < pixels.length; offset += 4) {
+    const delta = Math.max(
+      Math.abs(pixels[offset] - raster.data[offset]),
+      Math.abs(pixels[offset + 1] - raster.data[offset + 1]),
+      Math.abs(pixels[offset + 2] - raster.data[offset + 2]),
+    )
+    if (delta < 16) continue
+    const pixel = offset / 4
+    const x = pixel % width
+    const y = Math.floor(pixel / width)
+    changedPixelCount += 1
+    left = Math.min(left, x)
+    top = Math.min(top, y)
+    right = Math.max(right, x)
+    bottom = Math.max(bottom, y)
+    if (x < width * 0.56) ghostPixelCount += 1
+  }
+
+  const sourceCanvas = document.createElement('canvas')
+  sourceCanvas.width = width
+  sourceCanvas.height = height
+  sourceCanvas.getContext('2d')!.putImageData(raster, 0, 0)
+  const sheet = document.createElement('canvas')
+  const titleHeight = 28
+  sheet.width = width * 2
+  sheet.height = height + titleHeight
+  const sheetContext = sheet.getContext('2d')!
+  sheetContext.fillStyle = '#101114'
+  sheetContext.fillRect(0, 0, sheet.width, sheet.height)
+  sheetContext.fillStyle = '#FFFFFF'
+  sheetContext.font = '600 14px system-ui, sans-serif'
+  sheetContext.textBaseline = 'middle'
+  sheetContext.fillText('Translated non-Meta source', 10, titleHeight / 2)
+  sheetContext.fillText('Source-aware Pixels material', width + 10, titleHeight / 2)
+  sheetContext.drawImage(sourceCanvas, 0, titleHeight)
+  sheetContext.drawImage(output, width, titleHeight)
+
+  return {
+    screenshot: sheet.toDataURL('image/png'),
+    sourceHash: hashPixels(raster.data),
+    outputHash: hashPixels(pixels),
+    changedPixelCount,
+    ghostPixelCount,
+    changedBounds: changedPixelCount
+      ? { left, top, right, bottom }
+      : null,
+  }
+}
+
 declare global {
   interface Window {
     __mbsLookParity?: {
@@ -535,6 +657,7 @@ declare global {
       run: typeof runLookParity
       runTranslatedTrails: typeof runTranslatedTrailsFixture
       renderTranslatedTrails4k: typeof renderTranslatedTrails4k
+      translatedPixels: typeof renderTranslatedPixelsFixture
     }
   }
 }
@@ -544,5 +667,6 @@ window.__mbsLookParity = {
   run: runLookParity,
   runTranslatedTrails: runTranslatedTrailsFixture,
   renderTranslatedTrails4k,
+  translatedPixels: renderTranslatedPixelsFixture,
 }
 document.documentElement.dataset.parityHarness = 'ready'

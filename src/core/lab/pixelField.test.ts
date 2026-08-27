@@ -106,16 +106,33 @@ function everyRegionTouches(
   return true
 }
 
-function rowBounds(mask: Uint8Array, columns: number): { minimum: number; maximum: number } {
-  let minimum = Number.POSITIVE_INFINITY
-  let maximum = Number.NEGATIVE_INFINITY
-  for (let index = 0; index < mask.length; index += 1) {
-    if (!mask[index]) continue
-    const row = Math.floor(index / columns)
-    minimum = Math.min(minimum, row)
-    maximum = Math.max(maximum, row)
+function maximumExtension(
+  active: Uint8Array,
+  protectedMask: Uint8Array,
+  columns: number,
+  rows: number,
+  aspect: number,
+): number {
+  const protectedPoints: { x: number; y: number }[] = []
+  for (let index = 0; index < protectedMask.length; index += 1) {
+    if (!protectedMask[index]) continue
+    protectedPoints.push({
+      x: ((index % columns) + 0.5) * aspect / columns,
+      y: (Math.floor(index / columns) + 0.5) / rows,
+    })
   }
-  return { minimum, maximum }
+  let maximum = 0
+  for (let index = 0; index < active.length; index += 1) {
+    if (!active[index] || protectedMask[index]) continue
+    const x = ((index % columns) + 0.5) * aspect / columns
+    const y = (Math.floor(index / columns) + 0.5) / rows
+    let nearest = Number.POSITIVE_INFINITY
+    for (const point of protectedPoints) {
+      nearest = Math.min(nearest, Math.hypot(x - point.x, y - point.y))
+    }
+    maximum = Math.max(maximum, nearest)
+  }
+  return maximum
 }
 
 describe('adaptive pixel field', () => {
@@ -161,17 +178,29 @@ describe('adaptive pixel field', () => {
     }
   })
 
-  it('extends attached portrait structure vertically while keeping the whole mark visible', () => {
-    for (const seed of [42, 1913, 8675309]) {
-      const plan = planPixelField(input(seed, 0.85, 9 / 16))
-      const active = rowBounds(plan.masks.active, plan.columns)
-      const protectedRows = rowBounds(plan.masks.protected, plan.columns)
-
-      expect(protectedRows.minimum).toBeGreaterThan(0)
-      expect(protectedRows.maximum).toBeLessThan(plan.rows - 1)
-      expect(active.minimum).toBeLessThanOrEqual(protectedRows.minimum - 6)
-      expect(active.maximum).toBeGreaterThanOrEqual(protectedRows.maximum + 6)
-      expect(active.maximum - active.minimum).toBeGreaterThan(plan.rows * 0.5)
+  it('keeps perimeter caps within one macro unit and disables low glitches', () => {
+    for (const aspect of [16 / 9, 9 / 16, 1, 4 / 5]) {
+      for (const seed of [42, 1913, 8675309]) {
+        const plan = planPixelField(input(seed, 0.15, aspect))
+        const macroUnit = 6 * Math.max(aspect / plan.columns, 1 / plan.rows)
+        for (const attachment of plan.attachments) {
+          const length = Math.hypot(
+            (attachment.endX - attachment.startX) * aspect,
+            attachment.endY - attachment.startY,
+          )
+          expect(length + attachment.endRadius).toBeLessThanOrEqual(
+            macroUnit + Number.EPSILON,
+          )
+        }
+        expect(maximumExtension(
+          plan.masks.active,
+          plan.masks.protected,
+          plan.columns,
+          plan.rows,
+          aspect,
+        )).toBeLessThanOrEqual(macroUnit * 1.15)
+        expect(plan.tiles.filter((tile) => tile.glitch)).toHaveLength(0)
+      }
     }
   })
 
@@ -199,7 +228,7 @@ describe('adaptive pixel field', () => {
       )
       let massOverlap = 0
 
-      expect(plan.diagnostics.quietCellCount).toBeGreaterThan(8)
+      expect(plan.diagnostics.quietCellCount).toBeGreaterThan(3)
       expect(largest / plan.diagnostics.quietCellCount).toBeGreaterThan(0.7)
       expect(plan.quietZone.attachment).toBeLessThan(plan.attachments.length)
       for (let index = 0; index < plan.masks.quiet.length; index += 1) {

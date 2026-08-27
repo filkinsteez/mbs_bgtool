@@ -6,13 +6,14 @@ import {
 import { chan } from '@/core/organic/random'
 import type { LookColorPlan } from './colorDirection'
 import type { CompositionPlan } from './compositionPlan'
+import type { PixelProtectedSample } from './pixelSourceMask'
 
-// Pixels owns a normalized, source-independent topology. Every complexity uses
-// the same coarse attached masses; higher values add fine edge stairs without
-// moving those masses. Output resolution only scales the plan, and motion never
-// enters it, so preview/export geometry and animated topology stay aligned.
+// Pixels owns a normalized topology derived either from the canonical mark or
+// the analyzed source silhouette. Every complexity uses the same coarse masses;
+// higher values add fine edge stairs without moving those masses. Output
+// resolution only scales the plan, and motion never changes its topology.
 const TAU = Math.PI * 2
-const PLAN_REVISION = 2
+const PLAN_REVISION = 3
 
 export type PixelBlockScale = 'macro' | 'meso' | 'micro'
 export type PixelColorRole = 'dominant' | 'support' | 'accent'
@@ -61,6 +62,7 @@ export type PixelFieldPlan = {
   revision: typeof PLAN_REVISION
   columns: number
   rows: number
+  protectedMode: 'canonical' | 'source'
   tiles: readonly PixelFieldTile[]
   masks: {
     active: Uint8Array
@@ -103,6 +105,8 @@ export type PixelFieldInput = {
   paletteSize: number
   colorPlan?: LookColorPlan
   composition?: CompositionPlan
+  protectedKey?: string
+  protectedSample?: PixelProtectedSample
 }
 
 export type PixelGlitchFrame = {
@@ -111,6 +115,13 @@ export type PixelGlitchFrame = {
 }
 
 type QuietZone = PixelFieldPlan['quietZone']
+type SilhouetteSample = {
+  inside: boolean
+  distance: number
+}
+type SilhouetteField = {
+  sample: (u: number, v: number) => SilhouetteSample
+}
 type GridCandidate = {
   column: number
   row: number
@@ -238,21 +249,6 @@ function movePhysical(
   }
 }
 
-function metaBoundaryAlong(angle: number, aspect: number): { x: number; y: number } {
-  let boundary = { x: 0.5, y: 0.5 }
-  let found = metaSample(boundary.x, boundary.y, aspect).inside
-  const maximum = Math.hypot(aspect / 2, 0.5)
-  for (let step = 1; step <= 180; step += 1) {
-    const radius = maximum * step / 180
-    const point = movePhysical({ x: 0.5, y: 0.5 }, angle, radius, aspect)
-    if (point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1) break
-    if (!metaSample(point.x, point.y, aspect).inside) continue
-    boundary = point
-    found = true
-  }
-  return found ? boundary : { x: 0.5, y: 0.5 }
-}
-
 function clampPoint(
   point: { x: number; y: number },
   margin = 0.025,
@@ -263,40 +259,134 @@ function clampPoint(
   }
 }
 
-function buildAttachments(input: PixelFieldInput, aspect: number): PixelAttachment[] {
-  const { seed, composition } = input
-  const fieldAngle = composition?.field.angle
-    ?? chan(seed, 0, 'lab.pixel.field.angle') * TAU
-  const portrait = aspect < 0.72
-  const squareish = aspect >= 0.72 && aspect < 1.15
-  const lean = (chan(seed, 0, 'lab.pixel.attach.lean') - 0.5) * 0.42
-  const angles = portrait
-    ? [-Math.PI / 2 + lean, Math.PI / 2 - lean * 0.72]
-    : squareish
-      ? [fieldAngle, fieldAngle + TAU / 3, fieldAngle + TAU * 2 / 3]
-      : [fieldAngle + lean * 0.4, fieldAngle + Math.PI - lean * 0.55]
+function createSilhouetteField(
+  protectedMask: Uint8Array,
+  columns: number,
+  rows: number,
+  aspect: number,
+  exactSample: PixelProtectedSample,
+): SilhouetteField {
+  const points: { x: number; y: number }[] = []
+  for (let row = 0; row < rows; row += 1) {
+    for (let column = 0; column < columns; column += 1) {
+      if (!protectedMask[row * columns + column]) continue
+      points.push({
+        x: (column + 0.5) * aspect / columns,
+        y: (row + 0.5) / rows,
+      })
+    }
+  }
+  const cellRadius = Math.hypot(aspect / columns, 1 / rows) * 0.5
+  return {
+    sample: (u, v) => {
+      const inside = exactSample(u, v) >= 0.5
+      if (inside) return { inside: true, distance: 0 }
+      let distance = Number.POSITIVE_INFINITY
+      const x = u * aspect
+      for (const point of points) {
+        distance = Math.min(distance, Math.hypot(x - point.x, v - point.y))
+      }
+      return {
+        inside: false,
+        distance: Number.isFinite(distance)
+          ? Math.max(0, distance - cellRadius)
+          : 1,
+      }
+    },
+  }
+}
 
-  return angles.map((angle, index) => {
-    const boundary = metaBoundaryAlong(angle, aspect)
-    const length = portrait
-      ? 0.235 + chan(seed, index, 'lab.pixel.attach.length') * 0.055
-      : squareish
-        ? 0.075 + chan(seed, index, 'lab.pixel.attach.length') * 0.045
-        : 0.075 + chan(seed, index, 'lab.pixel.attach.length') * 0.05
-    const startRadius = (
-      portrait ? 0.028 : squareish ? 0.034 : 0.038
-    ) + chan(seed, index, 'lab.pixel.attach.radius') * (
-      portrait ? 0.012 : 0.014
+function buildAttachments(
+  input: PixelFieldInput,
+  aspect: number,
+  protectedMask: Uint8Array,
+  exterior: Uint8Array,
+  columns: number,
+  rows: number,
+): PixelAttachment[] {
+  const cellX = aspect / columns
+  const cellY = 1 / rows
+  const cellSize = Math.max(cellX, cellY)
+  const macroUnit = cellSize * 3
+  const candidates: {
+    column: number
+    row: number
+    angle: number
+    score: number
+  }[] = []
+  for (let row = 0; row < rows; row += 1) {
+    for (let column = 0; column < columns; column += 1) {
+      const index = row * columns + column
+      if (!protectedMask[index]) continue
+      let outwardX = 0
+      let outwardY = 0
+      let exposure = 0
+      for (const [offsetX, offsetY] of [
+        [-1, 0],
+        [1, 0],
+        [0, -1],
+        [0, 1],
+      ] as const) {
+        const x = column + offsetX
+        const y = row + offsetY
+        const outside = x < 0 || x >= columns || y < 0 || y >= rows
+        if (!outside && !exterior[y * columns + x]) continue
+        outwardX += offsetX * cellX
+        outwardY += offsetY * cellY
+        exposure += 1
+      }
+      if (!exposure || (outwardX === 0 && outwardY === 0)) continue
+      const angle = Math.atan2(outwardY, outwardX)
+      const fieldAngle = input.composition?.field.angle ?? 0
+      const alignment = (Math.cos(angle - fieldAngle) + 1) * 0.5
+      candidates.push({
+        column,
+        row,
+        angle,
+        score: exposure * 0.22
+          + alignment * 0.18
+          + chan(input.seed, index, 'lab.pixel.cap.pick') * 0.6,
+      })
+    }
+  }
+  candidates.sort((a, b) => b.score - a.score || a.row - b.row || a.column - b.column)
+  const desired = aspect < 0.72 ? 3 : 2
+  const picked: typeof candidates = []
+  for (const candidate of candidates) {
+    const x = (candidate.column + 0.5) * aspect / columns
+    const y = (candidate.row + 0.5) / rows
+    if (picked.some((other) => {
+      const otherX = (other.column + 0.5) * aspect / columns
+      const otherY = (other.row + 0.5) / rows
+      return Math.hypot(x - otherX, y - otherY) < macroUnit * 1.35
+    })) continue
+    picked.push(candidate)
+    if (picked.length >= desired) break
+  }
+
+  return picked.map((candidate, index) => {
+    const boundary = {
+      x: (candidate.column + 0.5) / columns,
+      y: (candidate.row + 0.5) / rows,
+    }
+    const startRadius = cellSize * (
+      0.9 + chan(input.seed, index, 'lab.pixel.cap.radius') * 0.2
     )
-    const endRadius = startRadius * (
-      0.48 + chan(seed, index, 'lab.pixel.attach.taper') * 0.14
+    const endRadius = cellSize * (
+      0.7 + chan(input.seed, index, 'lab.pixel.cap.end-radius') * 0.16
     )
-    const start = movePhysical(boundary, angle, -startRadius * 0.62, aspect)
-    const end = movePhysical(boundary, angle, length, aspect)
-    const clampedStart = clampPoint(start)
-    const clampedEnd = clampPoint(end)
+    const inset = cellSize * 0.38
+    const maximumLength = Math.max(0, macroUnit - endRadius - inset)
+    const length = Math.min(
+      maximumLength,
+      macroUnit * (0.46 + chan(input.seed, index, 'lab.pixel.cap.length') * 0.16),
+    )
+    const start = movePhysical(boundary, candidate.angle, -inset, aspect)
+    const end = movePhysical(boundary, candidate.angle, length, aspect)
+    const clampedStart = clampPoint(start, 0)
+    const clampedEnd = clampPoint(end, 0)
     return {
-      angle,
+      angle: candidate.angle,
       startX: clampedStart.x,
       startY: clampedStart.y,
       endX: clampedEnd.x,
@@ -393,24 +483,32 @@ function resolveQuietZone(
   attachments: readonly PixelAttachment[],
 ): QuietZone {
   const { seed } = input
+  if (!attachments.length) {
+    return {
+      x: 0.5,
+      y: 0.5,
+      radiusX: 0.04 / aspect,
+      radiusY: 0.032,
+      rotation: 0,
+      attachment: -1,
+    }
+  }
   const attachmentIndex = Math.min(
     attachments.length - 1,
     Math.floor(chan(seed, 0, 'lab.pixel.quiet.attachment') * attachments.length),
   )
   const attachment = attachments[Math.max(0, attachmentIndex)]
-  const progress = 0.5 + chan(seed, 0, 'lab.pixel.quiet.progress') * 0.18
+  const progress = 0.34 + chan(seed, 0, 'lab.pixel.quiet.progress') * 0.24
   const center = {
     x: attachment.startX + (attachment.endX - attachment.startX) * progress,
     y: attachment.startY + (attachment.endY - attachment.startY) * progress,
   }
   const side = chan(seed, 0, 'lab.pixel.quiet.side') < 0.5 ? -1 : 1
-  const physicalRadius = (
-    0.075 + chan(seed, 0, 'lab.pixel.quiet.radius') * 0.02
-  ) * Math.min(1, aspect)
+  const physicalRadius = 0.045 + chan(seed, 0, 'lab.pixel.quiet.radius') * 0.012
   const offsetCenter = movePhysical(
     center,
     attachment.angle + side * Math.PI / 2,
-    physicalRadius * 0.88,
+    physicalRadius * 0.64,
     aspect,
   )
   const radiusX = physicalRadius / aspect
@@ -442,12 +540,15 @@ function massAt(
   u: number,
   v: number,
   attachments: readonly PixelAttachment[],
+  silhouette: SilhouetteField,
 ): number {
   const { seed, composition } = input
   const aspect = Math.max(0.25, Math.min(4, input.aspect))
-  const meta = metaSample(u, v, aspect)
+  const protectedPoint = silhouette.sample(u, v)
   const haloScale = aspect < 0.72 ? 0.034 : aspect < 1.15 ? 0.042 : 0.047
-  const halo = meta.inside ? 1 : Math.exp(-((meta.distance / haloScale) ** 2))
+  const halo = protectedPoint.inside
+    ? 1
+    : Math.exp(-((protectedPoint.distance / haloScale) ** 2))
   const attached = attachmentInfluence(attachments, u, v, aspect)
   const angle = composition?.field.angle ?? chan(seed, 0, 'lab.pixel.field.angle') * TAU
   const phase = composition?.field.phase ?? chan(seed, 0, 'lab.pixel.field.phase') * TAU
@@ -893,24 +994,41 @@ export function planPixelField(input: PixelFieldInput): PixelFieldPlan {
   const aspect = Math.max(0.25, Math.min(4, input.aspect))
   const normalizedInput = { ...input, complexity, aspect }
   const { columns, rows } = gridDimensions(aspect)
-  const attachments = buildAttachments(normalizedInput, aspect)
-  const quietZone = resolveQuietZone(normalizedInput, aspect, attachments)
+  const localMacroUnit = 6 * Math.max(aspect / columns, 1 / rows)
   const coarseColumns = columns / 2
   const coarseRows = rows / 2
   const coarseProtected = new Uint8Array(coarseColumns * coarseRows)
   const coarseMass = new Uint8Array(coarseProtected.length)
   const coarseBase = new Uint8Array(coarseProtected.length)
   const coarseQuiet = new Uint8Array(coarseProtected.length)
+  const exactProtectedSample: PixelProtectedSample = input.protectedSample
+    ?? ((u, v) => metaSample(u, v, aspect).inside ? 1 : 0)
 
   for (let row = 0; row < coarseRows; row += 1) {
     for (let column = 0; column < coarseColumns; column += 1) {
       const index = row * coarseColumns + column
       const u = (column + 0.5) / coarseColumns
       const v = (row + 0.5) / coarseRows
-      if (metaSample(u, v, aspect).inside) coarseProtected[index] = 1
+      if (exactProtectedSample(u, v) >= 0.5) coarseProtected[index] = 1
     }
   }
   const exterior = floodExterior(coarseProtected, coarseColumns, coarseRows)
+  const silhouette = createSilhouetteField(
+    coarseProtected,
+    coarseColumns,
+    coarseRows,
+    aspect,
+    exactProtectedSample,
+  )
+  const attachments = buildAttachments(
+    normalizedInput,
+    aspect,
+    coarseProtected,
+    exterior,
+    coarseColumns,
+    coarseRows,
+  )
+  const quietZone = resolveQuietZone(normalizedInput, aspect, attachments)
   const coarseVoid = new Uint8Array(coarseProtected.length)
   for (let index = 0; index < coarseVoid.length; index += 1) {
     coarseVoid[index] = coarseProtected[index] || exterior[index] ? 0 : 1
@@ -944,9 +1062,7 @@ export function planPixelField(input: PixelFieldInput): PixelFieldPlan {
         coarseVoid[index] === 1
         || (neighborProtected(column, row) && attachment < 0.48)
       )
-      const quiet = !protectedCell
-        && attachment < 0.4
-        && inQuietZone(u, v, quietZone, aspect)
+      const quiet = !protectedCell && inQuietZone(u, v, quietZone, aspect)
       if (protectedCell) {
         coarseMass[index] = 1
         coarseBase[index] = 1
@@ -958,7 +1074,8 @@ export function planPixelField(input: PixelFieldInput): PixelFieldPlan {
         continue
       }
       if (guardedVoid) continue
-      if (massAt(normalizedInput, u, v, attachments) < 0.34) continue
+      if (silhouette.sample(u, v).distance > localMacroUnit) continue
+      if (massAt(normalizedInput, u, v, attachments, silhouette) < 0.34) continue
       coarseMass[index] = 1
       if (!quiet) coarseBase[index] = 1
     }
@@ -990,9 +1107,10 @@ export function planPixelField(input: PixelFieldInput): PixelFieldPlan {
         ) continue
         const u = (column + 0.5) / columns
         const v = (row + 0.5) / rows
-        const meta = metaSample(u, v, aspect)
-        const score = massAt(normalizedInput, u, v, attachments)
-        const exactEdge = meta.inside || score >= 0.34
+        const protectedPoint = silhouette.sample(u, v)
+        if (protectedPoint.distance > localMacroUnit) continue
+        const score = massAt(normalizedInput, u, v, attachments, silhouette)
+        const exactEdge = protectedPoint.inside || score >= 0.34
         const nearEdge = score >= 0.275
         if (!exactEdge && !nearEdge) continue
         const chance = exactEdge
@@ -1000,7 +1118,7 @@ export function planPixelField(input: PixelFieldInput): PixelFieldPlan {
           : detailAmount * 0.2
         if (chan(input.seed, index, 'lab.pixel.edge.stair') >= chance) continue
         active[index] = 1
-        if (meta.inside) protectedMask[index] = 1
+        if (protectedPoint.inside) protectedMask[index] = 1
       }
     }
     retainAttached(active, protectedMask, columns, rows)
@@ -1028,6 +1146,7 @@ export function planPixelField(input: PixelFieldInput): PixelFieldPlan {
     revision: PLAN_REVISION,
     columns,
     rows,
+    protectedMode: input.protectedSample ? 'source' : 'canonical',
     tiles,
     masks: {
       active,

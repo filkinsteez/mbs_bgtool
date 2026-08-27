@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { expect, test, type Page } from '@playwright/test'
 import type { ViteDevServer } from 'vite'
 
@@ -73,6 +74,20 @@ type Trails4kResult = {
   renderMilliseconds: number
   pngMilliseconds: number
   pngBytes: number
+}
+
+type TranslatedPixelsFixtureResult = {
+  screenshot: string
+  sourceHash: string
+  outputHash: string
+  changedPixelCount: number
+  ghostPixelCount: number
+  changedBounds: {
+    left: number
+    top: number
+    right: number
+    bottom: number
+  } | null
 }
 
 const LOOKS: LookId[] = [
@@ -313,6 +328,39 @@ test('trails source-aware material renders and encodes at 4K', async ({ page }, 
   expect(result.renderMilliseconds).toBeLessThan(6_000)
   expect(result.pngMilliseconds).toBeLessThan(20_000)
   console.info('TRAILS_MATERIAL_4K', JSON.stringify(result))
+})
+
+test('source-aware Pixels follows a translated non-Meta material fixture', async ({
+  page,
+}, testInfo) => {
+  await openHarness(page)
+  const result = await page.evaluate(() => {
+    const harness = (window as typeof window & {
+      __mbsLookParity?: {
+        translatedPixels: () => TranslatedPixelsFixtureResult
+      }
+    }).__mbsLookParity
+    if (!harness) throw new Error('Look parity harness unavailable')
+    return harness.translatedPixels()
+  })
+  const screenshot = Buffer.from(result.screenshot.split(',')[1], 'base64')
+
+  expect(result.outputHash).not.toBe(result.sourceHash)
+  expect(result.changedPixelCount).toBeGreaterThan(500)
+  expect(result.ghostPixelCount).toBe(0)
+  expect(result.changedBounds).not.toBeNull()
+  expect(result.changedBounds!.left).toBeGreaterThan(175)
+  await testInfo.attach('pixels-material-translated-fixture', {
+    body: screenshot,
+    contentType: 'image/png',
+  })
+  if (process.env.PIXELS_LOOK_AUDIT === '1') {
+    await mkdir('/tmp/mbs-pixels-audit', { recursive: true })
+    await writeFile(
+      '/tmp/mbs-pixels-audit/pixels-material-translated-fixture.png',
+      screenshot,
+    )
+  }
 })
 
 test('3D export includes the selected Look', async ({ page }) => {

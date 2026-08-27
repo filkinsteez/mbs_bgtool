@@ -1,5 +1,6 @@
 import type { LookColorPlan } from './colorDirection'
 import type { CompositionPlan } from './compositionPlan'
+import type { PixelProtectedSample } from './pixelSourceMask'
 import {
   planPixelField,
   resolvePixelGlitchFrame,
@@ -23,6 +24,8 @@ export type PaintPixelFieldOptions = {
   motionPhase: number
   motionAmount: number
   motionSpeed: number
+  protectedKey?: string
+  protectedSample?: PixelProtectedSample
   sourceSample?: PixelSourceSample
 }
 
@@ -35,11 +38,12 @@ type PixelRect = {
 
 function planKey(options: PaintPixelFieldOptions): string {
   return JSON.stringify({
-    revision: 2,
+    revision: 3,
     seed: options.seed,
     complexity: Math.round(options.complexity * 10000) / 10000,
     aspect: Math.round((options.width / Math.max(1, options.height)) * 100000) / 100000,
     paletteSize: options.palette.length,
+    protectedKey: options.protectedKey ?? null,
     colorPlan: options.colorPlan
       ? {
           roles: options.colorPlan.roles,
@@ -63,6 +67,8 @@ function cachedPlan(options: PaintPixelFieldOptions): PixelFieldPlan {
     paletteSize: options.palette.length,
     colorPlan: options.colorPlan,
     composition: options.composition,
+    protectedKey: options.protectedKey,
+    protectedSample: options.protectedSample,
   })
   if (planCache.size >= 12) planCache.delete(planCache.keys().next().value!)
   planCache.set(key, plan)
@@ -98,15 +104,19 @@ function sourceColorIndex(
     + sample[1] * 0.7152
     + sample[2] * 0.0722
   ) / 255
-  const visible = plan.colorHierarchy.visible
+  const visible = plan.protectedMode === 'source'
+    ? [...new Set([
+        plan.colorHierarchy.ground,
+        ...plan.colorHierarchy.visible,
+      ])]
+    : plan.colorHierarchy.visible
   const index = Math.min(
     visible.length - 1,
-    Math.floor((1 - luminance) * visible.length),
+    Math.floor((1 - luminance) * visible.length * (
+      plan.protectedMode === 'source' ? 1.75 : 1
+    )),
   )
-  const sourceIndex = visible[Math.max(0, index)]
-  return tile.protected && tile.colorIndex !== plan.colorHierarchy.dominant
-    ? tile.colorIndex
-    : sourceIndex
+  return visible[Math.max(0, index)]
 }
 
 function fillTile(

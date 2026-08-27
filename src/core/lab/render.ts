@@ -25,6 +25,7 @@ import { renderFrameLook } from './frameRenderer'
 import { renderTrails } from './renderTrails'
 import { renderBrushwork } from './brushworkRender'
 import { paintPixelField } from './pixelFieldPainter'
+import { createPixelSourceMask } from './pixelSourceMask'
 
 // One painter for preview AND export. The ctx arrives pre-scaled and
 // everything draws in output units. Per-render work is lazy: the
@@ -162,6 +163,15 @@ export function renderLab(
   }
 
   const pixelComposite = view === 'composite' && lab.look?.id === 'pixels'
+  const pixelSourceMask = pixelComposite && maps && source
+    ? createPixelSourceMask({
+        maps,
+        sourceHash: source.hash,
+        rect,
+        outputWidth: outW,
+        outputHeight: outH,
+      })
+    : null
   const cells = pixelComposite
     ? []
     : buildCells({
@@ -249,6 +259,8 @@ export function renderLab(
       motionPhase: lab.motion.frame?.phase ?? 0,
       motionAmount: lab.motion.amount,
       motionSpeed: lab.motion.speed,
+      protectedKey: pixelSourceMask?.key,
+      protectedSample: pixelSourceMask?.sample,
       sourceSample: maps
         ? (u, v) => {
             const sourceU = (u * outW - rect.x) / rect.w
