@@ -57,7 +57,9 @@ export function renderMandala(ctx: CanvasRenderingContext2D, env: V2Env): void {
   const breath = Math.sin(2 * Math.PI * env.motionPhase) * 0.35 * env.motionAmount
   const phi1 = chan(seed, 0, 'v2.mandala.phi1') * Math.PI * 2 + breath
   const phi2 = chan(seed, 0, 'v2.mandala.phi2') * Math.PI * 2 - breath
-  const maxR = 0.44 * minDim
+  // sized so the scatter fringe (t → -0.15, radius ≈ maxR·1.15·(1+a1+a2))
+  // dies out inside the canvas even with the seeded center offset
+  const maxR = 0.31 * minDim
   const k2 = k + 3
 
   // ---- zone ramp: palette ordered by contrast vs ground, ground excluded
@@ -143,7 +145,9 @@ export function renderMandala(ctx: CanvasRenderingContext2D, env: V2Env): void {
 
       // dot grows toward the core; near-solid center (side → p)
       const tc = Math.max(0, Math.min(1, t))
-      const side = Math.min(p, p * (0.45 + 0.55 * Math.pow(tc, 1.3)))
+      let side = Math.min(p, p * (0.45 + 0.55 * Math.pow(tc, 1.3)))
+      // deep core: dots touch so the center reads solid
+      if (t > 1 - 0.5 / nZones) side = p
       const half = side / 2
       buckets[zone].push((ix + 0.5) * p - half, (iy + 0.5) * p - half, side)
     }
