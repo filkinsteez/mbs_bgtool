@@ -1,12 +1,17 @@
 import type { V2Env } from './system'
+import type { Field } from '../field'
 import { chan } from '@/core/organic/random'
 import { hexToRgb, rgbCss, type RGB } from '@/core/lab/colorField'
 
 // V2 'Mandala' — a pixel-mandala built entirely from small squares on a
-// fixed lattice. Concentric irregular ZONES of palette color radiate from
-// a near-center point: sparse scatter at the rim, then successively
-// higher-contrast solid zones, then a solid near-core. Signature qualities
-// from the reference:
+// fixed lattice. Concentric irregular ZONES of palette color emanate from
+// the MARK'S FORM: the symbol's graded distance field (rendered very soft,
+// oversized and off-center so the mark is cropped by the frame) drives the
+// zone ramp — sparse scatter at the far rim, then successively
+// higher-contrast solid contour bands hugging the mark's silhouette, then
+// a solid core inside/along the mark itself. An angular wobble perturbs
+// the ramp so the outline never renders cleanly — the mark is felt
+// everywhere, readable nowhere. Signature qualities from the reference:
 //   (a) distinct zones — a dot deep inside a zone paints exactly that
 //       zone's color; the two adjacent zone colors interleave dot-by-dot
 //       (ordered Bayer 4x4 dither) ONLY inside a narrow boundary band, so
@@ -78,14 +83,74 @@ export function renderMandala(ctx: CanvasRenderingContext2D, env: V2Env): void {
   const breath = Math.sin(2 * Math.PI * env.motionPhase) * 0.35 * env.motionAmount
   const phi1 = chan(seed, 0, 'v2.mandala.phi1') * Math.PI * 2 + breath
   const phi2 = chan(seed, 0, 'v2.mandala.phi2') * Math.PI * 2 - breath
-  // the mandala dominates the frame: zone-0 rim at ~0.6·minDim, clipping
-  // top/bottom slightly. Only on the LONG axis must the scatter fringe
-  // (t → -FRINGE, worst-case radius (1+FRINGE)·maxR / min wobble) still
-  // die out before the canvas edge — clamp maxR to guarantee it.
+  const k2 = k + 3
+
+  // ---- the mark's graded field drives the zone ramp ---------------------
+  // Oversized, pushed off-center along a seeded direction and gently
+  // tilted, so a partial/cropped mark anchors the composition; very high
+  // softness turns the silhouette into a wide smooth gradient whose level
+  // sets become the contour bands.
+  const fScale = 1.15 + 0.45 * chan(seed, 0, 'v2.mandala.fieldScale')
+  const fDir = chan(seed, 0, 'v2.mandala.fieldDir') * Math.PI * 2
+  const fDist = 0.2 + 0.3 * chan(seed, 0, 'v2.mandala.fieldDist')
+  const fRot = (chan(seed, 0, 'v2.mandala.fieldRot') * 2 - 1) * 0.4
+  const fSoft = 2.6 + 0.8 * chan(seed, 0, 'v2.mandala.fieldSoft')
+  // softness pyramid: the same placed mark rendered at growing softness
+  // and summed. Every layer is 1 inside the silhouette and graded outside
+  // over a wider and wider falloff, so the sum is a topographic gradient
+  // whose level sets are true dilations of the mark's form — stepped
+  // contour bands AROUND the silhouette, core = inside the mark — graded
+  // no matter how tight the silhouette's native falloff is.
+  // geometric falloff spread; ascending weights so the broad layers carry
+  // more of the range than the steep silhouette-hugging one — the bands
+  // share the annulus around the mark instead of collapsing onto its edge
+  const SOFT_STACK: [number, number][] = [
+    [1, 0.55],
+    [1.8, 0.7],
+    [3.2, 0.85],
+    [5.8, 1],
+    [10.5, 1.15],
+    [19, 1.3],
+  ]
+  const fOffX = Math.cos(fDir) * fDist
+  const fOffY = Math.sin(fDir) * fDist
+  const symLayers: [Field, number][] = SOFT_STACK.map(([m, w]) => [
+    env.symbolField({
+      scale: fScale,
+      offsetX: fOffX,
+      offsetY: fOffY,
+      rotation: fRot,
+      softness: fSoft * m,
+    }),
+    w,
+  ])
+  // low-frequency coordinate warp (1-2 undulations per frame): displaces
+  // the field spatially by a fixed amount, so even where the field is
+  // steep (right at the silhouette) the mark's outline never renders
+  // cleanly — influenced, not shown
+  const wAmp = (0.055 + 0.03 * chan(seed, 0, 'v2.mandala.warpAmp')) * minDim
+  const wf1 = (4.5 + 3 * chan(seed, 0, 'v2.mandala.warpF1')) / minDim
+  const wf2 = (4.5 + 3 * chan(seed, 0, 'v2.mandala.warpF2')) / minDim
+  const wq1 = chan(seed, 0, 'v2.mandala.warpQ1') * Math.PI * 2
+  const wq2 = chan(seed, 0, 'v2.mandala.warpQ2') * Math.PI * 2
+  const wq3 = chan(seed, 0, 'v2.mandala.warpQ3') * Math.PI * 2
+  const wq4 = chan(seed, 0, 'v2.mandala.warpQ4') * Math.PI * 2
+  const symField = (x: number, y: number): number => {
+    const wx = x + wAmp * (Math.sin(y * wf1 + wq1) + 0.6 * Math.sin((x + y) * wf2 + wq2))
+    const wy = y + wAmp * (Math.sin(x * wf2 + wq3) + 0.6 * Math.sin((x - y) * wf1 + wq4))
+    let acc = 0
+    for (const [f, w] of symLayers) acc += f(wx, wy) * w
+    return acc
+  }
+  // anchor of the angular wobble = the mark's placement center
+  const ax = outW / 2 + (fOffX * outW) / 2
+  const ay = outH / 2 + (fOffY * outH) / 2
+  // point-radial fallback (no mark loaded): zone-0 rim at ~0.6·minDim; on
+  // the LONG axis the scatter fringe (t → -FRINGE, worst-case radius
+  // (1+FRINGE)·maxR / min wobble) must die out before the canvas edge.
   const wobMin = 1 - a1 - a2
   const halfLong = outW >= outH ? Math.min(cx, outW - cx) : Math.min(cy, outH - cy)
   const maxR = Math.min(0.6 * minDim, (halfLong * wobMin) / (1 + FRINGE))
-  const k2 = k + 3
 
   // ---- zone ramp: palette ordered by contrast vs ground, ground excluded
   const nZones = complexity < 0.33 ? 3 : 4
@@ -155,26 +220,83 @@ export function renderMandala(ctx: CanvasRenderingContext2D, env: V2Env): void {
   const blockT = new Float32Array(bCols * bRows)
   const lum = env.luminance
   const groundIsLight = relLum(groundRgb) > 0.45
-  for (let by = 0; by < bRows; by++) {
-    for (let bx = 0; bx < bCols; bx++) {
-      const X = (bx * 4 + 2) * p
-      const Y = (by * 4 + 2) * p
-      let t: number
-      if (lum) {
-        // 3D material mode: captured-frame tone drives the ramp instead of
-        // the radial field (contrast-vs-ground direction)
-        const l = lum(X, Y)
+  if (lum) {
+    // 3D material mode: captured-frame tone drives the ramp instead of
+    // the symbol field (contrast-vs-ground direction) — unchanged
+    for (let by = 0; by < bRows; by++) {
+      for (let bx = 0; bx < bCols; bx++) {
+        const l = lum((bx * 4 + 2) * p, (by * 4 + 2) * p)
         const tone = groundIsLight ? 1 - l : l
-        t = tone * 1.3 - 0.15
-      } else {
-        const dx = X - cx
-        const dy = Y - cy
-        const dist = Math.hypot(dx, dy)
-        const th = Math.atan2(dy, dx)
-        const wob = 1 + a1 * Math.cos(k * th + phi1) + a2 * Math.cos(k2 * th + phi2)
-        t = 1 - (dist * wob) / maxR
+        blockT[by * bCols + bx] = tone * 1.3 - 0.15
       }
-      blockT[by * bCols + bx] = t
+    }
+  } else {
+    // pass 1: sample the mark's graded field once per block
+    let fMin = Infinity
+    let fMax = -Infinity
+    for (let by = 0; by < bRows; by++) {
+      for (let bx = 0; bx < bCols; bx++) {
+        const v = symField((bx * 4 + 2) * p, (by * 4 + 2) * p)
+        blockT[by * bCols + bx] = v
+        if (v < fMin) fMin = v
+        if (v > fMax) fMax = v
+      }
+    }
+    const span = fMax - fMin
+    if (span > 1e-4) {
+      // pass 2: histogram-equalize the sampled field over the frame. The
+      // mapping is monotone, so t's level sets still flow around the
+      // mark's form, but every zone is guaranteed a real share of the
+      // canvas however steep the silhouette's native falloff is: the
+      // bottom R0 of blocks sit below t=0 (fringe scatter fading into
+      // bare ground on the field's far side), the rest split evenly into
+      // the stepped zones, core = deepest inside the mark. The angular
+      // wobble rides on t through a mid-band window (zero at both
+      // extremes: far ground stays clean, core stays coherent) so the
+      // contour bands stay chunky-organic and the outline never sharpens.
+      const R0 = 0.32
+      const sorted = blockT.slice()
+      sorted.sort()
+      const nB = sorted.length
+      const cdf = (v: number): number => {
+        let lo = 0
+        let hi = nB
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1
+          if (sorted[mid] < v) lo = mid + 1
+          else hi = mid
+        }
+        const first = lo
+        hi = nB
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1
+          if (sorted[mid] <= v) lo = mid + 1
+          else hi = mid
+        }
+        return (first + lo) / 2 / nB
+      }
+      for (let by = 0; by < bRows; by++) {
+        for (let bx = 0; bx < bCols; bx++) {
+          const i = by * bCols + bx
+          const n = (cdf(blockT[i]) - R0) / (1 - R0)
+          const th = Math.atan2((by * 4 + 2) * p - ay, (bx * 4 + 2) * p - ax)
+          const wob = a1 * Math.cos(k * th + phi1) + a2 * Math.cos(k2 * th + phi2)
+          const m = Math.max(0, Math.min(1, n))
+          blockT[i] = n + wob * Math.min(1, 4 * m * (1 - m))
+        }
+      }
+    } else {
+      // no mark loaded: fall back to the point-radial composition
+      for (let by = 0; by < bRows; by++) {
+        for (let bx = 0; bx < bCols; bx++) {
+          const dx = (bx * 4 + 2) * p - cx
+          const dy = (by * 4 + 2) * p - cy
+          const dist = Math.hypot(dx, dy)
+          const th = Math.atan2(dy, dx)
+          const wob = 1 + a1 * Math.cos(k * th + phi1) + a2 * Math.cos(k2 * th + phi2)
+          blockT[by * bCols + bx] = 1 - (dist * wob) / maxR
+        }
+      }
     }
   }
 

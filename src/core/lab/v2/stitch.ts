@@ -4,8 +4,10 @@ import { hexToRgb, type RGB } from '@/core/lab/colorField'
 
 // 'Stitch' — a cross-stitch / perler-bead mosaic. A COARSE grid of chunky
 // rounded squares, each carrying a smaller inner square of a strongly
-// contrasting shade (the double-square bead read). The mark's stroke runs
-// 4-8 cells wide, so it reads as filled cell-masses, not an outline.
+// contrasting shade plus a pierced-center hole dot (the bead read). The
+// mark's stroke runs 4-8 cells wide, so it reads as filled cell-masses,
+// not an outline. Most color regions checker two tonal shades per-cell,
+// so up close each patch looks like woven two-tone beadwork.
 // Loud color regions (~3.5-cell features, dealt from the plan swatches
 // plus tinted/shaded variants of each) cross the strokes; blob clusters
 // fused to the mask edge bleed the silhouette outward so at a glance it
@@ -276,6 +278,8 @@ export function renderStitch(ctx: CanvasRenderingContext2D, env: V2Env): void {
   const siteY = new Float64Array(gcols * grows)
   const siteColor = new Int32Array(gcols * grows)
   const siteTowardWhite = new Uint8Array(gcols * grows)
+  const sitePartner = new Int32Array(gcols * grows)
+  const siteChecker = new Uint8Array(gcols * grows)
   for (let gj = 0; gj < grows; gj++) {
     for (let gi = 0; gi < gcols; gi++) {
       const si = gj * gcols + gi
@@ -309,6 +313,53 @@ export function renderStitch(ctx: CanvasRenderingContext2D, env: V2Env): void {
       // white or toward black ("gradient within the shape").
       siteTowardWhite[si] =
         chan(seed, si, 'v2.stitch.parity') < (relLum(pool[idx].rgb) < 0.45 ? 0.7 : 0.3) ? 1 : 0
+      // Within-region checkerboard: every region carries a shade PAIR —
+      // the dealt primary plus a partner from the pool — and ~60% of
+      // regions alternate the two per-cell in a checker. The partner is
+      // normally a TONAL NEIGHBOR (the primary's own base swatch at a
+      // different 30% tint/shade step) so checkered regions read as woven
+      // two-tone cloth; a seeded few instead pair the pool entry farthest
+      // away in lightness, giving each canvas some high-contrast accent
+      // patches. Partners never affect the adjacent-region loudness rule
+      // above — that is judged on primaries, and tonal partners hug their
+      // primary, so the >=0.12 region-to-region separation still reads.
+      let partner = idx
+      if (pool.length > 1) {
+        const b3 = pool[idx].base * 3
+        if (chan(seed, si, 'v2.stitch.accent') < 0.14) {
+          let bestGap = -1
+          for (let k = 0; k < pool.length; k++) {
+            const gap = Math.abs(pool[k].lightness - pool[idx].lightness)
+            if (gap > bestGap) {
+              bestGap = gap
+              partner = k
+            }
+          }
+        } else if (idx === b3) {
+          partner = b3 + 1 + (chan(seed, si, 'v2.stitch.pairPick') < 0.5 ? 0 : 1)
+        } else {
+          partner = b3
+        }
+        // A near-invisible pair (a base whose 30% variant barely moves in
+        // lightness) upgrades to the base's other variant, keeping the
+        // checker legible while staying inside the same swatch family.
+        if (
+          partner !== idx &&
+          pool[partner].base === pool[idx].base &&
+          Math.abs(pool[partner].lightness - pool[idx].lightness) < 0.055
+        ) {
+          const alt = b3 + 1 + (partner === b3 + 1 ? 1 : 0)
+          if (
+            alt !== idx &&
+            Math.abs(pool[alt].lightness - pool[idx].lightness) >
+              Math.abs(pool[partner].lightness - pool[idx].lightness)
+          ) {
+            partner = alt
+          }
+        }
+      }
+      sitePartner[si] = partner
+      siteChecker[si] = partner !== idx && chan(seed, si, 'v2.stitch.checker') < 0.6 ? 1 : 0
     }
   }
   // Nearest site for a bead at cell-space (u, v); the low bit of the
@@ -357,6 +408,12 @@ export function renderStitch(ctx: CanvasRenderingContext2D, env: V2Env): void {
   const outerR = 0.2 * c
   const inner = 0.42 * c
   const innerR = 0.1 * c
+  // Bead hole: pierced-center dot, ~0.14c across. Skipped entirely when
+  // cells run small (fine grids would just muddy), and mixed less hard at
+  // low complexity so big beads stay calm.
+  const holeR = 0.07 * c
+  const drawHoles = c >= 14
+  const holeMix = 0.72 + 0.2 * complexity
 
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
@@ -381,8 +438,13 @@ export function renderStitch(ctx: CanvasRenderingContext2D, env: V2Env): void {
       const si = region >> 1
       const fringe = (region & 1) === 1
 
-      const base = pool[siteColor[si]].rgb
-      const shade = shadeNoise(u + shimmer, v) * 0.2
+      // Checkered regions alternate the pair by cell parity; noise
+      // shading nearly vanishes there so the two tones stay crisp.
+      // Solid regions keep the full noise drift as before.
+      const checker = siteChecker[si] === 1
+      const entryIdx = checker && ((i + j) & 1) === 1 ? sitePartner[si] : siteColor[si]
+      const base = pool[entryIdx].rgb
+      const shade = shadeNoise(u + shimmer, v) * (checker ? 0.05 : 0.2)
       let cell = mix(base, siteTowardWhite[si] === 1 ? white : black, shade)
       if (fringe) cell = mix(cell, groundRgb, 0.45)
 
@@ -392,10 +454,21 @@ export function renderStitch(ctx: CanvasRenderingContext2D, env: V2Env): void {
       roundedRect(ctx, x, y, outer, outer, outerR)
       ctx.fill()
 
-      const innerColor = relLum(cell) > 0.5 ? mix(cell, black, 0.55) : mix(cell, white, 0.55)
+      const dark = relLum(cell) <= 0.5
+      const innerColor = dark ? mix(cell, white, 0.55) : mix(cell, black, 0.55)
       ctx.fillStyle = css(innerColor)
       roundedRect(ctx, x0 + i * c + (c - inner) / 2, y0 + j * c + (c - inner) / 2, inner, inner, innerR)
       ctx.fill()
+
+      // The pierced-bead hole rides on top of the inner square — pushed
+      // toward white in dark cells and toward black in light ones, one
+      // step past the inner square's own flip.
+      if (drawHoles) {
+        ctx.fillStyle = css(dark ? mix(cell, white, holeMix) : mix(cell, black, holeMix))
+        ctx.beginPath()
+        ctx.arc(centerX(i), centerY(j), holeR, 0, Math.PI * 2)
+        ctx.fill()
+      }
     }
   }
 }

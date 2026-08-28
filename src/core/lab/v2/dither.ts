@@ -5,8 +5,12 @@ import { chan } from '@/core/organic/random'
 // The canvas is guillotine-partitioned into 5-9 rectangular zones with hard
 // seams; each zone renders the SAME underlying tone image T(x,y) through its
 // own dither technique (ordered bayer, diagonal halftone lines, dot grid,
-// horizontal lines, noisy diffusion) at its own cell scale. Strictly two
-// colors: ground + the highest-contrast plan swatch.
+// horizontal lines, noisy diffusion) at its own cell scale. Each zone is
+// strictly two-color internally — the shared ground plus ONE ink dealt to
+// that zone from the enabled plan swatches (weight-proportional, adjacent
+// zones avoid repeats) — so the 1-bit character survives per zone while the
+// collage carries the whole user mix. A single-ink mix collapses to the
+// classic ground + highest-contrast-swatch render.
 
 const C = 'v2.dither.'
 
@@ -49,6 +53,110 @@ function makeDrift(seed: number, cellPx: number, shift: number) {
 }
 
 type Zone = { x: number; y: number; w: number; h: number; id: number }
+
+// ---- per-zone ink dealing ---------------------------------------------------
+
+type PoolInk = { hex: string; weight: number }
+
+// oklab of a hex color (same transform the color plan uses), so ground
+// proximity is judged perceptually rather than by raw RGB.
+function hexToOklab(hex: string): [number, number, number] {
+  const match = hex.trim().match(/^#?([0-9a-f]{6})$/i)
+  const value = match ? Number.parseInt(match[1], 16) : 0
+  const lin = (c: number) => {
+    const u = c / 255
+    return u <= 0.04045 ? u / 12.92 : ((u + 0.055) / 1.055) ** 2.4
+  }
+  const r = lin((value >> 16) & 255)
+  const g = lin((value >> 8) & 255)
+  const b = lin(value & 255)
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  ]
+}
+
+// the enabled plan swatches that can act as ink: everything far enough from
+// the ground to survive as 1-bit texture. Falls back to the single
+// highest-contrast swatch (the classic render) when the plan is missing or
+// the filter empties the pool.
+function buildInkPool(env: V2Env): PoolInk[] {
+  const plan = env.plan
+  if (!plan || plan.depthOrder.length === 0) return [{ hex: env.ink, weight: 1 }]
+  const [gl, ga, gb] = hexToOklab(env.ground)
+  const pool: PoolInk[] = []
+  for (const sw of plan.swatches) {
+    const sa = Math.cos(sw.hue) * sw.chroma
+    const sb = Math.sin(sw.hue) * sw.chroma
+    const dist = Math.hypot(sw.lightness - gl, sa - ga, sb - gb)
+    if (dist >= 0.09) pool.push({ hex: sw.hex, weight: Math.max(1e-4, sw.weight) })
+  }
+  if (pool.length === 0) {
+    const idx = plan.depthOrder[plan.depthOrder.length - 1]
+    return [{ hex: plan.swatches[idx]?.hex ?? env.ink, weight: 1 }]
+  }
+  return pool
+}
+
+// deal one ink per zone: weight-proportional via chan, then a greedy repair
+// that steers away from inks already dealt to seam-sharing neighbours where
+// the pool allows it. Deterministic in (seed, zone ids).
+function assignZoneInks(seed: number, zones: Zone[], pool: PoolInk[]): string[] {
+  const inks = new Array<string>(zones.length)
+  if (pool.length === 1) {
+    inks.fill(pool[0].hex)
+    return inks
+  }
+  const total = pool.reduce((sum, p) => sum + p.weight, 0) || 1
+  // adjacency = rectangles sharing a seam segment (guillotine cuts are
+  // integer-rounded, but keep a small epsilon anyway)
+  const eps = 0.5
+  const adj: number[][] = zones.map(() => [])
+  for (let i = 0; i < zones.length; i++) {
+    for (let j = i + 1; j < zones.length; j++) {
+      const a = zones[i]
+      const b = zones[j]
+      const xTouch = Math.abs(a.x + a.w - b.x) < eps || Math.abs(b.x + b.w - a.x) < eps
+      const yTouch = Math.abs(a.y + a.h - b.y) < eps || Math.abs(b.y + b.h - a.y) < eps
+      const xOverlap = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > eps
+      const yOverlap = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) > eps
+      if ((xTouch && yOverlap) || (yTouch && xOverlap)) {
+        adj[i].push(j)
+        adj[j].push(i)
+      }
+    }
+  }
+  for (let i = 0; i < zones.length; i++) {
+    // weight-proportional base pick
+    const sample = chan(seed, zones[i].id, C + 'ink') * total
+    let acc = 0
+    let pick = pool.length - 1
+    for (let k = 0; k < pool.length; k++) {
+      acc += pool[k].weight
+      if (sample < acc) {
+        pick = k
+        break
+      }
+    }
+    // steer off inks already dealt to adjacent zones, when avoidable
+    const used = new Set<string>()
+    for (const j of adj[i]) if (inks[j] !== undefined) used.add(inks[j])
+    let choice = pick
+    for (let step = 0; step < pool.length; step++) {
+      const k = (pick + step) % pool.length
+      if (!used.has(pool[k].hex)) {
+        choice = k
+        break
+      }
+    }
+    inks[i] = pool[choice].hex
+  }
+  return inks
+}
 
 // recursive guillotine partition: split the largest splittable leaf along its
 // longer axis at a seeded 0.3-0.7 position until we hold 5-9 zones.
@@ -242,16 +350,11 @@ export function renderDither(ctx: CanvasRenderingContext2D, env: V2Env): void {
   const { outW: W, outH: H, seed, complexity } = env
   const minDim = Math.min(W, H)
 
-  // ---- colors: strictly ground + one ink ------------------------------------
+  // ---- colors: shared ground + one ink dealt per zone -----------------------
   ctx.save()
   ctx.fillStyle = env.ground
   ctx.fillRect(0, 0, W, H)
-  let ink = env.ink
-  if (env.plan && env.plan.depthOrder.length > 0) {
-    const idx = env.plan.depthOrder[env.plan.depthOrder.length - 1]
-    ink = env.plan.swatches[idx]?.hex ?? env.ink
-  }
-  ctx.fillStyle = ink
+  const inkPool = buildInkPool(env)
 
   // ---- underlying tone field T(x,y) ----------------------------------------
   const breathe = Math.sin(2 * Math.PI * env.motionPhase) * 0.25 * env.motionAmount
@@ -280,6 +383,10 @@ export function renderDither(ctx: CanvasRenderingContext2D, env: V2Env): void {
 
   // ---- patchwork zones ------------------------------------------------------
   const zones = partition(seed, W, H, complexity)
+
+  // one ink per zone from the enabled mix; single-ink pools fill every zone
+  // with the classic highest-contrast ink
+  const zoneInks = assignZoneInks(seed, zones, inkPool)
 
   // style deck: a seeded shuffle cycled across zones so styles never all match
   const deck: Style[] = STYLES.map((style, k) => ({ style, key: chan(seed, k, C + 'deck') }))
@@ -314,6 +421,7 @@ export function renderDither(ctx: CanvasRenderingContext2D, env: V2Env): void {
     ctx.beginPath()
     ctx.rect(z.x, z.y, z.w, z.h)
     ctx.clip()
+    ctx.fillStyle = zoneInks[i]
     if (style === 'bayer') renderBayer(ctx, z, s, tone)
     else if (style === 'diag45') renderDiag(ctx, z, s, tone, 1, gapFloor)
     else if (style === 'diag135') renderDiag(ctx, z, s, tone, -1, gapFloor)
