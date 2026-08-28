@@ -9,6 +9,7 @@ import { resolveCompositionPlan } from '@/core/lab/compositionPlan'
 import { resolveLookColorPlan } from '@/core/lab/colorDirection'
 import { resolveLookColorPlan as resolveLookColorPlanV1b } from '@/core/lab/v1b/colorDirection'
 import { PAPER } from '@/core/state/defaults'
+import { chan } from '@/core/organic/random'
 import { mergeDeep, type DeepPartial } from '@/core/state/store'
 import { MATERIAL_BY_ID, type MaterialId } from './material/catalog'
 import {
@@ -490,28 +491,48 @@ export function backgroundRecipeToLab(
         source.id === curve?.id && source.curve
           ? {
               ...source,
-              // V1b commits the symbol interior to the top band instead of
-              // leaving it straddling a boundary, and widens the falloff for
-              // the two Looks that read as graded fields.
+              // V1b never shows the whole mark. The geometry runs oversized,
+              // off-center, and tilted — seeded per recipe — so one arc or
+              // lobe sweeps the frame as an organizing field, not a logo.
+              // Full weight commits the swept interior to the top band; the
+              // wide falloff grades the texture instead of stamping a shape.
               ...(isV1b
                 ? {
                     weight: 1,
                     softness: recipe.look.id === 'pixels'
-                      ? 0.8
+                      ? 0.9
                       : recipe.look.id === 'marks'
                         ? 0.7
-                        : source.softness,
+                        : 0.5,
                   }
                 : {}),
-              curve: {
-                ...source.curve,
-                amplitudeX: CANONICAL_META_SAFE_AREA.width,
-                amplitudeY: CANONICAL_META_SAFE_AREA.height,
-                offsetX: 0,
-                offsetY: 0,
-                rotation: 0,
-                silhouette: 'meta-symbol',
-              },
+              curve: isV1b
+                ? (() => {
+                    const scale = 1.45
+                      + chan(recipe.seed, 0, 'v1b.symbol.scale') * 0.85
+                    const direction = chan(recipe.seed, 0, 'v1b.symbol.dir')
+                      * Math.PI * 2
+                    const distance = 0.42
+                      + chan(recipe.seed, 0, 'v1b.symbol.dist') * 0.34
+                    return {
+                      ...source.curve,
+                      amplitudeX: scale,
+                      amplitudeY: scale,
+                      offsetX: Math.cos(direction) * distance,
+                      offsetY: Math.sin(direction) * distance,
+                      rotation: (chan(recipe.seed, 0, 'v1b.symbol.rot') - 0.5) * 1.1,
+                      silhouette: 'meta-symbol' as const,
+                    }
+                  })()
+                : {
+                    ...source.curve,
+                    amplitudeX: CANONICAL_META_SAFE_AREA.width,
+                    amplitudeY: CANONICAL_META_SAFE_AREA.height,
+                    offsetX: 0,
+                    offsetY: 0,
+                    rotation: 0,
+                    silhouette: 'meta-symbol' as const,
+                  },
             }
           : source,
       ),

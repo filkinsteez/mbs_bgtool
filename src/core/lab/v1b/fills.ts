@@ -163,8 +163,13 @@ export function buildShingleFills(opts: {
     const cy = cell.y + cell.size / 2
     // one palette pair per broad region so areas read as one material —
     // the partner deals from the same region lattice, so neighbors hold
-    // one consistent weave instead of per-cell confetti
-    const r = regionValue(seed, cx, cy, cell.size * 3.2, 'lab.shingle')
+    // one consistent weave instead of per-cell confetti. With a plan the
+    // deal leans by territory, the same as blocks: ink gathers where the
+    // field runs strong, pale weave opens up at the fringe.
+    const raw = regionValue(seed, cx, cy, cell.size * 3.2, 'lab.shingle')
+    const r = colorPlan
+      ? Math.max(0, Math.min(1, raw + (1 - cell.t) * 0.45 - 0.24))
+      : raw
     const a = colorPlan
       ? weightedColorIndex(colorPlan, r)
       : Math.min(paletteSize - 1, Math.floor(r * paletteSize))

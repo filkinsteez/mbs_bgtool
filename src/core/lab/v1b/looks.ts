@@ -1,6 +1,9 @@
 import type { LabPatch } from '../labStore'
 import type { Look, LookId } from '../looks'
 
+// V1b Looks are FULL-FRAME fields: no band is quiet, so no Look sits a
+// shape on solid ground. The territory grades density and color instead
+// of gating presence.
 // LOOKS — the preset layer every shipped image tool leads with. A look
 // is a plain LabPatch: applying one goes through the normal patch/undo
 // path, so every control underneath lands on real editable values (a
@@ -21,7 +24,7 @@ const V1B_LOOKS: Look[] = [
     patch: {
       // blocks carry the symbol body; the territory lean inside
       // buildBlockFills keeps paper breathing through the mosaic
-      territory: { bands: ['quiet', 'blocks', 'blocks', 'blocks'], boundary: 'hard' },
+      territory: { bands: ['blocks', 'blocks', 'blocks', 'blocks'], boundary: 'hard' },
       structure: { baseCell: 30, maxLevels: 1, subdivide: 0.46 },
       finish: { grain: 0.08 },
       sourceVisibility: 0,
@@ -31,7 +34,7 @@ const V1B_LOOKS: Look[] = [
     id: 'pixels',
     label: 'Pixels',
     patch: {
-      territory: { bands: ['quiet', 'mosaic', 'mosaic', 'mosaic'], boundary: 'dither' },
+      territory: { bands: ['mosaic', 'mosaic', 'mosaic', 'mosaic'], boundary: 'dither' },
       structure: { baseCell: 40, maxLevels: 2, subdivide: 0.72 },
       finish: { grain: 0.1 },
       sourceVisibility: 0,
@@ -52,7 +55,7 @@ const V1B_LOOKS: Look[] = [
     id: 'streams',
     label: 'Streams',
     patch: {
-      territory: { bands: ['quiet', 'streams', 'streams', 'streams'], boundary: 'porous' },
+      territory: { bands: ['streams', 'streams', 'streams', 'streams'], boundary: 'porous' },
       flow: { basis: 'curve', curl: 0.22, scale: 0.42 },
       finish: { grain: 0.1 },
       sourceVisibility: 0,
@@ -74,7 +77,7 @@ const V1B_LOOKS: Look[] = [
     id: 'beads',
     label: 'Beads',
     patch: {
-      territory: { bands: ['quiet', 'beads', 'beads', 'beads'], boundary: 'hard' },
+      territory: { bands: ['beads', 'beads', 'beads', 'beads'], boundary: 'hard' },
       structure: { baseCell: 40, maxLevels: 0, subdivide: 0 },
       finish: { grain: 0.05 },
       sourceVisibility: 0,
@@ -84,7 +87,7 @@ const V1B_LOOKS: Look[] = [
     id: 'quilt',
     label: 'Quilt',
     patch: {
-      territory: { bands: ['quiet', 'blocks', 'blocks', 'blocks'], boundary: 'hard' },
+      territory: { bands: ['blocks', 'blocks', 'blocks', 'blocks'], boundary: 'hard' },
       structure: { baseCell: 72, maxLevels: 2, subdivide: 0.52 },
       finish: { grain: 0 },
       sourceVisibility: 0,
@@ -94,7 +97,7 @@ const V1B_LOOKS: Look[] = [
     id: 'weave',
     label: 'Weave',
     patch: {
-      territory: { bands: ['quiet', 'shingle', 'shingle', 'shingle'], boundary: 'dither' },
+      territory: { bands: ['shingle', 'shingle', 'shingle', 'shingle'], boundary: 'dither' },
       structure: { baseCell: 84, maxLevels: 1, subdivide: 0.42 },
       finish: { grain: 0.14 },
       sourceVisibility: 0,
@@ -104,7 +107,7 @@ const V1B_LOOKS: Look[] = [
     id: 'marks',
     label: 'Marks',
     patch: {
-      territory: { bands: ['empty', 'marks', 'contours', 'photo'], boundary: 'hard' },
+      territory: { bands: ['marks', 'marks', 'contours', 'photo'], boundary: 'hard' },
       structure: { baseCell: 28, maxLevels: 2, subdivide: 0.55 },
       mark: { colorMode: 'palette', occupancy: 0.85, echo: 0 },
       finish: { grain: 0.05 },

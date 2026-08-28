@@ -215,15 +215,50 @@ export function renderLabV1b(
   // the GENERATED color field quantized the same way (the pixel-
   // gradient read: a gorgeous smooth field, sampled coarsely)
   if (cells.some((c) => c.treatment === 'mosaic')) {
-    const field = !maps && !colorPlan
-      ? buildColorField({ palette, seed: lab.seed, T, outW, outH })
+    // Pixels IS the aurora: the color field lets every palette color claim
+    // its stretch of the territory and breaks the banding into weather, so
+    // the whole frame reads as one soft quantized gradient — never a flat
+    // ribbon on bare paper. The plan orders the field's palette from ground
+    // at the far field to the strongest ink along the swept geometry.
+    const isPixelsLook = lab.look?.id === 'pixels'
+    // a 4-swatch quantized field is one flat color per zone — interleave
+    // midpoint tints so the aurora has enough steps to actually grade
+    const auroraPalette = (() => {
+      if (!colorPlan) return palette
+      const ordered = colorPlan.depthOrder.map((index) => palette[index])
+      const out: string[] = []
+      for (let index = 0; index < ordered.length; index += 1) {
+        out.push(ordered[index])
+        if (index < ordered.length - 1) {
+          out.push(midpointHex(ordered[index], ordered[index + 1]))
+        }
+      }
+      return out
+    })()
+    const field = !maps && (!colorPlan || isPixelsLook)
+      ? buildColorField({
+          palette: auroraPalette,
+          seed: lab.seed,
+          // the silhouette is a step function, and no quantization grades a
+          // step — blend it with slow drift so the geometry reads as a dark
+          // current inside a continuously moving wash, not a filled shape
+          T: colorPlan
+            ? (x, y) => {
+                const drift = regionValue(
+                  lab.seed,
+                  x,
+                  y,
+                  Math.min(outW, outH) * 0.5,
+                  'v1b.pixel.drift',
+                )
+                return Math.max(0, Math.min(1,
+                  0.14 + T(x, y) * 0.5 + (drift - 0.5) * 0.55))
+              }
+            : T,
+          outW,
+          outH,
+        })
       : null
-    // Pixels reads as the reference's soft quantized gradient: territory
-    // drives a ramp from the ground at the far field through ever
-    // stronger ink toward the symbol core, with only mild weather.
-    const pixelColors = lab.look?.id === 'pixels' && colorPlan
-      ? colorPlan.depthOrder
-      : []
     for (const c of cells) {
       if (c.treatment !== 'mosaic') continue
       const cx = c.x + c.size / 2
@@ -235,7 +270,9 @@ export function renderLabV1b(
         const [r, g, b] = sampleRGB(maps, u * maps.w - 0.5, v * maps.h - 0.5)
         ctx.fillStyle = `rgb(${r} ${g} ${b})`
       } else {
-        if (colorPlan) {
+        if (field) {
+          ctx.fillStyle = rgbCss(field(cx, cy))
+        } else if (colorPlan) {
           const planSample = lab.composition
             ? sampleCompositionPlan(lab.composition, cx, cy, outW, outH)
             : null
@@ -248,23 +285,12 @@ export function renderLabV1b(
           )
           const sample = Math.max(0, Math.min(
             0.999999,
-            pixelColors.length > 0
-              ? c.t * 0.92 - 0.18
-                + (mass - 0.5) * 0.16
-                + (planSample?.wave ?? 0) * 0.05
-              : 0.5
-                + (mass - 0.5) * 1.75
-                + (planSample?.wave ?? 0) * 0.18
-                + (c.t - 0.5) * 0.14,
+            0.5
+              + (mass - 0.5) * 1.75
+              + (planSample?.wave ?? 0) * 0.18
+              + (c.t - 0.5) * 0.14,
           ))
-          const colorIndex = pixelColors.length > 0
-            ? pixelColors[
-                Math.min(pixelColors.length - 1, Math.floor(sample * pixelColors.length))
-              ]
-            : weightedColorIndex(colorPlan, sample)
-          ctx.fillStyle = palette[colorIndex]
-        } else {
-          ctx.fillStyle = rgbCss(field!(cx, cy))
+          ctx.fillStyle = palette[weightedColorIndex(colorPlan, sample)]
         }
       }
       ctx.fillRect(c.x, c.y, c.size + 0.35, c.size + 0.35)
@@ -331,10 +357,8 @@ export function renderLabV1b(
       let column = 0
       for (let cx = -spacing + rowOffset; cx <= outW + spacing; cx += spacing) {
         const territory = compiledTerritory(cx, cy)
-        if (territory <= 0.075) {
-          column += 1
-          continue
-        }
+        // the whole lattice draws — the pegboard IS the surface; the field
+        // only decides how large and how present each bead is
         const id = row * 4099 + column
         const edge = Math.max(0, Math.min(1, (territory - 0.075) / 0.72))
         const hero = edge > 0.58 && chan(lab.seed, id, 'lab.bead.hero') > 0.965
@@ -367,7 +391,7 @@ export function renderLabV1b(
         ctx.arc(cx + radius * 0.13, cy + radius * 0.17, radius, 0, Math.PI * 2)
         ctx.fill()
 
-        ctx.globalAlpha = 0.58 + edge * 0.42
+        ctx.globalAlpha = 0.26 + edge * 0.74
         ctx.fillStyle = fill
         ctx.beginPath()
         ctx.arc(cx, cy, radius, 0, Math.PI * 2)
@@ -544,7 +568,7 @@ export function renderLabV1b(
         ? dealInkPalette(outW * 0.5, y, 'lab.scan.ground')
         : ink
       ctx.lineWidth = baseWidth * (accented ? 1.08 : 0.72)
-      ctx.globalAlpha = accented ? 0.2 : 0.11
+      ctx.globalAlpha = accented ? 0.24 : 0.14
       ctx.stroke()
 
       let segment: Path2D | null = null
@@ -601,6 +625,8 @@ export function renderLabV1b(
   // STREAMS — long field-line hairlines contained by the curve territory,
   // so the flow enriches the symbol instead of dissolving its silhouette.
   if (vector && cells.some((c) => c.treatment === 'streams')) {
+    // no territory gate: the hairlines cover the frame and the curve speaks
+    // only through the tangent field they follow
     const streams = buildStreams({
       cells,
       seed: lab.seed,
@@ -608,7 +634,6 @@ export function renderLabV1b(
       outW,
       outH,
       complexity: lab.look?.complexity ?? 0.5,
-      territory: T,
     })
     // each stream takes a palette color where it starts — the walker
     // carries it, so neighbouring seeds make colored braids
@@ -759,6 +784,14 @@ export function renderLabV1b(
   // GRAIN — the shared surface pass: seeded hash noise over the whole
   // composite, so every treatment reads as one printed artifact
   if (lab.finish.grain > 0) applyGrain(ctx, lab.finish.grain, lab.seed)
+}
+
+function midpointHex(a: string, b: string): string {
+  const [ar, ag, ab] = hexToRgb(a)
+  const [br, bg, bb] = hexToRgb(b)
+  return '#' + [ar + (br - ar) * 0.5, ag + (bg - ag) * 0.5, ab + (bb - ab) * 0.5]
+    .map((v) => Math.round(v).toString(16).padStart(2, '0'))
+    .join('')
 }
 
 function mixHexColors(a: string, b: string, amount: number): string {
