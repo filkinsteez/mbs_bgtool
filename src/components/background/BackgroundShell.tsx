@@ -187,7 +187,6 @@ export function BackgroundShell() {
                 <MaterialPanel />
                 <LooksPanel />
                 <ColorsPanel />
-                <MotionPanel />
               </>
             )}
           </div>

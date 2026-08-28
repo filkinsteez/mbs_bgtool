@@ -9,6 +9,12 @@ import { resolveLookColorPlan } from '@/core/lab/colorDirection'
 import type { BackgroundRecipeV2 } from '../recipe'
 
 export const MATERIAL_GPU_LOOK_INDEX: Partial<Record<LookId, number>> = {
+  // Current V2 catalog (the "V3" UI tab).
+  pattern: 0,
+  mandala: 3,
+  stitch: 2,
+  dither: 1,
+  // Legacy ids kept so saved recipes keep resolving a stable system.
   frame: 0,
   pixels: 1,
   scanlines: 1,
@@ -462,14 +468,14 @@ function relativeLuminance(hex: string): number {
   return color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722
 }
 
-export function materialLookLoopPhase(timeMs: number, loopSeconds: number): number {
-  const loopMs = Math.max(2000, loopSeconds * 1000)
-  return ((timeMs % loopMs) + loopMs) % loopMs / loopMs
-}
-
 export function materialLookEnergy(speed: number): number {
   return THREE.MathUtils.clamp((speed - 0.1) / 1.9, 0, 1)
 }
+
+// Material mode renders a still: motion never feeds the 3D Look overlay, so
+// the shader's energy term is pinned to the default-speed constant to keep
+// today's default composition.
+export const MATERIAL_STATIC_ENERGY = materialLookEnergy(0.5)
 
 export function resolveMaterialGpuPalette(
   recipe: BackgroundRecipeV2,
@@ -670,8 +676,10 @@ export class MaterialLookGpuPipeline {
       throw new Error('WebGL context is lost')
     }
 
+    // The material overlay is static over time: the loop phase is pinned to
+    // the seam frame unless a debug/export override asks for another phase.
     const phase = options.phase === undefined
-      ? materialLookLoopPhase(timeMs, recipe.motion.loopSeconds)
+      ? 0
       : ((options.phase % 1) + 1) % 1
     const exportResolution = options.exportResolution
     this.lastPhase = phase
@@ -685,10 +693,8 @@ export class MaterialLookGpuPipeline {
     this.uniforms.uLook.value = MATERIAL_GPU_LOOK_INDEX[recipe.look.id] ?? 0
     this.uniforms.uSeed.value = recipe.seed
     this.uniforms.uComplexity.value = THREE.MathUtils.clamp(recipe.look.detail, 0, 1)
-    this.uniforms.uMotionAmount.value = recipe.motion.enabled
-      ? THREE.MathUtils.clamp(recipe.motion.amount, 0, 1)
-      : 0
-    this.uniforms.uEnergy.value = materialLookEnergy(recipe.motion.speed)
+    this.uniforms.uMotionAmount.value = 0
+    this.uniforms.uEnergy.value = MATERIAL_STATIC_ENERGY
     this.uniforms.uLoopPhase.value = phase
     this.uniforms.uCameraNear.value = this.camera.near
     this.uniforms.uCameraFar.value = this.camera.far

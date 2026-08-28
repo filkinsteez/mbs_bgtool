@@ -1,4 +1,4 @@
-import type { V2Env } from './system'
+import { motionHarmonic, type V2Env } from './system'
 import type { Field } from '../field'
 import { chan } from '@/core/organic/random'
 
@@ -513,12 +513,23 @@ export function renderPattern(ctx: CanvasRenderingContext2D, env: V2Env): void {
   // Motion: diagonal scroll by whole pattern periods per loop so phase 0 and
   // phase 1 are pixel-identical. The horizontal period is 2 tiles (mirrored
   // column pairs), the vertical period is 1 tile. motionAmount scales the
-  // speed in whole periods (1 or 2 per loop) — fractions would break the loop.
-  const periods = env.motionAmount <= 0 ? 0 : env.motionAmount > 0.6 ? 2 : 1
+  // speed in whole periods (1 or 2 per loop — fractions would break the
+  // loop) and the Energy harmonic adds up to 2 more, so Energy audibly
+  // changes the scroll tempo without touching the wrap. Between the integer
+  // Amount steps the response is carried by a perpendicular whole-pixel sway
+  // whose amplitude scales continuously with motionAmount and whose tempo
+  // follows the same harmonic; sin(2π·phase·h) is zero at phase 0 and 1, so
+  // the sway never touches the loop seam or the phase-0 thumbnail frame.
+  const h = motionHarmonic(env)
+  const periods =
+    env.motionAmount <= 0 ? 0 : Math.max(1, Math.round(env.motionAmount * 2)) + (h - 1)
   const travel = env.motionPhase * periods
   const wrap = (value: number, span: number) => -((((value % span) + span) % span))
+  const sway = Math.round(
+    Math.sin(2 * Math.PI * env.motionPhase * h) * env.motionAmount * unit * 0.25,
+  )
   const offsetX = Math.round(wrap(travel * dirX * unit * 2, unit * 2))
-  const offsetY = Math.round(wrap(travel * dirY * unit, unit))
+  const offsetY = Math.round(wrap(travel * dirY * unit, unit)) + sway
 
   const motif = buildMotif(env, n)
 

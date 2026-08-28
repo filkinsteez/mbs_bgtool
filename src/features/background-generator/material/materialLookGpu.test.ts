@@ -1,15 +1,23 @@
 import { describe, expect, it } from 'vitest'
+import { V2_SYSTEM_IDS } from '@/core/lab/looks'
 import { createDefaultBackgroundRecipe } from '../recipe'
 import {
   MATERIAL_GPU_LOOK_INDEX,
+  MATERIAL_STATIC_ENERGY,
   materialLookEnergy,
-  materialLookLoopPhase,
   resolveMaterialGpuPalette,
 } from './materialLookGpu'
 
 describe('material GPU Looks', () => {
   it('maps every V2 Look onto one of the five stable GPU systems', () => {
+    for (const id of V2_SYSTEM_IDS) {
+      expect(MATERIAL_GPU_LOOK_INDEX[id], `missing GPU system for ${id}`).not.toBeUndefined()
+    }
     expect(Object.keys(MATERIAL_GPU_LOOK_INDEX)).toEqual([
+      'pattern',
+      'mandala',
+      'stitch',
+      'dither',
       'frame',
       'pixels',
       'scanlines',
@@ -24,18 +32,15 @@ describe('material GPU Looks', () => {
     expect(new Set(Object.values(MATERIAL_GPU_LOOK_INDEX)).size).toBe(5)
   })
 
-  it('uses an exact normalized loop seam independent of Energy', () => {
-    for (const loopSeconds of [2, 8, 17.5, 30]) {
-      expect(materialLookLoopPhase(0, loopSeconds)).toBe(
-        materialLookLoopPhase(loopSeconds * 1000, loopSeconds),
-      )
-      expect(materialLookLoopPhase(1350, loopSeconds)).toBe(
-        materialLookLoopPhase(1350 + loopSeconds * 1000, loopSeconds),
-      )
-    }
+  it('maps Energy speed onto the normalized shader range', () => {
     expect(materialLookEnergy(0.1)).toBe(0)
     expect(materialLookEnergy(2)).toBe(1)
     expect(materialLookEnergy(1.05)).toBeCloseTo(0.5)
+  })
+
+  it('pins the static material energy to the default speed', () => {
+    expect(MATERIAL_STATIC_ENERGY).toBe(materialLookEnergy(0.5))
+    expect(MATERIAL_STATIC_ENERGY).toBeCloseTo(0.4 / 1.9)
   })
 
   it('keeps selected palette roles and avoids an all-black fallback', () => {

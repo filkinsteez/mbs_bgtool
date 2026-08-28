@@ -1,17 +1,13 @@
 import { expect, test, type Page } from '@playwright/test'
 import { mkdir, writeFile } from 'node:fs/promises'
 
+// The internal 'v2' catalog (the "V3" version tab in the UI) drives the
+// material-mode GPU Look overlay.
 const LOOKS = [
-  { id: 'frame', label: 'Frame' },
-  { id: 'pixels', label: 'Pixels' },
-  { id: 'scanlines', label: 'Scanlines' },
-  { id: 'streams', label: 'Streams' },
-  { id: 'brushwork', label: 'Brushwork' },
-  { id: 'beads', label: 'Beads' },
-  { id: 'quilt', label: 'Quilt' },
-  { id: 'weave', label: 'Weave' },
-  { id: 'marks', label: 'Marks' },
-  { id: 'trails', label: 'Trails' },
+  { id: 'pattern', label: 'Pattern' },
+  { id: 'mandala', label: 'Mandala' },
+  { id: 'stitch', label: 'Stitch' },
+  { id: 'dither', label: 'Dither' },
 ] as const
 
 const ASYMMETRIC_CURVED_OBJ = `
@@ -87,7 +83,9 @@ type DebugApi = {
   loseAndRestoreContext: () => boolean
 }
 
-test.describe.configure({ mode: 'serial', timeout: 180_000 })
+// Software-GL environments render the GPU Look composer slowly; these serial
+// tests take screenshots of many looks, so they get a generous budget.
+test.describe.configure({ mode: 'serial', timeout: 300_000 })
 
 async function waitFrames(page: Page, count = 3): Promise<void> {
   await page.evaluate(async (frames) => {
@@ -282,7 +280,7 @@ test('renders every V2 Look through the live Three.js GPU frame', async ({ page 
 
   let warmMetrics: GpuMetrics | null = null
   for (const [index, look] of LOOKS.entries()) {
-    if (index === 5) {
+    if (index === 2) {
       await page.getByRole('radio', { name: 'Bold', exact: true }).click()
     }
     const detail = index % 3 === 0 ? 25 : index % 3 === 1 ? 55 : 85
@@ -354,7 +352,7 @@ test('renders every V2 Look through the live Three.js GPU frame', async ({ page 
   const alternatePath = `${ARTIFACT_DIR}/all-looks-metal-orbited.png`
   const metricsPath = `${ARTIFACT_DIR}/timings-and-resources.json`
   await writeContactSheet(page, comparisonsPath, comparisons, 4)
-  await writeContactSheet(page, alternatePath, alternatePose, 5)
+  await writeContactSheet(page, alternatePath, alternatePose, 4)
   await writeFile(
     metricsPath,
     JSON.stringify({ timings, warmMetrics, stableMetrics }, null, 2),
@@ -373,12 +371,12 @@ test('renders every V2 Look through the live Three.js GPU frame', async ({ page 
   })
 })
 
-test('keeps transformed source geometry, loop motion, and 4K export on the GPU path', async ({
+test('keeps transformed source geometry, phase determinism, and 4K export on the GPU path', async ({
   page,
 }, testInfo) => {
   await mkdir(ARTIFACT_DIR, { recursive: true })
   const first = await openMaterialGpu(page)
-  await page.getByRole('button', { name: 'Trails', exact: true }).click()
+  await page.getByRole('button', { name: 'Stitch', exact: true }).click()
   await expect(first.viewer).toHaveAttribute('data-postprocess', 'gpu-look')
   await setPhase(page, 0)
   await setRawOutput(page, true)
@@ -396,7 +394,7 @@ test('keeps transformed source geometry, loop motion, and 4K export on the GPU p
       scale: 1.18,
       rotation: 17,
     }
-    recipe.look = { ...recipe.look, id: 'trails', version: 'v2' }
+    recipe.look = { ...recipe.look, id: 'stitch', version: 'v2' }
     recipe.materialLookOverlay = { enabled: true }
     sessionStorage.setItem('material-gpu-recipe-override', JSON.stringify(recipe))
   })
@@ -424,11 +422,10 @@ test('keeps transformed source geometry, loop motion, and 4K export on the GPU p
     rawTransformResponse.centroidY - finalTransformResponse.centroidY,
   )).toBeLessThan(0.18)
 
-  const amount = page.getByRole('slider', { name: 'Amount', exact: true })
-  const energy = page.getByRole('slider', { name: 'Energy', exact: true })
-  await amount.fill('80')
-  await expect(energy).toBeEnabled()
-  await energy.fill('0.1')
+  // Material mode has no Motion panel: the 3D overlay is a still, and the
+  // debug/export phase override is the only way to move the loop phase.
+  await expect(page.getByRole('slider', { name: 'Amount', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('slider', { name: 'Energy', exact: true })).toHaveCount(0)
   await setPhase(page, 0)
   const seamStart = await screenshotArtboard(artboard)
   await setPhase(page, 1)
@@ -441,13 +438,11 @@ test('keeps transformed source geometry, loop motion, and 4K export on the GPU p
   const replayB = await screenshotArtboard(artboard)
   expect(replayB.equals(replayA), 'same-state GPU replay must be deterministic').toBe(true)
 
-  await setPhase(page, 0.25)
-  const lowEnergy = await screenshotArtboard(artboard)
-  await energy.fill('2')
-  await waitFrames(page)
-  const highEnergy = await screenshotArtboard(artboard)
-  const energyResponse = await imageStats(page, lowEnergy, highEnergy)
-  expect(energyResponse.mean).toBeGreaterThan(0.15)
+  await setPhase(page, null)
+  const liveA = await screenshotArtboard(artboard)
+  await waitFrames(page, 30)
+  const liveB = await screenshotArtboard(artboard)
+  expect(liveB.equals(liveA), 'the live GPU overlay must be static over time').toBe(true)
 
   await setPhase(page, 0)
   const previewAtExportPhase = await screenshotArtboard(artboard)
@@ -474,7 +469,7 @@ test('keeps transformed source geometry, loop motion, and 4K export on the GPU p
   expect(parity.mean).toBeLessThan(24)
   expect(parity.changedFraction).toBeLessThan(0.72)
 
-  const exportPath = `${ARTIFACT_DIR}/trails-gpu-export-3840x2160.png`
+  const exportPath = `${ARTIFACT_DIR}/stitch-gpu-export-3840x2160.png`
   const measurementsPath = `${ARTIFACT_DIR}/transform-motion-export.json`
   await writeFile(
     exportPath,
@@ -483,7 +478,6 @@ test('keeps transformed source geometry, loop motion, and 4K export on the GPU p
   await writeFile(measurementsPath, JSON.stringify({
     rawTransformResponse,
     finalTransformResponse,
-    energyResponse,
     parity,
     exportMs: exportResult.elapsedMs,
   }, null, 2))
@@ -491,11 +485,10 @@ test('keeps transformed source geometry, loop motion, and 4K export on the GPU p
     path: exportPath,
     contentType: 'image/png',
   })
-  await testInfo.attach('transform, motion, and export measurements', {
+  await testInfo.attach('transform, phase, and export measurements', {
     body: Buffer.from(JSON.stringify({
       rawTransformResponse,
       finalTransformResponse,
-      energyResponse,
       parity,
       exportMs: exportResult.elapsedMs,
     }, null, 2)),
@@ -505,7 +498,7 @@ test('keeps transformed source geometry, loop motion, and 4K export on the GPU p
 
 test('recovers the Three.js GPU Look after context loss', async ({ page }) => {
   const { viewer, canvas } = await openMaterialGpu(page)
-  await page.getByRole('button', { name: 'Streams', exact: true }).click()
+  await page.getByRole('button', { name: 'Mandala', exact: true }).click()
   await expect(viewer).toHaveAttribute('data-postprocess', 'gpu-look')
   await setPhase(page, 0.2)
   const before = await gpuMetrics(page)

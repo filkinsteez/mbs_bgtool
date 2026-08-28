@@ -35,6 +35,15 @@ export type V2Env = {
   luminance: Field | null
   motionPhase: number // 0..1, exactly loopable
   motionAmount: number // 0..1
+  motionEnergy: number // 0..1, from the Energy slider (motion.speed 0.1..2)
+}
+
+// Integer temporal harmonic for the look renderers: the Energy slider picks
+// 1, 2 or 3 sine cycles per loop. Keeping h an INTEGER is what guarantees
+// sin(2π·phase·h + constant) matches exactly at phase 0 and phase 1, so the
+// loop seam stays byte-identical at every energy.
+export function motionHarmonic(env: V2Env): number {
+  return 1 + Math.round(2 * Math.max(0, Math.min(1, env.motionEnergy)))
 }
 
 const symbolCache = new Map<string, Field>()
@@ -87,5 +96,8 @@ export function buildV2Env(lab: LabState, source: LabSource | null): V2Env {
     luminance,
     motionPhase: (((lab.motion.frame?.phase ?? 0) % 1) + 1) % 1,
     motionAmount: lab.motion.enabled ? Math.max(0, Math.min(1, lab.motion.amount)) : 0,
+    // motion.speed runs 0.1..2 (see MotionState); normalize to 0..1 with the
+    // same mapping the v1 band path and organic warp use
+    motionEnergy: Math.max(0, Math.min(1, (lab.motion.speed - 0.1) / 1.9)),
   }
 }

@@ -1,4 +1,4 @@
-import type { V2Env } from './system'
+import { motionHarmonic, type V2Env } from './system'
 import { chan } from '@/core/organic/random'
 import { hexToRgb, type RGB } from '@/core/lab/colorField'
 
@@ -395,10 +395,31 @@ export function renderStitch(ctx: CanvasRenderingContext2D, env: V2Env): void {
 
   const groundRgb = hexToRgb(env.ground)
 
-  // Motion: a very subtle whole-grid shimmer — the shade-noise sample
-  // point slides by sin(2π·phase)·0.3·amount cells. Exactly loops; static
-  // at motionAmount 0.
-  const shimmer = Math.sin(2 * Math.PI * env.motionPhase) * 0.3 * env.motionAmount
+  // Motion. All terms are amount-scaled, and time enters only through
+  // sin/cos(2π·phase·integer ± constant), so integer harmonics close the
+  // loop exactly. Terms with a spatial or seeded phase offset use the
+  // sin(θ+φ) − sin(φ) form: exactly zero at phase 0/1 (the loop seam and
+  // the phase-0 thumbnail stay byte-identical to the static render) yet
+  // moving at full rate through the seam, so no stretch of the loop goes
+  // dead.
+  const amt = env.motionAmount
+  const h = motionHarmonic(env)
+  const theta = 2 * Math.PI * env.motionPhase * h
+  // (a) whole-grid shimmer: the shade-noise sample point slides by
+  // sin(2π·phase·h)·0.3·amount cells.
+  const shimmer = Math.sin(theta) * 0.3 * amt
+  // (b) traveling brightness wave: crests roll diagonally across the bead
+  // grid — W whole wavelengths over the canvas, h cycles per loop — read
+  // as a sheen washing over the beadwork.
+  const W = 2 + Math.floor(chan(seed, 0, 'v2.stitch.waveLen') * 2.999) // 2..4
+  const waveAmp = amt * 0.22
+  const waveAt = (u: number, v: number): number => {
+    const spatial = 2 * Math.PI * ((u + v) / (cols + rows)) * W
+    return waveAmp * (Math.sin(theta - spatial) + Math.sin(spatial))
+  }
+  // (c) bead twinkle: the drop-gate threshold wobbles per cell, so beads
+  // sitting near the gate pop in and out on their own seeded beat.
+  const twinkleAmp = amt * 0.1
 
   // 5. Paint ON cells: outer rounded square inset 5%, then the inner
   // contrast square — 55% toward black in light cells, 55% toward white
@@ -428,8 +449,14 @@ export function renderStitch(ctx: CanvasRenderingContext2D, env: V2Env): void {
           ? 0.12 + 0.12 * complexity
           : 0.05
         : 0.2
+      let twinkle = 0
+      if (twinkleAmp > 0) {
+        const beat = 2 * Math.PI * chan(seed, cellId, 'v2.stitch.twinklePhase')
+        twinkle = twinkleAmp * (Math.sin(theta + beat) - Math.sin(beat))
+      }
       const on =
-        (inMask || inBlob(i, j)) && chan(seed, cellId, 'v2.stitch.drop') >= dropRate
+        (inMask || inBlob(i, j)) &&
+        chan(seed, cellId, 'v2.stitch.drop') >= dropRate + twinkle
       if (!on) continue
 
       const u = i + 0.5
@@ -444,7 +471,9 @@ export function renderStitch(ctx: CanvasRenderingContext2D, env: V2Env): void {
       const checker = siteChecker[si] === 1
       const entryIdx = checker && ((i + j) & 1) === 1 ? sitePartner[si] : siteColor[si]
       const base = pool[entryIdx].rgb
-      const shade = shadeNoise(u + shimmer, v) * (checker ? 0.05 : 0.2)
+      const shade = clamp01(
+        shadeNoise(u + shimmer, v) * (checker ? 0.05 : 0.2) + waveAt(u, v),
+      )
       let cell = mix(base, siteTowardWhite[si] === 1 ? white : black, shade)
       if (fringe) cell = mix(cell, groundRgb, 0.45)
 

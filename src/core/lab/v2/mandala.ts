@@ -1,4 +1,4 @@
-import type { V2Env } from './system'
+import { motionHarmonic, type V2Env } from './system'
 import type { Field } from '../field'
 import { chan } from '@/core/organic/random'
 import { hexToRgb, rgbCss, type RGB } from '@/core/lab/colorField'
@@ -79,11 +79,22 @@ export function renderMandala(ctx: CanvasRenderingContext2D, env: V2Env): void {
   const k = 5 + Math.floor(chan(seed, 0, 'v2.mandala.k') * 5) // 5..9-fold symmetry
   const a1 = 0.12 + 0.04 * chan(seed, 0, 'v2.mandala.a1') // ~0.14: unmistakable steps
   const a2 = 0.04 + 0.02 * chan(seed, 0, 'v2.mandala.a2')
-  // breathing wobble: phases shift by sin(2π·phase), exact loop, static at 0
-  const breath = Math.sin(2 * Math.PI * env.motionPhase) * 0.35 * env.motionAmount
-  const phi1 = chan(seed, 0, 'v2.mandala.phi1') * Math.PI * 2 + breath
-  const phi2 = chan(seed, 0, 'v2.mandala.phi2') * Math.PI * 2 - breath
+  const phi1 = chan(seed, 0, 'v2.mandala.phi1') * Math.PI * 2
+  const phi2 = chan(seed, 0, 'v2.mandala.phi2') * Math.PI * 2
   const k2 = k + 3
+  // Motion: the angular wobble PRECESSES — each harmonic crossfades between
+  // its static crest pattern and a copy that rotates a whole number of turns
+  // per loop (the finer k2 harmonic counter-rotates, so the crests shear past
+  // each other instead of turning as a rigid disk). At phase 0/1 the rotated
+  // copy coincides with the static pattern (h is an integer), and at
+  // motionAmount 0 the crossfade collapses to the static term — both give a
+  // frame byte-identical to the static render.
+  const amt = env.motionAmount
+  const h = motionHarmonic(env)
+  const prec = 2 * Math.PI * env.motionPhase * h
+  const wobble = (th: number): number =>
+    a1 * ((1 - amt) * Math.cos(k * th + phi1) + amt * Math.cos(k * th + phi1 + prec)) +
+    a2 * ((1 - amt) * Math.cos(k2 * th + phi2) + amt * Math.cos(k2 * th + phi2 - prec))
 
   // ---- the mark's graded field drives the zone ramp ---------------------
   // Oversized, pushed off-center along a seeded direction and gently
@@ -280,7 +291,7 @@ export function renderMandala(ctx: CanvasRenderingContext2D, env: V2Env): void {
           const i = by * bCols + bx
           const n = (cdf(blockT[i]) - R0) / (1 - R0)
           const th = Math.atan2((by * 4 + 2) * p - ay, (bx * 4 + 2) * p - ax)
-          const wob = a1 * Math.cos(k * th + phi1) + a2 * Math.cos(k2 * th + phi2)
+          const wob = wobble(th)
           const m = Math.max(0, Math.min(1, n))
           blockT[i] = n + wob * Math.min(1, 4 * m * (1 - m))
         }
@@ -293,11 +304,29 @@ export function renderMandala(ctx: CanvasRenderingContext2D, env: V2Env): void {
           const dy = (by * 4 + 2) * p - cy
           const dist = Math.hypot(dx, dy)
           const th = Math.atan2(dy, dx)
-          const wob = 1 + a1 * Math.cos(k * th + phi1) + a2 * Math.cos(k2 * th + phi2)
+          const wob = 1 + wobble(th)
           blockT[by * bCols + bx] = 1 - (dist * wob) / maxR
         }
       }
     }
+  }
+
+  // ---- ring breathing ---------------------------------------------------
+  // A spatially-constant swell added to the ramp before zone quantization,
+  // so every zone boundary moves outward and back together — the rings
+  // breathe. Applied to all three t-field branches (symbol, point-radial
+  // fallback AND captured-luminance), so 3D captures breathe too. The
+  // sin(θ+φ) − sin(φ) form is exactly zero at phase 0/1 — the loop seam and
+  // the phase-0 thumbnail stay byte-identical to the static render — while
+  // moving at full rate right through the seam (no dead zone), and the
+  // seeded φ keeps the swell from locking step with the precession.
+  const bPhi = 2 * Math.PI * chan(seed, 0, 'v2.mandala.breathePhase')
+  const breathe =
+    amt *
+    0.11 *
+    (Math.sin(2 * Math.PI * env.motionPhase * h + bPhi) - Math.sin(bPhi))
+  if (breathe !== 0) {
+    for (let i = 0; i < blockT.length; i++) blockT[i] += breathe
   }
 
   // ---- dots: bucket rects per zone color, then paint --------------------

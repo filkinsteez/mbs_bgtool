@@ -889,8 +889,7 @@ export function MaterialModelViewer() {
             })
             const gpuCanvas = runtime.renderer.domElement
             const readyKey = `${liveRecipe.look.id}:${liveRecipe.look.version}`
-            const animated = liveRecipe.motion.enabled && liveRecipe.motion.amount > 0
-            if (gpuRenderedVersion !== sourceVersion || animated) {
+            if (gpuRenderedVersion !== sourceVersion) {
               gpuRenderRevision += 1
               gpuRenderedVersion = sourceVersion
             }
@@ -1078,9 +1077,6 @@ export function MaterialModelViewer() {
         stopPointer(event)
         containerRef.current?.focus({ preventScroll: true })
       }}
-      onPointerMove={stopPointer}
-      onPointerUp={stopPointer}
-      onPointerCancel={stopPointer}
       onWheel={stopWheel}
       onDoubleClick={() => resetView()}
       onKeyDown={onKeyDown}

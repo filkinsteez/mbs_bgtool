@@ -1,4 +1,4 @@
-import type { V2Env } from './system'
+import { motionHarmonic, type V2Env } from './system'
 import { chan } from '@/core/organic/random'
 
 // 'Dither' — a patchwork of dithering styles over one continuous tone field.
@@ -357,11 +357,36 @@ export function renderDither(ctx: CanvasRenderingContext2D, env: V2Env): void {
   const inkPool = buildInkPool(env)
 
   // ---- underlying tone field T(x,y) ----------------------------------------
-  const breathe = Math.sin(2 * Math.PI * env.motionPhase) * 0.25 * env.motionAmount
+  // Motion, two amount-scaled terms riding the shared tone field so every
+  // dither style animates in the same rhythm:
+  //   (a) drift slide — the smooth drift lattice's sample point swings by
+  //       roughly one lattice cell, on two quadrature harmonics (both zero
+  //       at phase 0/1) so the slide never stalls mid-loop;
+  //   (b) tone pump — a low-frequency traveling wave (seeded direction,
+  //       ~1.5-2.5 wavelengths across the frame, h cycles per loop) that
+  //       swells and thins the dither densities. The sin(θ+φ) − sin(φ)
+  //       form is exactly zero at phase 0/1 — the loop seam and the
+  //       phase-0 thumbnail stay byte-identical to the static render —
+  //       while pumping at full rate right through the seam.
+  const amt = env.motionAmount
+  const h = motionHarmonic(env)
+  const theta = 2 * Math.PI * env.motionPhase * h
+  const shift = 1.3 * (Math.sin(theta) + 0.5 * (Math.cos(theta) - 1)) * amt
+  const pumpAmp = amt * 0.22
+  const pumpDir = chan(seed, 2, C + 'pumpDir') * Math.PI * 2
+  const pumpMag = (2 * Math.PI * (1.5 + chan(seed, 2, C + 'pumpFreq'))) / minDim
+  const pumpKx = Math.cos(pumpDir) * pumpMag
+  const pumpKy = Math.sin(pumpDir) * pumpMag
+  const pump = (x: number, y: number): number => {
+    const spatial = x * pumpKx + y * pumpKy
+    return pumpAmp * (Math.sin(theta + spatial) - Math.sin(spatial))
+  }
   let tone: Tone
   if (env.luminance) {
+    // 3D material mode: the captured frame's tone, with the same pump so
+    // captured dithers animate too
     const lum = env.luminance
-    tone = (x, y) => clamp01(1 - lum(x, y))
+    tone = (x, y) => clamp01(1 - lum(x, y) + pump(x, y))
   } else {
     const scale = 1.5 + chan(seed, 1, C + 'symScale') * 0.8
     const dir = chan(seed, 1, C + 'symDir') * Math.PI * 2
@@ -374,11 +399,14 @@ export function renderDither(ctx: CanvasRenderingContext2D, env: V2Env): void {
       rotation,
       softness: 0.85,
     })
-    const drift = makeDrift(seed, minDim * 0.5, breathe)
+    const drift = makeDrift(seed, minDim * 0.5, shift)
     // cap below 1 so no dither style ever saturates into a literal solid
     // fill of the mark — texture must survive everywhere
     tone = (x, y) =>
-      Math.min(0.82, clamp01(0.18 + sym(x, y) * 0.62 + drift(x, y) * 0.35 - 0.175))
+      Math.min(
+        0.82,
+        clamp01(0.18 + sym(x, y) * 0.62 + drift(x, y) * 0.35 + pump(x, y) - 0.175),
+      )
   }
 
   // ---- patchwork zones ------------------------------------------------------

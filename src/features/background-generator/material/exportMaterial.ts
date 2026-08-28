@@ -14,8 +14,8 @@ export async function exportMaterialAtTarget(
     output: recipe.materialLookOverlay.enabled && recipe.look.version === 'v2'
       ? 'auto'
       : 'raw',
-    // Exports are deterministic recipe artifacts. Phase zero is the exact
-    // seam frame for the integer-harmonic GPU motion loop.
+    // Exports are deterministic recipe artifacts. The 3D GPU overlay is a
+    // still — motion never feeds it — and phase zero is its canonical frame.
     phase: 0,
   })
   return encodeMaterialCanvas(canvas, recipe, protos)

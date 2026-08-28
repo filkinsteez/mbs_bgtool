@@ -482,6 +482,8 @@ export function LabCanvas() {
   }
 
   const onWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    const target = event.target as Element
+    if (target.closest('[data-mbs-material-model="true"]')) return
     event.preventDefault()
     const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? wrapSize.h : 1
     const deltaX = event.deltaX * unit
