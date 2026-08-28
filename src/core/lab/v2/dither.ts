@@ -102,7 +102,9 @@ function renderBayer(ctx: CanvasRenderingContext2D, z: Zone, s: number, tone: To
     const row = BAYER8[iy & 7]
     for (let ix = 0; ix < cols; ix++) {
       const x = z.x + ix * s
-      const t = tone(x + s * 0.5, y + s * 0.5)
+      // cap effective coverage ~88%: the top matrix cells never fill, so the
+      // pattern stays visibly textured even where tone saturates
+      const t = Math.min(0.875, tone(x + s * 0.5, y + s * 0.5))
       if (t > (row[ix & 7] + 0.5) / 64) ctx.rect(x, y, s + 0.35, s + 0.35)
     }
   }
@@ -115,6 +117,7 @@ function renderDiag(
   s: number,
   tone: Tone,
   sign: 1 | -1,
+  gapFloor: number,
 ): void {
   const angle = (sign * Math.PI) / 4
   const cx = z.x + z.w * 0.5
@@ -122,6 +125,10 @@ function renderDiag(
   const cosA = Math.cos(angle)
   const sinA = Math.sin(angle)
   const R = Math.hypot(z.w, z.h) * 0.5 + 2 * s
+  // never let the line swallow its pitch — thickness <= pitch - gap, where the
+  // gap stays >= max(~2 preview px, 30% of pitch), so the halftone texture
+  // survives even where tone saturates
+  const thMax = Math.max(0.5 * s, 2 * s - Math.max(gapFloor, 0.6 * s))
   ctx.save()
   ctx.translate(cx, cy)
   ctx.rotate(angle)
@@ -133,9 +140,7 @@ function renderDiag(
       if (px < z.x - s || px > z.x + z.w + s || py < z.y - s || py > z.y + z.h + s) continue
       const t = tone(px, py)
       if (t < 0.06) continue
-      // never let the line swallow its pitch — a visible ground gap keeps
-      // the halftone texture alive even at full tone
-      const th = Math.min(2 * s - Math.max(1.25, 0.55 * s), t * 2.2 * s)
+      const th = Math.min(thMax, t * 2.2 * s)
       ctx.rect(u - s * 0.5, v - th * 0.5, s + 0.35, th)
     }
   }
@@ -143,10 +148,19 @@ function renderDiag(
   ctx.restore()
 }
 
-function renderDotGrid(ctx: CanvasRenderingContext2D, z: Zone, s: number, tone: Tone): void {
+function renderDotGrid(
+  ctx: CanvasRenderingContext2D,
+  z: Zone,
+  s: number,
+  tone: Tone,
+  gapFloor: number,
+): void {
   const pitch = s * 2
   const cols = Math.ceil(z.w / pitch)
   const rows = Math.ceil(z.h / pitch)
+  // dots never fully merge: keep a ground gap >= max(~2 preview px, 30% of
+  // pitch) between neighbours so the grid reads as dots at every tone
+  const rMax = Math.max(0.3 * s, Math.min(s - gapFloor * 0.5, 0.7 * s))
   ctx.beginPath()
   for (let iy = 0; iy <= rows; iy++) {
     const y = z.y + iy * pitch + pitch * 0.5
@@ -154,7 +168,7 @@ function renderDotGrid(ctx: CanvasRenderingContext2D, z: Zone, s: number, tone: 
       const x = z.x + ix * pitch + pitch * 0.5
       const t = tone(x, y)
       if (t < 0.015) continue
-      const r = Math.min(1.15 * s, Math.sqrt(t) * 1.15 * s)
+      const r = Math.min(rMax, Math.sqrt(t) * 1.15 * s)
       ctx.moveTo(x + r, y)
       ctx.arc(x, y, r, 0, Math.PI * 2)
     }
@@ -162,9 +176,17 @@ function renderDotGrid(ctx: CanvasRenderingContext2D, z: Zone, s: number, tone: 
   ctx.fill()
 }
 
-function renderHLines(ctx: CanvasRenderingContext2D, z: Zone, s: number, tone: Tone): void {
+function renderHLines(
+  ctx: CanvasRenderingContext2D,
+  z: Zone,
+  s: number,
+  tone: Tone,
+  gapFloor: number,
+): void {
   const cols = Math.ceil(z.w / s)
   const rows = Math.ceil(z.h / (2 * s))
+  // same ground-gap guarantee as the diagonal style: thickness <= pitch - gap
+  const thMax = Math.max(0.5 * s, 2 * s - Math.max(gapFloor, 0.6 * s))
   ctx.beginPath()
   for (let iy = 0; iy <= rows; iy++) {
     const y = z.y + iy * 2 * s + s
@@ -172,7 +194,7 @@ function renderHLines(ctx: CanvasRenderingContext2D, z: Zone, s: number, tone: T
       const x = z.x + ix * s
       const t = tone(x + s * 0.5, y)
       if (t < 0.05) continue
-      const th = Math.min(2 * s - Math.max(1.25, 0.55 * s), t * 1.9 * s)
+      const th = Math.min(thMax, t * 1.9 * s)
       ctx.rect(x, y - th * 0.5, s + 0.35, th)
     }
   }
@@ -193,7 +215,17 @@ function renderNoise(
     const y = z.y + iy * s
     for (let ix = 0; ix < cols; ix++) {
       const x = z.x + ix * s
-      const t = tone(x + s * 0.5, y + s * 0.5)
+      // one seeded keeper cell per 3x3 block never fills, so ink clumps stay
+      // bounded and the diffusion zone keeps ground speckle at saturation
+      const bx = (ix / 3) | 0
+      const by = (iy / 3) | 0
+      const bid =
+        (Math.imul(bx + 11, 0x85ebca77) ^ Math.imul(by + 17, 0x9e3779b1) ^ Math.imul(z.id, 0x27d4eb2f)) >>>
+        0
+      if (ix - bx * 3 + (iy - by * 3) * 3 === Math.floor(chan(seed, bid, C + 'keep') * 9) % 9)
+        continue
+      // cap fill probability so a saturated tone still leaves random speckle
+      const t = Math.min(0.92, tone(x + s * 0.5, y + s * 0.5))
       const id =
         (Math.imul(ix + 7, 0xc2b2ae35) ^ Math.imul(iy + 13, 0x27d4eb2f) ^ Math.imul(z.id, 0x165667b1)) >>>
         0
@@ -257,20 +289,36 @@ export function renderDither(ctx: CanvasRenderingContext2D, env: V2Env): void {
   // cell scale base: coarse at complexity 0, fine at 1
   const base = minDim / (210 + complexity * 190)
 
+  // ground-gap floor: ~2px at preview scale (the canvas previews near 1:1 at
+  // ~675px min dimension; larger outputs shrink, so the floor scales up)
+  const gapFloor = Math.max(2, minDim / 340)
+
+  // one seeded zone anchors the collage as a distinctly coarse dot grid, the
+  // rest spread across a wide cell-scale range so zones contrast in grain.
+  // Pick the anchor from the larger half of the zones so it reads.
+  const byArea = zones
+    .map((_, i) => i)
+    .sort((a, b) => zones[b].w * zones[b].h - zones[a].w * zones[a].h)
+  const bigHalf = byArea.slice(0, Math.ceil(byArea.length / 2))
+  const anchor = bigHalf[Math.floor(chan(seed, 3, C + 'anchor') * bigHalf.length) % bigHalf.length]
+
   for (let i = 0; i < zones.length; i++) {
     const z = zones[i]
     if (z.w < 1 || z.h < 1) continue
-    const style = deck[i % deck.length]
-    const s = Math.max(3, base * (0.75 + chan(seed, z.id, C + 'cell') * 0.7))
+    const coarse = i === anchor
+    const style: Style = coarse ? 'dotgrid' : deck[i % deck.length]
+    const s = coarse
+      ? Math.max(3, base) * 2.2
+      : Math.max(3, base * (0.6 + chan(seed, z.id, C + 'cell') * 1.2))
     ctx.save()
     ctx.beginPath()
     ctx.rect(z.x, z.y, z.w, z.h)
     ctx.clip()
     if (style === 'bayer') renderBayer(ctx, z, s, tone)
-    else if (style === 'diag45') renderDiag(ctx, z, s, tone, 1)
-    else if (style === 'diag135') renderDiag(ctx, z, s, tone, -1)
-    else if (style === 'dotgrid') renderDotGrid(ctx, z, s, tone)
-    else if (style === 'hlines') renderHLines(ctx, z, s, tone)
+    else if (style === 'diag45') renderDiag(ctx, z, s, tone, 1, gapFloor)
+    else if (style === 'diag135') renderDiag(ctx, z, s, tone, -1, gapFloor)
+    else if (style === 'dotgrid') renderDotGrid(ctx, z, s, tone, gapFloor)
+    else if (style === 'hlines') renderHLines(ctx, z, s, tone, gapFloor)
     else renderNoise(ctx, z, s, tone, seed)
     ctx.restore()
   }
