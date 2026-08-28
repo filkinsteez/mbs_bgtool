@@ -19,3 +19,9 @@ This version has breaking changes — APIs, conventions, and file structure may 
   pixel textures) are the native medium and are preferred.
 - The canonical Meta geometry above is still the source of FORM; render
   it however raster techniques serve the look.
+
+## No status badges or explanatory chrome (owner directive)
+
+- Never add passive UI labels, status badges, or explanatory meta text
+  ("Custom mix", "Generic previews", "Relative weight", and the like).
+  If it isn't a control or a value the user acts on, leave it out.

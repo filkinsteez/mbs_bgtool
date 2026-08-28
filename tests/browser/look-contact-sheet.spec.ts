@@ -278,7 +278,7 @@ test('builds seed by aspect sheets for the selected structural Looks', async ({
     await page.goto('/')
     await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
     const canvas = page.locator('canvas[data-renderer="looks"]')
-    const format = page.getByRole('region', { name: 'Format', exact: true })
+    const format = page.getByRole('region', { name: 'Aspect ratio', exact: true })
     await page.getByRole('slider', { name: 'Complexity', exact: true }).fill('50')
 
     for (const aspect of STRUCTURAL_ASPECTS) {
@@ -611,7 +611,7 @@ test('renders every Look across the preset aspect ratios', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
   const canvas = page.locator('canvas[data-renderer="looks"]')
-  const format = page.getByRole('region', { name: 'Format', exact: true })
+  const format = page.getByRole('region', { name: 'Aspect ratio', exact: true })
 
   for (const aspect of ['16:9', '9:16', '1:1', '4:5'] as const) {
     await format.getByRole('radio', { name: aspect, exact: true }).click()

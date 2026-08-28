@@ -757,7 +757,7 @@ test('recomposes every structural Look across seeds and aspects', async ({
     await page.goto('/')
     await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
     const canvas = page.locator('canvas[data-renderer="looks"]')
-    const format = page.getByRole('region', { name: 'Format', exact: true })
+    const format = page.getByRole('region', { name: 'Aspect ratio', exact: true })
     const aspects = seed === 1913
       ? ['16:9', '9:16', '1:1', '4:5'] as const
       : ['16:9'] as const
@@ -1120,8 +1120,8 @@ test('pins the accessible mode switch to the stage and keeps mode-specific contr
   const actualScale = Math.round(keyboardZoomWidth / 3840 * 100)
   await expect(toolbar.getByLabel('Canvas zoom')).toHaveText(`${actualScale}%`)
   await toolbar.getByRole('button', { name: 'Fit view', exact: true }).click()
-  const formatRegion = page.getByRole('region', { name: 'Format', exact: true })
-  const aspectPresets = formatRegion.getByRole('radiogroup', { name: 'Aspect' })
+  const formatRegion = page.getByRole('region', { name: 'Aspect ratio', exact: true })
+  const aspectPresets = formatRegion.getByRole('radiogroup', { name: 'Aspect ratio' })
   await expect(aspectPresets).toBeVisible()
   await expect(aspectPresets.getByRole('radio')).toHaveCount(4)
   await expect(formatRegion.getByText('3840 × 2160', { exact: true })).toHaveCount(0)
@@ -1154,15 +1154,12 @@ test('pins the accessible mode switch to the stage and keeps mode-specific contr
   await expect(page.locator('.panel-heading', { hasText: /^Materials$/ })).toBeVisible()
   await expect(page.locator('.panel-heading', { hasText: /^Looks$/ })).toBeVisible()
   await expect(page.locator('.lab-side-right .panel-heading')).toHaveText([
-    'Format',
+    'Aspect ratio',
     'Colors',
     'Materials',
     'Looks',
     'Look palette',
   ])
-  await expect(page.locator('[data-mbs-look-scope="3d-full-frame"]')).toHaveText(
-    'Generic previews',
-  )
   const backgroundRole = page.getByRole('button', { name: 'Background', exact: true })
   const highlightRole = page.getByRole('button', { name: 'Highlight', exact: true })
   await expect(backgroundRole).toBeVisible()
@@ -1370,7 +1367,6 @@ test('uses color weights as off state and adds swatches without replacing the mi
       return recipe.palette?.mix?.[0]
     }),
   ).toMatchObject({ enabled: false, ratio: 0 })
-  await expect(colorSection.getByText('Custom mix', { exact: true })).toBeVisible()
   await expect(ratioInputs).toHaveCount(3)
   await expect(ratioInputs.first()).toHaveValue('0')
   await ratioInputs.first().fill('10')
@@ -1435,7 +1431,6 @@ test('uses color weights as off state and adds swatches without replacing the mi
     packId: 'custom',
     colors: [...before.map((item) => item.color), addedColor],
   })
-  await expect(colorSection.getByText('Custom mix', { exact: true })).toBeVisible()
 })
 
 test('hides explicit palette role controls in 2D', async ({ page }) => {
@@ -1700,7 +1695,6 @@ test('processes the live 3D frame through canonical Canvas2D Looks and supports 
   await expect(viewer).toHaveAttribute('data-model-status', 'ready')
   await expect(viewer).toHaveAttribute('data-look', 'off')
   await expect(viewer).toHaveAttribute('data-postprocess', 'raw')
-  await expect(page.locator('[data-mbs-look-scope="3d-full-frame"]')).toBeVisible()
   await expect(page.locator('[data-mbs-material-look-overlay="true"]')).toHaveCount(0)
   await expect(viewer.locator('canvas')).toHaveCount(2)
   await expect(page.locator('.lab-look[aria-pressed="true"]')).toHaveCount(0)
@@ -2604,10 +2598,10 @@ test('exports both modes as exact 4K PNGs', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
 
-  const formatSection = page.getByRole('region', { name: 'Format', exact: true })
+  const formatSection = page.getByRole('region', { name: 'Aspect ratio', exact: true })
   const exportSection = page.getByRole('region', { name: 'Export', exact: true })
   await expect(page.getByRole('button', { name: 'Export', exact: true })).toHaveCount(1)
-  await expect(formatSection.getByRole('radiogroup', { name: 'Aspect', exact: true })).toBeVisible()
+  await expect(formatSection.getByRole('radiogroup', { name: 'Aspect ratio', exact: true })).toBeVisible()
   await expect(
     formatSection.getByRole('group', { name: 'Export resolution', exact: true }),
   ).toHaveCount(0)

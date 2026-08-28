@@ -20,9 +20,9 @@ export function FormatPanel() {
 
   return (
     <div className="panel-section" role="region" aria-labelledby="format-heading">
-      <h2 className="panel-heading" id="format-heading">Format</h2>
+      <h2 className="panel-heading" id="format-heading">Aspect ratio</h2>
       <SegmentedControl
-        label="Aspect"
+        ariaLabel="Aspect ratio"
         value={format.aspect}
         options={ASPECTS.map((aspect) => ({
           value: aspect,

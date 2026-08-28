@@ -16,11 +16,20 @@ import {
 } from '@/features/background-generator/lookProcessor'
 import type { LookVersion } from '@/core/lab/types'
 
-// 2D thumbnails use only the active generator recipe. 3D thumbnails use
-// one fixed generic frame so live camera and material changes cannot leak in.
+// 2D thumbnails use only the active generator recipe, with detail pinned to
+// its midpoint so dragging Complexity never redraws the strip. 3D thumbnails
+// use one fixed generic frame so live camera and material changes cannot
+// leak in.
 
 const GENERIC_3D_BASE_RECIPE = createDefaultBackgroundRecipe(1913)
 const LOOK_VERSIONS: readonly LookVersion[] = ['v1', 'v1b', 'v2']
+// Display names count 1-2-3; the stored version ids stay as-is so saved
+// recipes and share links keep deserializing.
+const LOOK_VERSION_LABELS: Record<LookVersion, string> = {
+  v1: 'V1',
+  v1b: 'V2',
+  v2: 'V3',
+}
 const GENERIC_3D_RECIPE = {
   ...GENERIC_3D_BASE_RECIPE,
   format: {
@@ -74,7 +83,6 @@ export function LooksPanel() {
     const recipe = state.recipe
     return [
       recipe.seed,
-      recipe.look.detail,
       recipe.look.version,
       recipe.palette.mix.map((item) =>
         `${item.color}:${item.enabled ? 1 : 0}:${item.ratio}`,
@@ -109,7 +117,11 @@ export function LooksPanel() {
           ? createLabSourceFromCanvas(genericFrame, { filename: 'generic-3d-look-preview.rgba' })
           : null
         const canvases = strip.querySelectorAll('canvas')
-        const liveRecipe = useBackgroundStore.getState().recipe
+        const stateRecipe = useBackgroundStore.getState().recipe
+        const liveRecipe = {
+          ...stateRecipe,
+          look: { ...stateRecipe.look, detail: 0.5 },
+        }
         looksForVersion(lookVersion).forEach((look, i) => {
           const canvas = canvases[i]
           if (!canvas) return
@@ -145,14 +157,7 @@ export function LooksPanel() {
 
   return (
     <div className="panel-section">
-      <div className="panel-heading-row">
-        <h2 className="panel-heading">Looks</h2>
-        {mode === 'material' ? (
-          <span className="lab-status-badge" data-mbs-look-scope="3d-full-frame">
-            Generic previews
-          </span>
-        ) : null}
-      </div>
+      <h2 className="panel-heading">Looks</h2>
       <div className="lab-look-version-tabs" role="tablist" aria-label="Look version">
         {LOOK_VERSIONS.map((version) => (
           <button
@@ -199,7 +204,7 @@ export function LooksPanel() {
               })
             }}
           >
-            {version.toUpperCase()}
+            {LOOK_VERSION_LABELS[version]}
           </button>
         ))}
       </div>

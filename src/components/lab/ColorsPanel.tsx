@@ -141,7 +141,6 @@ export function ColorsPanel() {
       <h2 className="panel-heading">{mode === 'material' ? 'Look palette' : 'Colors'}</h2>
       <div className="lab-subsection-heading">
         <span>Palette</span>
-        {customActive ? <span className="lab-status-badge">Custom mix</span> : null}
       </div>
       <div className="lab-palette-presets" role="radiogroup" aria-label="Apply a color palette">
         {packOptions.map((p, index) => (
@@ -222,7 +221,6 @@ export function ColorsPanel() {
       ) : null}
       <div className="lab-subsection-heading">
         <span>Mix</span>
-        <span className="lab-subsection-meta">Relative weight</span>
       </div>
       {mixRows.map(({ item: m, index: i }) => (
         <div

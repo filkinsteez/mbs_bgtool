@@ -74,7 +74,7 @@ test('renders the Trails seed, aspect, and complexity audit', async ({ page }, t
     await page.getByRole('radio', { name: 'Trails', exact: true }).click()
     const canvas = page.locator('canvas[data-renderer="looks"]')
     const complexity = page.getByRole('slider', { name: 'Complexity', exact: true })
-    const format = page.getByRole('region', { name: 'Format', exact: true })
+    const format = page.getByRole('region', { name: 'Aspect ratio', exact: true })
 
     for (const aspect of ASPECTS) {
       await format.getByRole('radio', { name: aspect, exact: true }).click()
@@ -148,7 +148,7 @@ test('renders the Trails seed, aspect, and complexity audit', async ({ page }, t
     contentType: 'image/png',
   })
 
-  await page.getByRole('region', { name: 'Format', exact: true })
+  await page.getByRole('region', { name: 'Aspect ratio', exact: true })
     .getByRole('radio', { name: '16:9', exact: true })
     .click()
   await page.getByRole('slider', { name: 'Complexity', exact: true }).fill('85')

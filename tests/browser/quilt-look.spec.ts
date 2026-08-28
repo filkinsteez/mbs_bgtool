@@ -103,7 +103,7 @@ test('renders the Quilt visual audit matrix', async ({ browser }, testInfo) => {
     await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
     const canvas = page.locator('canvas[data-renderer="looks"]')
     const complexity = page.getByRole('slider', { name: 'Complexity', exact: true })
-    const format = page.getByRole('region', { name: 'Format', exact: true })
+    const format = page.getByRole('region', { name: 'Aspect ratio', exact: true })
 
     for (const aspect of ASPECTS) {
       await format.getByRole('radio', { name: aspect, exact: true }).click()
