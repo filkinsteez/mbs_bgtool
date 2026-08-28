@@ -1667,6 +1667,9 @@ test('offers a compact 3D palette and grouped approved colors', async ({ page })
 })
 
 test('processes the live 3D frame through canonical Canvas2D Looks and supports bypass', async ({ page }) => {
+  // Several full-frame Canvas2D overlay renders under software GL need more
+  // than the default budget.
+  test.slow()
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
   page.on('console', (message) => {
@@ -1683,6 +1686,9 @@ test('processes the live 3D frame through canonical Canvas2D Looks and supports 
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
   const materialTab = page.getByRole('radio', { name: '3D', exact: true })
   await materialTab.click()
+  // The classic ten-look catalog lives on the V2 tab (internal v1b); the
+  // default V3 tab carries the four rebuilt systems.
+  await page.getByRole('tab', { name: 'V2', exact: true }).click()
 
   const viewer = page.locator('[data-mbs-material-model="true"]')
   const modelCanvas = viewer.locator('.lab-material-model-canvas')
@@ -1708,7 +1714,7 @@ test('processes the live 3D frame through canonical Canvas2D Looks and supports 
   await scanlinesButton.click()
   await expect(scanlinesButton).toHaveAttribute('aria-pressed', 'true')
   await expect(viewer).toHaveAttribute('data-look', 'scanlines')
-  await expect(viewer).toHaveAttribute('data-postprocess', 'gpu-look')
+  await expect(viewer).toHaveAttribute('data-postprocess', 'legacy-canvas2d-look')
   await page.getByRole('radio', { name: 'Clean', exact: true }).click()
   await expect(viewer).toHaveAttribute('data-material', 'clean')
   await expect(processedCanvas).toHaveAttribute('data-look', 'scanlines')
@@ -1773,7 +1779,7 @@ test('processes the live 3D frame through canonical Canvas2D Looks and supports 
   const orbitDifference = await pixelDifference(page, beforeOrbit, afterOrbit)
   expect(orbitDifference.changedFraction).toBeGreaterThan(0.05)
   expect(orbitDifference.centerMean).toBeGreaterThan(2)
-  await expect(viewer).toHaveAttribute('data-postprocess', 'gpu-look')
+  await expect(viewer).toHaveAttribute('data-postprocess', 'legacy-canvas2d-look')
 
   const trailsButton = page.getByRole('button', { name: 'Trails', exact: true })
   await trailsButton.click()
@@ -1804,11 +1810,13 @@ test('processes the live 3D frame through canonical Canvas2D Looks and supports 
   await expect(viewer).toHaveAttribute('data-material', 'clean')
   await expect(viewer).toHaveAttribute('data-look', 'off')
   await expect(viewer).toHaveAttribute('data-postprocess', 'raw')
+  // Reset all restores the default V3 catalog; return to the classic tab.
+  await page.getByRole('tab', { name: 'V2', exact: true }).click()
   await scanlinesButton.click()
   await expect(trailsButton).toHaveAttribute('aria-pressed', 'false')
   await expect(scanlinesButton).toHaveAttribute('aria-pressed', 'true')
   await expect(viewer).toHaveAttribute('data-look', 'scanlines')
-  await expect(viewer).toHaveAttribute('data-postprocess', 'gpu-look')
+  await expect(viewer).toHaveAttribute('data-postprocess', 'legacy-canvas2d-look')
   await page.getByRole('radio', { name: 'Stainless Steel', exact: true }).click()
   await expect(viewer).toHaveAttribute('data-material', 'metal')
   await page.mouse.move(
@@ -1827,7 +1835,7 @@ test('processes the live 3D frame through canonical Canvas2D Looks and supports 
     sidebar.scrollTop = 0
   })
   await page.screenshot({
-    path: 'test-results/3d-gpu-look-scanlines.png',
+    path: 'test-results/3d-canvas2d-look-scanlines.png',
     fullPage: true,
   })
 
@@ -1837,6 +1845,9 @@ test('processes the live 3D frame through canonical Canvas2D Looks and supports 
 test('keeps every V1 and V2 3D Look opaque and patterned across the full frame', async ({
   page,
 }) => {
+  // Twenty Canvas2D overlay renders under software GL need more than the
+  // default budget.
+  test.slow()
   await page.addInitScript(() => localStorage.clear())
   await page.goto('/')
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()

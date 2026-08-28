@@ -78,9 +78,7 @@ type ViewerStatus = 'loading' | 'ready' | 'error'
 type LookStatus = 'idle' | 'processing' | 'ready' | 'error'
 
 const MODEL_URL = '/api/material-model'
-const LIVE_LOOK_EDGE = 700
 const HQ_LOOK_EDGE = 1200
-const LIVE_LOOK_INTERVAL_MS = 90
 const LOOK_SETTLE_MS = 160
 
 type MaterialDebugApi = {
@@ -435,8 +433,6 @@ export function MaterialModelViewer() {
     let processedVersion = -1
     let processedRevision = 0
     let lastSourceChange = performance.now()
-    let lastProcess = -Infinity
-    let processedQuality: 'live' | 'hq' | null = null
     const invalidateSource = () => {
       sourceVersion += 1
       lastSourceChange = performance.now()
@@ -732,11 +728,11 @@ export function MaterialModelViewer() {
         },
       )
 
-      const processLegacyLook = (quality: 'live' | 'hq', now: number) => {
+      const processLegacyLook = () => {
         if (!runtime?.model) return
         try {
           runtime.processedCanvas.dataset.renderStatus = 'processing'
-          if (processedQuality === null) {
+          if (processedVersion === -1) {
             queueMicrotask(() => {
               if (!cancelled) setLookStatus('processing')
             })
@@ -751,19 +747,17 @@ export function MaterialModelViewer() {
             resolveBankCached(sourceLab.mark.bank, sourceLab.look.version),
             {
               fit: 'contain',
-              maxLongEdge: quality === 'live' ? LIVE_LOOK_EDGE : HQ_LOOK_EDGE,
+              maxLongEdge: HQ_LOOK_EDGE,
             },
           )
           runtime.processedCanvas.dataset.sourceHash = source.hash
           runtime.processedCanvas.dataset.look = liveRecipe.look.id
           runtime.processedCanvas.dataset.lookVersion = liveRecipe.look.version
-          runtime.processedCanvas.dataset.quality = quality
+          runtime.processedCanvas.dataset.quality = 'hq'
           processedRevision += 1
           runtime.processedCanvas.dataset.renderRevision = String(processedRevision)
           runtime.processedCanvas.dataset.renderStatus = 'ready'
           processedVersion = sourceVersion
-          processedQuality = quality
-          lastProcess = now
           lookFailedRef.current = false
           queueMicrotask(() => {
             if (!cancelled) setLookStatus('ready')
@@ -803,15 +797,18 @@ export function MaterialModelViewer() {
         if (useLegacyLook) {
           const settled =
             !controlsGestureActive && now - lastSourceChange >= LOOK_SETTLE_MS
-          const quality = settled ? 'hq' : 'live'
-          const needsCurrentFrame = processedVersion !== sourceVersion
-          const needsSettledFrame = settled && processedQuality !== 'hq'
-          if (
-            (needsCurrentFrame || needsSettledFrame)
-            && (settled || now - lastProcess >= LIVE_LOOK_INTERVAL_MS)
-          ) {
-            processLegacyLook(quality, now)
+          const stale = processedVersion !== sourceVersion
+          if (stale && !settled) {
+            // The camera is moving: chasing frames with the full treatment
+            // is what made orbiting lag, so drop straight to the raw
+            // viewport and re-treat once with the settled pose below.
+            container.dataset.lookHold = 'moving'
+          } else {
+            if (stale) processLegacyLook()
+            delete container.dataset.lookHold
           }
+        } else {
+          delete container.dataset.lookHold
         }
         animationFrame = requestAnimationFrame(render)
       }

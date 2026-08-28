@@ -27,6 +27,11 @@ The intended result is:
 - Palettes behaving consistently in 2D and 3D.
 - Motion that is organic, visibly composed, performant, and exactly loopable.
 - 3D Looks applied as real GPU post-processing over the lit model, not as a hidden WebGL scene replaced by a Canvas2D image.
+  - SUPERSEDED (2026-08-28, owner): 3D Looks are a render layer over the
+    viewport — the captured frame processed by the shared Canvas2D look
+    renderer, same path for every catalog. The procedural GPU pipeline was
+    rejected by the owner and removed. Later GPU-requirement notes in this
+    file are historical.
 - A simple 4K PNG export matching the preview.
 
 The user also asked for direct communication. Do not describe technical progress as aesthetic success unless the rendered result actually supports that claim.

@@ -508,6 +508,16 @@
   opacity: 1;
 }
 
+/* While the camera is moving the treatment cannot keep up, so the raw
+   viewport shows until the pose settles and one fresh treatment lands. */
+.lab-material-model-viewer[data-look-hold='moving'] .lab-material-model-canvas {
+  opacity: 1;
+}
+
+.lab-material-model-viewer[data-look-hold='moving'] .lab-material-look-canvas {
+  opacity: 0;
+}
+
 .lab-material-model-status {
   position: absolute;
   z-index: 2;
