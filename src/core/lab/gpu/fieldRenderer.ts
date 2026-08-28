@@ -300,12 +300,17 @@ export function renderGpuFieldLook(
   sourceTexture = ensureTexture(gl, sourceTexture)
   const influenceMap = buildInfluenceMap(options.width, options.height, options.influence)
   const sourceMap = buildSourceMap(options.width, options.height, options.sourceSample)
+  // WebGL expects the first unpacked row at the texture bottom by default.
+  // Our CPU rasters are authored top-down in image space, so force Y-flip
+  // on upload to keep the canonical Meta symbol orientation exact.
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1)
   gl.activeTexture(gl.TEXTURE0)
   gl.bindTexture(gl.TEXTURE_2D, influenceTexture)
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, options.width, options.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, influenceMap)
   gl.activeTexture(gl.TEXTURE1)
   gl.bindTexture(gl.TEXTURE_2D, sourceTexture)
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, options.width, options.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, sourceMap)
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0)
   gl.uniform1i(state.uniforms.uInfluence, 0)
   gl.uniform1i(state.uniforms.uSource, 1)
 
