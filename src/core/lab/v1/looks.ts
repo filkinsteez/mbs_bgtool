@@ -2,7 +2,7 @@ import type { LabPatch } from '../labStore'
 import type { Look, LookId } from '../looks'
 
 // Snapshot of every Look preset from git commit 67f7de1.
-export const V1_LOOK_PATCHES: Record<LookId, LabPatch> = {
+export const V1_LOOK_PATCHES: Partial<Record<LookId, LabPatch>> = {
   frame: {
     territory: { bands: ['blocks', 'beads', 'shingle', 'photo'], boundary: 'hard' },
     structure: { baseCell: 30, maxLevels: 1, subdivide: 0.5 },
@@ -72,7 +72,9 @@ export const V1_LOOK_PATCHES: Record<LookId, LabPatch> = {
 }
 
 export function v1LookPatchFor(look: Look, hasSource: boolean): LabPatch {
-  const patch = V1_LOOK_PATCHES[look.id]
+  // V2-system ids can never reach the V1 path (the catalogs heal on tab
+  // switch), so the fallback exists only for the type system
+  const patch = V1_LOOK_PATCHES[look.id] ?? V1_LOOK_PATCHES.frame!
   if (hasSource) return patch
   const bands = patch.territory?.bands
   if (!bands) return patch

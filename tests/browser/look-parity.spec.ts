@@ -4,6 +4,10 @@ import { expect, test, type Page } from '@playwright/test'
 import type { ViteDevServer } from 'vite'
 
 type LookId =
+  | 'pattern'
+  | 'mandala'
+  | 'stitch'
+  | 'dither'
   | 'frame'
   | 'pixels'
   | 'scanlines'

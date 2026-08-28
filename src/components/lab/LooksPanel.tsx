@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { LOOKS } from '@/core/lab/looks'
+import { looksForVersion } from '@/core/lab/looks'
 import { mergeDeep } from '@/core/state/store'
 import { createLabSourceFromCanvas } from '@/core/lab/sourceCache'
 import { resolveBankCached } from './bankCache'
@@ -110,7 +110,7 @@ export function LooksPanel() {
           : null
         const canvases = strip.querySelectorAll('canvas')
         const liveRecipe = useBackgroundStore.getState().recipe
-        LOOKS.forEach((look, i) => {
+        looksForVersion(lookVersion).forEach((look, i) => {
           const canvas = canvases[i]
           if (!canvas) return
           if (genericSource) {
@@ -164,7 +164,14 @@ export function LooksPanel() {
             aria-selected={lookVersion === version}
             tabIndex={lookVersion === version ? 0 : -1}
             className={lookVersion === version ? 'active' : undefined}
-            onClick={() => updateRecipe({ look: { version } })}
+            onClick={() => {
+              const catalog = looksForVersion(version)
+              updateRecipe({
+                look: catalog.some((look) => look.id === lookId)
+                  ? { version }
+                  : { version, id: catalog[0].id },
+              })
+            }}
             onKeyDown={(event) => {
               let nextIndex: number
               const current = LOOK_VERSIONS.indexOf(version)
@@ -181,7 +188,12 @@ export function LooksPanel() {
               }
               event.preventDefault()
               const next = LOOK_VERSIONS[nextIndex]
-              updateRecipe({ look: { version: next } })
+              const catalog = looksForVersion(next)
+              updateRecipe({
+                look: catalog.some((look) => look.id === lookId)
+                  ? { version: next }
+                  : { version: next, id: catalog[0].id },
+              })
               requestAnimationFrame(() => {
                 document.getElementById(`lab-look-version-${next}`)?.focus()
               })
@@ -202,7 +214,7 @@ export function LooksPanel() {
           role={mode === 'background' ? 'radiogroup' : 'group'}
           aria-label={mode === 'background' ? '2D Look' : '3D Looks'}
         >
-          {LOOKS.map((look) => {
+          {looksForVersion(lookVersion).map((look) => {
             const active = lookId === look.id
               && (mode === 'background' || materialOverlayEnabled)
             return (

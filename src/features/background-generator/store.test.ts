@@ -21,14 +21,14 @@ describe('background recipe history', () => {
 
   it('keeps a redone Look recipe valid for autosave restore', () => {
     const store = useBackgroundStore.getState()
-    store.updateRecipe({ look: { id: 'pixels' } })
-    useBackgroundStore.getState().updateRecipe({ look: { id: 'scanlines' } })
+    store.updateRecipe({ look: { id: 'mandala' } })
+    useBackgroundStore.getState().updateRecipe({ look: { id: 'stitch' } })
     useBackgroundStore.getState().undo()
     useBackgroundStore.getState().redo()
 
     const recipe = useBackgroundStore.getState().recipe
-    expect(recipe.look.id).toBe('scanlines')
-    expect(deserializeBackgroundRecipe(JSON.stringify(recipe))?.look.id).toBe('scanlines')
+    expect(recipe.look.id).toBe('stitch')
+    expect(deserializeBackgroundRecipe(JSON.stringify(recipe))?.look.id).toBe('stitch')
   })
 
   it('keeps mode navigation out of recipe history', () => {
@@ -80,12 +80,12 @@ describe('background recipe history', () => {
     const store = useBackgroundStore.getState()
     store.beginTransaction()
     store.setTransient({ look: { detail: 0.8 } })
-    store.updateRecipe({ look: { id: 'trails' } })
+    store.updateRecipe({ look: { id: 'dither' } })
 
     expect(backgroundHistory.depth.past).toBe(2)
     useBackgroundStore.getState().undo()
     expect(useBackgroundStore.getState().recipe.look).toMatchObject({
-      id: 'frame',
+      id: 'pattern',
       detail: 0.8,
     })
     useBackgroundStore.getState().undo()

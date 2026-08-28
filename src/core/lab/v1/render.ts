@@ -22,7 +22,7 @@ import { stampProto } from '../stamp'
 
 let scratch: HTMLCanvasElement | null = null
 
-const LOOK_BACKGROUND_TREATMENT: Record<LookId, TreatmentId> = {
+const LOOK_BACKGROUND_TREATMENT: Partial<Record<LookId, TreatmentId>> = {
   frame: 'blocks',
   pixels: 'mosaic',
   scanlines: 'scan',
@@ -35,7 +35,7 @@ const LOOK_BACKGROUND_TREATMENT: Record<LookId, TreatmentId> = {
   trails: 'marks',
 }
 
-const LOOK_SUBJECT_TREATMENT: Record<LookId, TreatmentId> = {
+const LOOK_SUBJECT_TREATMENT: Partial<Record<LookId, TreatmentId>> = {
   ...LOOK_BACKGROUND_TREATMENT,
   frame: 'shingle',
 }

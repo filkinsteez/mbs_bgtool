@@ -1,5 +1,5 @@
 import type { LookId } from '@/core/lab/looks'
-import { LOOKS, lookComplexityPatch, lookPatchFor } from '@/core/lab/looks'
+import { lookById, looksForVersion, lookComplexityPatch, lookPatchFor } from '@/core/lab/looks'
 import { createDefaultLab } from '@/core/lab/recipe'
 import { createDefaultLabV1 } from '@/core/lab/v1/recipe'
 import type { LabState, LookVersion } from '@/core/lab/types'
@@ -217,7 +217,7 @@ export function createDefaultBackgroundRecipe(seed = 1913): BackgroundRecipeV2 {
     mode: 'background',
     seed,
     format: { aspect: '16:9', ...dimensionsFor('16:9') },
-    look: { id: 'frame', detail: 0.5, version: 'v2' },
+    look: { id: 'pattern', detail: 0.5, version: 'v2' },
     materialLookOverlay: { enabled: false },
     palette: {
       packId: pack.id,
@@ -293,7 +293,11 @@ export function deserializeBackgroundRecipe(json: string): BackgroundRecipeV2 | 
       recipe.look.id = migratedLook
       recipe.materialLookOverlay.enabled = true
     }
-    const allowedLook = LOOKS.some((look) => look.id === recipe.look.id)
+    const catalog = looksForVersion(recipe.look.version)
+    if (!catalog.some((look) => look.id === recipe.look.id)) {
+      recipe.look.id = catalog[0].id
+    }
+    const allowedLook = true
     const pack = PALETTE_PACKS.find((item) => item.id === recipe.palette.packId)
     const customPalette = recipe.palette.packId === CUSTOM_PALETTE_ID
       && Array.isArray(recipe.palette.mix)
@@ -414,7 +418,7 @@ export function backgroundRecipeToLab(
   const isV1b = recipe.look.version === 'v1b'
   const v1bGround = PAPER.toUpperCase()
   const base = isV1 ? createDefaultLabV1(recipe.seed) : createDefaultLab(recipe.seed)
-  const look = LOOKS.find((item) => item.id === recipe.look.id) ?? LOOKS[0]
+  const look = lookById(recipe.look.id) ?? looksForVersion(recipe.look.version)[0]
   const hasSource = options.hasSource === true
   let lab = mergeDeep(base, lookPatchFor(look, hasSource, recipe.look.version))
   lab = mergeDeep(

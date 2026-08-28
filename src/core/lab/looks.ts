@@ -19,6 +19,10 @@ export { V1_LOOK_PATCHES } from './v1/looks'
 // sheet before earning a slot.
 
 export type LookId =
+  | 'pattern'
+  | 'mandala'
+  | 'stitch'
+  | 'dither'
   | 'frame'
   | 'pixels'
   | 'scanlines'
@@ -31,6 +35,26 @@ export type LookId =
   | 'trails'
 
 export type Look = { id: LookId; label: string; patch: LabPatch }
+
+// The V2 catalog is a fresh start: four systems rebuilt from the approved
+// are.na references. They render through src/core/lab/v2/, not the band
+// machinery, so their patches stay minimal.
+export const V2_LOOKS: Look[] = [
+  { id: 'pattern', label: 'Pattern', patch: { sourceVisibility: 0 } },
+  { id: 'mandala', label: 'Mandala', patch: { sourceVisibility: 0 } },
+  { id: 'stitch', label: 'Stitch', patch: { sourceVisibility: 0 } },
+  { id: 'dither', label: 'Dither', patch: { sourceVisibility: 0 } },
+]
+
+export const V2_SYSTEM_IDS = new Set<LookId>(['pattern', 'mandala', 'stitch', 'dither'])
+
+export function looksForVersion(version: LookVersion): Look[] {
+  return version === 'v2' ? V2_LOOKS : LOOKS
+}
+
+export function lookById(id: LookId): Look | undefined {
+  return LOOKS.find((look) => look.id === id) ?? V2_LOOKS.find((look) => look.id === id)
+}
 
 export const LOOKS: Look[] = [
   {
@@ -154,7 +178,7 @@ type ComplexityProfile = {
   echo?: readonly [number, number]
 }
 
-const COMPLEXITY_PROFILES: Record<LookId, ComplexityProfile> = {
+const COMPLEXITY_PROFILES: Partial<Record<LookId, ComplexityProfile>> = {
   frame: { coarseCell: 76, fineCell: 22, levels: [0, 1, 1], subdivide: [0.24, 0.62] },
   pixels: { coarseCell: 98, fineCell: 18, levels: [1, 2, 2], subdivide: [0.38, 0.9] },
   scanlines: {
@@ -208,8 +232,11 @@ export function lookComplexityPatch(
 ): LabPatch {
   if (version === 'v1') return v1DetailPatch(value)
   if (version === 'v1b') return lookComplexityPatchV1b(lookId, value)
+  // the V2 systems read look.complexity directly at render time
+  if (V2_SYSTEM_IDS.has(lookId)) return {}
   const complexity = Math.max(0, Math.min(1, value))
   const profile = COMPLEXITY_PROFILES[lookId]
+  if (!profile) return {}
   const level = profile.levels[
     complexity < 0.34 ? 0 : complexity < 0.67 ? 1 : 2
   ]
@@ -253,6 +280,7 @@ export function lookPatchFor(
 ): LabPatch {
   if (version === 'v1') return v1LookPatchFor(look, hasSource)
   if (version === 'v1b') return lookPatchForV1b(look.id, hasSource)
+  if (V2_SYSTEM_IDS.has(look.id)) return look.patch
   const patch = look.patch
   if (hasSource) return patch
   const bands = patch.territory?.bands

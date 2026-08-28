@@ -8,7 +8,7 @@ import type { LookId } from '@/core/lab/looks'
 import { resolveLookColorPlan } from '@/core/lab/colorDirection'
 import type { BackgroundRecipeV2 } from '../recipe'
 
-export const MATERIAL_GPU_LOOK_INDEX: Record<LookId, number> = {
+export const MATERIAL_GPU_LOOK_INDEX: Partial<Record<LookId, number>> = {
   frame: 0,
   pixels: 1,
   scanlines: 1,
@@ -682,7 +682,7 @@ export class MaterialLookGpuPipeline {
       exportResolution?.[1] ?? 0,
     )
     this.uniforms.uAspect.value = this.width / this.height
-    this.uniforms.uLook.value = MATERIAL_GPU_LOOK_INDEX[recipe.look.id]
+    this.uniforms.uLook.value = MATERIAL_GPU_LOOK_INDEX[recipe.look.id] ?? 0
     this.uniforms.uSeed.value = recipe.seed
     this.uniforms.uComplexity.value = THREE.MathUtils.clamp(recipe.look.detail, 0, 1)
     this.uniforms.uMotionAmount.value = recipe.motion.enabled

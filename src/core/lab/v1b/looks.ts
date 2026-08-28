@@ -139,7 +139,7 @@ type ComplexityProfile = {
   echo?: readonly [number, number]
 }
 
-const COMPLEXITY_PROFILES: Record<LookId, ComplexityProfile> = {
+const COMPLEXITY_PROFILES: Partial<Record<LookId, ComplexityProfile>> = {
   frame: { coarseCell: 76, fineCell: 22, levels: [0, 1, 1], subdivide: [0.24, 0.62] },
   pixels: { coarseCell: 98, fineCell: 28, levels: [1, 1, 2], subdivide: [0.38, 0.9] },
   scanlines: {
@@ -206,6 +206,7 @@ export function lookComplexityPatchV1b(lookId: LookId, value: number): LabPatch 
     ? 0.52 + complexity * 0.48
     : complexity
   const profile = COMPLEXITY_PROFILES[lookId]
+  if (!profile) return {}
   const level = profile.levels[
     structuralComplexity < 0.34 ? 0 : structuralComplexity < 0.67 ? 1 : 2
   ]
