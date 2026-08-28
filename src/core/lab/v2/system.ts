@@ -4,7 +4,8 @@ import type { Field } from '../field'
 import { fieldFromMap, fitRect } from '../field'
 import type { LookColorPlan } from '../colorDirection'
 import type { CurveSnapshot } from '../types'
-import { buildCurveField } from '../territory'
+import { buildCurveField, META_CURVE } from '../territory'
+import { CANONICAL_META_SAFE_AREA } from '../metaInfluence'
 
 // The V2 systems are pattern generators rebuilt from the approved are.na
 // references. They draw directly from this environment — seed, palette,
@@ -48,15 +49,30 @@ export function motionHarmonic(env: V2Env): number {
 
 const symbolCache = new Map<string, Field>()
 
+// 3D material mode strips the territory stack down to the tone source
+// (sourceAwareLabForRecipe), so there is no curve source to read — yet the
+// mark stays the only motif geometry the V2 systems may draw from. This is
+// the same canonical centered placement backgroundRecipeToLab gives the
+// generated path: the official Meta symbol geometry, canonical orientation,
+// fit to the canonical safe area. Never mirrored, rotated, or redrawn.
+const CANONICAL_META_SNAPSHOT: CurveSnapshot = {
+  ...META_CURVE,
+  amplitudeX: CANONICAL_META_SAFE_AREA.width,
+  amplitudeY: CANONICAL_META_SAFE_AREA.height,
+  offsetX: 0,
+  offsetY: 0,
+  rotation: 0,
+  silhouette: 'meta-symbol',
+}
+
 export function buildV2Env(lab: LabState, source: LabSource | null): V2Env {
   const { width: outW, height: outH } = lab.output
   const curveSource = lab.territory.sources.find(
     (item) => item.kind === 'curve' && item.enabled && item.curve,
   )
-  const snapshot = curveSource?.curve
+  const snapshot = curveSource?.curve ?? CANONICAL_META_SNAPSHOT
 
   const symbolField = (options: SymbolFieldOptions = {}): Field => {
-    if (!snapshot) return () => 0
     const resolved: CurveSnapshot = {
       ...snapshot,
       amplitudeX: snapshot.amplitudeX * (options.scale ?? 1),
@@ -65,7 +81,7 @@ export function buildV2Env(lab: LabState, source: LabSource | null): V2Env {
       offsetY: options.offsetY ?? snapshot.offsetY,
       rotation: options.rotation ?? snapshot.rotation,
     }
-    const softness = options.softness ?? curveSource.softness
+    const softness = options.softness ?? curveSource?.softness ?? 0.3
     const key = `${JSON.stringify(resolved)}|${outW}x${outH}|${softness.toFixed(3)}|${lab.seed}`
     let field = symbolCache.get(key)
     if (!field) {

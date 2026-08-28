@@ -23,6 +23,16 @@ import { chan } from '@/core/organic/random'
 // a rotated colorway so the leftover inks surface — tile-locally, so the
 // 2-column / 1-row motion loop period is untouched. A single-ink pool
 // collapses to the classic two-color render.
+//
+// 3D material mode is a JACQUARD WEAVE over the captured viewport: the same
+// mark-crop motif (buildV2Env synthesizes the canonical centered snapshot
+// there) tiles a finer half-drop grid, and each tile deals one of 2-3
+// COLORWAYS by the mean captured-frame tone under its footprint — ground
+// tiles keep the classic deal, figure tiles invert figure and ground, mid
+// tiles re-ink the dominant ring — so the model's 3D form emerges at tile
+// resolution as a colorway change across one continuous weave. Material
+// renders are motionless stills, so reading the frame per tile cannot touch
+// the 2D loop constraint.
 
 const C = 'v2.pattern.'
 
@@ -168,12 +178,13 @@ function fallbackMotif(seed: number, n: number): Uint8Array {
 
 const CROP_RETRIES = 10
 
-// 3D material mode: normalize the captured frame's tone so the crop windows
-// respond to the frame's RELATIVE structure whatever its exposure. A fixed
-// 0.5 threshold on an all-dark (or all-bright) frame rasterizes no cells,
-// every retry fails, and the tiling collapses to the seeded fallback motif —
-// a render that ignores the viewport. The frame border reads as ground; the
-// tonal side away from it becomes the figure.
+// 3D material mode: normalize the captured frame's tone so the per-tile
+// colorway deal responds to the frame's RELATIVE structure whatever its
+// exposure (scene lighting and ground color move the absolute range). The
+// frame border reads as ground; the tonal side away from it becomes the
+// figure, so the returned field is 0 on the ground side rising to 1 on the
+// model side. A near-flat frame returns the zero field — every tile deals
+// the ground colorway and the weave stays uniform.
 function normalizedLuminance(env: V2Env): Field {
   const lum = env.luminance
   if (!lum) return () => 0
@@ -206,10 +217,11 @@ function normalizedLuminance(env: V2Env): Field {
 }
 
 // Build the motif bitmap by cropping the mark. Each retry index derives a
-// fresh seeded placement (scale, push direction, tilt) — or, in 3D material
-// mode, a fresh window over the captured frame's luminance — and the first
+// fresh seeded placement (scale, push direction, tilt) and the first
 // horizontally-spanning dense crop wins (corner-to-corner spans are the
-// fallback tier). Fully deterministic per (seed, retry index).
+// fallback tier). Fully deterministic per (seed, retry index). Material
+// mode shares this exact machinery — buildV2Env synthesizes the canonical
+// centered snapshot there, so every tile still carries the stepped-arc DNA.
 function buildMotif(env: V2Env, n: number): Uint8Array {
   const { outW, outH, seed } = env
   const total = n * n
@@ -217,41 +229,26 @@ function buildMotif(env: V2Env, n: number): Uint8Array {
   let horizontal: { cells: Uint8Array; dist: number } | null = null
   let corner: { cells: Uint8Array; dist: number } | null = null
   let nearest: { cells: Uint8Array; coverage: number; spansVertical: boolean } | null = null
-  const materialTone = env.luminance ? normalizedLuminance(env) : null
   for (let k = 0; k < CROP_RETRIES; k++) {
-    let field: Field
-    let cx: number
-    let cy: number
-    let size: number
-    if (materialTone) {
-      // 3D material mode: crop the captured frame's (normalized) tone
-      // instead — the seeded window wanders the frame looking for a bold
-      // edge.
-      field = materialTone
-      cx = outW * (0.22 + chan(seed, k, C + 'lumWinX') * 0.56)
-      cy = outH * (0.22 + chan(seed, k, C + 'lumWinY') * 0.56)
-      size = Math.min(outW, outH) * 0.4
-    } else {
-      // Oversize the mark and push it off-center so one arc edge sweeps
-      // through the (canvas-centered) crop window: different seeds catch
-      // different lobe corners or the crossover.
-      const scale = 2.2 + chan(seed, k, C + 'cropScale') * 1.2
-      const rotation = (chan(seed, k, C + 'cropRot') * 2 - 1) * 0.6
-      const dir = chan(seed, k, C + 'cropDir') * Math.PI * 2
-      const dist = 0.35 + chan(seed, k, C + 'cropDist') * 0.5
-      field = env.symbolField({
-        scale,
-        offsetX: Math.cos(dir) * dist,
-        offsetY: Math.sin(dir) * dist,
-        rotation,
-        softness: 0.15,
-      })
-      cx = outW / 2
-      cy = outH / 2
-      // A wide window relative to the mark's arc radius, so the crop spans
-      // enough of the bend that the stepped edge visibly changes direction.
-      size = Math.min(outW, outH) * 0.72
-    }
+    // Oversize the mark and push it off-center so one arc edge sweeps
+    // through the (canvas-centered) crop window: different seeds catch
+    // different lobe corners or the crossover.
+    const scale = 2.2 + chan(seed, k, C + 'cropScale') * 1.2
+    const rotation = (chan(seed, k, C + 'cropRot') * 2 - 1) * 0.6
+    const dir = chan(seed, k, C + 'cropDir') * Math.PI * 2
+    const dist = 0.35 + chan(seed, k, C + 'cropDist') * 0.5
+    const field: Field = env.symbolField({
+      scale,
+      offsetX: Math.cos(dir) * dist,
+      offsetY: Math.sin(dir) * dist,
+      rotation,
+      softness: 0.15,
+    })
+    const cx = outW / 2
+    const cy = outH / 2
+    // A wide window relative to the mark's arc radius, so the crop spans
+    // enough of the bend that the stepped edge visibly changes direction.
+    const size = Math.min(outW, outH) * 0.72
     const cleaned = cleanLargest(rasterizeCrop(field, cx, cy, size, n), n)
     if (cleaned.count === 0) continue
     // Judge the PACKED tile — its coverage is the figure share the render
@@ -310,6 +307,8 @@ let tileMirror: HTMLCanvasElement | null = null
 // masses with no hairline seams; the tile canvas carries the 1px apron.
 // Bands are painted outer ring first, so inner rings win the shared seam
 // pixels — a fixed order that keeps repeat renders byte-identical.
+// An optional bg fills the tile's ground cells (the material jacquard's
+// inverted colorways); without it they stay transparent as before.
 function paintTile(
   existing: HTMLCanvasElement | null,
   bands: Int8Array,
@@ -317,6 +316,7 @@ function paintTile(
   n: number,
   cell: number,
   mirrored: boolean,
+  bg?: string,
 ): HTMLCanvasElement {
   const canvas = existing ?? document.createElement('canvas')
   const size = n * cell + 1
@@ -327,6 +327,10 @@ function paintTile(
   const tctx = canvas.getContext('2d')
   if (!tctx) return canvas
   tctx.clearRect(0, 0, size, size)
+  if (bg) {
+    tctx.fillStyle = bg
+    tctx.fillRect(0, 0, size, size)
+  }
   for (let band = 0; band < colors.length; band++) {
     tctx.fillStyle = colors[band]
     for (let j = 0; j < n; j++) {
@@ -345,6 +349,20 @@ function paintTile(
 // ---------------------------------------------------------------------------
 
 type PoolInk = { hex: string; weight: number; lab: [number, number, number] }
+
+// Blend two hex colors in sRGB (t toward b). The material colorways use it
+// to keep single-ink figure tiles ink-dominant while the arcs stay visible.
+function mixHex(a: string, b: string, t: number): string {
+  const parse = (hex: string): [number, number, number] => {
+    const match = hex.trim().match(/^#?([0-9a-f]{6})$/i)
+    const value = match ? Number.parseInt(match[1], 16) : 0
+    return [(value >> 16) & 255, (value >> 8) & 255, value & 255]
+  }
+  const ca = parse(a)
+  const cb = parse(b)
+  const at = (k: number) => Math.round(ca[k] + (cb[k] - ca[k]) * t)
+  return `#${((at(0) << 16) | (at(1) << 8) | at(2)).toString(16).padStart(6, '0')}`
+}
 
 // oklab of a hex color (same transform the color plan uses), so ground
 // proximity and band adjacency are judged perceptually, not by raw RGB.
@@ -520,10 +538,177 @@ function assignBandInks(counts: readonly number[], inks: readonly PoolInk[]): st
 }
 
 // ---------------------------------------------------------------------------
+// Render: 3D material mode — a jacquard weave over the captured frame
+// ---------------------------------------------------------------------------
+
+// Prerendered tile canvases per (colorway level, mirrored) — at most 3 x 2.
+// Painting per combination (never per tile) keeps the draw loop drawImage-only.
+const materialTiles: (HTMLCanvasElement | null)[] = [null, null, null, null, null, null]
+
+function renderPatternMaterial(ctx: CanvasRenderingContext2D, env: V2Env): void {
+  const { outW, outH, seed, complexity } = env
+
+  // Ground first — ground-level tiles keep transparent channels over it.
+  ctx.fillStyle = env.ground
+  ctx.fillRect(0, 0, outW, outH)
+
+  const level = Math.max(0, Math.min(1, complexity))
+
+  // Motif resolution matches the 2D branch, but the TILING runs much finer —
+  // ~14 tiles across at complexity 0, ~24 at the default 0.5, ~34 at 1 — so
+  // the model's silhouette owns enough tile-pixels to read. Cells stay
+  // whole-pixel, so the weave stays raster-crisp at any output size.
+  const n = 10 + Math.round(4 * level)
+  const divisor = 14 + 20 * level
+  const cell = Math.max(2, Math.round(outW / divisor / n))
+  const unit = cell * n
+  const half = Math.floor(unit / 2)
+
+  // Same seeded grid choices as the 2D branch — the grid itself never varies.
+  const mirrorParity = chan(seed, 1, C + 'mirrorPhase') < 0.5 ? 0 : 1
+  const dropDir = chan(seed, 2, C + 'dropDir') < 0.5 ? -1 : 1
+
+  // Motif: the SAME mark-crop machinery as the 2D branch — buildV2Env
+  // synthesizes the canonical centered snapshot in material mode, so every
+  // tile carries the stepped-arc DNA of the official geometry.
+  const motif = buildMotif(env, n)
+  const pool = buildInkPool(env)
+  const { depth, maxDepth } = erosionDepth(motif, n)
+  const layers = Math.max(1, Math.min(pool.length, maxDepth, 4))
+  const bands = bandCells(depth, maxDepth, layers)
+  const counts = new Array<number>(layers).fill(0)
+  for (let idx = 0; idx < bands.length; idx++) {
+    if (bands[idx] >= 0) counts[bands[idx]]++
+  }
+  let largestBand = 0
+  for (let b = 1; b < layers; b++) {
+    if (counts[b] > counts[largestBand]) largestBand = b
+  }
+
+  // The colorways of one weave (2 with a single-ink pool, else 3). Every
+  // level weaves the SAME motif; what separates them is how loud the deal
+  // runs, so the model segments at a glance without breaking the textile:
+  //   ground — tone-on-tone: the classic deal's inks pulled 68% toward the
+  //            canvas ground. The weave stays visible up close but reads as
+  //            one calm field at arm's length;
+  //   mid    — the classic full-strength deal (the 2D pattern look): a loud
+  //            rim tracing where the model partially covers tiles;
+  //   figure — the figure ink FLOODS the tile and the dominant ring weaves
+  //            in canvas-ground color — a jacquard inversion. The figure ink
+  //            is the pool ink farthest (oklab, worst case) from BOTH other
+  //            levels' mean tile colors, so the model's mass pops against
+  //            ground and rim alike.
+  const classicColors = assignBandInks(counts, pool.slice(0, layers))
+  const groundLab = hexToOklab(env.ground)
+  const tileMeanLab = (colors: readonly string[]): [number, number, number] => {
+    let l = 0
+    let a = 0
+    let bb = 0
+    let groundCells = n * n
+    for (let b = 0; b < layers; b++) {
+      const lab = hexToOklab(colors[b])
+      l += lab[0] * counts[b]
+      a += lab[1] * counts[b]
+      bb += lab[2] * counts[b]
+      groundCells -= counts[b]
+    }
+    return [
+      (l + groundLab[0] * groundCells) / (n * n),
+      (a + groundLab[1] * groundCells) / (n * n),
+      (bb + groundLab[2] * groundCells) / (n * n),
+    ]
+  }
+  const mutedColors = classicColors.map((hex) => mixHex(env.ground, hex, 0.32))
+  const midMean = tileMeanLab(classicColors)
+  const groundMean = tileMeanLab(mutedColors)
+  let figureInk = pool[0]
+  let figureDist = -1
+  for (const ink of pool) {
+    const d = Math.min(
+      Math.hypot(ink.lab[0] - midMean[0], ink.lab[1] - midMean[1], ink.lab[2] - midMean[2]),
+      Math.hypot(
+        ink.lab[0] - groundMean[0],
+        ink.lab[1] - groundMean[1],
+        ink.lab[2] - groundMean[2],
+      ),
+    )
+    if (d > figureDist + 1e-9) {
+      figureDist = d
+      figureInk = ink
+    }
+  }
+  const figureColors = classicColors.map((hex, b) =>
+    b === largestBand || hex === figureInk.hex
+      ? pool.length === 1
+        ? mixHex(figureInk.hex, env.ground, 0.45)
+        : env.ground
+      : hex,
+  )
+  const levelCount = pool.length >= 2 ? 3 : 2
+  const colorways: { colors: string[]; bg?: string }[] = levelCount === 3
+    ? [
+        { colors: mutedColors },
+        { colors: classicColors },
+        { colors: figureColors, bg: figureInk.hex },
+      ]
+    : [{ colors: mutedColors }, { colors: figureColors, bg: figureInk.hex }]
+  const tiles = colorways.map((way, w) => [
+    (materialTiles[w * 2] = paintTile(
+      materialTiles[w * 2], bands, way.colors, n, cell, false, way.bg,
+    )),
+    (materialTiles[w * 2 + 1] = paintTile(
+      materialTiles[w * 2 + 1], bands, way.colors, n, cell, true, way.bg,
+    )),
+  ])
+
+  // Per-tile colorway from the frame: binarize the normalized tone at each
+  // of a 4x4 deterministic sample grid over the tile's footprint (clamped
+  // into frame) and quantize the model COVERAGE — coverage, not mean, so the
+  // model's own shading cannot fragment its mass into speckle. Border-side
+  // tiles deal ground, solidly-covered tiles figure, the partial rim mid.
+  // Same frame + seed => same deal; material renders are motionless stills,
+  // so reading the frame per tile cannot touch the 2D branch's loop
+  // constraint.
+  const tone = normalizedLuminance(env)
+  const pick = levelCount === 3
+    ? (m: number) => (m >= 0.5 ? 2 : m >= 0.15 ? 1 : 0)
+    : (m: number) => (m >= 0.4 ? 1 : 0)
+
+  const cols = Math.ceil(outW / unit)
+  const rows = Math.ceil(outH / unit)
+  const step = unit / 4
+  for (let i = -1; i <= cols + 1; i++) {
+    const parity = ((i % 2) + 2) % 2
+    const drop = parity === 1 ? dropDir * half : 0
+    const mirrored = parity === mirrorParity ? 1 : 0
+    const x = i * unit
+    for (let j = -1; j <= rows + 1; j++) {
+      const y = j * unit + drop
+      let cover = 0
+      for (let sj = 0; sj < 4; sj++) {
+        const py = Math.max(0, Math.min(outH - 1, y + (sj + 0.5) * step))
+        for (let si = 0; si < 4; si++) {
+          const px = Math.max(0, Math.min(outW - 1, x + (si + 0.5) * step))
+          if (tone(px, py) >= 0.5) cover += 1
+        }
+      }
+      ctx.drawImage(tiles[pick(cover / 16)][mirrored], x, y)
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Render
 // ---------------------------------------------------------------------------
 
 export function renderPattern(ctx: CanvasRenderingContext2D, env: V2Env): void {
+  // 3D material mode (a captured viewport frame is present) renders the
+  // jacquard branch; everything below is the untouched 2D generated path.
+  if (env.luminance) {
+    renderPatternMaterial(ctx, env)
+    return
+  }
+
   const { outW, outH, seed, complexity } = env
 
   // Ground first — the channels between figure masses are always ground.
