@@ -6,9 +6,14 @@ import { chan } from '@/core/organic/random'
 // PIXEL-CROP of the Meta mark itself. A seeded fragment of the symbol field
 // (oversized, pushed off-center, tilted) is rasterized onto a small motif
 // grid and thresholded, so every tile is a stepped curved fragment carrying
-// the mark's arc DNA — never the whole logo. The tiling is unchanged from
-// round 2: strict grid, half-drop columns, seeded mirrored-column phase,
-// exactly two colors, whole-pixel cells, diagonal whole-period motion scroll.
+// the mark's arc DNA — never the whole logo. The fragment is packed to fill
+// its tile (bounding-box crop stretched to the grid) and crops are accepted
+// dense (42-68% of cells), so figure masses from neighboring half-drop
+// mirrored columns nearly touch and the ground reads as channels between
+// them — a dense interlocking two-color textile, not spot motifs on ground.
+// The tiling itself is unchanged from round 2: strict grid, half-drop
+// columns, seeded mirrored-column phase, exactly two colors, whole-pixel
+// cells, diagonal whole-period motion scroll.
 
 const C = 'v2.pattern.'
 
@@ -42,8 +47,13 @@ function rasterizeCrop(
 type CleanedMotif = {
   cells: Uint8Array // only the largest 4-connected component survives
   count: number // on-cells in that component
-  edgesTouched: number // how many distinct window edges it reaches (0..4)
   spansVertical: boolean // touches both top and bottom window edges
+  spansHorizontal: boolean // touches both left and right window edges
+  spansCorner: boolean // touches one horizontal edge plus one vertical edge
+  bboxW: number // component bounding-box width in cells
+  bboxH: number // component bounding-box height in cells
+  bboxX: number // bounding-box left cell
+  bboxY: number // bounding-box top cell
 }
 
 // Keep only the largest 4-connected component; islands are dropped so the
@@ -81,22 +91,54 @@ function cleanLargest(raw: Uint8Array, n: number): CleanedMotif {
     if (members.length > best.length) best = members
   }
   const cells = new Uint8Array(n * n)
-  let left = false
-  let right = false
-  let top = false
-  let bottom = false
+  let minX = n
+  let minY = n
+  let maxX = -1
+  let maxY = -1
   for (const idx of best) {
     cells[idx] = 1
     const x = idx % n
     const y = (idx - x) / n
-    if (x === 0) left = true
-    if (x === n - 1) right = true
-    if (y === 0) top = true
-    if (y === n - 1) bottom = true
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+    if (y < minY) minY = y
+    if (y > maxY) maxY = y
   }
-  const edgesTouched =
-    (left ? 1 : 0) + (right ? 1 : 0) + (top ? 1 : 0) + (bottom ? 1 : 0)
-  return { cells, count: best.length, edgesTouched, spansVertical: top && bottom }
+  const left = minX === 0
+  const right = maxX === n - 1
+  const top = minY === 0
+  const bottom = maxY === n - 1
+  return {
+    cells,
+    count: best.length,
+    spansVertical: top && bottom,
+    spansHorizontal: left && right,
+    spansCorner: (left || right) && (top || bottom),
+    bboxW: best.length > 0 ? maxX - minX + 1 : 0,
+    bboxH: best.length > 0 ? maxY - minY + 1 : 0,
+    bboxX: minX,
+    bboxY: minY,
+  }
+}
+
+// Pack the component so it fills the whole motif grid: crop to its bounding
+// box and nearest-neighbor stretch back to n x n (whole cells, deterministic,
+// 4-connectivity preserved). This strips the implicit ground margins a crop
+// leaves inside its tile — margins that tiling would otherwise repeat as wide
+// empty channels — so neighboring tiles' figure masses meet at the tile seams
+// and the half-drop mirror columns interlock like houndstooth teeth.
+function packMotif(cleaned: CleanedMotif, n: number): Uint8Array {
+  const { cells, bboxW, bboxH, bboxX, bboxY } = cleaned
+  if (cleaned.count === 0 || (bboxW === n && bboxH === n)) return cells
+  const packed = new Uint8Array(n * n)
+  for (let j = 0; j < n; j++) {
+    const sy = bboxY + Math.floor(((j + 0.5) * bboxH) / n)
+    for (let i = 0; i < n; i++) {
+      const sx = bboxX + Math.floor(((i + 0.5) * bboxW) / n)
+      packed[j * n + i] = cells[sy * n + sx]
+    }
+  }
+  return packed
 }
 
 // Deterministic fallback if no crop retry lands on a usable arc edge (e.g.
@@ -120,11 +162,15 @@ const CROP_RETRIES = 10
 // Build the motif bitmap by cropping the mark. Each retry index derives a
 // fresh seeded placement (scale, push direction, tilt) — or, in 3D material
 // mode, a fresh window over the captured frame's luminance — and the first
-// non-degenerate crop wins. Fully deterministic per (seed, retry index).
+// horizontally-spanning dense crop wins (corner-to-corner spans are the
+// fallback tier). Fully deterministic per (seed, retry index).
 function buildMotif(env: V2Env, n: number): Uint8Array {
   const { outW, outH, seed } = env
   const total = n * n
-  let nearest: CleanedMotif | null = null
+  const TARGET = 0.53
+  let horizontal: { cells: Uint8Array; dist: number } | null = null
+  let corner: { cells: Uint8Array; dist: number } | null = null
+  let nearest: { cells: Uint8Array; coverage: number; spansVertical: boolean } | null = null
   for (let k = 0; k < CROP_RETRIES; k++) {
     let field: Field
     let cx: number
@@ -159,35 +205,49 @@ function buildMotif(env: V2Env, n: number): Uint8Array {
       size = Math.min(outW, outH) * 0.72
     }
     const cleaned = cleanLargest(rasterizeCrop(field, cx, cy, size, n), n)
-    const coverage = cleaned.count / total
-    // A good crop is an arc fragment: substantial but not solid, and the
-    // component must run across the window (touch 2+ edges), not sit as an
-    // isolated blob. Top-to-bottom spans are rejected too — under half-drop
-    // tiling they fuse into plain vertical stripes, where horizontal spans
-    // break into interlocking diagonal chains instead.
-    if (
-      coverage >= 0.3 &&
-      coverage <= 0.7 &&
-      cleaned.edgesTouched >= 2 &&
-      !cleaned.spansVertical
-    ) {
-      return cleaned.cells
+    if (cleaned.count === 0) continue
+    // Judge the PACKED tile — its coverage is the figure share the render
+    // will actually show. A good crop is dense enough to leave ground only
+    // as channels (42-68% of cells) but not solid, and its component must
+    // run left-to-right or corner-to-corner so the half-drop columns
+    // interlock. Top-to-bottom spans stay rejected — under half-drop tiling
+    // they fuse into plain vertical stripes — and skinny bounding boxes are
+    // rejected too, since stretching those to the full grid degenerates
+    // into stripes as well.
+    const packed = packMotif(cleaned, n)
+    let count = 0
+    for (let idx = 0; idx < total; idx++) count += packed[idx]
+    const coverage = count / total
+    const stocky = cleaned.bboxW * 3 >= n && cleaned.bboxH * 3 >= n
+    if (coverage >= 0.42 && coverage <= 0.68 && stocky && !cleaned.spansVertical) {
+      // Horizontal spans interlock best — one landing in the 45-60% sweet
+      // band wins outright. Denser or lighter (but still in-window) crops
+      // are kept ranked by distance from the target share, corner-to-corner
+      // spans one tier below, so a heavy first retry can't shade the whole
+      // pattern toward one color when a better-balanced retry exists.
+      const dist = Math.abs(coverage - TARGET)
+      if (cleaned.spansHorizontal) {
+        if (coverage >= 0.45 && coverage <= 0.6) return packed
+        if (!horizontal || dist < horizontal.dist) horizontal = { cells: packed, dist }
+      } else if (cleaned.spansCorner) {
+        if (!corner || dist < corner.dist) corner = { cells: packed, dist }
+      }
     }
     if (
-      cleaned.count > 0 &&
-      (!nearest ||
-        (nearest.spansVertical && !cleaned.spansVertical) ||
-        (nearest.spansVertical === cleaned.spansVertical &&
-          Math.abs(coverage - 0.5) < Math.abs(nearest.count / total - 0.5)))
+      !nearest ||
+      (nearest.spansVertical && !cleaned.spansVertical) ||
+      (nearest.spansVertical === cleaned.spansVertical &&
+        Math.abs(coverage - 0.55) < Math.abs(nearest.coverage - 0.55))
     ) {
-      nearest = cleaned
+      nearest = { cells: packed, coverage, spansVertical: cleaned.spansVertical }
     }
   }
-  if (nearest) {
-    const coverage = nearest.count / total
-    if (coverage >= 0.15 && coverage <= 0.85) return nearest.cells
+  if (horizontal) return horizontal.cells
+  if (corner) return corner.cells
+  if (nearest && nearest.coverage >= 0.25 && nearest.coverage <= 0.8) {
+    return nearest.cells
   }
-  return fallbackMotif(seed, n)
+  return packMotif(cleanLargest(fallbackMotif(seed, n), n), n)
 }
 
 // ---------------------------------------------------------------------------
