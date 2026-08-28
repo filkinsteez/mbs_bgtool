@@ -39,12 +39,13 @@ export function ColorsPanel() {
     const nextPack = PALETTE_PACKS.find((p) => p.id === packId) ?? PALETTE_PACKS[0]
     const nextMix = colorMixForPack(nextPack)
     const enabled = nextMix.filter((item) => item.enabled)
+    // the ground is the picked surface, independent of the mix — a pack
+    // switch re-deals the inks but never darkens the paper underneath
     updateRecipe({
       palette: {
         packId: nextPack.id,
         mix: nextMix,
         ink: enabled[0]?.color ?? nextPack.colors[0],
-        ground: enabled.at(-1)?.color ?? nextPack.colors[0],
       },
     })
   }

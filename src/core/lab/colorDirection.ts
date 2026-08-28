@@ -122,23 +122,46 @@ export function resolveLookColorPlan(input: {
       hue: Math.atan2(b, a),
     }
   })
-  const dominant = swatches.reduce(
-    (best, swatch, index) => swatch.weight > swatches[best].weight ? index : best,
-    0,
+  // The ground is the surface every treatment sits on. When the picked
+  // ground is not one of the mix colors it still joins the plan with
+  // half the deal: palette-surface treatments (blocks, shingle, mosaic)
+  // must be able to leave ground showing, or every cell fills with ink
+  // and the composition loses its air.
+  const groundHex = normalizeHex(input.ground)
+  let ground = swatches.findIndex((swatch) => swatch.hex === groundHex)
+  if (ground < 0) {
+    for (const swatch of swatches) swatch.weight *= 0.5
+    const [lightness, a, b] = oklab(groundHex)
+    swatches.push({
+      hex: groundHex,
+      weight: 0.5,
+      lightness,
+      chroma: Math.hypot(a, b),
+      hue: Math.atan2(b, a),
+    })
+    ground = swatches.length - 1
+  }
+  // Structural roles describe the INK story — the marks, strokes, and
+  // accents drawn ON the ground — so the ground swatch never claims them.
+  const inkIndices = swatches.length > 1
+    ? swatches.map((_, index) => index).filter((index) => index !== ground)
+    : swatches.map((_, index) => index)
+  const dominant = inkIndices.reduce(
+    (best, index) => swatches[index].weight > swatches[best].weight ? index : best,
+    inkIndices[0],
   )
-  const support = swatches
-    .map((swatch, index) => ({ index, distance: colorDistance(swatches[dominant], swatch) }))
+  const support = inkIndices
+    .map((index) => ({ index, distance: colorDistance(swatches[dominant], swatches[index]) }))
     .filter(({ index }) => index !== dominant)
     .sort((a, b) => a.distance - b.distance || a.index - b.index)
     .slice(0, 2)
     .map(({ index }) => index)
-  const accent = swatches.length > 1
-    ? swatches
-      .map((swatch, index) => ({ index, distance: colorDistance(swatches[dominant], swatch) }))
+  const accent = inkIndices.length > 1
+    ? inkIndices
+      .map((index) => ({ index, distance: colorDistance(swatches[dominant], swatches[index]) }))
       .filter(({ index }) => index !== dominant)
       .sort((a, b) => b.distance - a.distance || a.index - b.index)[0].index
     : null
-  const ground = closestIndex(swatches, input.ground)
   const ink = closestIndex(swatches, input.ink)
   const depthOrder = swatches
     .map((swatch, index) => ({
@@ -181,6 +204,26 @@ export function weightedColorIndex(plan: LookColorPlan, sample: number): number 
     if (value < accumulated) return index
   }
   return plan.swatches.length - 1
+}
+
+// Deal only surface-visible colors: strokes, marks, and scan segments
+// drawn in the ground color would vanish into the ground they sit on.
+export function inkColorIndex(plan: LookColorPlan, sample: number): number {
+  const ground = plan.roles.ground
+  if (plan.swatches.length < 2) return weightedColorIndex(plan, sample)
+  let total = 0
+  for (let index = 0; index < plan.swatches.length; index += 1) {
+    if (index !== ground) total += plan.swatches[index].weight
+  }
+  if (total <= 0) return plan.roles.dominant
+  const value = Math.max(0, Math.min(0.999999, sample)) * total
+  let accumulated = 0
+  for (let index = 0; index < plan.swatches.length; index += 1) {
+    if (index === ground) continue
+    accumulated += plan.swatches[index].weight
+    if (value < accumulated) return index
+  }
+  return plan.roles.dominant
 }
 
 export function distinctColorIndex(

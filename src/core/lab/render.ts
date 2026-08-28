@@ -11,7 +11,7 @@ import { fieldFromMap, fitRect } from './field'
 import { buildCurveField, compileTerritory, territoryGrid } from './territory'
 import { buildCellMarks, buildCells, curveFlowField, tintFor } from './composition'
 import { buildDabs, buildStreams, composeFlow, type VectorField } from './flow'
-import { buildColorField, rgbCss } from './colorField'
+import { buildColorField, hexToRgb, rgbCss } from './colorField'
 import { buildBlockFills, buildShingleFills, regionValue } from './fills'
 import { getPaintRaster, reconcilePaint, type PaintRaster } from './paintRuntime'
 import { sampleRGB } from './analysis'
@@ -19,7 +19,7 @@ import { stampProto } from './stamp'
 import { createOrganicMotionWarp } from './motion'
 import { constrainArtworkToCanvas } from './artworkTransform'
 import { artDirectTerritory, sampleCompositionPlan } from './compositionPlan'
-import { weightedColorIndex } from './colorDirection'
+import { inkColorIndex, weightedColorIndex } from './colorDirection'
 
 // One painter for preview AND export. The ctx arrives pre-scaled and
 // everything draws in output units. Per-render work is lazy: the
@@ -128,8 +128,11 @@ export function renderLab(
   const directedTerritory = lab.composition
     ? artDirectTerritory(lab.composition, compiledTerritory, outW, outH)
     : compiledTerritory
+  // With a Look active the symbol is the composition: art direction
+  // modulates the territory but never rewrites it. Full-strength
+  // direction (focal lifts strong enough to mint their own islands)
+  // remains the source-editor behavior, where no Look is set.
   const preserveSilhouette = lab.look?.id != null
-    && ['pixels', 'streams', 'beads', 'quilt'].includes(lab.look.id)
   const T: Field = preserveSilhouette
     ? (x, y) => {
         const base = compiledTerritory(x, y)
@@ -207,10 +210,12 @@ export function renderLab(
   const palette = hasPalette ? lab.colors.palette : [ink, paper]
   const colorPlan = lab.colors?.plan
   const K = palette.length
-  const dealPalette = (x: number, y: number, channel: string) => {
+  // strokes and marks sit ON the ground — dealing them the ground color
+  // would erase them, so their deals come from the ink swatches only
+  const dealInkPalette = (x: number, y: number, channel: string) => {
     const sample = regionValue(lab.seed, x, y, lab.structure.baseCell * 2.8, channel)
     const index = colorPlan
-      ? weightedColorIndex(colorPlan, sample)
+      ? inkColorIndex(colorPlan, sample)
       : Math.min(K - 1, Math.floor(sample * K))
     return palette[index]
   }
@@ -222,8 +227,11 @@ export function renderLab(
     const field = !maps && !colorPlan
       ? buildColorField({ palette, seed: lab.seed, T, outW, outH })
       : null
+    // Pixels reads as the reference's soft quantized gradient: territory
+    // drives a ramp from the ground at the far field through ever
+    // stronger ink toward the symbol core, with only mild weather.
     const pixelColors = lab.look?.id === 'pixels' && colorPlan
-      ? colorPlan.depthOrder.filter((index) => index !== colorPlan.roles.ground)
+      ? colorPlan.depthOrder
       : []
     for (const c of cells) {
       if (c.treatment !== 'mosaic') continue
@@ -249,10 +257,14 @@ export function renderLab(
           )
           const sample = Math.max(0, Math.min(
             0.999999,
-            0.5
-              + (mass - 0.5) * 1.75
-              + (planSample?.wave ?? 0) * 0.18
-              + (c.t - 0.5) * 0.14,
+            pixelColors.length > 0
+              ? c.t * 0.92 - 0.18
+                + (mass - 0.5) * 0.16
+                + (planSample?.wave ?? 0) * 0.05
+              : 0.5
+                + (mass - 0.5) * 1.75
+                + (planSample?.wave ?? 0) * 0.18
+                + (c.t - 0.5) * 0.14,
           ))
           const colorIndex = pixelColors.length > 0
             ? pixelColors[
@@ -407,61 +419,37 @@ export function renderLab(
   // SHINGLE — per-cell linear gradients between palette neighbors,
   // direction alternating in a weave, leaned by the flow angle
   if (cells.some((c) => c.treatment === 'shingle')) {
-    let renderedCurveWeave = false
-    if (lab.look?.id === 'weave') {
-      const curveSource = lab.territory.sources.find(
-        (source) => source.kind === 'curve' && source.enabled && source.curve,
-      )
-      const curve = curveSource?.curve
-        ? sampleCurve(
-            {
-              ...curveSource.curve,
-              sampleDensity: 128,
-              curve: curveSource.curve.curve,
-            },
-            outW,
-            outH,
-            360,
+    const fills = buildShingleFills({
+      cells,
+      paletteSize: K,
+      seed: lab.seed,
+      lean: 0,
+      colorPlan,
+    })
+    for (const f of fills) {
+      const { cell } = f
+      const cx = cell.x + cell.size / 2
+      const cy = cell.y + cell.size / 2
+      const dx = (Math.cos(f.angle) * cell.size) / 2
+      const dy = (Math.sin(f.angle) * cell.size) / 2
+      const g = ctx.createLinearGradient(cx - dx, cy - dy, cx + dx, cy + dy)
+      // a full-range light-to-ink gradient reads as beveled satin, not
+      // woven cloth — compress high-contrast pairs toward their midpoint
+      const contrast = colorPlan
+        ? Math.abs(
+            (colorPlan.swatches[f.a]?.lightness ?? 0.5)
+            - (colorPlan.swatches[f.b]?.lightness ?? 0.5),
           )
-        : []
-      if (curve.length > 1) {
-        renderWeave(ctx, {
-          width: outW,
-          height: outH,
-          seed: lab.seed,
-          palette,
-          colorPlan,
-          curve,
-          complexity: lab.look.complexity ?? 0.5,
-          motionPhase: lab.motion.frame?.phase ?? 0,
-          motionAmount: lab.motion.amount,
-        })
-        renderedCurveWeave = true
-      }
-    }
-    if (!renderedCurveWeave) {
-      // Source-aware processing has no fixed curve. Fall back to a woven
-      // cell field driven by the captured frame instead of drawing a ghost
-      // Meta curve over the material.
-      const fills = buildShingleFills({
-        cells,
-        paletteSize: K,
-        seed: lab.seed,
-        lean: 0,
-        colorPlan,
-      })
-      for (const f of fills) {
-        const { cell } = f
-        const cx = cell.x + cell.size / 2
-        const cy = cell.y + cell.size / 2
-        const dx = (Math.cos(f.angle) * cell.size) / 2
-        const dy = (Math.sin(f.angle) * cell.size) / 2
-        const g = ctx.createLinearGradient(cx - dx, cy - dy, cx + dx, cy + dy)
+        : 0
+      if (contrast > 0.18) {
+        g.addColorStop(0, mixHexColors(palette[f.a], palette[f.b], 0.28))
+        g.addColorStop(1, mixHexColors(palette[f.a], palette[f.b], 0.72))
+      } else {
         g.addColorStop(0, palette[f.a])
         g.addColorStop(1, palette[f.b])
-        ctx.fillStyle = g
-        ctx.fillRect(cell.x, cell.y, cell.size + 0.35, cell.size + 0.35)
       }
+      ctx.fillStyle = g
+      ctx.fillRect(cell.x, cell.y, cell.size + 0.35, cell.size + 0.35)
     }
   }
 
@@ -497,6 +485,10 @@ export function renderLab(
   if (lab.look?.id === 'frame') {
     const grid = territoryGrid(T, outW, outH, 160)
     const levels = 10 + Math.round((lab.look.complexity ?? 0.5) * 10)
+    // ground-colored rings would vanish into the paper they band
+    const ringColors = colorPlan
+      ? colorPlan.depthOrder.filter((index) => index !== colorPlan.roles.ground)
+      : []
     ctx.save()
     ctx.lineJoin = 'round'
     ctx.lineCap = 'round'
@@ -505,8 +497,8 @@ export function renderLab(
       const pathData = contourAtLevel(grid, level)
       if (!pathData) continue
       const path = new Path2D(pathData)
-      const paletteIndex = colorPlan
-        ? colorPlan.depthOrder[index % colorPlan.depthOrder.length]
+      const paletteIndex = ringColors.length > 0
+        ? ringColors[index % ringColors.length]
         : index % palette.length
       ctx.globalAlpha = index % 4 === 0 ? 0.92 : 0.56
       ctx.lineWidth = index % 4 === 0 ? 2.2 : 0.85
@@ -539,7 +531,7 @@ export function renderLab(
   if (scanCells.length) {
     const complexity = Math.max(0, Math.min(1, lab.look?.complexity ?? 0.5))
     const minDim = Math.min(outW, outH)
-    const spacing = Math.max(4, minDim * (0.018 - complexity * 0.0095))
+    const spacing = Math.max(4, minDim * (0.024 - complexity * 0.015))
     const sampleStep = Math.max(2, outW / 360)
     const motionPhase = ((lab.motion.frame?.phase ?? 0) % 1 + 1) % 1
     const motion = Math.max(0, Math.min(1, lab.motion.amount))
@@ -558,10 +550,10 @@ export function renderLab(
       ctx.moveTo(0, y)
       ctx.lineTo(outW, y)
       ctx.strokeStyle = hasPalette
-        ? dealPalette(outW * 0.5, y, 'lab.scan.ground')
+        ? dealInkPalette(outW * 0.5, y, 'lab.scan.ground')
         : ink
       ctx.lineWidth = baseWidth * (accented ? 1.08 : 0.72)
-      ctx.globalAlpha = accented ? 0.14 : 0.075
+      ctx.globalAlpha = accented ? 0.2 : 0.11
       ctx.stroke()
 
       let segment: Path2D | null = null
@@ -574,15 +566,16 @@ export function renderLab(
           return
         }
         const anchorX = (segmentStart + endX) / 2
-        const scanPulse = 0.82 + Math.sin(
+        // neutral at rest: the pulse only dims while motion breathes
+        const scanPulse = 1 + (Math.sin(
           y / Math.max(1, outH) * Math.PI * 6
           + motionPhase * Math.PI * 2,
-        ) * 0.18 * motion
+        ) - 1) * 0.18 * motion
         ctx.strokeStyle = hasPalette
-          ? dealPalette(anchorX, y, 'lab.scan.subject')
+          ? dealInkPalette(anchorX, y, 'lab.scan.subject')
           : ink
         ctx.lineWidth = baseWidth * (1.2 + peak * 1.15 + (accented ? 0.2 : 0))
-        ctx.globalAlpha = Math.min(0.96, (0.56 + peak * 0.36) * scanPulse)
+        ctx.globalAlpha = Math.min(0.96, (0.62 + peak * 0.34) * scanPulse)
         ctx.stroke(segment)
         segment = null
         peak = 0
@@ -628,16 +621,16 @@ export function renderLab(
     })
     // each stream takes a palette color where it starts — the walker
     // carries it, so neighbouring seeds make colored braids
-    const streamWidth = Math.max(0.65, Math.min(outW, outH) * 0.00105)
-    const widthScales = [0.72, 1.14, 1.9] as const
+    const streamWidth = Math.max(0.9, Math.min(outW, outH) * 0.0013)
+    const widthScales = [0.85, 1.25, 1.95] as const
     for (const stream of streams) {
       const pts = stream.points
       const rhythm = lab.composition?.rhythm
       const accented = rhythm?.pattern[stream.id % rhythm.steps] ?? (stream.id % 7 === 0)
       ctx.lineWidth = streamWidth * widthScales[stream.widthClass] * (accented ? 1.25 : 1)
-      ctx.globalAlpha = Math.min(0.94, (stream.alphaClass ? 0.76 : 0.54) + (accented ? 0.14 : 0))
+      ctx.globalAlpha = Math.min(0.94, (stream.alphaClass ? 0.86 : 0.68) + (accented ? 0.08 : 0))
       ctx.strokeStyle = hasPalette
-        ? dealPalette(stream.seedX, stream.seedY, 'lab.stream.pal')
+        ? dealInkPalette(stream.seedX, stream.seedY, 'lab.stream.pal')
         : ink
       strokePolyline(ctx, pts)
     }
@@ -654,6 +647,7 @@ export function renderLab(
       field: vector,
       occupancy: lab.mark.occupancy,
       complexity: lab.look?.complexity ?? 0.5,
+      minDim: Math.min(outW, outH),
     })
     const mode = lab.mark.colorMode
     ctx.lineCap = 'round'
@@ -664,9 +658,9 @@ export function renderLab(
       else if (mode === 'source' && maps) {
         const [r, g, b] = sampleRGB(maps, d.mx, d.my)
         stroke = `rgb(${r} ${g} ${b})`
-      } else if (mode === 'palette') stroke = dealPalette(d.pts[0], d.pts[1], 'lab.dab.pal')
+      } else if (mode === 'palette') stroke = dealInkPalette(d.pts[0], d.pts[1], 'lab.dab.pal')
       ctx.strokeStyle = stroke
-      ctx.globalAlpha = alpha * (0.12 + d.pressure * 0.12)
+      ctx.globalAlpha = alpha * (0.05 + d.pressure * 0.05)
       ctx.lineWidth = d.width * 1.65
       strokePolyline(ctx, d.pts)
       ctx.globalAlpha = alpha * (0.58 + d.pressure * 0.34)
@@ -712,7 +706,7 @@ export function renderLab(
           && s.hierarchy > 0.82
           && colorPlan?.roles.accent != null
           ? palette[colorPlan.roles.accent]
-          : dealPalette(s.x, s.y, 'lab.mark.pal')
+          : dealInkPalette(s.x, s.y, 'lab.mark.pal')
       }
       if (lab.mark.bank !== 'brand') {
         alpha *= 0.54 + s.hierarchy * 0.46
@@ -831,146 +825,14 @@ export function renderLabArtwork(
   ctx.restore()
 }
 
-function renderWeave(
-  ctx: CanvasRenderingContext2D,
-  options: {
-    width: number
-    height: number
-    seed: number
-    palette: string[]
-    colorPlan: LabState['colors']['plan']
-    curve: readonly { x: number; y: number; angle: number }[]
-    complexity: number
-    motionPhase: number
-    motionAmount: number
-  },
-): void {
-  const {
-    width,
-    height,
-    seed,
-    palette,
-    colorPlan,
-    curve,
-    complexity,
-    motionPhase,
-    motionAmount,
-  } = options
-  if (curve.length < 2) return
-  const c = Math.max(0, Math.min(1, complexity))
-  const minDim = Math.min(width, height)
-  const strandCount = 3 + Math.round(c * 2)
-  const bandWidth = minDim * (0.115 + c * 0.035)
-  const threadWidth = Math.max(1.25, bandWidth / (strandCount * 2.25))
-  const groundIndex = colorPlan?.roles.ground ?? 0
-  const phase = (((motionPhase % 1) + 1) % 1) * Math.PI * 2
-  const motion = Math.max(0, Math.min(1, motionAmount))
-  const visibleColors = colorPlan?.depthOrder.filter((index) => index !== groundIndex) ?? []
-  const strandColors = Array.from({ length: strandCount }, (_, index) => {
-    if (!colorPlan) return index % palette.length
-    return visibleColors[index % Math.max(1, Math.min(visibleColors.length, 3))]
-      ?? colorPlan.roles.dominant
-  })
-  const cycles = 8 + Math.round(c * 8)
-  const seededPhase = chan(seed, 0, 'lab.weave.phase') * Math.PI * 2
-  const strandPoints = Array.from({ length: strandCount }, (_, strand) => {
-    const strandPhase = seededPhase + strand / strandCount * Math.PI * 2
-    return curve.map((point, index) => {
-      const progress = index / Math.max(1, curve.length - 1)
-      const braidPhase = progress * Math.PI * 2 * cycles
-        + strandPhase
-        + phase * motion
-      const offset = (
-        Math.sin(braidPhase) * 0.28
-        + Math.sin(braidPhase * 2 + strandPhase) * 0.045
-      ) * bandWidth
-      return {
-        x: point.x - Math.sin(point.angle) * offset,
-        y: point.y + Math.cos(point.angle) * offset,
-        depth: Math.cos(braidPhase),
-      }
-    })
-  })
-  const buildPath = (strand: number, start = 0, end = curve.length - 1): Path2D => {
-    const path = new Path2D()
-    for (let index = start; index <= end; index += 1) {
-      const point = strandPoints[strand][index]
-      if (index === start) path.moveTo(point.x, point.y)
-      else path.lineTo(point.x, point.y)
-    }
-    return path
-  }
-
-  ctx.save()
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-  for (let strand = 0; strand < strandCount; strand += 1) {
-    const path = buildPath(strand)
-    ctx.strokeStyle = palette[strandColors[strand]]
-    ctx.lineWidth = threadWidth
-    ctx.globalAlpha = 0.92
-    ctx.stroke(path)
-  }
-
-  // Redraw only the forward-facing portions with a narrow knockout. This
-  // creates a real alternating braid without filling the symbol or adding
-  // transverse straps.
-  for (let strand = 0; strand < strandCount; strand += 1) {
-    const points = strandPoints[strand]
-    let runStart = -1
-    for (let index = 0; index <= points.length; index += 1) {
-      const isOver = index < points.length && points[index].depth > 0.56
-      if (isOver && runStart < 0) runStart = Math.max(0, index - 1)
-      if ((!isOver || index === points.length) && runStart >= 0) {
-        const runEnd = Math.min(points.length - 1, index)
-        const path = buildPath(strand, runStart, runEnd)
-        ctx.strokeStyle = palette[groundIndex]
-        ctx.lineWidth = threadWidth * 1.34
-        ctx.globalAlpha = 1
-        ctx.stroke(path)
-        ctx.strokeStyle = palette[strandColors[strand]]
-        ctx.lineWidth = threadWidth
-        ctx.stroke(path)
-        runStart = -1
-      }
-    }
-  }
-
-  // Resolve the symbol's self-intersection as one deliberate overpass.
-  const centerX = width / 2
-  const centerY = height / 2
-  let crossingIndex = Math.floor(curve.length / 2)
-  let crossingDistance = Number.POSITIVE_INFINITY
-  for (let index = Math.floor(curve.length * 0.12); index < curve.length * 0.88; index += 1) {
-    const dx = curve[index].x - centerX
-    const dy = curve[index].y - centerY
-    const distance = dx * dx + dy * dy
-    if (distance < crossingDistance) {
-      crossingDistance = distance
-      crossingIndex = index
-    }
-  }
-  const crossingSpan = Math.max(4, Math.round(curve.length * 0.018))
-  const crossingStart = Math.max(0, crossingIndex - crossingSpan)
-  const crossingEnd = Math.min(curve.length - 1, crossingIndex + crossingSpan)
-  const crossingPath = new Path2D()
-  for (let index = crossingStart; index <= crossingEnd; index += 1) {
-    const point = curve[index]
-    if (index === crossingStart) crossingPath.moveTo(point.x, point.y)
-    else crossingPath.lineTo(point.x, point.y)
-  }
-  ctx.strokeStyle = palette[groundIndex]
-  ctx.lineWidth = bandWidth * 0.64
-  ctx.globalAlpha = 1
-  ctx.lineCap = 'butt'
-  ctx.stroke(crossingPath)
-  ctx.lineCap = 'round'
-  for (let strand = 0; strand < strandCount; strand += 1) {
-    ctx.strokeStyle = palette[strandColors[strand]]
-    ctx.lineWidth = threadWidth
-    ctx.stroke(buildPath(strand, crossingStart, crossingEnd))
-  }
-  ctx.restore()
+function mixHexColors(a: string, b: string, amount: number): string {
+  const [ar, ag, ab] = hexToRgb(a)
+  const [br, bg, bb] = hexToRgb(b)
+  return rgbCss([
+    ar + (br - ar) * amount,
+    ag + (bg - ag) * amount,
+    ab + (bb - ab) * amount,
+  ])
 }
 
 function strokePolyline(ctx: CanvasRenderingContext2D, pts: number[]): void {
@@ -1093,7 +955,9 @@ function curveAngleFor(lab: LabState, outW: number, outH: number) {
   const key = `${JSON.stringify(src.curve)}|${outW}x${outH}`
   return cached(flowCache, key, () => {
     const samples = sampleCurve({ ...src.curve!, sampleDensity: 96, curve: src.curve!.curve }, outW, outH, 200)
-    return curveFlowField(samples, outW, outH)
+    // a finer lattice keeps tangents coherent through the crossover,
+    // where nearest-point tangents on a coarse grid shear into a shelf
+    return curveFlowField(samples, outW, outH, 128)
   })
 }
 

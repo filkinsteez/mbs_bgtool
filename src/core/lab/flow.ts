@@ -395,13 +395,20 @@ export function buildDabs(opts: {
   field: VectorField
   occupancy: number
   complexity?: number
+  minDim?: number
 }): Dab[] {
   const { cells, maps, rect, seed, field, occupancy, complexity = 0.5 } = opts
+  const minDim = opts.minDim ?? Math.min(rect.w, rect.h)
   const out: Dab[] = []
   for (const cell of cells) {
     if (cell.treatment !== 'dabs') continue
     const id = cellId(cell.level, cell.ix, cell.iy)
-    const n = Math.max(1, Math.round(occupancy * (1.25 + complexity * 0.75)))
+    // dab geometry is canvas-scaled, not cell-scaled: coarse cells deal
+    // MORE small dabs instead of inflating each stroke into a long dash,
+    // so coverage — not stroke size — is what the cell pitch controls
+    const stroke = Math.min(cell.size, minDim * 0.012)
+    const density = Math.max(1, Math.min(4, Math.pow(cell.size / stroke, 1.5)))
+    const n = Math.max(1, Math.round(occupancy * (1.25 + complexity * 0.75) * density))
     for (let k = 0; k < n; k++) {
       const x0 = cell.x + chan(seed, id, `lab.dab.x${k}`) * cell.size
       const y0 = cell.y + chan(seed, id, `lab.dab.y${k}`) * cell.size
@@ -415,8 +422,9 @@ export function buildDabs(opts: {
         inSrc && maps
           ? (1 - sampleMap(maps.lum, maps.w, maps.h, mx, my)) * a + cell.t * (1 - a)
           : cell.t
-      // presence follows tone so dab density carries the image
-      if (chan(seed, id, `lab.dab.cull${k}`) > 0.15 + tone * 0.85) continue
+      // presence follows tone steeply, so the far field stays sparse and
+      // the subject accumulates as real coverage
+      if (chan(seed, id, `lab.dab.cull${k}`) > 0.05 + Math.pow(tone, 1.4) * 0.95) continue
       const seedAngle = chan(seed, id, `lab.dab.a${k}`) * Math.PI * 2
       const pressure = 0.62 + chan(seed, id, `lab.dab.pressure${k}`) * 0.38
       const dry = chan(seed, id, `lab.dab.dry${k}`)
@@ -426,7 +434,7 @@ export function buildDabs(opts: {
         x0,
         y0,
         steps,
-        cell.size * (0.12 + chan(seed, id, `lab.dab.length${k}`) * 0.08),
+        stroke * (0.12 + chan(seed, id, `lab.dab.length${k}`) * 0.08),
         [Math.cos(seedAngle), Math.sin(seedAngle)],
       )
       out.push({
@@ -434,7 +442,7 @@ export function buildDabs(opts: {
         tone,
         mx,
         my,
-        width: Math.max(1, cell.size * (0.1 + tone * 0.15) * pressure),
+        width: Math.max(1, stroke * (0.1 + tone * 0.15) * pressure),
         pressure,
         dry,
       })
@@ -472,7 +480,7 @@ export function buildStreams(opts: {
   const normalizedStep = 0.004
   const stepLen = Math.max(1, minDim * normalizedStep)
   const baseSteps = Math.round((0.12 + complexity * 0.14) / normalizedStep)
-  const separation = minDim * (0.046 + (0.018 - 0.046) * complexity)
+  const separation = minDim * (0.038 + (0.018 - 0.038) * complexity)
   const gridSize = separation / Math.SQRT2
   const cols = Math.max(1, Math.ceil(outW / gridSize))
   const rows = Math.max(1, Math.ceil(outH / gridSize))
@@ -494,7 +502,7 @@ export function buildStreams(opts: {
   }
 
   const aspectArea = (outW * outH) / Math.max(1, minDim * minDim)
-  const target = Math.min(900, Math.round(aspectArea * (90 + complexity * 420)))
+  const target = Math.min(900, Math.round(aspectArea * (150 + complexity * 380)))
   const acceptedX: number[] = []
   const acceptedY: number[] = []
   const acceptedIds: number[] = []

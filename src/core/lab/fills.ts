@@ -61,8 +61,14 @@ export function buildBlockFills(opts: {
     const id = cellId(cell.level, cell.ix, cell.iy)
     const cx = cell.x + cell.size / 2
     const cy = cell.y + cell.size / 2
-    // stretched region lattice: wider than tall, so blocks run in bands
-    const r = regionValue(seed, cx * 0.55, cy, cell.size * 2.6, 'lab.block')
+    // stretched region lattice: wider than tall, so blocks run in bands.
+    // With a plan the deal leans by territory — ink gathers toward the
+    // symbol core, ground-colored blocks open up at the fringe — so the
+    // quilt reads the composition instead of pure noise.
+    const raw = regionValue(seed, cx * 0.55, cy, cell.size * 2.6, 'lab.block')
+    const r = colorPlan
+      ? Math.max(0, Math.min(1, raw + (1 - cell.t) * 0.5 - 0.28))
+      : raw
     const color = colorPlan
       ? weightedColorIndex(colorPlan, r)
       : Math.min(paletteSize - 1, Math.floor(r * paletteSize))
@@ -155,13 +161,15 @@ export function buildShingleFills(opts: {
     if (cell.treatment !== 'shingle') continue
     const cx = cell.x + cell.size / 2
     const cy = cell.y + cell.size / 2
-    // one palette pair per broad region so areas read as one material
+    // one palette pair per broad region so areas read as one material —
+    // the partner deals from the same region lattice, so neighbors hold
+    // one consistent weave instead of per-cell confetti
     const r = regionValue(seed, cx, cy, cell.size * 3.2, 'lab.shingle')
     const a = colorPlan
       ? weightedColorIndex(colorPlan, r)
       : Math.min(paletteSize - 1, Math.floor(r * paletteSize))
     const b = colorPlan
-      ? distinctColorIndex(colorPlan, a, chan(seed, cellId(cell.level, cell.ix, cell.iy), 'lab.shingle.pair'))
+      ? distinctColorIndex(colorPlan, a, regionValue(seed, cx, cy, cell.size * 3.2, 'lab.shingle.pair'))
       : (a + 1) % Math.max(1, paletteSize)
     // alternate direction by row parity, flip some columns for weave
     const flip = (cell.iy & 1) === 1 !== ((cell.ix & 3) === 3)

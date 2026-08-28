@@ -128,7 +128,7 @@ describe('background recipe', () => {
       packId: 'custom',
       mix,
       ink: '#0288F9',
-      ground: '#24D366',
+      ground: '#F4F2ED',
     })
   })
 
@@ -228,8 +228,8 @@ describe('background recipe', () => {
       (item) => item.kind === 'curve',
     )
     expect(source?.curve).toMatchObject({
-      amplitudeX: 1,
-      amplitudeY: 1,
+      amplitudeX: 0.78,
+      amplitudeY: 0.78,
       offsetX: 0,
       offsetY: 0,
       rotation: 0,

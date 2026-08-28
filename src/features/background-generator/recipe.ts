@@ -1,5 +1,6 @@
 import type { LookId } from '@/core/lab/looks'
 import { LOOKS, lookComplexityPatch, lookPatchFor } from '@/core/lab/looks'
+import { PAPER } from '@/core/state/defaults'
 import { createDefaultLab } from '@/core/lab/recipe'
 import type { LabState } from '@/core/lab/types'
 import { constrainArtworkToCanvas } from '@/core/lab/artworkTransform'
@@ -17,7 +18,7 @@ import {
 } from './palette/registry'
 
 export const BACKGROUND_RECIPE_VERSION = 2
-export const BACKGROUND_RENDER_REVISION = 1
+export const BACKGROUND_RENDER_REVISION = 2
 export const BACKGROUND_AUTOSAVE_KEY = 'mbs-bg-generator-autosave-v2'
 export const LEGACY_BACKGROUND_AUTOSAVE_KEY = 'mbs-bg-generator-autosave-v1'
 
@@ -53,7 +54,7 @@ export type BackgroundFormat = {
 
 export type BackgroundRecipeV2 = {
   version: 2
-  renderRevision: 1
+  renderRevision: 2
   mode: GeneratorMode
   seed: number
   format: BackgroundFormat
@@ -122,6 +123,14 @@ const ASPECTS: Record<FixedAspectId, readonly [number, number]> = {
 }
 
 const EXPORT_LONG_EDGE = 3840
+
+// The reference sheet was judged on the lab's warm paper: generated
+// backgrounds default to texture-on-paper, never ink-on-ink.
+export const DEFAULT_GROUND = PAPER.toUpperCase()
+
+// The symbol keeps breathing room inside the artboard; framing presets
+// (oversized, left, right, crossover) supply the deliberate crops.
+const SYMBOL_AMPLITUDE = 0.78
 
 type FramingTransform = Omit<SubjectTransform, 'preset' | 'rotation'>
 
@@ -216,7 +225,7 @@ export function createDefaultBackgroundRecipe(seed = 1913): BackgroundRecipeV2 {
     palette: {
       packId: pack.id,
       mix,
-      ground: mix.filter((item) => item.enabled).at(-1)?.color ?? META_BLUE,
+      ground: DEFAULT_GROUND,
       ink: mix.find((item) => item.enabled)?.color ?? META_BLUE,
     },
     transforms: {
@@ -302,10 +311,7 @@ export function deserializeBackgroundRecipe(json: string): BackgroundRecipeV2 | 
     })
     recipe.materialLookOverlay.enabled = recipe.materialLookOverlay.enabled === true
     const weightedPalette = buildWeightedPalette(recipe.palette.mix, 100)
-    recipe.palette.ground = normalizeHexColor(
-      rawPalette?.ground,
-      weightedPalette.at(-1) ?? META_BLUE,
-    )
+    recipe.palette.ground = normalizeHexColor(rawPalette?.ground, DEFAULT_GROUND)
     recipe.palette.ink = normalizeHexColor(
       rawPalette?.ink,
       weightedPalette[0] ?? META_BLUE,
@@ -439,10 +445,18 @@ export function backgroundRecipeToLab(
         source.id === curve?.id && source.curve
           ? {
               ...source,
+              // The symbol IS the composition: full weight commits its
+              // interior to the top band instead of leaving it straddling
+              // a band boundary (the editor's 0.8 leaves headroom for a
+              // photo's tone source that generated backgrounds don't have).
+              weight: 1,
+              // Pixels reads as the reference's soft quantized gradient —
+              // it needs a wide falloff halo around the silhouette.
+              softness: recipe.look.id === 'pixels' ? 0.8 : source.softness,
               curve: {
                 ...source.curve,
-                amplitudeX: 1,
-                amplitudeY: 1,
+                amplitudeX: SYMBOL_AMPLITUDE,
+                amplitudeY: SYMBOL_AMPLITUDE,
                 offsetX: 0,
                 offsetY: 0,
                 rotation: 0,

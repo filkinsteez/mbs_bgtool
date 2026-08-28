@@ -29,7 +29,9 @@ export const LOOKS: Look[] = [
     id: 'frame',
     label: 'Frame',
     patch: {
-      territory: { bands: ['quiet', 'blocks', 'blocks', 'quiet'], boundary: 'hard' },
+      // blocks carry the symbol body; the territory lean inside
+      // buildBlockFills keeps paper breathing through the mosaic
+      territory: { bands: ['quiet', 'blocks', 'blocks', 'blocks'], boundary: 'hard' },
       structure: { baseCell: 30, maxLevels: 1, subdivide: 0.46 },
       finish: { grain: 0.08 },
       sourceVisibility: 0,
@@ -61,7 +63,7 @@ export const LOOKS: Look[] = [
     label: 'Streams',
     patch: {
       territory: { bands: ['quiet', 'streams', 'streams', 'streams'], boundary: 'porous' },
-      flow: { basis: 'curve', curl: 0.22, scale: 0.58 },
+      flow: { basis: 'curve', curl: 0.22, scale: 0.42 },
       finish: { grain: 0.1 },
       sourceVisibility: 0,
     },
@@ -74,7 +76,7 @@ export const LOOKS: Look[] = [
       structure: { baseCell: 26, maxLevels: 2, subdivide: 0.68 },
       mark: { colorMode: 'palette', occupancy: 1 },
       flow: { basis: 'curve', curl: 0.5, scale: 0.35 },
-      finish: { grain: 0.18 },
+      finish: { grain: 0.12 },
       sourceVisibility: 0,
     },
   },
@@ -104,7 +106,7 @@ export const LOOKS: Look[] = [
     patch: {
       territory: { bands: ['quiet', 'shingle', 'shingle', 'shingle'], boundary: 'dither' },
       structure: { baseCell: 84, maxLevels: 1, subdivide: 0.42 },
-      finish: { grain: 0.05 },
+      finish: { grain: 0.14 },
       sourceVisibility: 0,
     },
   },
@@ -146,7 +148,7 @@ type ComplexityProfile = {
 
 const COMPLEXITY_PROFILES: Record<LookId, ComplexityProfile> = {
   frame: { coarseCell: 76, fineCell: 22, levels: [0, 1, 1], subdivide: [0.24, 0.62] },
-  pixels: { coarseCell: 98, fineCell: 18, levels: [1, 2, 2], subdivide: [0.38, 0.9] },
+  pixels: { coarseCell: 98, fineCell: 28, levels: [1, 1, 2], subdivide: [0.38, 0.9] },
   scanlines: {
     coarseCell: 52,
     fineCell: 12,
@@ -160,23 +162,29 @@ const COMPLEXITY_PROFILES: Record<LookId, ComplexityProfile> = {
     fineCell: 20,
     levels: [0, 0, 0],
     subdivide: [0, 0],
-    curl: [0.08, 0.42],
+    // beyond ~0.3 the curl overwhelms the curve basis and the hatching
+    // collapses into fingerprint whorls with visible spiral centers
+    curl: [0.08, 0.28],
   },
   brushwork: {
-    coarseCell: 86,
+    // dense enough to read as stippling even at the calm end — sparse
+    // large dabs on paper read as noise, not brushwork
+    coarseCell: 44,
     fineCell: 18,
-    levels: [0, 1, 2],
+    levels: [0, 1, 1],
     subdivide: [0.28, 0.78],
-    occupancy: [0.48, 1],
-    curl: [0.18, 0.78],
+    occupancy: [0.72, 1],
+    curl: [0.12, 0.4],
   },
   beads: { coarseCell: 82, fineCell: 18, levels: [0, 0, 0], subdivide: [0, 0] },
-  quilt: { coarseCell: 148, fineCell: 28, levels: [0, 1, 2], subdivide: [0.22, 0.72] },
-  weave: { coarseCell: 116, fineCell: 24, levels: [0, 0, 1], subdivide: [0, 0.4] },
+  quilt: { coarseCell: 96, fineCell: 40, levels: [0, 1, 2], subdivide: [0.22, 0.72] },
+  weave: { coarseCell: 116, fineCell: 32, levels: [0, 0, 1], subdivide: [0, 0.4] },
   marks: {
     coarseCell: 44,
-    fineCell: 12,
-    levels: [1, 2, 2],
+    fineCell: 14,
+    // two subdivision levels grind sourceless marks into sub-pixel dust;
+    // one level keeps every stamp legible at export scale
+    levels: [0, 1, 1],
     subdivide: [0.3, 0.8],
     occupancy: [0.72, 0.98],
   },
@@ -238,7 +246,9 @@ export function lookComplexityPatch(lookId: LookId, value: number): LabPatch {
 
 // Generated backgrounds are full-frame artwork. Photo zones become palette
 // mosaics and sparse zones become solid quiet space rather than accidental
-// transparency that reveals the editor behind the canvas.
+// transparency that reveals the editor behind the canvas. Marks is the
+// exception: a solid mosaic core would read as a blob inside its speckle
+// grammar, so its photo zone densifies into marks instead.
 export function lookPatchFor(look: Look, hasSource: boolean): LabPatch {
   if (hasSource) return look.patch
   const bands = look.patch.territory?.bands
@@ -248,7 +258,7 @@ export function lookPatchFor(look: Look, hasSource: boolean): LabPatch {
     territory: {
       ...look.patch.territory,
       bands: bands.map((band) => {
-        if (band === 'photo') return 'mosaic'
+        if (band === 'photo') return look.id === 'marks' ? 'marks' : 'mosaic'
         if (band === 'empty') return 'quiet'
         return band
       }),
