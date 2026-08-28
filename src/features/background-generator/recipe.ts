@@ -450,9 +450,14 @@ export function backgroundRecipeToLab(
               // a band boundary (the editor's 0.8 leaves headroom for a
               // photo's tone source that generated backgrounds don't have).
               weight: 1,
-              // Pixels reads as the reference's soft quantized gradient —
-              // it needs a wide falloff halo around the silhouette.
-              softness: recipe.look.id === 'pixels' ? 0.8 : source.softness,
+              // Pixels reads as the reference's soft quantized gradient and
+              // Marks wants a graded stipple halo — both need a wider
+              // falloff around the silhouette than the editor default.
+              softness: recipe.look.id === 'pixels'
+                ? 0.8
+                : recipe.look.id === 'marks'
+                  ? 0.7
+                  : source.softness,
               curve: {
                 ...source.curve,
                 amplitudeX: SYMBOL_AMPLITUDE,

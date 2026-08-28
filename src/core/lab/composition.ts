@@ -172,14 +172,16 @@ export function buildCellMarks(opts: {
     const mx = maps ? u * maps.w - 0.5 : 0
     const my = maps ? v * maps.h - 0.5 : 0
 
+    const coh = region(x, y)
     // outside the fitted source (or with no source at all) there is
     // still territory — marks fall back to the territory value as their
-    // tone so the curve can carry composition beyond the photo's edge
+    // tone, shaded by the coherence field so a flat territory interior
+    // still breathes instead of stamping one uniform size everywhere
     const a = inSource && maps ? sampleMap(maps.alpha, maps.w, maps.h, mx, my) : 0
     const tone =
       inSource && maps
         ? (1 - sampleMap(maps.lum, maps.w, maps.h, mx, my)) * a + cell.t * (1 - a)
-        : cell.t
+        : cell.t * (0.6 + coh * 0.4)
     const edge = inSource && maps ? sampleMap(maps.edge, maps.w, maps.h, mx, my) : 0
     const detail = inSource && maps ? sampleMap(maps.detailFine, maps.w, maps.h, mx, my) : 0
     const structure = Math.min(1, edge * 0.7 + detail * 0.65)
@@ -203,7 +205,6 @@ export function buildCellMarks(opts: {
       : planSample?.pulse
         ? 0.58
         : 0.24 + chan(seed, id, 'lab.mark.hierarchy') * 0.16
-    const coh = region(x, y)
     let protoIndex = 0
     if (bankSize > 1) {
       const shift = (coh - 0.5) * 0.55 * (bankSize - 1)
@@ -238,7 +239,23 @@ export function buildCellMarks(opts: {
     }
     const rot = p.rotationInfluence * 0.5 * Math.atan2(vy, vx)
 
-    out.push({ x, y, size, rot: rot || 0, protoIndex, tone, mx, my, hierarchy })
+    // Sourceless marks have no image evidence pinning them to the grid —
+    // seeded sub-cell drift breaks the punch-card read. With a source the
+    // stamp stays put so it keeps reporting the pixels it sampled.
+    const jitterX = maps ? 0 : (chan(seed, id, 'lab.mark.jx') - 0.5) * cell.size * 0.4
+    const jitterY = maps ? 0 : (chan(seed, id, 'lab.mark.jy') - 0.5) * cell.size * 0.4
+
+    out.push({
+      x: x + jitterX,
+      y: y + jitterY,
+      size,
+      rot: rot || 0,
+      protoIndex,
+      tone,
+      mx,
+      my,
+      hierarchy,
+    })
   }
   return out
 }

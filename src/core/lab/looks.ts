@@ -194,8 +194,10 @@ const COMPLEXITY_PROFILES: Record<LookId, ComplexityProfile> = {
     levels: [1, 1, 1],
     subdivide: [0.35, 0.56],
     occupancy: [0.68, 0.94],
-    curl: [0.38, 0.52],
-    echo: [6, 9],
+    // near-linear runs, short comets: heavy curl and long echo chains
+    // turn the trail grammar into swirling smoke
+    curl: [0.1, 0.28],
+    echo: [3, 6],
   },
 }
 
