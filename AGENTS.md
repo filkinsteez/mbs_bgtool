@@ -9,3 +9,13 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - The symbol must use the official canonical Meta geometry from `META_SYMBOL_PATH` exactly.
 - Never mirror, rotate, approximate, redraw, or substitute the symbol.
 - Orientation must match the real Meta logo at every stage (sampling, SDF bake, shader mapping, 2D, 3D, preview, export).
+
+## This is a RASTER tool (owner directive)
+
+- This is a raster graphics background creator. There is no need for
+  vector/SVG output, vector-crisp purity, or designs constrained to
+  vector-friendly primitives — do not bake that in.
+- Per-pixel and per-cell raster effects (dithers, grain, halftones,
+  pixel textures) are the native medium and are preferred.
+- The canonical Meta geometry above is still the source of FORM; render
+  it however raster techniques serve the look.
