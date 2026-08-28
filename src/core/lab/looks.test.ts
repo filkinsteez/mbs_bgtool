@@ -105,16 +105,16 @@ describe('approved looks', () => {
     })
   })
 
-  it('uses the original V1 detail-to-cell mapping without changing other controls', () => {
+  it('keeps the V1 cell range but runs it in Complexity direction', () => {
     for (const look of LOOKS) {
       expect(lookComplexityPatch(look.id, 0, 'v1')).toEqual({
-        structure: { baseCell: 16 },
+        structure: { baseCell: 88 },
       })
       expect(lookComplexityPatch(look.id, 0.5, 'v1')).toEqual({
         structure: { baseCell: 52 },
       })
       expect(lookComplexityPatch(look.id, 1, 'v1')).toEqual({
-        structure: { baseCell: 88 },
+        structure: { baseCell: 16 },
       })
     }
   })

@@ -86,9 +86,13 @@ export function v1LookPatchFor(look: Look, hasSource: boolean): LabPatch {
 }
 
 export function v1DetailPatch(detail: number): LabPatch {
+  // 67f7e1's slider meant CELL SIZE, so its raw mapping runs backwards
+  // under the Complexity label: up made the picture coarser. Same 16-88px
+  // range and the same 52px midpoint, inverted so up means finer — a
+  // recipe saved at 50% renders identically.
   return {
     structure: {
-      baseCell: Math.round(16 + detail * 72),
+      baseCell: Math.round(16 + (1 - detail) * 72),
     },
   }
 }
