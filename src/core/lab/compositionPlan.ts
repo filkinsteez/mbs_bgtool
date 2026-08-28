@@ -191,6 +191,7 @@ export function resolveCompositionPlan(input: {
   lookId: string
   complexity: number
   aspect: number
+  lookVersion?: 'v1' | 'v2'
 }): CompositionPlan {
   const { seed, lookId } = input
   const complexity = clamp01(input.complexity)
@@ -218,7 +219,7 @@ export function resolveCompositionPlan(input: {
   // Brushwork owns a fixed stroke catalog. Keep its full macro plan stable so
   // Complexity reveals existing stroke IDs rather than moving their anchors
   // or changing the quiet-space mask underneath them.
-  const stableBrushworkHierarchy = lookId === 'brushwork'
+  const stableBrushworkHierarchy = lookId === 'brushwork' && input.lookVersion !== 'v1'
   const secondaryCount = stableBrushworkHierarchy ? 2 : complexity > 0.66 ? 2 : 1
   const anchors: CompositionAnchor[] = [primary]
   for (let index = 0; index < secondaryCount; index += 1) {

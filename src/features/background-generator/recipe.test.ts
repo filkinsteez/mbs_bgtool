@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { CANONICAL_META_SAFE_AREA } from '@/core/lab/metaInfluence'
 import {
   backgroundRecipeToLab,
   constrainBackgroundTransform,
@@ -16,7 +17,7 @@ describe('background recipe', () => {
     expect(dimensionsFor('4:5')).toEqual({ width: 3072, height: 3840 })
   })
 
-  it('keeps small artwork inside the canvas and large artwork covering it', () => {
+  it('keeps generated backgrounds covering the full canvas', () => {
     for (const [width, height] of [[3840, 2160], [2160, 3840], [3840, 3840]]) {
       for (const rotation of [-135, -45, 0, 30, 90, 175]) {
         for (const [x, y, scale] of [[-2, 2, 0.1], [0.8, -0.7, 1], [0, 0, 4]]) {
@@ -38,20 +39,10 @@ describe('background recipe', () => {
             top: centerY - halfHeight,
             bottom: centerY + halfHeight,
           }
-          if (halfWidth <= width / 2) {
-            expect(bounds.left).toBeGreaterThanOrEqual(-0.001)
-            expect(bounds.right).toBeLessThanOrEqual(width + 0.001)
-          } else {
-            expect(bounds.left).toBeLessThanOrEqual(0.001)
-            expect(bounds.right).toBeGreaterThanOrEqual(width - 0.001)
-          }
-          if (halfHeight <= height / 2) {
-            expect(bounds.top).toBeGreaterThanOrEqual(-0.001)
-            expect(bounds.bottom).toBeLessThanOrEqual(height + 0.001)
-          } else {
-            expect(bounds.top).toBeLessThanOrEqual(0.001)
-            expect(bounds.bottom).toBeGreaterThanOrEqual(height - 0.001)
-          }
+          expect(bounds.left).toBeLessThanOrEqual(0.001)
+          expect(bounds.right).toBeGreaterThanOrEqual(width - 0.001)
+          expect(bounds.top).toBeLessThanOrEqual(0.001)
+          expect(bounds.bottom).toBeGreaterThanOrEqual(height - 0.001)
         }
       }
     }
@@ -59,6 +50,7 @@ describe('background recipe', () => {
 
   it('round-trips a deterministic versioned recipe', () => {
     const recipe = createDefaultBackgroundRecipe(42)
+    expect(recipe.look.version).toBe('v2')
     expect(recipe.materialLookOverlay.enabled).toBe(false)
     expect(recipe.format).not.toHaveProperty('resolution')
     expect(recipe.transforms.background.scale).toBe(1)
@@ -72,6 +64,48 @@ describe('background recipe', () => {
     ).toMatchObject({ mode: 'background' })
     expect(deserializeBackgroundRecipe(JSON.stringify({ ...recipe, version: 3 }))).toBeNull()
     expect(deserializeBackgroundRecipe(JSON.stringify({ ...recipe, mode: 'combined' }))).toBeNull()
+  })
+
+  it('repairs saved inset background transforms without changing material framing', () => {
+    const recipe = createDefaultBackgroundRecipe(42)
+    const inset = {
+      preset: 'free' as const,
+      x: 0.25,
+      y: -0.2,
+      scale: 0.82,
+      rotation: 0,
+    }
+    const restored = deserializeBackgroundRecipe(JSON.stringify({
+      ...recipe,
+      transforms: {
+        background: inset,
+        material: inset,
+      },
+    }))
+
+    expect(restored?.transforms.background).toEqual({
+      preset: 'free',
+      x: 0,
+      y: 0,
+      scale: 1,
+      rotation: 0,
+    })
+    expect(restored?.transforms.material).toEqual(inset)
+  })
+
+  it('keeps recipes saved before Look tabs on V1', () => {
+    const recipe = createDefaultBackgroundRecipe(42)
+    const withoutLookVersion = {
+      ...recipe,
+      look: { id: recipe.look.id, detail: recipe.look.detail },
+    }
+
+    expect(
+      deserializeBackgroundRecipe(JSON.stringify(withoutLookVersion))?.look.version,
+    ).toBe('v1')
+    expect(
+      deserializeBackgroundRecipe(JSON.stringify(recipe))?.look.version,
+    ).toBe('v2')
   })
 
   it('loads obsolete resolution values and dimensions as fixed 4K output', () => {
@@ -162,6 +196,7 @@ describe('background recipe', () => {
       crop: { x: 0.1, y: 0.1, zoom: 2 },
     }))
     expect(migrated?.version).toBe(2)
+    expect(migrated?.look.version).toBe('v1')
     expect(migrated?.format).toEqual({ aspect: '16:9', width: 3840, height: 2160 })
     expect(migrated?.transforms.background.x).toBeCloseTo(0.3)
     expect(migrated?.transforms.background).toMatchObject({
@@ -183,6 +218,39 @@ describe('background recipe', () => {
   it('creates identical render state from identical recipes', () => {
     const recipe = createDefaultBackgroundRecipe(42)
     expect(backgroundRecipeToLab(recipe)).toEqual(backgroundRecipeToLab(recipe))
+  })
+
+  it('routes V1 and V2 through their matching Look recipes', () => {
+    const current = createDefaultBackgroundRecipe(42)
+    const v1 = {
+      ...current,
+      look: { id: 'brushwork' as const, detail: 0.5, version: 'v1' as const },
+    }
+    const v2 = {
+      ...current,
+      look: { id: 'brushwork' as const, detail: 0.5, version: 'v2' as const },
+    }
+    const v1Lab = backgroundRecipeToLab(v1)
+    const v2Lab = backgroundRecipeToLab(v2)
+
+    expect(v1Lab.look.version).toBe('v1')
+    expect(v1Lab.look.complexity).toBeUndefined()
+    expect(v2Lab.look.version).toBe('v2')
+    expect(v1Lab.structure).toMatchObject({
+      baseCell: 52,
+      maxLevels: 1,
+      subdivide: 0.6,
+    })
+    expect(v1Lab.mark.colorMode).toBe('source')
+    expect(v1Lab.composition).toBeUndefined()
+    expect(v1Lab.colors.plan).toBeUndefined()
+    expect(v2Lab.structure).toMatchObject({
+      baseCell: 224,
+      maxLevels: 0,
+    })
+    expect(v2Lab.mark.colorMode).toBe('palette')
+    expect(v2Lab.composition).toBeDefined()
+    expect(v2Lab.colors.plan).toBeDefined()
   })
 
   it('preserves each Look carrier when an explicit raster source is present', () => {
@@ -228,8 +296,8 @@ describe('background recipe', () => {
       (item) => item.kind === 'curve',
     )
     expect(source?.curve).toMatchObject({
-      amplitudeX: 1,
-      amplitudeY: 1,
+      amplitudeX: CANONICAL_META_SAFE_AREA.width,
+      amplitudeY: CANONICAL_META_SAFE_AREA.height,
       offsetX: 0,
       offsetY: 0,
       rotation: 0,

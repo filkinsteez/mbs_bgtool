@@ -1,4 +1,11 @@
 import type { LabPatch } from './labStore'
+import type { LookVersion } from './types'
+import {
+  v1DetailPatch,
+  v1LookPatchFor,
+} from './v1/looks'
+
+export { V1_LOOK_PATCHES } from './v1/looks'
 
 // LOOKS — the preset layer every shipped image tool leads with. A look
 // is a plain LabPatch: applying one goes through the normal patch/undo
@@ -193,7 +200,12 @@ function mix(from: number, to: number, amount: number): number {
   return from + (to - from) * amount
 }
 
-export function lookComplexityPatch(lookId: LookId, value: number): LabPatch {
+export function lookComplexityPatch(
+  lookId: LookId,
+  value: number,
+  version: LookVersion = 'v2',
+): LabPatch {
+  if (version === 'v1') return v1DetailPatch(value)
   const complexity = Math.max(0, Math.min(1, value))
   const profile = COMPLEXITY_PROFILES[lookId]
   const level = profile.levels[
@@ -232,14 +244,20 @@ export function lookComplexityPatch(lookId: LookId, value: number): LabPatch {
 // Generated backgrounds are full-frame artwork. Photo zones become palette
 // mosaics and sparse zones become solid quiet space rather than accidental
 // transparency that reveals the editor behind the canvas.
-export function lookPatchFor(look: Look, hasSource: boolean): LabPatch {
-  if (hasSource) return look.patch
-  const bands = look.patch.territory?.bands
-  if (!bands) return look.patch
+export function lookPatchFor(
+  look: Look,
+  hasSource: boolean,
+  version: LookVersion = 'v2',
+): LabPatch {
+  if (version === 'v1') return v1LookPatchFor(look, hasSource)
+  const patch = look.patch
+  if (hasSource) return patch
+  const bands = patch.territory?.bands
+  if (!bands) return patch
   return {
-    ...look.patch,
+    ...patch,
     territory: {
-      ...look.patch.territory,
+      ...patch.territory,
       bands: bands.map((band) => {
         if (band === 'photo') return 'mosaic'
         if (band === 'empty') return 'quiet'

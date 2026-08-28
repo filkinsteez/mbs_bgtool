@@ -1,6 +1,8 @@
 import { chan } from '@/core/organic/random'
 import {
   META_SYMBOL_HEIGHT,
+  META_SYMBOL_MIN_X,
+  META_SYMBOL_MIN_Y,
   META_SYMBOL_PATH,
   META_SYMBOL_WIDTH,
   sampleMetaSymbol,
@@ -148,8 +150,12 @@ function roleColorPool(
   for (const index of candidates) {
     if (!validColor(index, paletteSize)) continue
     if (
-      index !== colorPlan.roles.dominant
-      && (index === colorPlan.roles.ground || index === colorPlan.roles.accent)
+      paletteSize > 2
+      && index !== colorPlan.roles.dominant
+      && (
+        index === colorPlan.roles.ground
+        || index === colorPlan.roles.accent
+      )
     ) continue
     pool.push(index)
     if (pool.length >= Math.max(1, colorPlan.localColorLimit)) break
@@ -768,7 +774,9 @@ function applyClip(
   cells: readonly CellNode[],
 ): boolean {
   if (plan.frame.clip === 'meta-symbol') {
+    ctx.translate(-META_SYMBOL_MIN_X, -META_SYMBOL_MIN_Y)
     ctx.clip(getMetaSymbolPath())
+    ctx.translate(META_SYMBOL_MIN_X, META_SYMBOL_MIN_Y)
     return true
   }
 
@@ -904,6 +912,8 @@ export function renderQuilt(
 
   if (plan.frame.clip === 'meta-symbol') {
     const symbol = getMetaSymbolPath()
+    ctx.save()
+    ctx.translate(-META_SYMBOL_MIN_X, -META_SYMBOL_MIN_Y)
     ctx.setLineDash([])
     ctx.globalAlpha = 0.9
     ctx.strokeStyle = ground
@@ -915,6 +925,7 @@ export function renderQuilt(
     ctx.strokeStyle = ink
     ctx.lineWidth = 0.019
     ctx.stroke(symbol)
+    ctx.restore()
   }
 
   ctx.restore()

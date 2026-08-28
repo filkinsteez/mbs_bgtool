@@ -170,6 +170,30 @@ describe('Quilt plan', () => {
     expect(insets.every((patch) => patch.inset?.color === colorPlan.roles.accent)).toBe(true)
   })
 
+  it('uses both material colors when only two swatches are available', () => {
+    const materialPalette = ['#0064E0', '#FFFFFF']
+    const materialPlan = resolveLookColorPlan({
+      mix: [
+        { color: materialPalette[0], enabled: true, weight: 72 },
+        { color: materialPalette[1], enabled: true, weight: 28 },
+      ],
+      ground: materialPalette[0],
+      ink: materialPalette[1],
+      lookId: 'quilt',
+      complexity: 0.5,
+    })
+    const plan = buildQuiltPlan(options({
+      paletteSize: materialPalette.length,
+      colorPlan: materialPlan,
+    }))
+    const colors = new Set(plan.patches.flatMap((patch) => [
+      patch.baseColor,
+      ...patch.pieces.map((piece) => piece.color),
+    ]))
+
+    expect(colors).toEqual(new Set([0, 1]))
+  })
+
   it('loops stitch motion exactly without changing topology', () => {
     const start = resolveQuiltMotion(0, 0.8, 1.4)
     const quarter = resolveQuiltMotion(0.25, 0.8, 1.4)

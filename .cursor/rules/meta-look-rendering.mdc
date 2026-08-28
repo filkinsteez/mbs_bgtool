@@ -1,0 +1,17 @@
+---
+description: Non-negotiable visual requirements for MBS background Looks
+globs: "{src/core/lab/**/*.ts,src/features/background-generator/**/*.ts,src/components/lab/**/*.tsx,tests/browser/*look*.spec.ts}"
+alwaysApply: false
+---
+
+# Meta Look Rendering
+
+- Every logo-driven Look must use the canonical Meta symbol geometry. Never substitute a generic infinity sign, Lissajous curve, braid path, or hand-drawn approximation.
+- Preserve the official path's 1504.8272:1000 natural proportions with one uniform scale. Never stretch, reshape, rotate, or approximate it.
+- Give the canonical symbol deliberate safe space from every frame edge across all aspect ratios.
+- This is a background creator, not a logo creator. Every Look must art-direct the full canvas with pattern, texture, color structure, or intentional negative space.
+- The symbol and background must be one continuous composition. Do not place an isolated, filled, outlined, or clipped logo treatment over a separate background.
+- Brushwork must use the installed `p5.brush` library. Do not reintroduce a custom brush simulator.
+- The canonical Meta silhouette must remain clearly recognizable across aspect ratios, seeds, complexity levels, motion, preview, and export.
+- Before accepting a Look change, capture screenshots and ask whether the result plausibly meets the bar of a world-class generative artist or creative. If not, continue exploring.
+- Add regression checks for silhouette similarity, exact proportions, safe margins, and full-frame variation when practical.

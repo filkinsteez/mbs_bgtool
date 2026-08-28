@@ -34,8 +34,8 @@ export type MotionRecipe = {
 }
 
 // THE FIGURE DESIGN SPACE: the classic Lissajous is one point in a
-// continuous family of smooth warps of the y-oscillation. The Meta
-// infinity mark (reference: public/icon-fill.svg) is another point.
+// continuous family of smooth warps of the y-oscillation. The legacy
+// Meta-inspired centerline is another point; it is not logo geometry.
 // Every warp is C-infinity, preserves bilateral symmetry and the single
 // closed loop, and — crucially — keeps y's zeros EXACTLY at u = mπ, the
 // same as pure sine, so lobe cutting, halves and the speed-curve
@@ -71,8 +71,8 @@ export type FigureShape = {
 }
 
 export const CLASSIC_SHAPE: FigureShape = { waist: 0, fullness: 0, bias: 0, lean: 0, cross: 0, morph: 0 }
-// The Meta mark, fitted numerically: its centerline was extracted from
-// public/icon-fill.svg (rasterized, then per-column ribbon midpoints for
+// The legacy centerline was fitted numerically from the former 20x14 asset
+// (rasterized, then per-column ribbon midpoints for
 // the body plus per-row midpoints around the outer caps) and a 3-harmonic
 // profile least-squares fitted as point-to-curve distance. The decisive
 // parameter is PHASE ≈ 108.6° — the mark's lobes are tilted — plus the

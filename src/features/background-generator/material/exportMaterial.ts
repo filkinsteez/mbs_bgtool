@@ -9,7 +9,15 @@ export async function exportMaterialAtTarget(
   protos: ShapeProto[],
 ): Promise<Blob> {
   const { width, height } = recipe.format
-  const canvas = await captureMaterialFrame(width, height)
+  const canvas = await captureMaterialFrame(width, height, {
+    recipe,
+    output: recipe.materialLookOverlay.enabled && recipe.look.version === 'v2'
+      ? 'auto'
+      : 'raw',
+    // Exports are deterministic recipe artifacts. Phase zero is the exact
+    // seam frame for the integer-harmonic GPU motion loop.
+    phase: 0,
+  })
   return encodeMaterialCanvas(canvas, recipe, protos)
 }
 
@@ -18,7 +26,14 @@ function encodeMaterialCanvas(
   recipe: BackgroundRecipeV2,
   protos: ShapeProto[],
 ): Promise<Blob> {
-  if (!recipe.materialLookOverlay.enabled) return canvasToPng(canvas)
+  if (
+    !recipe.materialLookOverlay.enabled
+    || recipe.look.version === 'v2'
+  ) {
+    return canvasToPng(canvas)
+  }
+  // V1 retains its historical Canvas2D renderer. V2 has already been
+  // composited by the same Three.js GPU pipeline used in preview.
   const source = createLabSourceFromCanvas(canvas, {
     filename: 'material-export-frame.rgba',
   })

@@ -110,11 +110,26 @@ function sourceColorIndex(
         ...plan.colorHierarchy.visible,
       ])]
     : plan.colorHierarchy.visible
+  if (plan.protectedMode === 'source' && visible.length > 1) {
+    const bayer4 = [
+      0, 8, 2, 10,
+      12, 4, 14, 6,
+      3, 11, 1, 9,
+      15, 7, 13, 5,
+    ] as const
+    const materialTone = Math.max(0, Math.min(1, (luminance - 0.15) / 0.65))
+    const scaled = materialTone * (visible.length - 1)
+    const lower = Math.floor(scaled)
+    const threshold = (bayer4[(tile.row % 4) * 4 + tile.column % 4] + 0.5) / 16
+    const index = Math.min(
+      visible.length - 1,
+      lower + (scaled - lower >= threshold ? 1 : 0),
+    )
+    return visible[index]
+  }
   const index = Math.min(
     visible.length - 1,
-    Math.floor((1 - luminance) * visible.length * (
-      plan.protectedMode === 'source' ? 1.75 : 1
-    )),
+    Math.floor((1 - luminance) * visible.length),
   )
   return visible[Math.max(0, index)]
 }

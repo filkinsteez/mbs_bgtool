@@ -24,7 +24,7 @@ function quiltRecipe(
   const recipe = createDefaultBackgroundRecipe(seed)
   return {
     ...recipe,
-    look: { id: 'quilt', detail },
+    look: { id: 'quilt', detail, version: 'v2' },
     format: { aspect, ...dimensionsFor(aspect) },
   }
 }

@@ -14,11 +14,13 @@ import {
   renderRecipeLookToCanvas,
   sourceAwareLabForRecipe,
 } from '@/features/background-generator/lookProcessor'
+import type { LookVersion } from '@/core/lab/types'
 
 // 2D thumbnails use only the active generator recipe. 3D thumbnails use
 // one fixed generic frame so live camera and material changes cannot leak in.
 
 const GENERIC_3D_BASE_RECIPE = createDefaultBackgroundRecipe(1913)
+const LOOK_VERSIONS: readonly LookVersion[] = ['v1', 'v2']
 const GENERIC_3D_RECIPE = {
   ...GENERIC_3D_BASE_RECIPE,
   format: {
@@ -64,6 +66,7 @@ export function LooksPanel() {
   const mode = useBackgroundStore((state) => state.mode)
   const lookId = useBackgroundStore((state) => state.recipe.look.id)
   const lookDetail = useBackgroundStore((state) => state.recipe.look.detail)
+  const lookVersion = useBackgroundStore((state) => state.recipe.look.version)
   const materialOverlayEnabled = useBackgroundStore(
     (state) => state.recipe.materialLookOverlay.enabled,
   )
@@ -72,6 +75,7 @@ export function LooksPanel() {
     return [
       recipe.seed,
       recipe.look.detail,
+      recipe.look.version,
       recipe.palette.mix.map((item) =>
         `${item.color}:${item.enabled ? 1 : 0}:${item.ratio}`,
       ).join(','),
@@ -90,7 +94,7 @@ export function LooksPanel() {
   // Direct artwork transforms intentionally do not invalidate all ten
   // thumbnails on every pointer sample.
   const thumbKey = mode === 'material'
-    ? 'generic-3d-look-preview-v1'
+    ? `generic-3d-look-preview-${lookVersion}`
     : thumbnailRecipeKey
   useEffect(() => {
     clearTimeout(redrawTimerRef.current)
@@ -111,7 +115,7 @@ export function LooksPanel() {
           if (!canvas) return
           if (genericSource) {
             const recipe = mergeDeep(GENERIC_3D_RECIPE, {
-              look: { id: look.id, detail: 0.5 },
+              look: { id: look.id, detail: 0.5, version: lookVersion },
               materialLookOverlay: { enabled: true },
             })
             const lookLab = sourceAwareLabForRecipe(recipe, genericSource, 'cover')
@@ -119,7 +123,7 @@ export function LooksPanel() {
               canvas,
               recipe,
               genericSource,
-              resolveBankCached(lookLab.mark.bank),
+              resolveBankCached(lookLab.mark.bank, lookLab.look.version),
               { fit: 'cover', maxLongEdge: 128 },
             )
             return
@@ -137,7 +141,7 @@ export function LooksPanel() {
       clearTimeout(redrawTimerRef.current)
       cancelAnimationFrame(rafRef.current)
     }
-  }, [mode, thumbKey])
+  }, [lookVersion, mode, thumbKey])
 
   return (
     <div className="panel-section">
@@ -149,59 +153,103 @@ export function LooksPanel() {
           </span>
         ) : null}
       </div>
-      <div
-        className="lab-looks"
-        ref={stripRef}
-        role={mode === 'background' ? 'radiogroup' : 'group'}
-        aria-label={mode === 'background' ? '2D Look' : '3D Looks'}
-      >
-        {LOOKS.map((look) => {
-          const active = lookId === look.id
-            && (mode === 'background' || materialOverlayEnabled)
-          return (
-            <button
-              key={look.id}
-              type="button"
-              className={active ? 'lab-look active' : 'lab-look'}
-              role={mode === 'background' ? 'radio' : undefined}
-              title={mode === 'material' ? `${look.label} · generic effect preview` : look.label}
-              aria-checked={mode === 'background' ? active : undefined}
-              aria-pressed={mode === 'material' ? active : undefined}
-              tabIndex={mode === 'background' ? (active ? 0 : -1) : undefined}
-              onKeyDown={mode === 'background' ? handleRadioGroupKeyDown : undefined}
-              onClick={() => {
-                if (mode === 'background') {
-                  updateRecipe({ look: { id: look.id } })
-                  return
-                }
-                updateRecipe({
-                  look: { id: look.id },
-                  materialLookOverlay: {
-                    enabled: !(materialOverlayEnabled && lookId === look.id),
-                  },
-                })
-              }}
-            >
-              <canvas
-                className="lab-look-thumb"
-                data-preview-mode={mode === 'material' ? 'generic' : 'live'}
-              />
-              <span className="lab-look-label">{look.label}</span>
-            </button>
-          )
-        })}
+      <div className="lab-look-version-tabs" role="tablist" aria-label="Look version">
+        {LOOK_VERSIONS.map((version) => (
+          <button
+            id={`lab-look-version-${version}`}
+            key={version}
+            type="button"
+            role="tab"
+            aria-controls="lab-look-version-panel"
+            aria-selected={lookVersion === version}
+            tabIndex={lookVersion === version ? 0 : -1}
+            className={lookVersion === version ? 'active' : undefined}
+            onClick={() => updateRecipe({ look: { version } })}
+            onKeyDown={(event) => {
+              let nextIndex: number
+              const current = LOOK_VERSIONS.indexOf(version)
+              if (event.key === 'ArrowLeft') {
+                nextIndex = (current - 1 + LOOK_VERSIONS.length) % LOOK_VERSIONS.length
+              } else if (event.key === 'ArrowRight') {
+                nextIndex = (current + 1) % LOOK_VERSIONS.length
+              } else if (event.key === 'Home') {
+                nextIndex = 0
+              } else if (event.key === 'End') {
+                nextIndex = LOOK_VERSIONS.length - 1
+              } else {
+                return
+              }
+              event.preventDefault()
+              const next = LOOK_VERSIONS[nextIndex]
+              updateRecipe({ look: { version: next } })
+              requestAnimationFrame(() => {
+                document.getElementById(`lab-look-version-${next}`)?.focus()
+              })
+            }}
+          >
+            {version.toUpperCase()}
+          </button>
+        ))}
       </div>
-      <Slider
-        label="Complexity"
-        value={lookDetail}
-        min={0}
-        max={1}
-        step={0.01}
-        format={(value) => `${Math.round(value * 100)}`}
-        defaultValue={0.5}
-        onChange={(detail) => setTransient({ look: { detail } })}
-        onCommit={commitTransaction}
-      />
+      <div
+        id="lab-look-version-panel"
+        role="tabpanel"
+        aria-labelledby={`lab-look-version-${lookVersion}`}
+      >
+        <div
+          className="lab-looks"
+          ref={stripRef}
+          role={mode === 'background' ? 'radiogroup' : 'group'}
+          aria-label={mode === 'background' ? '2D Look' : '3D Looks'}
+        >
+          {LOOKS.map((look) => {
+            const active = lookId === look.id
+              && (mode === 'background' || materialOverlayEnabled)
+            return (
+              <button
+                key={look.id}
+                type="button"
+                className={active ? 'lab-look active' : 'lab-look'}
+                role={mode === 'background' ? 'radio' : undefined}
+                title={mode === 'material' ? `${look.label} · generic effect preview` : look.label}
+                aria-checked={mode === 'background' ? active : undefined}
+                aria-pressed={mode === 'material' ? active : undefined}
+                tabIndex={mode === 'background' ? (active ? 0 : -1) : undefined}
+                onKeyDown={mode === 'background' ? handleRadioGroupKeyDown : undefined}
+                onClick={() => {
+                  if (mode === 'background') {
+                    updateRecipe({ look: { id: look.id } })
+                    return
+                  }
+                  updateRecipe({
+                    look: { id: look.id },
+                    materialLookOverlay: {
+                      enabled: !(materialOverlayEnabled && lookId === look.id),
+                    },
+                  })
+                }}
+              >
+                <canvas
+                  className="lab-look-thumb"
+                  data-preview-mode={mode === 'material' ? 'generic' : 'live'}
+                />
+                <span className="lab-look-label">{look.label}</span>
+              </button>
+            )
+          })}
+        </div>
+        <Slider
+          label="Complexity"
+          value={lookDetail}
+          min={0}
+          max={1}
+          step={0.01}
+          format={(value) => `${Math.round(value * 100)}`}
+          defaultValue={0.5}
+          onChange={(detail) => setTransient({ look: { detail } })}
+          onCommit={commitTransaction}
+        />
+      </div>
     </div>
   )
 }

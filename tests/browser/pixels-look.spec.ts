@@ -21,7 +21,7 @@ function pixelRecipe(
   aspect: FixedAspectId = '16:9',
 ): BackgroundRecipeV2 {
   const recipe = createDefaultBackgroundRecipe(seed)
-  recipe.look = { id: 'pixels', detail }
+  recipe.look = { id: 'pixels', detail, version: 'v2' }
   recipe.format = { aspect, ...dimensionsFor(aspect) }
   return recipe
 }

@@ -1,8 +1,10 @@
 import type { LookId } from '@/core/lab/looks'
 import { LOOKS, lookComplexityPatch, lookPatchFor } from '@/core/lab/looks'
 import { createDefaultLab } from '@/core/lab/recipe'
-import type { LabState } from '@/core/lab/types'
-import { constrainArtworkToCanvas } from '@/core/lab/artworkTransform'
+import { createDefaultLabV1 } from '@/core/lab/v1/recipe'
+import type { LabState, LookVersion } from '@/core/lab/types'
+import { constrainArtworkCover } from '@/core/lab/artworkTransform'
+import { CANONICAL_META_SAFE_AREA } from '@/core/lab/metaInfluence'
 import { resolveCompositionPlan } from '@/core/lab/compositionPlan'
 import { resolveLookColorPlan } from '@/core/lab/colorDirection'
 import { mergeDeep, type DeepPartial } from '@/core/state/store'
@@ -60,6 +62,7 @@ export type BackgroundRecipeV2 = {
   look: {
     id: LookId
     detail: number
+    version: LookVersion
   }
   materialLookOverlay: {
     enabled: boolean
@@ -211,7 +214,7 @@ export function createDefaultBackgroundRecipe(seed = 1913): BackgroundRecipeV2 {
     mode: 'background',
     seed,
     format: { aspect: '16:9', ...dimensionsFor('16:9') },
-    look: { id: 'frame', detail: 0.5 },
+    look: { id: 'frame', detail: 0.5, version: 'v2' },
     materialLookOverlay: { enabled: false },
     palette: {
       packId: pack.id,
@@ -240,6 +243,7 @@ export function deserializeBackgroundRecipe(json: string): BackgroundRecipeV2 | 
   try {
     const raw = JSON.parse(json) as SerializedBackgroundRecipeV2 | LegacyBackgroundRecipeV1
     if (!raw || (raw.version !== 1 && raw.version !== BACKGROUND_RECIPE_VERSION)) return null
+    const serializedLookVersion = raw.look?.version
     let recipe: BackgroundRecipeV2
     const rawPalette = raw.palette
     const rawMotion = raw.motion
@@ -272,6 +276,11 @@ export function deserializeBackgroundRecipe(json: string): BackgroundRecipeV2 | 
         raw as unknown as DeepPartial<BackgroundRecipeV2>,
       )
     }
+    recipe.look.version = raw.version === 1
+      ? 'v1'
+      : serializedLookVersion === 'v1' || serializedLookVersion === 'v2'
+        ? serializedLookVersion
+        : 'v1'
     const migratedLook = LEGACY_MATERIAL_LOOKS[recipe.material.id as string]
     if (recipe.renderRevision !== BACKGROUND_RENDER_REVISION) return null
     if (migratedLook) {
@@ -377,7 +386,7 @@ export function constrainBackgroundTransform(
   artboardWidth: number,
   artboardHeight: number,
 ): SubjectTransform {
-  return constrainArtworkToCanvas(
+  return constrainArtworkCover(
     normalizeSubjectTransform(value),
     artboardWidth,
     artboardHeight,
@@ -393,20 +402,28 @@ export function backgroundRecipeToLab(
   recipe: BackgroundRecipeV2,
   options: BackgroundRecipeToLabOptions = {},
 ): LabState {
-  const base = createDefaultLab(recipe.seed)
+  const isV1 = recipe.look.version === 'v1'
+  const base = isV1 ? createDefaultLabV1(recipe.seed) : createDefaultLab(recipe.seed)
   const look = LOOKS.find((item) => item.id === recipe.look.id) ?? LOOKS[0]
   const hasSource = options.hasSource === true
-  let lab = mergeDeep(base, lookPatchFor(look, hasSource))
-  lab = mergeDeep(lab, lookComplexityPatch(recipe.look.id, recipe.look.detail))
+  let lab = mergeDeep(base, lookPatchFor(look, hasSource, recipe.look.version))
+  lab = mergeDeep(
+    lab,
+    lookComplexityPatch(recipe.look.id, recipe.look.detail, recipe.look.version),
+  )
   const curve = lab.territory.sources.find((source) => source.kind === 'curve' && source.curve)
-  const colorPlan = resolveLookColorPlan({
-    mix: recipe.palette.mix,
-    ground: recipe.palette.ground,
-    ink: recipe.palette.ink,
-    lookId: recipe.look.id,
-    complexity: recipe.look.detail,
-  })
-  const palette = colorPlan.swatches.map((swatch) => swatch.hex)
+  const colorPlan = isV1
+    ? null
+    : resolveLookColorPlan({
+        mix: recipe.palette.mix,
+        ground: recipe.palette.ground,
+        ink: recipe.palette.ink,
+        lookId: recipe.look.id,
+        complexity: recipe.look.detail,
+      })
+  const palette = isV1
+    ? buildWeightedPalette(recipe.palette.mix, 100)
+    : colorPlan!.swatches.map((swatch) => swatch.hex)
   lab = mergeDeep(lab, {
     seed: recipe.seed,
     output: {
@@ -421,19 +438,41 @@ export function backgroundRecipeToLab(
           fit: 'contain',
         })
       : null,
-    look: { id: recipe.look.id, strength: 1, complexity: recipe.look.detail },
-    composition: resolveCompositionPlan({
-      seed: recipe.seed,
-      lookId: recipe.look.id,
-      complexity: recipe.look.detail,
-      aspect: recipe.format.width / Math.max(1, recipe.format.height),
-    }),
-    colors: {
-      ink: recipe.palette.ink,
-      paper: recipe.palette.ground,
-      palette,
-      plan: colorPlan,
-    },
+    look: isV1
+      ? {
+          id: recipe.look.id,
+          strength: 1,
+          version: recipe.look.version,
+        }
+      : {
+          id: recipe.look.id,
+          strength: 1,
+          complexity: recipe.look.detail,
+          version: recipe.look.version,
+        },
+    ...(isV1
+      ? {}
+      : {
+          composition: resolveCompositionPlan({
+            seed: recipe.seed,
+            lookId: recipe.look.id,
+            complexity: recipe.look.detail,
+            aspect: recipe.format.width / Math.max(1, recipe.format.height),
+            lookVersion: recipe.look.version,
+          }),
+        }),
+    colors: isV1
+      ? {
+          ink: palette[0] ?? META_BLUE,
+          paper: palette.at(-1) ?? '#FFFFFF',
+          palette,
+        }
+      : {
+          ink: recipe.palette.ink,
+          paper: recipe.palette.ground,
+          palette,
+          plan: colorPlan!,
+        },
     territory: {
       sources: lab.territory.sources.map((source) =>
         source.id === curve?.id && source.curve
@@ -441,8 +480,8 @@ export function backgroundRecipeToLab(
               ...source,
               curve: {
                 ...source.curve,
-                amplitudeX: 1,
-                amplitudeY: 1,
+                amplitudeX: CANONICAL_META_SAFE_AREA.width,
+                amplitudeY: CANONICAL_META_SAFE_AREA.height,
                 offsetX: 0,
                 offsetY: 0,
                 rotation: 0,

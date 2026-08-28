@@ -317,8 +317,8 @@ export function unitPolygon(shape: 'square' | 'triangle' | 'cross'): { x: number
 
 let metaCache: { x: number; y: number }[] | null = null
 
-// the meta mark as a unit-centered polyline glyph (-1..1), sampled from
-// the same curve engine that drives everything else
+// Legacy unit-centered curve glyph (-1..1). V1 marks keep this commit-era
+// centerline; canonical identity geometry lives in core/metaSymbol.ts.
 export function metaUnitOutline(): { x: number; y: number }[] {
   if (metaCache) return metaCache
   const samples = sampleCurve(

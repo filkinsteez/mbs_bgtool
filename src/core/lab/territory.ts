@@ -3,9 +3,8 @@ import { META_PHASE } from '@/core/lissajous/equation'
 import { sampleCurve } from '@/core/lissajous/sampler'
 import { buildDistanceGrid } from '@/core/cloner/contours'
 import {
-  META_SYMBOL_HEIGHT,
-  META_SYMBOL_WIDTH,
-  sampleMetaSymbol,
+  META_SYMBOL_GEOMETRY,
+  type MetaSymbolGeometry,
 } from '@/core/metaSymbol'
 import type { AnalysisMaps } from './analysis'
 import type { Field, FitRect } from './field'
@@ -33,6 +32,9 @@ export type TerritoryDeps = {
   // An override REPLACES the source's field but keeps its position in
   // the fold — weight, invert, and combine semantics stay intact.
   fieldOverrides?: Map<string, Field>
+  // V1 injects its archived 20x14 geometry; all other callers use the
+  // current official company-brand vector.
+  metaSymbol?: MetaSymbolGeometry
 }
 
 type DistGrid = ReturnType<typeof buildDistanceGrid>
@@ -45,9 +47,10 @@ export function buildCurveField(
   outW: number,
   outH: number,
   softness: number,
+  metaSymbol: MetaSymbolGeometry = META_SYMBOL_GEOMETRY,
 ): Field {
   if (snap.silhouette === 'meta-symbol') {
-    return buildMetaSymbolField(snap, outW, outH, softness)
+    return buildMetaSymbolField(snap, outW, outH, softness, metaSymbol)
   }
   const samples = sampleCurve(
     { ...snap, sampleDensity: 96, curve: snap.curve },
@@ -75,6 +78,7 @@ export function buildMetaSymbolField(
   outW: number,
   outH: number,
   softness: number,
+  metaSymbol: MetaSymbolGeometry = META_SYMBOL_GEOMETRY,
 ): Field {
   const centerX = outW / 2 + (snap.offsetX * outW) / 2
   const centerY = outH / 2 + (snap.offsetY * outH) / 2
@@ -82,7 +86,7 @@ export function buildMetaSymbolField(
   const boxHeight = Math.max(0.001, Math.abs(snap.amplitudeY) * outH)
   const symbolScale = Math.max(
     0.001,
-    Math.min(boxWidth / META_SYMBOL_WIDTH, boxHeight / META_SYMBOL_HEIGHT),
+    Math.min(boxWidth / metaSymbol.width, boxHeight / metaSymbol.height),
   )
   const falloff = Math.max(1, softness * symbolScale * 2)
   const cos = Math.cos(snap.rotation)
@@ -101,9 +105,9 @@ export function buildMetaSymbolField(
       const dy = y - centerY
       const localX = dx * cos + dy * sin
       const localY = -dx * sin + dy * cos
-      const point = sampleMetaSymbol(
-        localX / symbolScale + META_SYMBOL_WIDTH / 2,
-        localY / symbolScale + META_SYMBOL_HEIGHT / 2,
+      const point = metaSymbol.sample(
+        localX / symbolScale + metaSymbol.width / 2,
+        localY / symbolScale + metaSymbol.height / 2,
       )
       let value = 1
       if (!point.inside) {
@@ -139,7 +143,7 @@ function sourceField(src: FieldSourceState, deps: TerritoryDeps): Field | null {
   switch (src.kind) {
     case 'curve': {
       if (!src.curve) return null
-      return buildCurveField(src.curve, outW, outH, src.softness)
+      return buildCurveField(src.curve, outW, outH, src.softness, deps.metaSymbol)
     }
     case 'linear': {
       // signed distance along the gradient axis from the offset point,

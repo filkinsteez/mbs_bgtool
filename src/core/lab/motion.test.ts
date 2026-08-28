@@ -34,6 +34,20 @@ describe('lab motion', () => {
     )
   })
 
+  it('uses the original V1 preview transform instead of the V2 runtime field', () => {
+    const lab = createDefaultLab()
+    lab.look.version = 'v1'
+    lab.motion = { enabled: true, amount: 0.8, speed: 1.2, loopSeconds: 8 }
+    const animated = applyMotionAt(lab, 2300)
+
+    expect(animated.motion.frame).toBeUndefined()
+    expect(animated.territory).not.toBe(lab.territory)
+    expect(animated.flow).not.toBe(lab.flow)
+    expect(animated.territory.sources[0].curve?.offsetX).not.toBe(
+      lab.territory.sources[0].curve?.offsetX,
+    )
+  })
+
   it('anchors the center and balances opposite deformation', () => {
     const lab = createDefaultLab(420)
     lab.motion = { enabled: true, amount: 1, speed: 1.5, loopSeconds: 8 }

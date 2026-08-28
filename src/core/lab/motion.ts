@@ -1,6 +1,7 @@
 import { chan } from '@/core/organic/random'
 import type { Field } from './field'
 import type { LabState, MotionState } from './types'
+import { applyV1MotionAt } from './v1/motion'
 
 const TAU = Math.PI * 2
 
@@ -106,6 +107,7 @@ export function createOrganicMotionWarp(
 // Preview-only runtime phase. The persisted geometry stays untouched, so the
 // animation deforms the generated field rather than translating the symbol.
 export function applyMotionAt(lab: LabState, timeMs: number): LabState {
+  if (lab.look?.version === 'v1') return applyV1MotionAt(lab, timeMs)
   if (lab.motion.amount <= 0) return lab
   return {
     ...lab,

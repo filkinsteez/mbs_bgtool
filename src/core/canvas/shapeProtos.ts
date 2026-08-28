@@ -13,8 +13,22 @@ import { shapePathD } from './shapeItems'
 // quantization would eat the geometry.
 export const PROTO_SIZE = 100
 
+export type ShapeProtoPathBounds = {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export type ShapeProto =
-  | { kind: 'path'; id: string; d: string; fill: string; opacity: number }
+  | {
+      kind: 'path'
+      id: string
+      d: string
+      fill: string
+      opacity: number
+      pathBounds?: ShapeProtoPathBounds
+    }
   | {
       kind: 'text'
       id: string

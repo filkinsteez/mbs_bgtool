@@ -58,7 +58,7 @@ export function resolveBackground2DInputs(
   return {
     lab,
     source: null,
-    protos: resolveBank(lab.mark.bank),
+    protos: resolveBank(lab.mark.bank, lab.look.version),
     view: 'composite',
     transform: constrainBackgroundTransform(
       recipe.transforms.background,

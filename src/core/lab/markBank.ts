@@ -1,8 +1,18 @@
-import type { ShapeProto } from '@/core/canvas/shapeProtos'
-import { PROTO_SIZE } from '@/core/canvas/shapeProtos'
+import {
+  PROTO_SIZE,
+  type ShapeProto,
+  type ShapeProtoPathBounds,
+} from '@/core/canvas/shapeProtos'
+import {
+  META_SYMBOL_HEIGHT,
+  META_SYMBOL_MIN_X,
+  META_SYMBOL_MIN_Y,
+  META_SYMBOL_PATH,
+  META_SYMBOL_WIDTH,
+} from '@/core/metaSymbol'
 import { metaUnitOutline, unitPolygon } from '@/core/sheet/sheet'
 import { INK } from '@/core/state/defaults'
-import type { MarkBankId } from './types'
+import type { LookVersion, MarkBankId } from './types'
 
 // Mark vocabularies. Everything is a ShapeProto — the same contract the
 // effectors stamp — so the user's own drawn shapes and the built-in
@@ -25,12 +35,17 @@ function circleD(r: number): string {
   return `M ${-r} 0 A ${r} ${r} 0 1 0 ${r} 0 A ${r} ${r} 0 1 0 ${-r} 0 Z`
 }
 
-const proto = (id: string, d: string): ShapeProto => ({
+const proto = (
+  id: string,
+  d: string,
+  pathBounds?: ShapeProtoPathBounds,
+): ShapeProto => ({
   kind: 'path',
   id,
   d,
   fill: INK,
   opacity: 1,
+  pathBounds,
 })
 
 // built-in glyphs, unit geometry shared with the sheet engine
@@ -44,7 +59,13 @@ const HALF = proto('lab-half', `M ${-H} ${H} A ${H} ${H} 0 0 1 ${H} ${H} Z`)
 const TRIANGLE = proto('lab-triangle', polyD(unitPolygon('triangle')))
 const CROSS = proto('lab-cross', polyD(unitPolygon('cross')))
 const SQUARE = proto('lab-square', polyD(unitPolygon('square')))
-const META = proto('lab-meta', polyD(metaUnitOutline()))
+const META = proto('lab-meta', META_SYMBOL_PATH, {
+  x: META_SYMBOL_MIN_X,
+  y: META_SYMBOL_MIN_Y,
+  width: META_SYMBOL_WIDTH,
+  height: META_SYMBOL_HEIGHT,
+})
+const V1_META = proto('lab-meta', polyD(metaUnitOutline()))
 
 export function builtinBank(id: 'dots' | 'geo'): ShapeProto[] {
   // dots: one mark, tone carried purely by scale — the generic-halftone
@@ -54,8 +75,12 @@ export function builtinBank(id: 'dots' | 'geo'): ShapeProto[] {
 }
 
 const BRAND_BANK = [META, RING, HALF, CROSS, DOT, SQUARE]
+const V1_BRAND_BANK = [V1_META, RING, HALF, CROSS, DOT, SQUARE]
 
-export function resolveBank(id: MarkBankId): ShapeProto[] {
-  if (id === 'brand') return BRAND_BANK
+export function resolveBank(
+  id: MarkBankId,
+  version: LookVersion = 'v2',
+): ShapeProto[] {
+  if (id === 'brand') return version === 'v1' ? V1_BRAND_BANK : BRAND_BANK
   return builtinBank(id)
 }

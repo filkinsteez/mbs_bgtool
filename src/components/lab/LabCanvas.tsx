@@ -219,9 +219,11 @@ export function LabCanvas() {
 
   useEffect(() => {
     cancelAnimationFrame(rafRef.current)
-    rafRef.current = requestAnimationFrame(() => draw())
+    rafRef.current = requestAnimationFrame((time) => {
+      draw(motionEnabled && !reducedMotion ? time : undefined)
+    })
     return () => cancelAnimationFrame(rafRef.current)
-  }, [draw, recipe, mode])
+  }, [draw, recipe, mode, motionEnabled, reducedMotion])
 
   useEffect(() => {
     if (mode !== 'background' || !motionEnabled || reducedMotion) return

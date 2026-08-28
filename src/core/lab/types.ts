@@ -11,6 +11,7 @@ import type { LookColorPlan } from './colorDirection'
 export const LAB_VERSION = 1
 
 export type LabFit = 'contain' | 'cover'
+export type LookVersion = 'v1' | 'v2'
 
 export type LabSourceMeta = {
   filename?: string
@@ -168,6 +169,7 @@ export type LabState = {
   seed: number
   output: { width: number; height: number; transparent: boolean }
   source: LabSourceMeta | null
+  sourceMask?: 'border-distance'
   territory: TerritoryState
   structure: StructureState
   mark: MarkParams
@@ -182,7 +184,12 @@ export type LabState = {
   finish: { grain: number }
   // the applied look and its strength: 1 = full effect, lower blends
   // the photo back over the result (the Lightroom-Amount read)
-  look: { id: string | null; strength: number; complexity?: number }
+  look: {
+    id: string | null
+    strength: number
+    complexity?: number
+    version?: LookVersion
+  }
   composition?: CompositionPlan
   motion: MotionState
 }

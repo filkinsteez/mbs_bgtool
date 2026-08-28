@@ -35,7 +35,16 @@ export function stampProto(
   ctx.scale(k, k)
   ctx.globalAlpha = Math.max(0, Math.min(1, alpha * proto.opacity))
   ctx.fillStyle = fill
-  if (proto.kind === 'path') ctx.fill(protoPath(proto.d), 'evenodd')
-  else paintTextProto(ctx, proto)
+  if (proto.kind === 'path') {
+    if (proto.pathBounds) {
+      const { x: left, y: top, width, height } = proto.pathBounds
+      const normalize = PROTO_SIZE / Math.max(width, height, 0.001)
+      ctx.scale(normalize, normalize)
+      ctx.translate(-(left + width / 2), -(top + height / 2))
+    }
+    ctx.fill(protoPath(proto.d), 'evenodd')
+  } else {
+    paintTextProto(ctx, proto)
+  }
   ctx.restore()
 }

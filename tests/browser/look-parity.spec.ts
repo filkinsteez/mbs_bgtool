@@ -90,6 +90,17 @@ type TranslatedPixelsFixtureResult = {
   } | null
 }
 
+type TranslatedLookMatrixResult = {
+  screenshot: string
+  width: number
+  height: number
+  sourceHash: string
+  rows: {
+    lookId: LookId
+    outputHash: string
+  }[]
+}
+
 const LOOKS: LookId[] = [
   'frame',
   'pixels',
@@ -188,6 +199,18 @@ async function runTranslatedTrails4k(page: Page): Promise<Trails4kResult> {
   })
 }
 
+async function runTranslatedLookMatrix(page: Page): Promise<TranslatedLookMatrixResult> {
+  return page.evaluate(() => {
+    const harness = (window as typeof window & {
+      __mbsLookParity?: {
+        translatedLookMatrix: () => TranslatedLookMatrixResult
+      }
+    }).__mbsLookParity
+    if (!harness) throw new Error('Look parity harness unavailable')
+    return harness.translatedLookMatrix()
+  })
+}
+
 test('the raw-byte harness is deterministic', async ({ page }) => {
   await openHarness(page)
   const first = await runLook(page, { lookId: 'marks' })
@@ -232,6 +255,119 @@ for (const lookId of LOOKS) {
     expect.soft(variant.threeDimensionalHash).not.toBe(result.threeDimensionalHash)
   })
 }
+
+test('keeps the broad source-aware matrix byte-exact', async ({ page }, testInfo) => {
+  test.skip(
+    process.env.LOOK_SOURCE_MATRIX !== '1',
+    'Run explicitly with LOOK_SOURCE_MATRIX=1 for broad source-aware parity.',
+  )
+  test.setTimeout(120_000)
+  await openHarness(page)
+  const bold = ['#0064E0', '#0288F9', '#2DC9E5', '#7C3AED', '#FF5001', '#FFFFFF']
+  const atmospheric = ['#09111F', '#18324A', '#5D7890', '#A9C4D6', '#F8FAFC']
+  const cases = [
+    { label: '16x9-low-bold', width: 320, height: 180, seed: 42, detail: 0.15, palette: bold },
+    {
+      label: '9x16-mid-atmospheric',
+      width: 180,
+      height: 320,
+      seed: 1913,
+      detail: 0.5,
+      palette: atmospheric,
+    },
+    {
+      label: '1x1-high-bold',
+      width: 240,
+      height: 240,
+      seed: 8675309,
+      detail: 0.85,
+      palette: bold,
+    },
+    {
+      label: '4x5-high-atmospheric',
+      width: 240,
+      height: 300,
+      seed: 42,
+      detail: 0.85,
+      palette: atmospheric,
+    },
+  ] as const
+  const results: (LookParityResult & { caseLabel: string })[] = []
+
+  for (const lookId of LOOKS) {
+    for (const matrixCase of cases) {
+      const {
+        label,
+        width,
+        height,
+        seed,
+        detail,
+        palette,
+      } = matrixCase
+      const result = await runLook(page, {
+        lookId,
+        width,
+        height,
+        seed,
+        detail,
+        palette: [...palette],
+      })
+      results.push({ ...result, caseLabel: label })
+      expect.soft(result.diff.alphaMismatchCount).toBe(0)
+      expect.soft(result.diff.mismatchedPixelFraction).toBe(0)
+      expect.soft(result.diff.maxAbsoluteError).toBe(0)
+      expect.soft(result.twoDimensionalHash).toBe(result.threeDimensionalHash)
+    }
+  }
+  for (const lookId of LOOKS) {
+    const hashes = results
+      .filter((result) => result.input.lookId === lookId)
+      .map((result) => result.threeDimensionalHash)
+    expect(new Set(hashes).size).toBe(cases.length)
+  }
+
+  const body = Buffer.from(`${JSON.stringify(results, null, 2)}\n`)
+  await writeFile('/tmp/mbs-look-source-aware-parity-matrix.json', body)
+  await testInfo.attach('look-source-aware-parity-matrix.json', {
+    body,
+    contentType: 'application/json',
+  })
+})
+
+test('renders every Look against a translated non-Meta source', async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    process.env.LOOK_SOURCE_MATRIX !== '1',
+    'Run explicitly with LOOK_SOURCE_MATRIX=1 for translated source evidence.',
+  )
+  await openHarness(page)
+  const result = await runTranslatedLookMatrix(page)
+  const screenshot = Buffer.from(result.screenshot.split(',')[1], 'base64')
+  const imagePath = '/tmp/mbs-look-translated-source-aware-matrix.png'
+  const reportPath = '/tmp/mbs-look-translated-source-aware-matrix.json'
+  const report = Buffer.from(`${JSON.stringify({
+    width: result.width,
+    height: result.height,
+    sourceHash: result.sourceHash,
+    rows: result.rows,
+  }, null, 2)}\n`)
+  await writeFile(imagePath, screenshot)
+  await writeFile(reportPath, report)
+  await testInfo.attach('look-translated-source-aware-matrix.png', {
+    body: screenshot,
+    contentType: 'image/png',
+  })
+  await testInfo.attach('look-translated-source-aware-matrix.json', {
+    body: report,
+    contentType: 'application/json',
+  })
+
+  expect(result.rows).toHaveLength(LOOKS.length)
+  expect(new Set(result.rows.map((row) => row.lookId))).toEqual(new Set(LOOKS))
+  expect(new Set(result.rows.map((row) => row.outputHash)).size).toBe(LOOKS.length)
+  expect(result.rows.every((row) => row.outputHash !== result.sourceHash)).toBe(true)
+})
 
 test('trails keeps exact parity across complexity and aspect', async ({ page }, testInfo) => {
   await openHarness(page)
@@ -344,6 +480,11 @@ test('source-aware Pixels follows a translated non-Meta material fixture', async
     return harness.translatedPixels()
   })
   const screenshot = Buffer.from(result.screenshot.split(',')[1], 'base64')
+  console.info('PIXELS_TRANSLATED_MATERIAL', JSON.stringify({
+    changedPixelCount: result.changedPixelCount,
+    ghostPixelCount: result.ghostPixelCount,
+    changedBounds: result.changedBounds,
+  }))
 
   expect(result.outputHash).not.toBe(result.sourceHash)
   expect(result.changedPixelCount).toBeGreaterThan(500)

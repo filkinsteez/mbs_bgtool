@@ -99,6 +99,17 @@ export type TranslatedPixelsFixtureResult = {
   } | null
 }
 
+export type TranslatedLookMatrixResult = {
+  screenshot: string
+  width: number
+  height: number
+  sourceHash: string
+  rows: {
+    lookId: LookId
+    outputHash: string
+  }[]
+}
+
 const DEFAULT_INPUT = {
   width: 320,
   height: 180,
@@ -134,6 +145,7 @@ function parseHex(hex: string): [number, number, number] {
 function fixtureRaster(input: LookParityInput): ImageData {
   const image = new ImageData(input.width, input.height)
   const colors = FIXTURE_SOURCE_COLORS.map(parseHex)
+  const border = Math.max(4, Math.round(Math.min(input.width, input.height) * 0.06))
   let random = FIXTURE_SOURCE_SEED
   const nextByte = () => {
     random ^= random << 13
@@ -145,6 +157,18 @@ function fixtureRaster(input: LookParityInput): ImageData {
   for (let y = 0; y < input.height; y += 1) {
     for (let x = 0; x < input.width; x += 1) {
       const offset = (y * input.width + x) * 4
+      if (
+        x < border
+        || x >= input.width - border
+        || y < border
+        || y >= input.height - border
+      ) {
+        image.data[offset] = 9
+        image.data[offset + 1] = 17
+        image.data[offset + 2] = 31
+        image.data[offset + 3] = 255
+        continue
+      }
       const paletteColor = colors[
         (Math.floor(x / 29) + Math.floor(y / 23)) % colors.length
       ]
@@ -209,7 +233,11 @@ function translatedTrailsRaster(width: number, height: number): {
   }
 }
 
-function translatedNonMetaRaster(width: number, height: number): ImageData {
+function translatedNonMetaRaster(
+  width: number,
+  height: number,
+  foregroundColor: readonly [number, number, number] = [242, 96, 38],
+): ImageData {
   const image = new ImageData(width, height)
   const centerX = width * 0.76
   const centerY = height * 0.36
@@ -228,9 +256,9 @@ function translatedNonMetaRaster(width: number, height: number): ImageData {
       )
       const notch = x > width * 0.76 && y > height * 0.47 && y < height * 0.58
       const foreground = (circle || stem) && !notch
-      image.data[offset] = foreground ? 242 : 9
-      image.data[offset + 1] = foreground ? 96 : 17
-      image.data[offset + 2] = foreground ? 38 : 31
+      image.data[offset] = foreground ? foregroundColor[0] : 9
+      image.data[offset + 1] = foreground ? foregroundColor[1] : 17
+      image.data[offset + 2] = foreground ? foregroundColor[2] : 31
       image.data[offset + 3] = 255
     }
   }
@@ -262,6 +290,7 @@ function recipeForInput(input: LookParityInput): BackgroundRecipeV2 {
     look: {
       id: input.lookId,
       detail: input.detail,
+      version: 'v2',
     },
     palette: {
       packId: recipe.palette.packId,
@@ -575,6 +604,9 @@ function renderTranslatedPixelsFixture(): TranslatedPixelsFixtureResult {
   const height = 240
   const raster = translatedNonMetaRaster(width, height)
   const source = sourceFromRaster(raster)
+  const alternateSource = sourceFromRaster(
+    translatedNonMetaRaster(width, height, [38, 204, 238]),
+  )
   const recipe = recipeForInput({
     ...DEFAULT_INPUT,
     width,
@@ -595,6 +627,24 @@ function renderTranslatedPixelsFixture(): TranslatedPixelsFixtureResult {
   if (!outputContext) throw new Error('Translated fixture output unavailable')
   renderLab(outputContext, lab, source, resolveBank(lab.mark.bank), 'composite', null)
   const pixels = outputContext.getImageData(0, 0, width, height).data
+  const alternate = document.createElement('canvas')
+  alternate.width = width
+  alternate.height = height
+  const alternateContext = alternate.getContext('2d', { willReadFrequently: true })
+  if (!alternateContext) throw new Error('Translated alternate output unavailable')
+  const alternateLab = {
+    ...sourceAwareLabForRecipe(recipe, alternateSource),
+    finish: { grain: 0 },
+  }
+  renderLab(
+    alternateContext,
+    alternateLab,
+    alternateSource,
+    resolveBank(alternateLab.mark.bank),
+    'composite',
+    null,
+  )
+  const alternatePixels = alternateContext.getImageData(0, 0, width, height).data
   let changedPixelCount = 0
   let ghostPixelCount = 0
   let left = width
@@ -602,12 +652,12 @@ function renderTranslatedPixelsFixture(): TranslatedPixelsFixtureResult {
   let right = -1
   let bottom = -1
   for (let offset = 0; offset < pixels.length; offset += 4) {
-    const delta = Math.max(
-      Math.abs(pixels[offset] - raster.data[offset]),
-      Math.abs(pixels[offset + 1] - raster.data[offset + 1]),
-      Math.abs(pixels[offset + 2] - raster.data[offset + 2]),
-    )
-    if (delta < 16) continue
+    const delta = (
+      Math.abs(pixels[offset] - alternatePixels[offset])
+      + Math.abs(pixels[offset + 1] - alternatePixels[offset + 1])
+      + Math.abs(pixels[offset + 2] - alternatePixels[offset + 2])
+    ) / 3
+    if (delta < 8) continue
     const pixel = offset / 4
     const x = pixel % width
     const y = Math.floor(pixel / width)
@@ -650,6 +700,88 @@ function renderTranslatedPixelsFixture(): TranslatedPixelsFixtureResult {
   }
 }
 
+function renderTranslatedLookMatrix(): TranslatedLookMatrixResult {
+  const width = 320
+  const height = 240
+  const raster = translatedNonMetaRaster(width, height)
+  const source = sourceFromRaster(raster)
+  const sourceCanvas = document.createElement('canvas')
+  sourceCanvas.width = width
+  sourceCanvas.height = height
+  sourceCanvas.getContext('2d')!.putImageData(raster, 0, 0)
+  const artifacts: {
+    label: string
+    canvas: HTMLCanvasElement
+    lookId?: LookId
+    outputHash?: string
+  }[] = [{ label: 'Translated non-Meta source', canvas: sourceCanvas }]
+  const rows: TranslatedLookMatrixResult['rows'] = []
+
+  for (const look of LOOKS) {
+    const input: LookParityInput = {
+      ...DEFAULT_INPUT,
+      width,
+      height,
+      seed: 1913,
+      lookId: look.id,
+      detail: 0.85,
+      palette: [...DEFAULT_INPUT.palette],
+    }
+    const recipe = recipeForInput(input)
+    const lab = sourceAwareLabForRecipe(recipe, source)
+    const canvas = document.createElement('canvas')
+    renderRecipeLookToCanvas(
+      canvas,
+      recipe,
+      source,
+      resolveBank(lab.mark.bank),
+    )
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    if (!context) throw new Error(`Translated ${look.id} output context unavailable`)
+    const outputHash = hashPixels(context.getImageData(0, 0, width, height).data)
+    rows.push({ lookId: look.id, outputHash })
+    artifacts.push({
+      label: look.label,
+      canvas,
+      lookId: look.id,
+      outputHash,
+    })
+  }
+
+  const columns = 4
+  const titleHeight = 28
+  const tileWidth = width
+  const tileHeight = height + titleHeight
+  const sheet = document.createElement('canvas')
+  sheet.width = columns * tileWidth
+  sheet.height = Math.ceil(artifacts.length / columns) * tileHeight
+  const sheetContext = sheet.getContext('2d')!
+  sheetContext.fillStyle = '#101114'
+  sheetContext.fillRect(0, 0, sheet.width, sheet.height)
+  sheetContext.fillStyle = '#FFFFFF'
+  sheetContext.font = '600 14px system-ui, sans-serif'
+  sheetContext.textBaseline = 'middle'
+  artifacts.forEach((artifact, index) => {
+    const column = index % columns
+    const row = Math.floor(index / columns)
+    const x = column * tileWidth
+    const y = row * tileHeight
+    sheetContext.fillStyle = '#101114'
+    sheetContext.fillRect(x, y, tileWidth, titleHeight)
+    sheetContext.fillStyle = '#FFFFFF'
+    sheetContext.fillText(artifact.label, x + 10, y + titleHeight / 2)
+    sheetContext.drawImage(artifact.canvas, x, y + titleHeight)
+  })
+
+  return {
+    screenshot: sheet.toDataURL('image/png'),
+    width,
+    height,
+    sourceHash: hashPixels(raster.data),
+    rows,
+  }
+}
+
 declare global {
   interface Window {
     __mbsLookParity?: {
@@ -658,6 +790,7 @@ declare global {
       runTranslatedTrails: typeof runTranslatedTrailsFixture
       renderTranslatedTrails4k: typeof renderTranslatedTrails4k
       translatedPixels: typeof renderTranslatedPixelsFixture
+      translatedLookMatrix: typeof renderTranslatedLookMatrix
     }
   }
 }
@@ -668,5 +801,6 @@ window.__mbsLookParity = {
   runTranslatedTrails: runTranslatedTrailsFixture,
   renderTranslatedTrails4k,
   translatedPixels: renderTranslatedPixelsFixture,
+  translatedLookMatrix: renderTranslatedLookMatrix,
 }
 document.documentElement.dataset.parityHarness = 'ready'

@@ -9,11 +9,9 @@ export type CurveKind = 'lissajous' | 'meta'
 // Base curve in unit space [-1,1]²:  x = sin(a·t + phase), y = sin(b·t)
 export type CurveParams = { a: number; b: number; phase: number; kind?: CurveKind }
 
-// The Meta mark, fitted numerically from public/icon-fill.svg. PHASE is the
-// decisive dial (the lobes are tilted ≈108.6°); the harmonic signature warps
-// the y-oscillation (raised crossing, full round bottoms, slightly peaked
-// tops); ASPECT is the drawing's height/width at the fitted point. These are
-// the single source of truth — the motion lab imports them from here.
+// Legacy parametric centerline used by curve tooling and V1-era flow. It was
+// numerically fitted to the former 20x14 asset and is not identity geometry;
+// logo silhouettes and V2 identity checks use core/metaSymbol.ts instead.
 export const META_PHASE = 1.8956 // ≈ 108.6°
 export const META_ASPECT = 0.63
 export const META_HARMONICS = {

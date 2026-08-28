@@ -17,7 +17,7 @@ import { getPaintRaster, reconcilePaint, type PaintRaster } from './paintRuntime
 import { sampleRGB } from './analysis'
 import { stampProto } from './stamp'
 import { createOrganicMotionWarp } from './motion'
-import { constrainArtworkToCanvas } from './artworkTransform'
+import { constrainArtworkCover } from './artworkTransform'
 import { artDirectTerritory, sampleCompositionPlan } from './compositionPlan'
 import { weightedColorIndex } from './colorDirection'
 import { renderQuilt } from './quilt'
@@ -26,6 +26,11 @@ import { renderTrails } from './renderTrails'
 import { renderBrushwork } from './brushworkRender'
 import { paintPixelField } from './pixelFieldPainter'
 import { createPixelSourceMask } from './pixelSourceMask'
+import { borderDistanceField } from './sourceMask'
+import { canonicalMetaInfluence } from './metaInfluence'
+import { renderWeaveField } from './weaveRender'
+import { renderBackgroundLook } from './backgroundLookRenderers'
+import { renderLabV1, renderSourceOverlayV1 } from './v1/render'
 
 // One painter for preview AND export. The ctx arrives pre-scaled and
 // everything draws in output units. Per-render work is lazy: the
@@ -72,6 +77,21 @@ function cached<T>(cache: Map<string, T>, key: string, build: () => T): T {
 }
 
 export function renderLab(
+  ctx: CanvasRenderingContext2D,
+  lab: LabState,
+  source: LabSource | null,
+  protos: ShapeProto[],
+  view: LabView,
+  paintRaster?: PaintRaster | null,
+): void {
+  if (lab.look?.version === 'v1') {
+    renderLabV1(ctx, lab, source, protos, view, paintRaster)
+    return
+  }
+  renderLabV2(ctx, lab, source, protos, view, paintRaster)
+}
+
+function renderLabV2(
   ctx: CanvasRenderingContext2D,
   lab: LabState,
   source: LabSource | null,
@@ -130,12 +150,33 @@ export function renderLab(
   const restore: Field | null = paintField
     ? (x: number, y: number) => Math.max(0, paintField(x, y))
     : null
+  const isV2 = lab.look?.version !== 'v1'
   const isFrameLook = lab.look?.id === 'frame'
-  const compiledTerritory = compileTerritoryCached(lab, rect, outW, outH, maps, paintField)
+  const usesV2Frame = isV2 && isFrameLook
+  const usesBackgroundLookRenderer = isV2 && [
+    'frame',
+    'pixels',
+    'scanlines',
+    'streams',
+    'beads',
+    'quilt',
+    'weave',
+    'marks',
+    'trails',
+  ].includes(lab.look?.id ?? '')
+  const compiledTerritory = compileTerritoryCached(
+    lab,
+    rect,
+    outW,
+    outH,
+    maps,
+    paintField,
+    source,
+  )
   // Frame owns a fixed contour topology and animates those points after
   // extraction. Sampling the shared domain-warped field here would add and
   // remove loops while it moved.
-  const frameTerritory = isFrameLook && lab.motion.frame
+  const stableLookTerritory = usesBackgroundLookRenderer && lab.motion.frame
     ? compileTerritoryCached(
         { ...lab, motion: { ...lab.motion, frame: undefined } },
         rect,
@@ -143,13 +184,22 @@ export function renderLab(
         outH,
         maps,
         paintField,
+        source,
       )
     : compiledTerritory
+  const frameTerritory = usesV2Frame ? stableLookTerritory : compiledTerritory
   const directedTerritory = lab.composition
     ? artDirectTerritory(lab.composition, frameTerritory, outW, outH)
     : frameTerritory
+  const sourceAwareMaterial = lab.sourceMask === 'border-distance' && source !== null
+  const logoInfluence = sourceAwareMaterial
+    ? stableLookTerritory
+    : canonicalMetaInfluence(outW, outH)
   const preserveSilhouette = lab.look?.id != null
-    && ['pixels', 'streams', 'beads', 'quilt'].includes(lab.look.id)
+    && (
+      ['pixels', 'streams', 'beads', 'quilt'].includes(lab.look.id)
+      || (isV2 && sourceAwareMaterial && lab.look.id === 'brushwork')
+    )
   const T: Field = preserveSilhouette
     ? (x, y) => {
         const base = compiledTerritory(x, y)
@@ -162,7 +212,47 @@ export function renderLab(
     return
   }
 
-  const pixelComposite = view === 'composite' && lab.look?.id === 'pixels'
+  const hasPalette = !!lab.colors?.palette?.length
+  const palette = hasPalette ? lab.colors.palette : [ink, paper]
+  const colorPlan = lab.colors?.plan
+  const K = palette.length
+  if (
+    view === 'composite'
+    && lab.look?.id
+    && renderBackgroundLook(ctx, {
+      id: lab.look.id,
+      width: outW,
+      height: outH,
+      seed: lab.seed,
+      complexity: lab.look.complexity ?? 0.5,
+      palette,
+      colorPlan,
+      influence: logoInfluence,
+      sourceSample: maps
+        ? (x, y) => {
+            const u = (x - rect.x) / rect.w
+            const v = (y - rect.y) / rect.h
+            if (u < 0 || u > 1 || v < 0 || v > 1) return null
+            return sampleRGB(maps, u * maps.w - 0.5, v * maps.h - 0.5)
+          }
+        : undefined,
+      motionPhase: lab.motion.frame?.phase ?? 0,
+      motionAmount: lab.motion.amount,
+      motionEnergy: Math.max(0, Math.min(1, (lab.motion.speed - 0.1) / 1.9)),
+    })
+  ) {
+    const strength = lab.look.strength ?? 1
+    if (source && strength < 1) {
+      ctx.save()
+      ctx.globalAlpha = Math.min(1, Math.max(0, 1 - strength))
+      ctx.drawImage(source.image, rect.x, rect.y, rect.w, rect.h)
+      ctx.restore()
+    }
+    if (lab.finish.grain > 0) applyGrain(ctx, lab.finish.grain, lab.seed)
+    return
+  }
+
+  const pixelComposite = isV2 && view === 'composite' && lab.look?.id === 'pixels'
   const pixelSourceMask = pixelComposite && maps && source
     ? createPixelSourceMask({
         maps,
@@ -235,10 +325,6 @@ export function renderLab(
   }
 
   // the palette every fill treatment deals from
-  const hasPalette = !!lab.colors?.palette?.length
-  const palette = hasPalette ? lab.colors.palette : [ink, paper]
-  const colorPlan = lab.colors?.plan
-  const K = palette.length
   const dealPalette = (x: number, y: number, channel: string) => {
     const sample = regionValue(lab.seed, x, y, lab.structure.baseCell * 2.8, channel)
     const index = colorPlan
@@ -279,13 +365,10 @@ export function renderLab(
   // mosaic: the source quantized to the cell grid — or, with no photo,
   // the GENERATED color field quantized the same way (the pixel-
   // gradient read: a gorgeous smooth field, sampled coarsely)
-  if (cells.some((c) => c.treatment === 'mosaic')) {
+  if (!pixelComposite && cells.some((c) => c.treatment === 'mosaic')) {
     const field = !maps && !colorPlan
       ? buildColorField({ palette, seed: lab.seed, T, outW, outH })
       : null
-    const pixelColors = lab.look?.id === 'pixels' && colorPlan
-      ? colorPlan.depthOrder.filter((index) => index !== colorPlan.roles.ground)
-      : []
     for (const c of cells) {
       if (c.treatment !== 'mosaic') continue
       const cx = c.x + c.size / 2
@@ -315,6 +398,9 @@ export function renderLab(
               + (planSample?.wave ?? 0) * 0.18
               + (c.t - 0.5) * 0.14,
           ))
+          const pixelColors = lab.look?.id === 'pixels'
+            ? colorPlan.depthOrder.filter((index) => index !== colorPlan.roles.ground)
+            : []
           const colorIndex = pixelColors.length > 0
             ? pixelColors[
                 Math.min(pixelColors.length - 1, Math.floor(sample * pixelColors.length))
@@ -331,8 +417,8 @@ export function renderLab(
 
   // BLOCKS — generic flat fills, except Quilt: its focused renderer owns
   // the patch topology, role-led color groups, and textile seam hierarchy.
-  if (!isFrameLook && cells.some((c) => c.treatment === 'blocks')) {
-    if (lab.look?.id === 'quilt') {
+  if (!usesV2Frame && cells.some((c) => c.treatment === 'blocks')) {
+    if (isV2 && lab.look?.id === 'quilt') {
       const curve = lab.territory.sources.find(
         (source) => source.kind === 'curve' && source.enabled && source.curve,
       )?.curve
@@ -359,19 +445,35 @@ export function renderLab(
         colorPlan,
       })) {
         const { cell } = f
+        const legacyQuilt = !isV2 && lab.look?.id === 'quilt'
+        const gap = legacyQuilt ? Math.max(0.7, cell.size * 0.025) : 0
         ctx.fillStyle = palette[f.color]
-        ctx.fillRect(cell.x, cell.y, cell.size + 0.35, cell.size + 0.35)
+        ctx.fillRect(
+          cell.x + gap,
+          cell.y + gap,
+          cell.size - gap * 2 + (legacyQuilt ? 0 : 0.35),
+          cell.size - gap * 2 + (legacyQuilt ? 0 : 0.35),
+        )
         if (f.accent !== null) {
           const inset = cell.size * 0.3
           ctx.fillStyle = palette[f.accent]
-          ctx.lineWidth = Math.max(1, cell.size * 0.055)
-          ctx.strokeStyle = palette[f.accent]
-          ctx.strokeRect(
-            cell.x + inset,
-            cell.y + inset,
-            cell.size - inset * 2,
-            cell.size - inset * 2,
-          )
+          if (legacyQuilt) {
+            ctx.beginPath()
+            ctx.moveTo(cell.x + gap, cell.y + gap)
+            ctx.lineTo(cell.x + cell.size - gap, cell.y + gap)
+            ctx.lineTo(cell.x + cell.size - gap, cell.y + cell.size - gap)
+            ctx.closePath()
+            ctx.fill()
+          } else {
+            ctx.lineWidth = Math.max(1, cell.size * 0.055)
+            ctx.strokeStyle = palette[f.accent]
+            ctx.strokeRect(
+              cell.x + inset,
+              cell.y + inset,
+              cell.size - inset * 2,
+              cell.size - inset * 2,
+            )
+          }
         }
       }
     }
@@ -474,36 +576,19 @@ export function renderLab(
   // direction alternating in a weave, leaned by the flow angle
   if (cells.some((c) => c.treatment === 'shingle')) {
     let renderedCurveWeave = false
-    if (lab.look?.id === 'weave') {
-      const curveSource = lab.territory.sources.find(
-        (source) => source.kind === 'curve' && source.enabled && source.curve,
-      )
-      const curve = curveSource?.curve
-        ? sampleCurve(
-            {
-              ...curveSource.curve,
-              sampleDensity: 128,
-              curve: curveSource.curve.curve,
-            },
-            outW,
-            outH,
-            360,
-          )
-        : []
-      if (curve.length > 1) {
-        renderWeave(ctx, {
-          width: outW,
-          height: outH,
-          seed: lab.seed,
-          palette,
-          colorPlan,
-          curve,
-          complexity: lab.look.complexity ?? 0.5,
-          motionPhase: lab.motion.frame?.phase ?? 0,
-          motionAmount: lab.motion.amount,
-        })
-        renderedCurveWeave = true
-      }
+    if (isV2 && lab.look?.id === 'weave') {
+      renderWeaveField(ctx, {
+        width: outW,
+        height: outH,
+        seed: lab.seed,
+        palette,
+        colorPlan,
+        influence: logoInfluence,
+        complexity: lab.look.complexity ?? 0.5,
+        motionPhase: lab.motion.frame?.phase ?? 0,
+        motionAmount: lab.motion.amount,
+      })
+      renderedCurveWeave = true
     }
     if (!renderedCurveWeave) {
       // Source-aware processing has no fixed curve. Fall back to a woven
@@ -560,7 +645,7 @@ export function renderLab(
     ctx.restore()
   }
 
-  if (isFrameLook) {
+  if (usesV2Frame) {
     renderFrameLook(ctx, {
       field: T,
       width: outW,
@@ -586,9 +671,29 @@ export function renderLab(
             colorPlan,
           ]),
     })
+  } else if (isFrameLook) {
+    const grid = territoryGrid(T, outW, outH, 160)
+    const levels = 10 + Math.round((lab.look?.complexity ?? 0.5) * 10)
+    ctx.save()
+    ctx.lineJoin = 'round'
+    ctx.lineCap = 'round'
+    for (let index = 0; index < levels; index += 1) {
+      const level = 0.12 + (index / Math.max(1, levels - 1)) * 0.76
+      const pathData = contourAtLevel(grid, level)
+      if (!pathData) continue
+      const path = new Path2D(pathData)
+      const paletteIndex = colorPlan
+        ? colorPlan.depthOrder[index % colorPlan.depthOrder.length]
+        : index % palette.length
+      ctx.globalAlpha = index % 4 === 0 ? 0.92 : 0.56
+      ctx.lineWidth = index % 4 === 0 ? 2.2 : 0.85
+      ctx.strokeStyle = palette[paletteIndex]
+      ctx.stroke(path)
+    }
+    ctx.restore()
   }
 
-  if (lab.look?.id === 'trails') {
+  if (isV2 && lab.look?.id === 'trails') {
     renderTrails(
       ctx,
       lab,
@@ -597,11 +702,10 @@ export function renderLab(
   }
 
   // the process treatments share one composed vector field
+  const useBrushworkScene = isV2
+    && lab.look?.id === 'brushwork'
   const needsVector = cells.some((c) => c.treatment === 'scan' || c.treatment === 'streams')
-    || (
-      lab.look?.id !== 'brushwork'
-      && cells.some((c) => c.treatment === 'dabs')
-    )
+    || (!useBrushworkScene && cells.some((c) => c.treatment === 'dabs'))
     || (lab.mark.echo > 0 && cells.some((c) => c.treatment === 'marks'))
   const vector: VectorField | null =
     needsVector
@@ -727,29 +831,32 @@ export function renderLab(
     ctx.globalAlpha = 1
   }
 
-  // BRUSHWORK — a fixed scene of broad hero gestures, supporting strokes,
-  // and sparse bristle texture. Complexity reveals stable IDs from that scene;
-  // motion deforms its existing points instead of reseeding cell-sized dabs.
-  if (lab.look?.id === 'brushwork') {
+  // BRUSHWORK — rendered by p5.brush, with a full-frame paper field and
+  // pigment clipped to the canonical Meta symbol or captured material mask.
+  if (useBrushworkScene) {
     renderBrushwork(ctx, {
       width: outW,
       height: outH,
       seed: lab.seed,
       complexity: lab.look.complexity ?? 0.5,
-      composition: lab.composition,
       palette,
       colorPlan,
       territory: T,
+      sourceAware: sourceAwareMaterial,
       motionPhase: lab.motion.frame?.phase,
       motionAmount: lab.motion.amount,
     })
   }
 
   // DABS — short strokes riding the flow, density and width from tone
-  if (lab.look?.id !== 'brushwork' && vector && cells.some((c) => c.treatment === 'dabs')) {
+  if (
+    !useBrushworkScene
+    && vector
+    && cells.some((c) => c.treatment === 'dabs')
+  ) {
     const dabs = buildDabs({
       cells,
-      maps,
+      maps: sourceAwareMaterial ? null : maps,
       rect,
       seed: lab.seed,
       field: vector,
@@ -759,21 +866,28 @@ export function renderLab(
     const mode = lab.mark.colorMode
     ctx.lineCap = 'round'
     for (const d of dabs) {
+      if (sourceAwareMaterial && d.tone < 0.08) continue
       let stroke = ink
       let alpha = 1
+      const evidence = sourceAwareMaterial ? 0.06 + d.tone * 0.94 : 1
       if (mode === 'tint') alpha = tintFor(d.tone)
       else if (mode === 'source' && maps) {
         const [r, g, b] = sampleRGB(maps, d.mx, d.my)
         stroke = `rgb(${r} ${g} ${b})`
       } else if (mode === 'palette') stroke = dealPalette(d.pts[0], d.pts[1], 'lab.dab.pal')
       ctx.strokeStyle = stroke
-      ctx.globalAlpha = alpha * (0.12 + d.pressure * 0.12)
+      if (sourceAwareMaterial) {
+        ctx.globalAlpha = evidence * (0.1 + d.pressure * 0.08)
+        ctx.lineWidth = d.width * 3.2
+        strokePolyline(ctx, d.pts)
+      }
+      ctx.globalAlpha = alpha * evidence * (0.12 + d.pressure * 0.12)
       ctx.lineWidth = d.width * 1.65
       strokePolyline(ctx, d.pts)
-      ctx.globalAlpha = alpha * (0.58 + d.pressure * 0.34)
+      ctx.globalAlpha = alpha * evidence * (0.58 + d.pressure * 0.34)
       strokeTaperedPolyline(ctx, d.pts, d.width)
       if (d.dry > 0.48) {
-        ctx.globalAlpha = alpha * (0.16 + d.dry * 0.18)
+        ctx.globalAlpha = alpha * evidence * (0.16 + d.dry * 0.18)
         ctx.lineWidth = Math.max(0.55, d.width * 0.12)
         strokePolyline(ctx, offsetPolyline(d.pts, d.width * 0.24))
         strokePolyline(ctx, offsetPolyline(d.pts, -d.width * 0.2))
@@ -879,7 +993,8 @@ export function renderLab(
 
 // The generated Look is stable in its own full-artboard coordinate system.
 // Editing the 2D transform composites that completed artwork as one clipped
-// layer, so the symbol, cells, marks, grain, and source pixels move together.
+// layer. The layer always covers the output; breathing room belongs inside
+// the generated composition around its canonical influence, never outside it.
 export function renderLabArtwork(
   ctx: CanvasRenderingContext2D,
   lab: LabState,
@@ -891,7 +1006,7 @@ export function renderLabArtwork(
   paintRaster?: PaintRaster | null,
 ): void {
   const { width: outW, height: outH } = lab.output
-  const renderTransform = constrainArtworkToCanvas(
+  const renderTransform = constrainArtworkCover(
     transform,
     outW,
     outH,
@@ -903,7 +1018,11 @@ export function renderLabArtwork(
   artwork.globalCompositeOperation = 'source-over'
   renderLab(artwork, lab, source, protos, view, paintRaster)
   if (focusedSourceId && view === 'composite') {
-    renderSourceOverlay(artwork, lab, source, focusedSourceId)
+    if (lab.look?.version === 'v1') {
+      renderSourceOverlayV1(artwork, lab, source, focusedSourceId)
+    } else {
+      renderSourceOverlay(artwork, lab, source, focusedSourceId)
+    }
   }
 
   const transparent = view === 'composite' && lab.territory.bands.includes('empty')
@@ -929,148 +1048,6 @@ export function renderLabArtwork(
   ctx.translate(-outW / 2, -outH / 2)
   ctx.imageSmoothingEnabled = true
   ctx.drawImage(artwork.canvas, 0, 0)
-  ctx.restore()
-}
-
-function renderWeave(
-  ctx: CanvasRenderingContext2D,
-  options: {
-    width: number
-    height: number
-    seed: number
-    palette: string[]
-    colorPlan: LabState['colors']['plan']
-    curve: readonly { x: number; y: number; angle: number }[]
-    complexity: number
-    motionPhase: number
-    motionAmount: number
-  },
-): void {
-  const {
-    width,
-    height,
-    seed,
-    palette,
-    colorPlan,
-    curve,
-    complexity,
-    motionPhase,
-    motionAmount,
-  } = options
-  if (curve.length < 2) return
-  const c = Math.max(0, Math.min(1, complexity))
-  const minDim = Math.min(width, height)
-  const strandCount = 3 + Math.round(c * 2)
-  const bandWidth = minDim * (0.115 + c * 0.035)
-  const threadWidth = Math.max(1.25, bandWidth / (strandCount * 2.25))
-  const groundIndex = colorPlan?.roles.ground ?? 0
-  const phase = (((motionPhase % 1) + 1) % 1) * Math.PI * 2
-  const motion = Math.max(0, Math.min(1, motionAmount))
-  const visibleColors = colorPlan?.depthOrder.filter((index) => index !== groundIndex) ?? []
-  const strandColors = Array.from({ length: strandCount }, (_, index) => {
-    if (!colorPlan) return index % palette.length
-    return visibleColors[index % Math.max(1, Math.min(visibleColors.length, 3))]
-      ?? colorPlan.roles.dominant
-  })
-  const cycles = 8 + Math.round(c * 8)
-  const seededPhase = chan(seed, 0, 'lab.weave.phase') * Math.PI * 2
-  const strandPoints = Array.from({ length: strandCount }, (_, strand) => {
-    const strandPhase = seededPhase + strand / strandCount * Math.PI * 2
-    return curve.map((point, index) => {
-      const progress = index / Math.max(1, curve.length - 1)
-      const braidPhase = progress * Math.PI * 2 * cycles
-        + strandPhase
-        + phase * motion
-      const offset = (
-        Math.sin(braidPhase) * 0.28
-        + Math.sin(braidPhase * 2 + strandPhase) * 0.045
-      ) * bandWidth
-      return {
-        x: point.x - Math.sin(point.angle) * offset,
-        y: point.y + Math.cos(point.angle) * offset,
-        depth: Math.cos(braidPhase),
-      }
-    })
-  })
-  const buildPath = (strand: number, start = 0, end = curve.length - 1): Path2D => {
-    const path = new Path2D()
-    for (let index = start; index <= end; index += 1) {
-      const point = strandPoints[strand][index]
-      if (index === start) path.moveTo(point.x, point.y)
-      else path.lineTo(point.x, point.y)
-    }
-    return path
-  }
-
-  ctx.save()
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-  for (let strand = 0; strand < strandCount; strand += 1) {
-    const path = buildPath(strand)
-    ctx.strokeStyle = palette[strandColors[strand]]
-    ctx.lineWidth = threadWidth
-    ctx.globalAlpha = 0.92
-    ctx.stroke(path)
-  }
-
-  // Redraw only the forward-facing portions with a narrow knockout. This
-  // creates a real alternating braid without filling the symbol or adding
-  // transverse straps.
-  for (let strand = 0; strand < strandCount; strand += 1) {
-    const points = strandPoints[strand]
-    let runStart = -1
-    for (let index = 0; index <= points.length; index += 1) {
-      const isOver = index < points.length && points[index].depth > 0.56
-      if (isOver && runStart < 0) runStart = Math.max(0, index - 1)
-      if ((!isOver || index === points.length) && runStart >= 0) {
-        const runEnd = Math.min(points.length - 1, index)
-        const path = buildPath(strand, runStart, runEnd)
-        ctx.strokeStyle = palette[groundIndex]
-        ctx.lineWidth = threadWidth * 1.34
-        ctx.globalAlpha = 1
-        ctx.stroke(path)
-        ctx.strokeStyle = palette[strandColors[strand]]
-        ctx.lineWidth = threadWidth
-        ctx.stroke(path)
-        runStart = -1
-      }
-    }
-  }
-
-  // Resolve the symbol's self-intersection as one deliberate overpass.
-  const centerX = width / 2
-  const centerY = height / 2
-  let crossingIndex = Math.floor(curve.length / 2)
-  let crossingDistance = Number.POSITIVE_INFINITY
-  for (let index = Math.floor(curve.length * 0.12); index < curve.length * 0.88; index += 1) {
-    const dx = curve[index].x - centerX
-    const dy = curve[index].y - centerY
-    const distance = dx * dx + dy * dy
-    if (distance < crossingDistance) {
-      crossingDistance = distance
-      crossingIndex = index
-    }
-  }
-  const crossingSpan = Math.max(4, Math.round(curve.length * 0.018))
-  const crossingStart = Math.max(0, crossingIndex - crossingSpan)
-  const crossingEnd = Math.min(curve.length - 1, crossingIndex + crossingSpan)
-  const crossingPath = new Path2D()
-  for (let index = crossingStart; index <= crossingEnd; index += 1) {
-    const point = curve[index]
-    if (index === crossingStart) crossingPath.moveTo(point.x, point.y)
-    else crossingPath.lineTo(point.x, point.y)
-  }
-  ctx.strokeStyle = palette[groundIndex]
-  ctx.lineWidth = bandWidth * 0.64
-  ctx.globalAlpha = 1
-  ctx.lineCap = 'butt'
-  ctx.stroke(crossingPath)
-  ctx.lineCap = 'round'
-  for (let strand = 0; strand < strandCount; strand += 1) {
-    ctx.strokeStyle = palette[strandColors[strand]]
-    ctx.lineWidth = threadWidth
-    ctx.stroke(buildPath(strand, crossingStart, crossingEnd))
-  }
   ctx.restore()
 }
 
@@ -1163,6 +1140,7 @@ function compileTerritoryCached(
   outH: number,
   maps: LabSource['maps'] | null,
   paintField: Field | null,
+  source: LabSource | null = null,
 ): Field {
   // curve distance lattices are the one expensive compile step — build
   // them through the cache and hand them to compileTerritory as
@@ -1171,6 +1149,12 @@ function compileTerritoryCached(
   // fields with forced 'add' and silently contradicted the engine)
   const fieldOverrides = new Map<string, Field>()
   const motionWarp = createOrganicMotionWarp(lab.motion, lab.seed, outW, outH)
+  if (lab.sourceMask === 'border-distance' && source) {
+    const mask = borderDistanceField(source, rect)
+    for (const src of lab.territory.sources) {
+      if (src.kind === 'tone' && src.enabled) fieldOverrides.set(src.id, mask)
+    }
+  }
   for (const src of lab.territory.sources) {
     if (src.kind !== 'curve' || !src.enabled || !src.curve) continue
     const key = `${JSON.stringify(src.curve)}|${outW}x${outH}|${src.softness.toFixed(3)}`
@@ -1299,7 +1283,7 @@ export function renderSourceOverlay(
       sources: [{ ...src, weight: 1, combine: 'add' }],
     },
   }
-  const T = compileTerritoryCached(solo, rect, outW, outH, maps, null)
+  const T = compileTerritoryCached(solo, rect, outW, outH, maps, null, source)
   const grid = territoryGrid(T, outW, outH)
   ctx.save()
   ctx.lineJoin = 'round'

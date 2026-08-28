@@ -1,6 +1,9 @@
-import { sampleCurve } from '@/core/lissajous/sampler'
-import { META_PHASE } from '@/core/lissajous/equation'
 import { SpatialHash } from '@/core/math/spatialHash'
+import {
+  getMetaSymbolContours,
+  META_SYMBOL_HEIGHT,
+  META_SYMBOL_WIDTH,
+} from '@/core/metaSymbol'
 import { chan } from '@/core/organic/random'
 import type { LookColorPlan } from './colorDirection'
 import {
@@ -15,7 +18,7 @@ import type { MotionState } from './types'
 const TAU = Math.PI * 2
 const GUIDE_SAMPLES = 384
 
-export const TRAIL_GEOMETRY_REVISION = 3
+export const TRAIL_GEOMETRY_REVISION = 4
 
 export type TrailTier = 'back' | 'support' | 'hero'
 
@@ -222,18 +225,8 @@ function buildGuide(
   height: number,
   composition: CompositionPlan,
 ): GuidePoint[] {
-  const raw = sampleCurve({
-    frequencyX: 1,
-    frequencyY: 2,
-    phase: META_PHASE,
-    amplitudeX: 1,
-    amplitudeY: 1,
-    rotation: 0,
-    offsetX: 0,
-    offsetY: 0,
-    sampleDensity: GUIDE_SAMPLES,
-    curve: 'meta',
-  }, 2, 2, GUIDE_SAMPLES)
+  const raw = getMetaSymbolContours()[0]
+  if (!raw?.length) throw new Error('Canonical Meta symbol contour is empty')
   const portraitRotation = height > width * 1.14 ? Math.PI / 2 : 0
   const tilt = (chan(seed, 0, 'lab.trails.guide.tilt') - 0.5) * 0.16
     + Math.sin(composition.field.angle) * 0.055
@@ -241,8 +234,8 @@ function buildGuide(
   const cos = Math.cos(rotation)
   const sin = Math.sin(rotation)
   const rotated = raw.map((point) => {
-    const x = point.x - 1
-    const y = point.y - 1
+    const x = point.x - META_SYMBOL_WIDTH / 2
+    const y = point.y - META_SYMBOL_HEIGHT / 2
     return {
       x: x * cos - y * sin,
       y: x * sin + y * cos,
@@ -264,10 +257,13 @@ function buildGuide(
   const centerY = height * (0.5 + ((anchor?.y ?? 0.5) - 0.5) * 0.18)
   const rawCenterX = (minX + maxX) / 2
   const rawCenterY = (minY + maxY) / 2
-  const fitted = rotated.map((point) => ({
-    x: centerX + (point.x - rawCenterX) * scale,
-    y: centerY + (point.y - rawCenterY) * scale,
-  }))
+  const fitted = resampleClosed(
+    rotated.map((point) => ({
+      x: centerX + (point.x - rawCenterX) * scale,
+      y: centerY + (point.y - rawCenterY) * scale,
+    })),
+    GUIDE_SAMPLES,
+  )
   const minDimension = Math.min(width, height)
   const normalAmplitude = minDimension
     * (0.012 + composition.latents.mutation * 0.024)

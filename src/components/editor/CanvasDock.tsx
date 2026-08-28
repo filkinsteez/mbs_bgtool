@@ -15,8 +15,8 @@ import {
 import { useStore, type CanvasTool, type DesignTab } from '@/core/state/store'
 import { metaUnitOutline } from '@/core/sheet/sheet'
 
-// The CURVE icon is the actual meta figure — same outline the sheet
-// glyphs stamp, traced once at module scope into the 24 grid
+// The CURVE icon previews the legacy parametric figure used by this editor
+// tool; it is not the canonical company-brand symbol.
 const META_ICON_D = (() => {
   const pts = metaUnitOutline()
   return (

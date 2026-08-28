@@ -3,8 +3,8 @@
 This fork is focused on generating export-ready Meta backgrounds with a
 simplified workflow:
 
-- Format aspect selection (16:9, 9:16, 1:1, 4:5, custom)
-- Looks (Frame, Pixels, Scanlines, Streams, Brushwork, Beads, Quilt, Weave, Marks, Trails)
+- Format aspect selection (16:9, 9:16, 1:1, 4:5)
+- V1 and V2 tabs for Frame, Pixels, Scanlines, Streams, Brushwork, Beads, Quilt, Weave, Marks, and Trails
 - Approved color packs with weighted color mixing
 - Direct canvas move, scale, rotate, centered aspect editing, pan, zoom, snapping, and undo/redo
 - Orthographic 3D material viewer with Clean, Liquid, Glass, and Stainless Steel finishes

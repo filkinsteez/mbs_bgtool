@@ -13,7 +13,7 @@ const ARTIFACT_DIRECTORY = '/tmp/mbs-trails-audit'
 
 test('keeps Trails motion varied and byte-exact at the loop seam', async ({ page }) => {
   const recipe = createDefaultBackgroundRecipe(1913)
-  recipe.look = { id: 'trails', detail: 0.85 }
+  recipe.look = { id: 'trails', detail: 0.85, version: 'v2' }
   recipe.motion = {
     enabled: true,
     amount: 0.75,

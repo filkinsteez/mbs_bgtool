@@ -39,7 +39,7 @@ describe('canvas geometry', () => {
     expect(snapped.guideX).toBe(500)
   })
 
-  it('keeps full-frame movement covered but allows scaling down for breathing room', () => {
+  it('keeps the generated background edge-to-edge while moving and scaling', () => {
     const full: SubjectTransform = {
       preset: 'full',
       x: 0,
@@ -50,7 +50,7 @@ describe('canvas geometry', () => {
 
     expect(moveSubject(full, 200, 100, 1000, 500, false).transform).toBe(full)
     expect(scaleSubjectFromCorner(full, 'se', 1000, 500, 700, 350, true).transform)
-      .toMatchObject({ preset: 'free', x: 0, y: 0, scale: 0.4 })
+      .toBe(full)
   })
 
   it('snaps all four artwork edges in screen space while moving', () => {

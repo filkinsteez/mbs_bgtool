@@ -41,7 +41,7 @@ function frameRecipe(
   return {
     ...recipe,
     format: { aspect, ...dimensionsFor(aspect) },
-    look: { id: 'frame', detail: complexity },
+    look: { id: 'frame', detail: complexity, version: 'v2' },
   }
 }
 

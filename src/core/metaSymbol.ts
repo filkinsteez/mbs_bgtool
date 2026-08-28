@@ -1,10 +1,23 @@
-// Canonical Meta symbol geometry. Keep this path byte-for-byte aligned with
-// public/icon-fill.svg; both 2D rendering and 3D export consume this source.
-export const META_SYMBOL_WIDTH = 20
-export const META_SYMBOL_HEIGHT = 14
-export const META_SYMBOL_PATH = 'M14.353 0C12.713 0 11.432 1.3 10.27 2.954C8.676 0.814 7.343 0 5.747 0C2.493 0 0 4.46 0 9.183C0 12.137 1.357 14 3.63 14C5.265 14 6.442 13.188 8.534 9.337L10.004 6.598C10.214 6.95533 10.4357 7.34033 10.669 7.753L11.649 9.491C13.56 12.858 14.625 14 16.555 14C18.768 14 20 12.111 20 9.096C19.999 4.152 17.45 0 14.353 0ZM6.94 8.294C5.244 11.094 4.658 11.721 3.713 11.721C2.741 11.721 2.163 10.822 2.163 9.221C2.163 5.793 3.786 2.288 5.72 2.288C6.767 2.288 7.643 2.925 8.982 4.946C7.71 7.004 6.94 8.294 6.94 8.294ZM13.339 7.941L12.167 5.881C11.8718 5.37509 11.5667 4.875 11.252 4.381C12.308 2.661 13.179 1.806 14.217 1.806C16.371 1.806 18.094 5.146 18.094 9.25C18.094 10.814 17.608 11.722 16.6 11.722C15.634 11.721 15.173 11.049 13.339 7.941Z'
+// Meta's company-brand page publishes Meta_Company-Lockup.zip. The Symbol
+// path below is copied byte-for-byte from the archive's monochrome RGB SVG;
+// public/icon-fill.svg carries that same path and its natural viewBox.
+export const META_SYMBOL_SOURCE_URL =
+  'https://www.meta.com/brand/resources/meta/company-brand/'
+export const META_SYMBOL_SOURCE_FILE =
+  'Meta_Company Lockup/3 Mono Black/RGB/Meta_lockup_mono_black_RGB.svg'
+export const META_SYMBOL_PATH_SHA256 =
+  'aefbd77408112a50ea8d92a123f629da0c988af3e19262cbc0d4ba2a44324f93'
+export const META_SYMBOL_MIN_X = 1000
+export const META_SYMBOL_MIN_Y = 1000
+export const META_SYMBOL_WIDTH = 1504.8272
+export const META_SYMBOL_HEIGHT = 1000
+export const META_SYMBOL_ASPECT_RATIO = META_SYMBOL_WIDTH / META_SYMBOL_HEIGHT
+export const META_SYMBOL_VIEW_BOX =
+  `${META_SYMBOL_MIN_X} ${META_SYMBOL_MIN_Y} ${META_SYMBOL_WIDTH} ${META_SYMBOL_HEIGHT}`
+export const META_SYMBOL_PATH = 'M2080,1000c-123.3911,0-219.8478,92.936-307.164,210.9931C1652.8473,1058.2153,1552.5,1000,1432.4138,1000,1187.5862,1000,1000,1318.6207,1000,1655.8621,1000,1866.8965,1102.0956,2000,1273.1035,2000c123.0805,0,211.6-58.0259,368.9655-333.1034,0,0,65.5973-115.8413,110.7249-195.6386q23.72,38.2978,49.9647,82.5351l73.7931,124.1379C2020.2989,1918.4789,2100.39,2000,2245.5172,2000c166.5959,0,259.31-134.9233,259.31-350.3448C2504.8276,1296.5517,2313.0118,1000,2080,1000ZM1522.069,1592.4138c-127.5862,200-171.7242,244.8276-242.7587,244.8276-73.1034,0-116.5517-64.1784-116.5517-178.6207,0-244.8276,122.069-495.1724,267.5862-495.1724,78.8013,0,144.6539,45.51,245.5224,189.9131C1580.088,1500.2723,1522.069,1592.4138,1522.069,1592.4138Zm481.5283-25.178-88.23-147.1481q-35.8152-58.2482-68.8384-107.23c79.52-122.7353,145.1135-183.8919,223.1261-183.8919,162.0691,0,291.7243,238.6207,291.7243,531.7241,0,111.7242-36.5935,176.5518-112.4139,176.5518C2176.2949,1837.2414,2141.5787,1789.2474,2003.5973,1567.2358Z'
 
-type Point = { x: number; y: number }
+export type MetaSymbolPoint = { x: number; y: number }
+type Point = MetaSymbolPoint
 
 export type MetaSymbolSample = {
   inside: boolean
@@ -12,10 +25,56 @@ export type MetaSymbolSample = {
 }
 
 const CUBIC_STEPS = 24
-const PATH_TOKEN = /[MLCZ]|[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/gi
-const contours = flattenPath(META_SYMBOL_PATH)
+const QUADRATIC_STEPS = 24
+const PATH_TOKEN = /[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?|[a-z]/gi
+const PATH_COMMAND = /^[a-z]$/i
+
+export type MetaSymbolGeometry = {
+  minX: number
+  minY: number
+  width: number
+  height: number
+  path: string
+  getContours: () => readonly (readonly MetaSymbolPoint[])[]
+  sample: (x: number, y: number) => MetaSymbolSample
+}
+
+export function createMetaSymbolGeometry(options: {
+  minX: number
+  minY: number
+  width: number
+  height: number
+  path: string
+}): MetaSymbolGeometry {
+  const geometryContours = flattenPath(options.path, options.minX, options.minY)
+  return {
+    ...options,
+    getContours: () => geometryContours,
+    sample: (x, y) => sampleContours(geometryContours, x, y),
+  }
+}
+
+export const META_SYMBOL_GEOMETRY = createMetaSymbolGeometry({
+  minX: META_SYMBOL_MIN_X,
+  minY: META_SYMBOL_MIN_Y,
+  width: META_SYMBOL_WIDTH,
+  height: META_SYMBOL_HEIGHT,
+  path: META_SYMBOL_PATH,
+})
+
+export function getMetaSymbolContours(): readonly (readonly MetaSymbolPoint[])[] {
+  return META_SYMBOL_GEOMETRY.getContours()
+}
 
 export function sampleMetaSymbol(x: number, y: number): MetaSymbolSample {
+  return META_SYMBOL_GEOMETRY.sample(x, y)
+}
+
+function sampleContours(
+  contours: readonly (readonly MetaSymbolPoint[])[],
+  x: number,
+  y: number,
+): MetaSymbolSample {
   let winding = 0
   let distanceSquared = Number.POSITIVE_INFINITY
 
@@ -53,7 +112,7 @@ export function metaSymbolDistance(x: number, y: number): number {
   return sampleMetaSymbol(x, y).distance
 }
 
-function flattenPath(path: string): Point[][] {
+function flattenPath(path: string, minX: number, minY: number): Point[][] {
   const tokens = path.match(PATH_TOKEN)
   if (!tokens) throw new Error('Canonical Meta symbol path is empty')
 
@@ -62,48 +121,69 @@ function flattenPath(path: string): Point[][] {
   let current: Point = { x: 0, y: 0 }
   let start: Point = current
   let index = 0
+  let command = ''
 
   const number = () => {
     const token = tokens[index]
-    if (token === undefined || /^[MLCZ]$/i.test(token)) {
+    if (token === undefined || PATH_COMMAND.test(token)) {
       throw new Error('Invalid canonical Meta symbol path')
     }
     index += 1
     return Number(token)
   }
 
+  const point = (relative: boolean, origin: Point): Point => {
+    const x = number()
+    const y = number()
+    return relative
+      ? { x: origin.x + x, y: origin.y + y }
+      : { x, y }
+  }
+
   const closeContour = () => {
     if (contour.length < 2) return
     const last = contour[contour.length - 1]
     if (last.x !== start.x || last.y !== start.y) contour.push({ ...start })
-    result.push(contour)
+    result.push(contour.map(({ x, y }) => ({ x: x - minX, y: y - minY })))
     contour = []
     current = start
   }
 
   while (index < tokens.length) {
-    const command = tokens[index]
-    index += 1
+    if (PATH_COMMAND.test(tokens[index])) {
+      command = tokens[index]
+      index += 1
+    }
+    if (!command) throw new Error('Invalid canonical Meta symbol path')
+    const relative = command === command.toLowerCase()
+    const operation = command.toUpperCase()
 
-    if (command === 'M') {
-      if (contour.length) closeContour()
-      current = { x: number(), y: number() }
-      start = current
-      contour = [{ ...current }]
+    if (operation === 'Z') {
+      closeContour()
+      command = ''
       continue
     }
 
-    if (command === 'L') {
-      current = { x: number(), y: number() }
+    if (operation === 'M') {
+      if (contour.length) closeContour()
+      current = point(relative, current)
+      start = current
+      contour = [{ ...current }]
+      command = relative ? 'l' : 'L'
+      continue
+    }
+
+    if (operation === 'L') {
+      current = point(relative, current)
       contour.push({ ...current })
       continue
     }
 
-    if (command === 'C') {
-      const controlA = { x: number(), y: number() }
-      const controlB = { x: number(), y: number() }
-      const end = { x: number(), y: number() }
+    if (operation === 'C') {
       const begin = current
+      const controlA = point(relative, begin)
+      const controlB = point(relative, begin)
+      const end = point(relative, begin)
       for (let step = 1; step <= CUBIC_STEPS; step += 1) {
         const t = step / CUBIC_STEPS
         const inverse = 1 - t
@@ -122,8 +202,23 @@ function flattenPath(path: string): Point[][] {
       continue
     }
 
-    if (command === 'Z') {
-      closeContour()
+    if (operation === 'Q') {
+      const begin = current
+      const control = point(relative, begin)
+      const end = point(relative, begin)
+      for (let step = 1; step <= QUADRATIC_STEPS; step += 1) {
+        const t = step / QUADRATIC_STEPS
+        const inverse = 1 - t
+        contour.push({
+          x: inverse ** 2 * begin.x
+            + 2 * inverse * t * control.x
+            + t ** 2 * end.x,
+          y: inverse ** 2 * begin.y
+            + 2 * inverse * t * control.y
+            + t ** 2 * end.y,
+        })
+      }
+      current = end
       continue
     }
 

@@ -5,7 +5,7 @@ import { Slider } from '@/components/controls/Slider'
 import { handleRadioGroupKeyDown } from '@/components/controls/radioKeyboard'
 import { ApprovedColorPicker } from '@/components/background/ApprovedColorPicker'
 import { ApprovedColorPopover } from '@/components/background/ApprovedColorPopover'
-import { ArrowLeftRight, Plus } from 'lucide-react'
+import { ArrowLeftRight, Plus, X } from 'lucide-react'
 import {
   addColorToMix,
   colorMixForPack,
@@ -23,6 +23,7 @@ type ColorPickerTarget =
 // what the user entered; zero is the off state.
 export function ColorsPanel() {
   const [colorPicker, setColorPicker] = useState<ColorPickerTarget | null>(null)
+  const mode = useBackgroundStore((state) => state.mode)
   const palette = useBackgroundStore((state) => state.recipe.palette)
   const updateRecipe = useBackgroundStore((state) => state.updateRecipe)
   const setTransient = useBackgroundStore((state) => state.setTransient)
@@ -112,9 +113,32 @@ export function ColorsPanel() {
     })
   }
 
+  const removeMixColor = (index: number) => {
+    const removed = mix[index]
+    if (!removed) return
+    const next = mix
+      .filter((item, itemIndex) =>
+        itemIndex !== index && (customActive || item.enabled))
+      .map((item) => ({ ...item }))
+    if (!next.length) return
+    const enabled = next.filter((item) => item.enabled && item.ratio > 0)
+    updateRecipe({
+      palette: {
+        packId: CUSTOM_PALETTE_ID,
+        mix: next,
+        ink: palette.ink === removed.color
+          ? (enabled[0]?.color ?? next[0].color)
+          : palette.ink,
+        ground: palette.ground === removed.color
+          ? (enabled.at(-1)?.color ?? next.at(-1)!.color)
+          : palette.ground,
+      },
+    })
+  }
+
   return (
     <div className="panel-section">
-      <h2 className="panel-heading">Colors</h2>
+      <h2 className="panel-heading">{mode === 'material' ? 'Look palette' : 'Colors'}</h2>
       <div className="lab-subsection-heading">
         <span>Palette</span>
         {customActive ? <span className="lab-status-badge">Custom mix</span> : null}
@@ -146,52 +170,56 @@ export function ColorsPanel() {
           </button>
         ))}
       </div>
-      <div className="lab-subsection-heading">Roles</div>
-      <div className="lab-palette-roles" role="group" aria-label="Palette roles">
-        <button
-          type="button"
-          className="lab-palette-role"
-          aria-label={`Change background color, currently ${palette.ground}`}
-          aria-haspopup="dialog"
-          aria-expanded={colorPicker?.kind === 'ground'}
-          onClick={(event) => setColorPicker({
-            kind: 'ground',
-            anchor: event.currentTarget,
-          })}
-        >
-          <span className="lab-role-swatch" style={{ backgroundColor: palette.ground }} />
-          <span>Background</span>
-        </button>
-        <button
-          type="button"
-          className="lab-icon-button"
-          aria-label="Swap background and marks colors"
-          title="Swap colors"
-          onClick={() => updateRecipe({
-            palette: {
-              packId: CUSTOM_PALETTE_ID,
-              ground: palette.ink,
-              ink: palette.ground,
-            },
-          })}
-        >
-          <ArrowLeftRight aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          className="lab-palette-role"
-          aria-label={`Change marks color, currently ${palette.ink}`}
-          aria-haspopup="dialog"
-          aria-expanded={colorPicker?.kind === 'ink'}
-          onClick={(event) => setColorPicker({
-            kind: 'ink',
-            anchor: event.currentTarget,
-          })}
-        >
-          <span className="lab-role-swatch" style={{ backgroundColor: palette.ink }} />
-          <span>Marks</span>
-        </button>
-      </div>
+      {mode === 'material' ? (
+        <>
+          <div className="lab-subsection-heading">Roles</div>
+          <div className="lab-palette-roles" role="group" aria-label="Palette roles">
+            <button
+              type="button"
+              className="lab-palette-role"
+              aria-label={`Change background color, currently ${palette.ground}`}
+              aria-haspopup="dialog"
+              aria-expanded={colorPicker?.kind === 'ground'}
+              onClick={(event) => setColorPicker({
+                kind: 'ground',
+                anchor: event.currentTarget,
+              })}
+            >
+              <span className="lab-role-swatch" style={{ backgroundColor: palette.ground }} />
+              <span>Background</span>
+            </button>
+            <button
+              type="button"
+              className="lab-icon-button"
+              aria-label="Swap background and marks colors"
+              title="Swap colors"
+              onClick={() => updateRecipe({
+                palette: {
+                  packId: CUSTOM_PALETTE_ID,
+                  ground: palette.ink,
+                  ink: palette.ground,
+                },
+              })}
+            >
+              <ArrowLeftRight aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="lab-palette-role"
+              aria-label={`Change marks color, currently ${palette.ink}`}
+              aria-haspopup="dialog"
+              aria-expanded={colorPicker?.kind === 'ink'}
+              onClick={(event) => setColorPicker({
+                kind: 'ink',
+                anchor: event.currentTarget,
+              })}
+            >
+              <span className="lab-role-swatch" style={{ backgroundColor: palette.ink }} />
+              <span>Marks</span>
+            </button>
+          </div>
+        </>
+      ) : null}
       <div className="lab-subsection-heading">
         <span>Mix</span>
         <span className="lab-subsection-meta">Relative weight</span>
@@ -228,6 +256,16 @@ export function ColorsPanel() {
             onChange={(ratio) => setMixWeight(i, ratio)}
             onCommit={commitTransientMix}
           />
+          <button
+            type="button"
+            className="lab-icon-button lab-mix-remove"
+            aria-label={`Remove ${m.color} from mix`}
+            title="Remove color"
+            disabled={mixRows.length <= 1}
+            onClick={() => removeMixColor(i)}
+          >
+            <X aria-hidden="true" />
+          </button>
         </div>
       ))}
       <details className="lab-color-library">

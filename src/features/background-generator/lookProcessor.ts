@@ -1,13 +1,12 @@
 import type { ShapeProto } from '@/core/canvas/shapeProtos'
 import { scaleLabForPreview } from '@/core/lab/preview'
-import { exportLabPng, renderLab } from '@/core/lab/render'
+import { renderLab } from '@/core/lab/render'
 import type { LabSource } from '@/core/lab/sourceCache'
 import type { LabFit, LabState } from '@/core/lab/types'
 import { resolveLookColorPlan } from '@/core/lab/colorDirection'
+import { buildWeightedPalette } from './palette/registry'
 import {
   backgroundRecipeToLab,
-  materialBaseColor,
-  materialHighlightColor,
   type BackgroundRecipeV2,
 } from './recipe'
 
@@ -31,22 +30,27 @@ export function sourceAwareLabForRecipe(
       fit,
     },
   })
-  const baseColor = materialBaseColor(recipe)
-  const highlightColor = materialHighlightColor(recipe)
-  const colorPlan = resolveLookColorPlan({
-    mix: [
-      { color: baseColor, weight: 72, enabled: true },
-      { color: highlightColor, weight: 28, enabled: true },
-    ],
-    ground: baseColor,
-    ink: highlightColor,
-    lookId: recipe.look.id,
-    complexity: recipe.look.detail,
-  })
+  const isV1 = recipe.look.version === 'v1'
+  const colorPlan = isV1
+    ? null
+    : resolveLookColorPlan({
+        mix: recipe.palette.mix,
+        ground: recipe.palette.ground,
+        ink: recipe.palette.ink,
+        lookId: recipe.look.id,
+        complexity: recipe.look.detail,
+      })
+  const palette = isV1
+    ? buildWeightedPalette(recipe.palette.mix, 100)
+    : colorPlan!.swatches.map((swatch) => swatch.hex)
   const tone = lab.territory.sources.find((item) => item.kind === 'tone')
   return {
     ...lab,
-    sourceVisibility: 1,
+    sourceMask: 'border-distance',
+    // A material Look replaces the captured frame with its canonical
+    // treatment. Keeping the raw frame underneath makes sparse treatments
+    // look like background overlays while the model remains untouched.
+    sourceVisibility: 0,
     paint: null,
     motion: {
       ...lab.motion,
@@ -55,10 +59,10 @@ export function sourceAwareLabForRecipe(
       frame: undefined,
     },
     colors: {
-      paper: baseColor,
-      ink: highlightColor,
-      palette: colorPlan.swatches.map((swatch) => swatch.hex),
-      plan: colorPlan,
+      paper: recipe.palette.ground,
+      ink: recipe.palette.ink,
+      palette,
+      ...(colorPlan ? { plan: colorPlan } : {}),
     },
     territory: {
       ...lab.territory,
@@ -98,11 +102,12 @@ export function exportRecipeLookPng(
   protos: ShapeProto[],
   fit: LabFit = 'contain',
 ): Promise<Blob> {
-  return exportLabPng(
-    sourceAwareLabForRecipe(recipe, source, fit),
-    source,
-    protos,
-    undefined,
-    null,
-  )
+  const canvas = document.createElement('canvas')
+  renderRecipeLookToCanvas(canvas, recipe, source, protos, { fit })
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => blob ? resolve(blob) : reject(new Error('toBlob failed')),
+      'image/png',
+    )
+  })
 }
