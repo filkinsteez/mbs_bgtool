@@ -7,6 +7,8 @@ import { constrainArtworkCover } from '@/core/lab/artworkTransform'
 import { CANONICAL_META_SAFE_AREA } from '@/core/lab/metaInfluence'
 import { resolveCompositionPlan } from '@/core/lab/compositionPlan'
 import { resolveLookColorPlan } from '@/core/lab/colorDirection'
+import { resolveLookColorPlan as resolveLookColorPlanV1b } from '@/core/lab/v1b/colorDirection'
+import { PAPER } from '@/core/state/defaults'
 import { mergeDeep, type DeepPartial } from '@/core/state/store'
 import { MATERIAL_BY_ID, type MaterialId } from './material/catalog'
 import {
@@ -278,7 +280,9 @@ export function deserializeBackgroundRecipe(json: string): BackgroundRecipeV2 | 
     }
     recipe.look.version = raw.version === 1
       ? 'v1'
-      : serializedLookVersion === 'v1' || serializedLookVersion === 'v2'
+      : serializedLookVersion === 'v1'
+        || serializedLookVersion === 'v1b'
+        || serializedLookVersion === 'v2'
         ? serializedLookVersion
         : 'v1'
     const migratedLook = LEGACY_MATERIAL_LOOKS[recipe.material.id as string]
@@ -403,6 +407,11 @@ export function backgroundRecipeToLab(
   options: BackgroundRecipeToLabOptions = {},
 ): LabState {
   const isV1 = recipe.look.version === 'v1'
+  // V1b is the texture-on-paper comparison variant: it shares the V2 Lab
+  // defaults but resolves its color plan on a paper ground, which is the
+  // whole point of the variant.
+  const isV1b = recipe.look.version === 'v1b'
+  const v1bGround = PAPER.toUpperCase()
   const base = isV1 ? createDefaultLabV1(recipe.seed) : createDefaultLab(recipe.seed)
   const look = LOOKS.find((item) => item.id === recipe.look.id) ?? LOOKS[0]
   const hasSource = options.hasSource === true
@@ -412,15 +421,18 @@ export function backgroundRecipeToLab(
     lookComplexityPatch(recipe.look.id, recipe.look.detail, recipe.look.version),
   )
   const curve = lab.territory.sources.find((source) => source.kind === 'curve' && source.curve)
+  const planInput = {
+    mix: recipe.palette.mix,
+    ground: isV1b ? v1bGround : recipe.palette.ground,
+    ink: recipe.palette.ink,
+    lookId: recipe.look.id,
+    complexity: recipe.look.detail,
+  }
   const colorPlan = isV1
     ? null
-    : resolveLookColorPlan({
-        mix: recipe.palette.mix,
-        ground: recipe.palette.ground,
-        ink: recipe.palette.ink,
-        lookId: recipe.look.id,
-        complexity: recipe.look.detail,
-      })
+    : isV1b
+      ? resolveLookColorPlanV1b(planInput)
+      : resolveLookColorPlan(planInput)
   const palette = isV1
     ? buildWeightedPalette(recipe.palette.mix, 100)
     : colorPlan!.swatches.map((swatch) => swatch.hex)
@@ -469,7 +481,7 @@ export function backgroundRecipeToLab(
         }
       : {
           ink: recipe.palette.ink,
-          paper: recipe.palette.ground,
+          paper: isV1b ? v1bGround : recipe.palette.ground,
           palette,
           plan: colorPlan!,
         },
@@ -478,6 +490,19 @@ export function backgroundRecipeToLab(
         source.id === curve?.id && source.curve
           ? {
               ...source,
+              // V1b commits the symbol interior to the top band instead of
+              // leaving it straddling a boundary, and widens the falloff for
+              // the two Looks that read as graded fields.
+              ...(isV1b
+                ? {
+                    weight: 1,
+                    softness: recipe.look.id === 'pixels'
+                      ? 0.8
+                      : recipe.look.id === 'marks'
+                        ? 0.7
+                        : source.softness,
+                  }
+                : {}),
               curve: {
                 ...source.curve,
                 amplitudeX: CANONICAL_META_SAFE_AREA.width,

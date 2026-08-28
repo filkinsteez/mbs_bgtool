@@ -11,7 +11,10 @@ import type { LookColorPlan } from './colorDirection'
 export const LAB_VERSION = 1
 
 export type LabFit = 'contain' | 'cover'
-export type LookVersion = 'v1' | 'v2'
+// V1b is a comparison variant of the V1-era Canvas2D pipeline carrying the
+// texture-on-paper color direction. It lives in `./v1b` and does not share
+// renderers with V1 or V2, so neither is affected by changes to it.
+export type LookVersion = 'v1' | 'v1b' | 'v2'
 
 export type LabSourceMeta = {
   filename?: string

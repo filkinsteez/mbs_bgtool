@@ -1,12 +1,5 @@
-import type { LabPatch } from './labStore'
-import type { LookVersion } from './types'
-import {
-  v1DetailPatch,
-  v1LookPatchFor,
-} from './v1/looks'
-import { lookComplexityPatchV1b, lookPatchForV1b } from './v1b/looks'
-
-export { V1_LOOK_PATCHES } from './v1/looks'
+import type { LabPatch } from '../labStore'
+import type { Look, LookId } from '../looks'
 
 // LOOKS — the preset layer every shipped image tool leads with. A look
 // is a plain LabPatch: applying one goes through the normal patch/undo
@@ -18,26 +11,17 @@ export { V1_LOOK_PATCHES } from './v1/looks'
 // All ten are today's proven recipes, judged against the reference
 // sheet before earning a slot.
 
-export type LookId =
-  | 'frame'
-  | 'pixels'
-  | 'scanlines'
-  | 'streams'
-  | 'brushwork'
-  | 'beads'
-  | 'quilt'
-  | 'weave'
-  | 'marks'
-  | 'trails'
 
-export type Look = { id: LookId; label: string; patch: LabPatch }
 
-export const LOOKS: Look[] = [
+
+const V1B_LOOKS: Look[] = [
   {
     id: 'frame',
     label: 'Frame',
     patch: {
-      territory: { bands: ['quiet', 'blocks', 'blocks', 'quiet'], boundary: 'hard' },
+      // blocks carry the symbol body; the territory lean inside
+      // buildBlockFills keeps paper breathing through the mosaic
+      territory: { bands: ['quiet', 'blocks', 'blocks', 'blocks'], boundary: 'hard' },
       structure: { baseCell: 30, maxLevels: 1, subdivide: 0.46 },
       finish: { grain: 0.08 },
       sourceVisibility: 0,
@@ -69,7 +53,7 @@ export const LOOKS: Look[] = [
     label: 'Streams',
     patch: {
       territory: { bands: ['quiet', 'streams', 'streams', 'streams'], boundary: 'porous' },
-      flow: { basis: 'curve', curl: 0.22, scale: 0.58 },
+      flow: { basis: 'curve', curl: 0.22, scale: 0.42 },
       finish: { grain: 0.1 },
       sourceVisibility: 0,
     },
@@ -79,12 +63,10 @@ export const LOOKS: Look[] = [
     label: 'Brushwork',
     patch: {
       territory: { bands: ['dabs', 'dabs', 'dabs'], boundary: 'porous' },
-      // Brushwork renders a normalized stroke scene, not one dab per cell.
-      // Keep the carrier coarse so 4K setup stays cheap.
-      structure: { baseCell: 224, maxLevels: 0, subdivide: 0 },
+      structure: { baseCell: 26, maxLevels: 2, subdivide: 0.68 },
       mark: { colorMode: 'palette', occupancy: 1 },
       flow: { basis: 'curve', curl: 0.5, scale: 0.35 },
-      finish: { grain: 0.18 },
+      finish: { grain: 0.12 },
       sourceVisibility: 0,
     },
   },
@@ -114,7 +96,7 @@ export const LOOKS: Look[] = [
     patch: {
       territory: { bands: ['quiet', 'shingle', 'shingle', 'shingle'], boundary: 'dither' },
       structure: { baseCell: 84, maxLevels: 1, subdivide: 0.42 },
-      finish: { grain: 0.05 },
+      finish: { grain: 0.14 },
       sourceVisibility: 0,
     },
   },
@@ -133,11 +115,11 @@ export const LOOKS: Look[] = [
     id: 'trails',
     label: 'Trails',
     patch: {
-      territory: { bands: ['quiet', 'quiet', 'quiet'], boundary: 'hard' },
-      structure: { baseCell: 72, maxLevels: 0, subdivide: 0 },
-      mark: { colorMode: 'palette', echo: 0, bank: 'geo', occupancy: 0.9 },
-      flow: { basis: 'curve', angle: 0, curl: 0.42 },
-      finish: { grain: 0.07 },
+      territory: { bands: ['marks', 'marks', 'marks'], boundary: 'porous' },
+      structure: { baseCell: 34, maxLevels: 0, subdivide: 0 },
+      mark: { colorMode: 'palette', echo: 4, bank: 'geo', occupancy: 0.9 },
+      flow: { basis: 'angle', angle: 0, curl: 0.15 },
+      finish: { grain: 0.1 },
       sourceVisibility: 0,
     },
   },
@@ -156,7 +138,7 @@ type ComplexityProfile = {
 
 const COMPLEXITY_PROFILES: Record<LookId, ComplexityProfile> = {
   frame: { coarseCell: 76, fineCell: 22, levels: [0, 1, 1], subdivide: [0.24, 0.62] },
-  pixels: { coarseCell: 98, fineCell: 18, levels: [1, 2, 2], subdivide: [0.38, 0.9] },
+  pixels: { coarseCell: 98, fineCell: 28, levels: [1, 1, 2], subdivide: [0.38, 0.9] },
   scanlines: {
     coarseCell: 52,
     fineCell: 12,
@@ -170,30 +152,42 @@ const COMPLEXITY_PROFILES: Record<LookId, ComplexityProfile> = {
     fineCell: 20,
     levels: [0, 0, 0],
     subdivide: [0, 0],
-    curl: [0.08, 0.42],
+    // beyond ~0.3 the curl overwhelms the curve basis and the hatching
+    // collapses into fingerprint whorls with visible spiral centers
+    curl: [0.08, 0.28],
   },
   brushwork: {
-    coarseCell: 256,
-    fineCell: 192,
-    levels: [0, 0, 0],
-    subdivide: [0, 0],
+    // dense enough to read as stippling even at the calm end — sparse
+    // large dabs on paper read as noise, not brushwork
+    coarseCell: 44,
+    fineCell: 18,
+    levels: [0, 1, 1],
+    subdivide: [0.28, 0.78],
+    occupancy: [0.72, 1],
+    curl: [0.12, 0.4],
   },
   beads: { coarseCell: 82, fineCell: 18, levels: [0, 0, 0], subdivide: [0, 0] },
-  quilt: { coarseCell: 148, fineCell: 28, levels: [0, 1, 2], subdivide: [0.22, 0.72] },
-  weave: { coarseCell: 116, fineCell: 24, levels: [0, 0, 1], subdivide: [0, 0.4] },
+  quilt: { coarseCell: 96, fineCell: 40, levels: [0, 1, 2], subdivide: [0.22, 0.72] },
+  weave: { coarseCell: 116, fineCell: 32, levels: [0, 0, 1], subdivide: [0, 0.4] },
   marks: {
     coarseCell: 44,
-    fineCell: 12,
-    levels: [1, 2, 2],
+    fineCell: 14,
+    // two subdivision levels grind sourceless marks into sub-pixel dust;
+    // one level keeps every stamp legible at export scale
+    levels: [0, 1, 1],
     subdivide: [0.3, 0.8],
     occupancy: [0.72, 0.98],
   },
   trails: {
-    coarseCell: 112,
-    fineCell: 44,
-    levels: [0, 0, 0],
-    subdivide: [0, 0],
-    curl: [0.34, 0.5],
+    coarseCell: 64,
+    fineCell: 20,
+    levels: [1, 1, 1],
+    subdivide: [0.35, 0.56],
+    occupancy: [0.68, 0.94],
+    // near-linear runs, short comets: heavy curl and long echo chains
+    // turn the trail grammar into swirling smoke
+    curl: [0.1, 0.28],
+    echo: [3, 6],
   },
 }
 
@@ -201,43 +195,42 @@ function mix(from: number, to: number, amount: number): number {
   return from + (to - from) * amount
 }
 
-export function lookComplexityPatch(
-  lookId: LookId,
-  value: number,
-  version: LookVersion = 'v2',
-): LabPatch {
-  if (version === 'v1') return v1DetailPatch(value)
-  if (version === 'v1b') return lookComplexityPatchV1b(lookId, value)
+export function lookComplexityPatchV1b(lookId: LookId, value: number): LabPatch {
   const complexity = Math.max(0, Math.min(1, value))
+  // Preserve the dense echo grammar that makes Trails coherent. The low end
+  // should simplify it, not reduce it to unrelated fragments.
+  const structuralComplexity = lookId === 'trails'
+    ? 0.52 + complexity * 0.48
+    : complexity
   const profile = COMPLEXITY_PROFILES[lookId]
   const level = profile.levels[
-    complexity < 0.34 ? 0 : complexity < 0.67 ? 1 : 2
+    structuralComplexity < 0.34 ? 0 : structuralComplexity < 0.67 ? 1 : 2
   ]
   const patch: LabPatch = {
     structure: {
-      baseCell: Math.round(mix(profile.coarseCell, profile.fineCell, complexity)),
+      baseCell: Math.round(mix(profile.coarseCell, profile.fineCell, structuralComplexity)),
       maxLevels: level,
-      subdivide: mix(profile.subdivide[0], profile.subdivide[1], complexity),
+      subdivide: mix(profile.subdivide[0], profile.subdivide[1], structuralComplexity),
     },
   }
   if (profile.occupancy) {
     patch.mark = {
-      occupancy: mix(profile.occupancy[0], profile.occupancy[1], complexity),
+      occupancy: mix(profile.occupancy[0], profile.occupancy[1], structuralComplexity),
     }
   }
   if (profile.curl || profile.warp) {
     patch.flow = {}
     if (profile.curl) {
-      patch.flow.curl = mix(profile.curl[0], profile.curl[1], complexity)
+      patch.flow.curl = mix(profile.curl[0], profile.curl[1], structuralComplexity)
     }
     if (profile.warp) {
-      patch.flow.warp = mix(profile.warp[0], profile.warp[1], complexity)
+      patch.flow.warp = mix(profile.warp[0], profile.warp[1], structuralComplexity)
     }
   }
   if (profile.echo) {
     patch.mark = {
       ...patch.mark,
-      echo: Math.round(mix(profile.echo[0], profile.echo[1], complexity)),
+      echo: Math.round(mix(profile.echo[0], profile.echo[1], structuralComplexity)),
     }
   }
   return patch
@@ -245,27 +238,29 @@ export function lookComplexityPatch(
 
 // Generated backgrounds are full-frame artwork. Photo zones become palette
 // mosaics and sparse zones become solid quiet space rather than accidental
-// transparency that reveals the editor behind the canvas.
-export function lookPatchFor(
-  look: Look,
-  hasSource: boolean,
-  version: LookVersion = 'v2',
-): LabPatch {
-  if (version === 'v1') return v1LookPatchFor(look, hasSource)
-  if (version === 'v1b') return lookPatchForV1b(look.id, hasSource)
-  const patch = look.patch
-  if (hasSource) return patch
-  const bands = patch.territory?.bands
-  if (!bands) return patch
+// transparency that reveals the editor behind the canvas. Marks is the
+// exception: a solid mosaic core would read as a blob inside its speckle
+// grammar, so its photo zone densifies into marks instead.
+function v1bPatch(look: Look, hasSource: boolean): LabPatch {
+  if (hasSource) return look.patch
+  const bands = look.patch.territory?.bands
+  if (!bands) return look.patch
   return {
-    ...patch,
+    ...look.patch,
     territory: {
-      ...patch.territory,
+      ...look.patch.territory,
       bands: bands.map((band) => {
-        if (band === 'photo') return 'mosaic'
+        if (band === 'photo') return look.id === 'marks' ? 'marks' : 'mosaic'
         if (band === 'empty') return 'quiet'
         return band
       }),
     },
   }
+}
+
+// Entry point for the dispatcher: V1b resolves the preset from its OWN
+// table by id, so the shared LOOKS array never leaks V2 patches into it.
+export function lookPatchForV1b(lookId: LookId, hasSource: boolean): LabPatch {
+  const look = V1B_LOOKS.find((item) => item.id === lookId) ?? V1B_LOOKS[0]
+  return v1bPatch(look, hasSource)
 }

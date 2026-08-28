@@ -20,7 +20,7 @@ import type { LookVersion } from '@/core/lab/types'
 // one fixed generic frame so live camera and material changes cannot leak in.
 
 const GENERIC_3D_BASE_RECIPE = createDefaultBackgroundRecipe(1913)
-const LOOK_VERSIONS: readonly LookVersion[] = ['v1', 'v2']
+const LOOK_VERSIONS: readonly LookVersion[] = ['v1', 'v1b', 'v2']
 const GENERIC_3D_RECIPE = {
   ...GENERIC_3D_BASE_RECIPE,
   format: {
