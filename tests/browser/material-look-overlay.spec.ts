@@ -1,9 +1,12 @@
 import { expect, test, type Page } from '@playwright/test'
 import { mkdir, writeFile } from 'node:fs/promises'
 
-// The internal 'v2' catalog (the "V3" version tab in the UI) drives the
-// material-mode GPU Look overlay.
-const LOOKS = [
+// Every Look catalog (internal v1/v1b/v2 — the V1/V2/V3 UI tabs) drives the
+// material-mode overlay the same way: the live Three.js viewport frame is
+// captured and processed by the canonical Canvas2D Look renderer, and the
+// processed canvas is layered over the viewport. There is no separate
+// procedural 3D pipeline.
+const V3_LOOKS = [
   { id: 'pattern', label: 'Pattern' },
   { id: 'mandala', label: 'Mandala' },
   { id: 'stitch', label: 'Stitch' },
@@ -56,7 +59,7 @@ const ARTBOARD_SCREENSHOT_STYLE = `
     visibility: hidden !important;
   }
 `
-const ARTIFACT_DIR = 'test-results/material-gpu-looks'
+const ARTIFACT_DIR = 'test-results/material-look-overlay'
 
 type ImageStats = {
   mean: number
@@ -65,26 +68,12 @@ type ImageStats = {
   centroidY: number
 }
 
-type GpuMetrics = {
-  geometries: number
-  textures: number
-  programs: number
-  calls: number
-  triangles: number
-  width: number
-  height: number
-  phase: number
-}
-
 type DebugApi = {
-  setRawOutput: (enabled: boolean) => void
-  setPhase: (phase: number | null) => void
-  getMetrics: () => GpuMetrics
   loseAndRestoreContext: () => boolean
 }
 
-// Software-GL environments render the GPU Look composer slowly; these serial
-// tests take screenshots of many looks, so they get a generous budget.
+// Software-GL environments render and process many looks in these serial
+// tests, so they get a generous budget.
 test.describe.configure({ mode: 'serial', timeout: 300_000 })
 
 async function waitFrames(page: Page, count = 3): Promise<void> {
@@ -95,10 +84,11 @@ async function waitFrames(page: Page, count = 3): Promise<void> {
   }, count)
 }
 
-async function openMaterialGpu(page: Page): Promise<{
+async function openMaterialViewer(page: Page): Promise<{
   artboard: ReturnType<Page['locator']>
   viewer: ReturnType<Page['locator']>
   canvas: ReturnType<Page['locator']>
+  overlay: ReturnType<Page['locator']>
 }> {
   await page.route('**/api/material-model', (route) => route.fulfill({
     status: 200,
@@ -106,11 +96,11 @@ async function openMaterialGpu(page: Page): Promise<{
     body: ASYMMETRIC_CURVED_OBJ,
   }))
   await page.addInitScript(() => {
-    if (!sessionStorage.getItem('material-gpu-test-initialized')) {
+    if (!sessionStorage.getItem('material-look-test-initialized')) {
       localStorage.clear()
-      sessionStorage.setItem('material-gpu-test-initialized', 'true')
+      sessionStorage.setItem('material-look-test-initialized', 'true')
     }
-    const override = sessionStorage.getItem('material-gpu-recipe-override')
+    const override = sessionStorage.getItem('material-look-recipe-override')
     if (override) {
       localStorage.setItem('mbs-bg-generator-autosave-v2', override)
     }
@@ -120,30 +110,27 @@ async function openMaterialGpu(page: Page): Promise<{
   await page.getByRole('radio', { name: '3D', exact: true }).click()
   const viewer = page.locator('[data-mbs-material-model="true"]')
   const canvas = viewer.locator('.lab-material-model-canvas')
+  const overlay = viewer.locator('.lab-material-look-canvas')
   const artboard = page.locator('#lab-generator-artboard')
   await expect(viewer).toHaveAttribute('data-model-status', 'ready')
-  await expect.poll(() => page.evaluate(() => (
-    typeof (window as unknown as { __mbsMaterialGpu?: DebugApi }).__mbsMaterialGpu
-  ))).toBe('object')
-  return { artboard, viewer, canvas }
+  return { artboard, viewer, canvas, overlay }
 }
 
-async function setRawOutput(page: Page, enabled: boolean): Promise<void> {
-  await page.evaluate((raw) => {
-    const api = (window as unknown as { __mbsMaterialGpu?: DebugApi }).__mbsMaterialGpu
-    if (!api) throw new Error('Material GPU debug API unavailable')
-    api.setRawOutput(raw)
-  }, enabled)
-  await waitFrames(page)
-}
-
-async function setPhase(page: Page, phase: number | null): Promise<void> {
-  await page.evaluate((value) => {
-    const api = (window as unknown as { __mbsMaterialGpu?: DebugApi }).__mbsMaterialGpu
-    if (!api) throw new Error('Material GPU debug API unavailable')
-    api.setPhase(value)
-  }, phase)
-  await waitFrames(page)
+// The overlay is ready once the shared Canvas2D processor has treated a
+// settled (hq) capture of the current viewport frame.
+async function waitForOverlay(
+  viewer: ReturnType<Page['locator']>,
+  overlay: ReturnType<Page['locator']>,
+  lookId: string,
+  lookVersion: string,
+): Promise<void> {
+  await expect(viewer).toHaveAttribute('data-look', lookId)
+  await expect(viewer).toHaveAttribute('data-look-version', lookVersion)
+  await expect(viewer).toHaveAttribute('data-postprocess', 'legacy-canvas2d-look')
+  await expect(overlay).toHaveAttribute('data-render-status', 'ready')
+  await expect(overlay).toHaveAttribute('data-look', lookId)
+  await expect(overlay).toHaveAttribute('data-look-version', lookVersion)
+  await expect(overlay).toHaveAttribute('data-quality', 'hq', { timeout: 30_000 })
 }
 
 async function screenshotArtboard(
@@ -258,131 +245,166 @@ async function writeContactSheet(
   await writeFile(outputPath, Buffer.from(dataUrl.split(',')[1], 'base64'))
 }
 
-async function gpuMetrics(page: Page): Promise<GpuMetrics> {
-  return page.evaluate(() => {
-    const api = (window as unknown as { __mbsMaterialGpu?: DebugApi }).__mbsMaterialGpu
-    if (!api) throw new Error('Material GPU debug API unavailable')
-    return api.getMetrics()
-  })
+async function orbitViewer(
+  page: Page,
+  viewer: ReturnType<Page['locator']>,
+): Promise<void> {
+  const viewerBox = await viewer.boundingBox()
+  expect(viewerBox).not.toBeNull()
+  await page.mouse.move(
+    viewerBox!.x + viewerBox!.width * 0.36,
+    viewerBox!.y + viewerBox!.height * 0.58,
+  )
+  await page.mouse.down({ button: 'left' })
+  await page.mouse.move(
+    viewerBox!.x + viewerBox!.width * 0.72,
+    viewerBox!.y + viewerBox!.height * 0.34,
+    { steps: 8 },
+  )
+  await page.mouse.up({ button: 'left' })
+  await waitFrames(page, 20)
 }
 
-test('renders every V2 Look through the live Three.js GPU frame', async ({ page }, testInfo) => {
+test('every Look catalog treats the live viewport through the Canvas2D overlay', async ({ page }, testInfo) => {
   await mkdir(ARTIFACT_DIR, { recursive: true })
-  const { artboard, viewer, canvas } = await openMaterialGpu(page)
-  const legacyCanvas = viewer.locator('.lab-material-look-canvas')
-  const complexity = page.getByRole('slider', { name: 'Complexity', exact: true })
+  const { artboard, viewer, canvas, overlay } = await openMaterialViewer(page)
   const comparisons: { label: string; image: Buffer }[] = []
-  const alternatePose: { label: string; image: Buffer }[] = []
-  const timings: Record<string, number> = {}
 
-  await expect(legacyCanvas).toHaveCSS('opacity', '0')
-  await setPhase(page, 0.125)
+  await expect(overlay).toHaveCSS('opacity', '0')
+  await expect(viewer).toHaveAttribute('data-postprocess', 'raw')
+  await expect(canvas).toHaveAttribute('data-render-pipeline', 'three-raw')
 
-  let warmMetrics: GpuMetrics | null = null
-  for (const [index, look] of LOOKS.entries()) {
-    if (index === 2) {
-      await page.getByRole('radio', { name: 'Bold', exact: true }).click()
-    }
-    const detail = index % 3 === 0 ? 25 : index % 3 === 1 ? 55 : 85
-    await complexity.fill(String(detail))
-    const previousRevision = await canvas.getAttribute('data-render-revision')
-    const startedAt = await page.evaluate(() => performance.now())
-    await page.getByRole('button', { name: look.label, exact: true }).click()
-    await expect(viewer).toHaveAttribute('data-look', look.id)
-    await expect(viewer).toHaveAttribute('data-look-version', 'v2')
-    await expect(viewer).toHaveAttribute('data-postprocess', 'gpu-look')
-    await expect(canvas).toHaveAttribute('data-render-pipeline', 'three-gpu-look')
-    await expect(canvas).toHaveAttribute('data-render-status', 'ready')
-    await expect.poll(() => canvas.getAttribute('data-render-revision')).not.toBe(previousRevision)
-    timings[look.id] = await page.evaluate((started) => performance.now() - started, startedAt)
-
-    await setRawOutput(page, true)
+  // ---- the V3 tab (internal v2): all four systems -------------------------
+  for (const look of V3_LOOKS) {
     const raw = await screenshotArtboard(artboard)
-    await setRawOutput(page, false)
-    const final = await screenshotArtboard(artboard)
-    const difference = await imageStats(page, raw, final)
+    await page.getByRole('button', { name: look.label, exact: true }).click()
+    await waitForOverlay(viewer, overlay, look.id, 'v2')
+    // The model canvas keeps rendering the raw lit frame underneath — the
+    // Look is a layer over it, not a replacement pipeline.
+    await expect(canvas).toHaveAttribute('data-render-pipeline', 'three-raw')
+    const treated = await screenshotArtboard(artboard)
+    const difference = await imageStats(page, raw, treated)
     expect(difference.mean, `${look.id} must alter the lit frame`).toBeGreaterThan(2)
     expect(
       difference.changedFraction,
       `${look.id} must compose the full frame`,
     ).toBeGreaterThan(0.08)
     comparisons.push(
-      { label: `${look.label} · raw`, image: raw },
-      { label: `${look.label} · GPU`, image: final },
+      { label: `${look.label} (v2) · raw`, image: raw },
+      { label: `${look.label} (v2) · overlay`, image: treated },
     )
-    await writeFile(`${ARTIFACT_DIR}/${look.id}-raw.png`, raw)
-    await writeFile(`${ARTIFACT_DIR}/${look.id}-gpu.png`, final)
-    if (index === 0) warmMetrics = await gpuMetrics(page)
-  }
-
-  await page.getByRole('radio', { name: 'Stainless Steel', exact: true }).click()
-  await page.getByRole('radio', { name: 'Harmonious', exact: true }).click()
-  const viewerBox = await viewer.boundingBox()
-  expect(viewerBox).not.toBeNull()
-  await page.mouse.move(
-    viewerBox!.x + viewerBox!.width * 0.48,
-    viewerBox!.y + viewerBox!.height * 0.52,
-  )
-  await page.mouse.down({ button: 'left' })
-  await page.mouse.move(
-    viewerBox!.x + viewerBox!.width * 0.63,
-    viewerBox!.y + viewerBox!.height * 0.44,
-    { steps: 6 },
-  )
-  await page.mouse.up({ button: 'left' })
-  await waitFrames(page, 20)
-
-  for (const look of LOOKS) {
+    await writeFile(`${ARTIFACT_DIR}/${look.id}-v2-raw.png`, raw)
+    await writeFile(`${ARTIFACT_DIR}/${look.id}-v2-overlay.png`, treated)
+    // Toggle the active look off: the raw viewport must come back.
     await page.getByRole('button', { name: look.label, exact: true }).click()
-    await expect(viewer).toHaveAttribute('data-look', look.id)
-    await expect(viewer).toHaveAttribute('data-postprocess', 'gpu-look')
-    alternatePose.push({
-      label: `${look.label} · metal · orbited`,
-      image: await screenshotArtboard(artboard),
-    })
+    await expect(viewer).toHaveAttribute('data-postprocess', 'raw')
   }
 
-  const stableMetrics = await gpuMetrics(page)
-  expect(warmMetrics).not.toBeNull()
-  expect(stableMetrics.programs).toBeLessThanOrEqual(warmMetrics!.programs + 1)
-  expect(stableMetrics.textures).toBeLessThanOrEqual(warmMetrics!.textures + 1)
-  expect(stableMetrics.geometries).toBeLessThanOrEqual(warmMetrics!.geometries + 1)
+  // ---- the V2 tab (internal v1b) and V1 tab (internal v1) -----------------
+  const otherCatalogs = [
+    { tab: 'V2', version: 'v1b', looks: [{ id: 'pixels', label: 'Pixels' }, { id: 'marks', label: 'Marks' }] },
+    { tab: 'V1', version: 'v1', looks: [{ id: 'frame', label: 'Frame' }] },
+  ] as const
+  for (const catalog of otherCatalogs) {
+    await page.getByRole('tab', { name: catalog.tab, exact: true }).click()
+    for (const look of catalog.looks) {
+      const raw = await screenshotArtboard(artboard)
+      await page.getByRole('button', { name: look.label, exact: true }).click()
+      await waitForOverlay(viewer, overlay, look.id, catalog.version)
+      await expect(canvas).toHaveAttribute('data-render-pipeline', 'three-raw')
+      const treated = await screenshotArtboard(artboard)
+      const difference = await imageStats(page, raw, treated)
+      expect(difference.mean, `${look.id} (${catalog.version}) must alter the lit frame`).toBeGreaterThan(2)
+      expect(
+        difference.changedFraction,
+        `${look.id} (${catalog.version}) must compose the full frame`,
+      ).toBeGreaterThan(0.08)
+      comparisons.push(
+        { label: `${look.label} (${catalog.version}) · raw`, image: raw },
+        { label: `${look.label} (${catalog.version}) · overlay`, image: treated },
+      )
+      await writeFile(`${ARTIFACT_DIR}/${look.id}-${catalog.version}-raw.png`, raw)
+      await writeFile(`${ARTIFACT_DIR}/${look.id}-${catalog.version}-overlay.png`, treated)
+      await page.getByRole('button', { name: look.label, exact: true }).click()
+      await expect(viewer).toHaveAttribute('data-postprocess', 'raw')
+    }
+  }
 
-  const comparisonsPath = `${ARTIFACT_DIR}/all-looks-raw-vs-gpu.png`
-  const alternatePath = `${ARTIFACT_DIR}/all-looks-metal-orbited.png`
-  const metricsPath = `${ARTIFACT_DIR}/timings-and-resources.json`
+  const comparisonsPath = `${ARTIFACT_DIR}/all-looks-raw-vs-overlay.png`
   await writeContactSheet(page, comparisonsPath, comparisons, 4)
-  await writeContactSheet(page, alternatePath, alternatePose, 4)
-  await writeFile(
-    metricsPath,
-    JSON.stringify({ timings, warmMetrics, stableMetrics }, null, 2),
-  )
-  await testInfo.attach('all V2 Looks: raw vs GPU', {
+  await testInfo.attach('all catalogs: raw vs Canvas2D overlay', {
     path: comparisonsPath,
     contentType: 'image/png',
   })
-  await testInfo.attach('all V2 Looks: alternate pose/material/palette', {
-    path: alternatePath,
+})
+
+test('the overlay re-treats the viewport when the camera orbits', async ({ page }, testInfo) => {
+  await mkdir(ARTIFACT_DIR, { recursive: true })
+  const { artboard, viewer, overlay } = await openMaterialViewer(page)
+  const orbited: { label: string; image: Buffer }[] = []
+
+  // One look per catalog: the treated image must follow the camera — that
+  // is the entire point of the overlay being a layer over the viewport.
+  const perVersion = [
+    { tab: 'V3', version: 'v2', look: { id: 'dither', label: 'Dither' } },
+    { tab: 'V2', version: 'v1b', look: { id: 'pixels', label: 'Pixels' } },
+    { tab: 'V1', version: 'v1', look: { id: 'frame', label: 'Frame' } },
+  ] as const
+  for (const entry of perVersion) {
+    await page.getByRole('tab', { name: entry.tab, exact: true }).click()
+    await page.getByRole('button', { name: entry.look.label, exact: true }).click()
+    await waitForOverlay(viewer, overlay, entry.look.id, entry.version)
+    const before = await screenshotArtboard(artboard)
+    const hashBefore = await overlay.getAttribute('data-source-hash')
+
+    await orbitViewer(page, viewer)
+    await expect.poll(
+      () => overlay.getAttribute('data-source-hash'),
+      { timeout: 30_000 },
+    ).not.toBe(hashBefore)
+    await expect(overlay).toHaveAttribute('data-quality', 'hq', { timeout: 30_000 })
+    const after = await screenshotArtboard(artboard)
+
+    const response = await imageStats(page, before, after)
+    // The mock fixture is a small slab, so a treatment that concentrates its
+    // response on the subject (dither) legitimately changes ~1-2% of the
+    // frame; the re-captured source hash above proves the overlay was
+    // re-treated, and this asserts the treated IMAGE moved with the camera.
+    expect(
+      response.changedFraction,
+      `${entry.look.id} (${entry.version}) overlay must change with the viewport`,
+    ).toBeGreaterThan(0.006)
+    orbited.push(
+      { label: `${entry.look.label} (${entry.version}) · before orbit`, image: before },
+      { label: `${entry.look.label} (${entry.version}) · after orbit`, image: after },
+    )
+
+    // Reset for the next catalog: look off, camera back to the front pose.
+    await page.getByRole('button', { name: entry.look.label, exact: true }).click()
+    await expect(viewer).toHaveAttribute('data-postprocess', 'raw')
+    await viewer.dblclick()
+    await waitFrames(page, 10)
+  }
+
+  const orbitPath = `${ARTIFACT_DIR}/overlay-orbit-response.png`
+  await writeContactSheet(page, orbitPath, orbited, 2)
+  await testInfo.attach('overlay before/after orbit per catalog', {
+    path: orbitPath,
     contentType: 'image/png',
-  })
-  await testInfo.attach('GPU timings and resource counts', {
-    body: Buffer.from(JSON.stringify({ timings, warmMetrics, stableMetrics }, null, 2)),
-    contentType: 'application/json',
   })
 })
 
-test('keeps transformed source geometry, phase determinism, and 4K export on the GPU path', async ({
+test('keeps transformed source geometry, replay determinism, and 4K export on the overlay path', async ({
   page,
 }, testInfo) => {
   await mkdir(ARTIFACT_DIR, { recursive: true })
-  const first = await openMaterialGpu(page)
+  const first = await openMaterialViewer(page)
   await page.getByRole('button', { name: 'Stitch', exact: true }).click()
-  await expect(first.viewer).toHaveAttribute('data-postprocess', 'gpu-look')
-  await setPhase(page, 0)
-  await setRawOutput(page, true)
-  const rawDefault = await screenshotArtboard(first.artboard)
-  await setRawOutput(page, false)
+  await waitForOverlay(first.viewer, first.overlay, 'stitch', 'v2')
   const finalDefault = await screenshotArtboard(first.artboard)
+  await page.getByRole('button', { name: 'Stitch', exact: true }).click()
+  await expect(first.viewer).toHaveAttribute('data-postprocess', 'raw')
+  const rawDefault = await screenshotArtboard(first.artboard)
 
   await page.evaluate(() => {
     const key = 'mbs-bg-generator-autosave-v2'
@@ -396,21 +418,25 @@ test('keeps transformed source geometry, phase determinism, and 4K export on the
     }
     recipe.look = { ...recipe.look, id: 'stitch', version: 'v2' }
     recipe.materialLookOverlay = { enabled: true }
-    sessionStorage.setItem('material-gpu-recipe-override', JSON.stringify(recipe))
+    sessionStorage.setItem('material-look-recipe-override', JSON.stringify(recipe))
   })
   await page.reload()
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
   await page.getByRole('radio', { name: '3D', exact: true }).click()
   const viewer = page.locator('[data-mbs-material-model="true"]')
+  const overlay = viewer.locator('.lab-material-look-canvas')
   const artboard = page.locator('#lab-generator-artboard')
   await expect(viewer).toHaveAttribute('data-model-status', 'ready')
-  await expect(viewer).toHaveAttribute('data-postprocess', 'gpu-look')
-  await setPhase(page, 0)
-  await setRawOutput(page, true)
-  const rawTransformed = await screenshotArtboard(artboard)
-  await setRawOutput(page, false)
+  await waitForOverlay(viewer, overlay, 'stitch', 'v2')
   const finalTransformed = await screenshotArtboard(artboard)
+  await page.getByRole('button', { name: 'Stitch', exact: true }).click()
+  await expect(viewer).toHaveAttribute('data-postprocess', 'raw')
+  const rawTransformed = await screenshotArtboard(artboard)
+  await page.getByRole('button', { name: 'Stitch', exact: true }).click()
+  await waitForOverlay(viewer, overlay, 'stitch', 'v2')
 
+  // The treatment must move with the model: the raw frame's transform
+  // response and the treated frame's response land in the same region.
   const rawTransformResponse = await imageStats(page, rawDefault, rawTransformed)
   const finalTransformResponse = await imageStats(page, finalDefault, finalTransformed)
   expect(rawTransformResponse.changedFraction).toBeGreaterThan(0.03)
@@ -422,30 +448,15 @@ test('keeps transformed source geometry, phase determinism, and 4K export on the
     rawTransformResponse.centroidY - finalTransformResponse.centroidY,
   )).toBeLessThan(0.18)
 
-  // Material mode has no Motion panel: the 3D overlay is a still, and the
-  // debug/export phase override is the only way to move the loop phase.
+  // Material mode has no Motion panel: the overlay is a still.
   await expect(page.getByRole('slider', { name: 'Amount', exact: true })).toHaveCount(0)
   await expect(page.getByRole('slider', { name: 'Energy', exact: true })).toHaveCount(0)
-  await setPhase(page, 0)
-  const seamStart = await screenshotArtboard(artboard)
-  await setPhase(page, 1)
-  const seamEnd = await screenshotArtboard(artboard)
-  expect(seamEnd.equals(seamStart), 'phase 0 and 1 must be the same GPU frame').toBe(true)
-
-  await setPhase(page, 0.375)
-  const replayA = await screenshotArtboard(artboard)
-  await waitFrames(page, 5)
-  const replayB = await screenshotArtboard(artboard)
-  expect(replayB.equals(replayA), 'same-state GPU replay must be deterministic').toBe(true)
-
-  await setPhase(page, null)
   const liveA = await screenshotArtboard(artboard)
   await waitFrames(page, 30)
   const liveB = await screenshotArtboard(artboard)
-  expect(liveB.equals(liveA), 'the live GPU overlay must be static over time').toBe(true)
+  expect(liveB.equals(liveA), 'the live overlay must be static over time').toBe(true)
 
-  await setPhase(page, 0)
-  const previewAtExportPhase = await screenshotArtboard(artboard)
+  const previewBeforeExport = await screenshotArtboard(artboard)
   const exportResult = await page.evaluate(async () => {
     const exportPng = (window as unknown as {
       __lbsLabExportPng?: () => Promise<string>
@@ -453,11 +464,13 @@ test('keeps transformed source geometry, phase determinism, and 4K export on the
     if (!exportPng) throw new Error('Dev export hook unavailable')
     const startedAt = performance.now()
     const dataUrl = await exportPng()
+    const repeat = await exportPng()
     const image = new Image()
     image.src = dataUrl
     await image.decode()
     return {
       dataUrl,
+      identicalRepeat: repeat === dataUrl,
       elapsedMs: performance.now() - startedAt,
       width: image.width,
       height: image.height,
@@ -465,12 +478,16 @@ test('keeps transformed source geometry, phase determinism, and 4K export on the
   })
   expect(exportResult.width).toBe(3840)
   expect(exportResult.height).toBe(2160)
-  const parity = await imageStats(page, previewAtExportPhase, exportResult.dataUrl)
+  expect(
+    exportResult.identicalRepeat,
+    'two exports of identical state must be byte-identical',
+  ).toBe(true)
+  const parity = await imageStats(page, previewBeforeExport, exportResult.dataUrl)
   expect(parity.mean).toBeLessThan(24)
   expect(parity.changedFraction).toBeLessThan(0.72)
 
-  const exportPath = `${ARTIFACT_DIR}/stitch-gpu-export-3840x2160.png`
-  const measurementsPath = `${ARTIFACT_DIR}/transform-motion-export.json`
+  const exportPath = `${ARTIFACT_DIR}/stitch-overlay-export-3840x2160.png`
+  const measurementsPath = `${ARTIFACT_DIR}/transform-replay-export.json`
   await writeFile(
     exportPath,
     Buffer.from(exportResult.dataUrl.split(',')[1], 'base64'),
@@ -481,11 +498,11 @@ test('keeps transformed source geometry, phase determinism, and 4K export on the
     parity,
     exportMs: exportResult.elapsedMs,
   }, null, 2))
-  await testInfo.attach('4K GPU export', {
+  await testInfo.attach('4K overlay export', {
     path: exportPath,
     contentType: 'image/png',
   })
-  await testInfo.attach('transform, phase, and export measurements', {
+  await testInfo.attach('transform, replay, and export measurements', {
     body: Buffer.from(JSON.stringify({
       rawTransformResponse,
       finalTransformResponse,
@@ -496,24 +513,19 @@ test('keeps transformed source geometry, phase determinism, and 4K export on the
   })
 })
 
-test('recovers the Three.js GPU Look after context loss', async ({ page }) => {
-  const { viewer, canvas } = await openMaterialGpu(page)
+test('recovers the Canvas2D overlay after WebGL context loss', async ({ page }) => {
+  const { viewer, canvas, overlay } = await openMaterialViewer(page)
   await page.getByRole('button', { name: 'Mandala', exact: true }).click()
-  await expect(viewer).toHaveAttribute('data-postprocess', 'gpu-look')
-  await setPhase(page, 0.2)
-  const before = await gpuMetrics(page)
+  await waitForOverlay(viewer, overlay, 'mandala', 'v2')
 
   const extensionAvailable = await page.evaluate(() => {
-    const api = (window as unknown as { __mbsMaterialGpu?: DebugApi }).__mbsMaterialGpu
+    const api = (window as unknown as { __mbsMaterialDebug?: DebugApi }).__mbsMaterialDebug
     return api?.loseAndRestoreContext() ?? false
   })
   test.skip(!extensionAvailable, 'WEBGL_lose_context is unavailable')
   await expect(viewer).toHaveAttribute('data-model-status', 'loading')
   await expect(viewer).toHaveAttribute('data-model-status', 'ready', { timeout: 30_000 })
-  await expect(viewer).toHaveAttribute('data-postprocess', 'gpu-look')
-  await expect(canvas).toHaveAttribute('data-render-pipeline', 'three-gpu-look')
+  await waitForOverlay(viewer, overlay, 'mandala', 'v2')
+  await expect(canvas).toHaveAttribute('data-render-pipeline', 'three-raw')
   await expect(canvas).toHaveAttribute('data-render-status', 'ready')
-  const after = await gpuMetrics(page)
-  expect(after.textures).toBeLessThanOrEqual(before.textures + 1)
-  expect(after.programs).toBeLessThanOrEqual(before.programs + 1)
 })

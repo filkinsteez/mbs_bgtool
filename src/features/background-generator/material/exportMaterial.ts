@@ -4,36 +4,17 @@ import { exportRecipeLookPng } from '../lookProcessor'
 import type { BackgroundRecipeV2 } from '../recipe'
 import { captureMaterialFrame } from './materialFrameCapture'
 
+// The 3D export is WYSIWYG with the live overlay: capture the raw lit
+// viewport frame at target size, then run the same canonical Canvas2D Look
+// processor over it that the preview uses — for EVERY Look version. With
+// the overlay off, the raw frame is the export.
 export async function exportMaterialAtTarget(
   recipe: BackgroundRecipeV2,
   protos: ShapeProto[],
 ): Promise<Blob> {
   const { width, height } = recipe.format
-  const canvas = await captureMaterialFrame(width, height, {
-    recipe,
-    output: recipe.materialLookOverlay.enabled && recipe.look.version === 'v2'
-      ? 'auto'
-      : 'raw',
-    // Exports are deterministic recipe artifacts. The 3D GPU overlay is a
-    // still — motion never feeds it — and phase zero is its canonical frame.
-    phase: 0,
-  })
-  return encodeMaterialCanvas(canvas, recipe, protos)
-}
-
-function encodeMaterialCanvas(
-  canvas: HTMLCanvasElement,
-  recipe: BackgroundRecipeV2,
-  protos: ShapeProto[],
-): Promise<Blob> {
-  if (
-    !recipe.materialLookOverlay.enabled
-    || recipe.look.version === 'v2'
-  ) {
-    return canvasToPng(canvas)
-  }
-  // V1 retains its historical Canvas2D renderer. V2 has already been
-  // composited by the same Three.js GPU pipeline used in preview.
+  const canvas = await captureMaterialFrame(width, height)
+  if (!recipe.materialLookOverlay.enabled) return canvasToPng(canvas)
   const source = createLabSourceFromCanvas(canvas, {
     filename: 'material-export-frame.rgba',
   })

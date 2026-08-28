@@ -80,7 +80,28 @@ export function buildV2Env(lab: LabState, source: LabSource | null): V2Env {
   const maps = source?.maps
   if (maps) {
     const rect = fitRect(source.fullW, source.fullH, outW, outH, lab.source?.fit ?? 'cover')
-    luminance = fieldFromMap(maps.lum, maps.w, maps.h, rect)
+    if (lab.sourceMask === 'border-distance') {
+      // 3D material mode (the only path that sets this mask): the live
+      // capture carries the model silhouette in ALPHA, and the shared
+      // analysis reads transparent as paper-white — which would flatten
+      // the whole scene to near-uniform brightness and disconnect the
+      // look from the viewport. Rebuild luminance from the raw RGB so the
+      // systems see the actual viewport image (and live matches export,
+      // whose capture is opaque).
+      const count = maps.w * maps.h
+      const sceneLum = new Float32Array(count)
+      for (let i = 0; i < count; i++) {
+        const offset = i * 4
+        sceneLum[i] = (
+          0.2126 * maps.rgba[offset]
+          + 0.7152 * maps.rgba[offset + 1]
+          + 0.0722 * maps.rgba[offset + 2]
+        ) / 255
+      }
+      luminance = fieldFromMap(sceneLum, maps.w, maps.h, rect)
+    } else {
+      luminance = fieldFromMap(maps.lum, maps.w, maps.h, rect)
+    }
   }
 
   return {

@@ -168,6 +168,43 @@ function fallbackMotif(seed: number, n: number): Uint8Array {
 
 const CROP_RETRIES = 10
 
+// 3D material mode: normalize the captured frame's tone so the crop windows
+// respond to the frame's RELATIVE structure whatever its exposure. A fixed
+// 0.5 threshold on an all-dark (or all-bright) frame rasterizes no cells,
+// every retry fails, and the tiling collapses to the seeded fallback motif —
+// a render that ignores the viewport. The frame border reads as ground; the
+// tonal side away from it becomes the figure.
+function normalizedLuminance(env: V2Env): Field {
+  const lum = env.luminance
+  if (!lum) return () => 0
+  const { outW, outH } = env
+  const cols = 48
+  const rows = Math.max(2, Math.round((cols * outH) / Math.max(1, outW)))
+  let lo = Infinity
+  let hi = -Infinity
+  let ringSum = 0
+  let ringCount = 0
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const value = lum(((i + 0.5) / cols) * outW, ((j + 0.5) / rows) * outH)
+      if (value < lo) lo = value
+      if (value > hi) hi = value
+      if (i === 0 || j === 0 || i === cols - 1 || j === rows - 1) {
+        ringSum += value
+        ringCount += 1
+      }
+    }
+  }
+  const span = hi - lo
+  if (span < 0.045) return () => 0
+  const invert = (ringSum / Math.max(1, ringCount) - lo) / span > 0.5
+  return (x, y) => {
+    const level = (lum(x, y) - lo) / span
+    const value = invert ? 1 - level : level
+    return value < 0 ? 0 : value > 1 ? 1 : value
+  }
+}
+
 // Build the motif bitmap by cropping the mark. Each retry index derives a
 // fresh seeded placement (scale, push direction, tilt) — or, in 3D material
 // mode, a fresh window over the captured frame's luminance — and the first
@@ -180,15 +217,17 @@ function buildMotif(env: V2Env, n: number): Uint8Array {
   let horizontal: { cells: Uint8Array; dist: number } | null = null
   let corner: { cells: Uint8Array; dist: number } | null = null
   let nearest: { cells: Uint8Array; coverage: number; spansVertical: boolean } | null = null
+  const materialTone = env.luminance ? normalizedLuminance(env) : null
   for (let k = 0; k < CROP_RETRIES; k++) {
     let field: Field
     let cx: number
     let cy: number
     let size: number
-    if (env.luminance) {
-      // 3D material mode: crop the captured frame's luminance instead —
-      // the seeded window wanders the frame looking for a bold edge.
-      field = env.luminance
+    if (materialTone) {
+      // 3D material mode: crop the captured frame's (normalized) tone
+      // instead — the seeded window wanders the frame looking for a bold
+      // edge.
+      field = materialTone
       cx = outW * (0.22 + chan(seed, k, C + 'lumWinX') * 0.56)
       cy = outH * (0.22 + chan(seed, k, C + 'lumWinY') * 0.56)
       size = Math.min(outW, outH) * 0.4

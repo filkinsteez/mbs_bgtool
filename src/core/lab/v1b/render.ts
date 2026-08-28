@@ -14,6 +14,7 @@ import { buildDabs, buildStreams, composeFlow, type VectorField } from './flow'
 import { buildColorField, hexToRgb, rgbCss } from '../colorField'
 import { buildBlockFills, buildShingleFills, regionValue } from './fills'
 import { getPaintRaster, reconcilePaint, type PaintRaster } from '../paintRuntime'
+import { borderDistanceField } from '../sourceMask'
 import { sampleRGB } from '../analysis'
 import { stampProto } from '../stamp'
 import { createOrganicMotionWarp } from '../motion'
@@ -115,7 +116,15 @@ export function renderLabV1b(
   const restore: Field | null = paintField
     ? (x: number, y: number) => Math.max(0, paintField(x, y))
     : null
-  const compiledTerritory = compileTerritoryCached(lab, rect, outW, outH, maps, paintField)
+  const compiledTerritory = compileTerritoryCached(
+    lab,
+    rect,
+    outW,
+    outH,
+    maps,
+    paintField,
+    source,
+  )
   const directedTerritory = lab.composition
     ? artDirectTerritory(lab.composition, compiledTerritory, outW, outH)
     : compiledTerritory
@@ -893,6 +902,7 @@ function compileTerritoryCached(
   outH: number,
   maps: LabSource['maps'] | null,
   paintField: Field | null,
+  source: LabSource | null = null,
 ): Field {
   // curve distance lattices are the one expensive compile step — build
   // them through the cache and hand them to compileTerritory as
@@ -901,6 +911,15 @@ function compileTerritoryCached(
   // fields with forced 'add' and silently contradicted the engine)
   const fieldOverrides = new Map<string, Field>()
   const motionWarp = createOrganicMotionWarp(lab.motion, lab.seed, outW, outH)
+  // 3D material mode (sourceAwareLabForRecipe): the captured viewport
+  // frame drives the territory through its subject silhouette, so every
+  // V1b treatment grades off the model image instead of a generated field.
+  if (lab.sourceMask === 'border-distance' && source) {
+    const mask = borderDistanceField(source, rect)
+    for (const src of lab.territory.sources) {
+      if (src.kind === 'tone' && src.enabled) fieldOverrides.set(src.id, mask)
+    }
+  }
   for (const src of lab.territory.sources) {
     if (src.kind !== 'curve' || !src.enabled || !src.curve) continue
     const key = `${JSON.stringify(src.curve)}|${outW}x${outH}|${src.softness.toFixed(3)}`

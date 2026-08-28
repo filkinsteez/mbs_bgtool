@@ -17,14 +17,7 @@ import { createLabSourceFromImage } from '@/core/lab/sourceCache'
 import type { LookId } from '@/core/lab/looks'
 import { sourceAwareLabForRecipe, renderRecipeLookToCanvas } from '@/features/background-generator/lookProcessor'
 import type { MaterialId } from '@/features/background-generator/material/catalog'
-import {
-  registerMaterialFrameCapture,
-  type MaterialFrameCaptureRequest,
-} from '@/features/background-generator/material/materialFrameCapture'
-import {
-  MaterialLookGpuPipeline,
-  type MaterialGpuMetrics,
-} from '@/features/background-generator/material/materialLookGpu'
+import { registerMaterialFrameCapture } from '@/features/background-generator/material/materialFrameCapture'
 import type {
   BackgroundRecipeV2,
   MaterialCameraPose,
@@ -59,7 +52,6 @@ type ViewerRuntime = {
   scene: THREE.Scene
   camera: THREE.OrthographicCamera
   renderer: THREE.WebGLRenderer
-  gpuPipeline: MaterialLookGpuPipeline
   processedCanvas: HTMLCanvasElement
   lookColorFrame: HTMLCanvasElement
   lookMaskFrame: HTMLCanvasElement
@@ -79,9 +71,6 @@ type ViewerRuntime = {
   viewportAspect: number
   cameraKey: string
   recipe: BackgroundRecipeV2
-  lastRenderTime: number
-  phaseOverride: number | null
-  forceRawOutput: boolean
   invalidateSource: () => void
 }
 
@@ -94,10 +83,7 @@ const HQ_LOOK_EDGE = 1200
 const LIVE_LOOK_INTERVAL_MS = 90
 const LOOK_SETTLE_MS = 160
 
-type MaterialGpuDebugApi = {
-  setRawOutput: (enabled: boolean) => void
-  setPhase: (phase: number | null) => void
-  getMetrics: () => MaterialGpuMetrics
+type MaterialDebugApi = {
   loseAndRestoreContext: () => boolean
 }
 
@@ -301,7 +287,6 @@ async function captureRuntimeFrame(
   runtime: ViewerRuntime,
   width: number,
   height: number,
-  request: MaterialFrameCaptureRequest,
 ): Promise<HTMLCanvasElement> {
   if (!runtime.model) throw new Error('3D model is not ready')
   if (
@@ -332,21 +317,10 @@ async function captureRuntimeFrame(
     runtime.camera.right = centerX + halfWidth
     runtime.camera.updateProjectionMatrix()
     runtime.controls.update()
-    const exportRecipe = request.recipe ?? runtime.recipe
-    const useGpuLook = (
-      request.output !== 'raw'
-      && exportRecipe.materialLookOverlay.enabled
-      && exportRecipe.look.version === 'v2'
-    )
-    runtime.gpuPipeline.setSize(width, height, 1, 'export')
-    if (useGpuLook) {
-      runtime.gpuPipeline.render(exportRecipe, 0, {
-        exportResolution: [width, height],
-        phase: request.phase ?? 0,
-      })
-    } else {
-      runtime.renderer.render(runtime.scene, runtime.camera)
-    }
+    // Every version exports the same way: the raw lit frame is captured
+    // here, and the canonical Canvas2D Look processor treats it downstream
+    // (exportMaterial.ts), exactly as the live overlay does.
+    runtime.renderer.render(runtime.scene, runtime.camera)
 
     const frame = document.createElement('canvas')
     frame.width = width
@@ -354,9 +328,7 @@ async function captureRuntimeFrame(
     const context = frame.getContext('2d')
     if (!context) throw new Error('3D export canvas unavailable')
     context.drawImage(runtime.renderer.domElement, 0, 0, width, height)
-    frame.dataset.renderPipeline = useGpuLook ? 'three-gpu-look' : 'three-raw'
-    frame.dataset.look = useGpuLook ? exportRecipe.look.id : 'off'
-    frame.dataset.phase = String(useGpuLook ? request.phase ?? 0 : 0)
+    frame.dataset.renderPipeline = 'three-raw'
     return frame
   } finally {
     runtime.renderer.setPixelRatio(originalPixelRatio)
@@ -367,27 +339,7 @@ async function captureRuntimeFrame(
     runtime.camera.top = originalFrustum.top
     runtime.camera.bottom = originalFrustum.bottom
     runtime.camera.updateProjectionMatrix()
-    runtime.gpuPipeline.setSize(
-      Math.max(1, originalSize.x),
-      Math.max(1, originalSize.y),
-      originalPixelRatio,
-      'preview',
-    )
-    if (
-      runtime.recipe.materialLookOverlay.enabled
-      && runtime.recipe.look.version === 'v2'
-      && !runtime.forceRawOutput
-    ) {
-      try {
-        runtime.gpuPipeline.render(runtime.recipe, runtime.lastRenderTime, {
-          phase: runtime.phaseOverride ?? undefined,
-        })
-      } catch {
-        runtime.renderer.render(runtime.scene, runtime.camera)
-      }
-    } else {
-      runtime.renderer.render(runtime.scene, runtime.camera)
-    }
+    runtime.renderer.render(runtime.scene, runtime.camera)
     runtime.invalidateSource()
   }
 }
@@ -427,13 +379,10 @@ export function MaterialModelViewer() {
   useEffect(() => () => reportMaterialModelStatus('loading'), [])
 
   useEffect(
-    () => registerMaterialFrameCapture(async (width, height, request = {}) => {
+    () => registerMaterialFrameCapture(async (width, height) => {
       const runtime = runtimeRef.current
       if (!runtime) throw new Error('3D view is not ready')
-      return captureRuntimeFrame(runtime, width, height, {
-        ...request,
-        recipe: request.recipe ?? recipeRef.current,
-      })
+      return captureRuntimeFrame(runtime, width, height)
     }),
     [],
   )
@@ -479,15 +428,12 @@ export function MaterialModelViewer() {
     let controlsChanged = false
     let controlsSettleTimer: ReturnType<typeof setTimeout> | undefined
     let contextRecoveryQueued = false
-    let debugApi: MaterialGpuDebugApi | null = null
+    let debugApi: MaterialDebugApi | null = null
     let onContextLost: ((event: Event) => void) | null = null
     let onContextRestored: (() => void) | null = null
     let sourceVersion = 0
     let processedVersion = -1
     let processedRevision = 0
-    let gpuRenderedVersion = -1
-    let gpuRenderRevision = 0
-    let gpuReadyKey = ''
     let lastSourceChange = performance.now()
     let lastProcess = -Infinity
     let processedQuality: 'live' | 'hq' | null = null
@@ -603,13 +549,11 @@ export function MaterialModelViewer() {
       const surface = createMaterialSurface()
       const modelRoot = new THREE.Group()
       scene.add(modelRoot)
-      const gpuPipeline = new MaterialLookGpuPipeline(renderer, scene, camera)
 
       runtime = {
         scene,
         camera,
         renderer,
-        gpuPipeline,
         processedCanvas,
         lookColorFrame: document.createElement('canvas'),
         lookMaskFrame: document.createElement('canvas'),
@@ -629,9 +573,6 @@ export function MaterialModelViewer() {
         viewportAspect: 1,
         cameraKey: '',
         recipe: recipeRef.current,
-        lastRenderTime: 0,
-        phaseOverride: null,
-        forceRawOutput: false,
         invalidateSource,
       }
       runtimeRef.current = runtime
@@ -660,22 +601,6 @@ export function MaterialModelViewer() {
 
       if (process.env.NODE_ENV !== 'production') {
         debugApi = {
-          setRawOutput: (enabled) => {
-            if (!runtime) return
-            runtime.forceRawOutput = enabled
-            container.dataset.debugOutput = enabled ? 'raw' : 'gpu'
-            runtime.invalidateSource()
-          },
-          setPhase: (phase) => {
-            if (!runtime) return
-            runtime.phaseOverride = phase === null ? null : ((phase % 1) + 1) % 1
-            container.dataset.debugPhase = phase === null ? 'live' : String(runtime.phaseOverride)
-            runtime.invalidateSource()
-          },
-          getMetrics: () => {
-            if (!runtime) throw new Error('3D view is not ready')
-            return runtime.gpuPipeline.getMetrics()
-          },
           loseAndRestoreContext: () => {
             if (!runtime) return false
             const extension = runtime.renderer.getContext().getExtension('WEBGL_lose_context')
@@ -686,8 +611,8 @@ export function MaterialModelViewer() {
           },
         }
         ;(window as unknown as {
-          __mbsMaterialGpu?: MaterialGpuDebugApi
-        }).__mbsMaterialGpu = debugApi
+          __mbsMaterialDebug?: MaterialDebugApi
+        }).__mbsMaterialDebug = debugApi
       }
       const adjustViewFromKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
         if (!runtime) return false
@@ -749,12 +674,6 @@ export function MaterialModelViewer() {
         const width = Math.max(1, container.clientWidth)
         const height = Math.max(1, container.clientHeight)
         runtime.renderer.setSize(width, height, false)
-        runtime.gpuPipeline.setSize(
-          width,
-          height,
-          runtime.renderer.getPixelRatio(),
-          'preview',
-        )
         runtime.viewportAspect = width / height
         if (runtime.model && !interactedRef.current && runtime.cameraKey === 'default') {
           fitCamera(runtime)
@@ -867,62 +786,19 @@ export function MaterialModelViewer() {
         runtime.controls.update()
         const now = performance.now()
         const liveRecipe = recipeRef.current
-        const useGpuLook = (
-          liveRecipe.materialLookOverlay.enabled
-          && liveRecipe.look.version === 'v2'
-          && runtime.model !== null
-          && !lookFailedRef.current
-        )
+        // Every Look version is a render layer over the live viewport: the
+        // raw lit frame renders first, then the shared Canvas2D processor
+        // treats a capture of it in processLegacyLook.
         const useLegacyLook = (
           liveRecipe.materialLookOverlay.enabled
-          && liveRecipe.look.version === 'v1'
           && runtime.model !== null
           && !lookFailedRef.current
         )
         runtime.recipe = liveRecipe
-        runtime.lastRenderTime = now
 
-        if (useGpuLook && !runtime.forceRawOutput) {
-          try {
-            runtime.gpuPipeline.render(liveRecipe, now, {
-              phase: runtime.phaseOverride ?? undefined,
-            })
-            const gpuCanvas = runtime.renderer.domElement
-            const readyKey = `${liveRecipe.look.id}:${liveRecipe.look.version}`
-            if (gpuRenderedVersion !== sourceVersion) {
-              gpuRenderRevision += 1
-              gpuRenderedVersion = sourceVersion
-            }
-            gpuCanvas.dataset.renderPipeline = 'three-gpu-look'
-            gpuCanvas.dataset.renderStatus = 'ready'
-            gpuCanvas.dataset.renderRevision = String(gpuRenderRevision)
-            gpuCanvas.dataset.sourceRevision = String(sourceVersion)
-            gpuCanvas.dataset.look = liveRecipe.look.id
-            gpuCanvas.dataset.lookVersion = liveRecipe.look.version
-            lookFailedRef.current = false
-            if (gpuReadyKey !== readyKey) {
-              gpuReadyKey = readyKey
-              queueMicrotask(() => {
-                if (!cancelled) setLookStatus('ready')
-              })
-            }
-          } catch (error) {
-            runtime.renderer.render(runtime.scene, runtime.camera)
-            runtime.renderer.domElement.dataset.renderStatus = 'error'
-            runtime.renderer.domElement.dataset.renderError = error instanceof Error
-              ? error.message
-              : 'GPU Look failed'
-            gpuReadyKey = ''
-            lookFailedRef.current = true
-            queueMicrotask(() => {
-              if (!cancelled) setLookStatus('error')
-            })
-          }
-        } else {
-          runtime.renderer.render(runtime.scene, runtime.camera)
-          runtime.renderer.domElement.dataset.renderPipeline = 'three-raw'
-          runtime.renderer.domElement.dataset.renderStatus = 'ready'
-        }
+        runtime.renderer.render(runtime.scene, runtime.camera)
+        runtime.renderer.domElement.dataset.renderPipeline = 'three-raw'
+        runtime.renderer.domElement.dataset.renderStatus = 'ready'
 
         if (useLegacyLook) {
           const settled =
@@ -962,10 +838,10 @@ export function MaterialModelViewer() {
         runtime.renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored)
       }
       const debugWindow = window as unknown as {
-        __mbsMaterialGpu?: MaterialGpuDebugApi
+        __mbsMaterialDebug?: MaterialDebugApi
       }
-      if (debugApi && debugWindow.__mbsMaterialGpu === debugApi) {
-        delete debugWindow.__mbsMaterialGpu
+      if (debugApi && debugWindow.__mbsMaterialDebug === debugApi) {
+        delete debugWindow.__mbsMaterialDebug
       }
       runtime.renderer.domElement.removeEventListener('pointercancel', flushControls)
       window.removeEventListener('blur', flushControls)
@@ -981,7 +857,6 @@ export function MaterialModelViewer() {
         runtime.surface.dispose()
         runtime.environment.dispose()
         runtime.pmrem.dispose()
-        runtime.gpuPipeline.dispose()
         runtime.renderer.dispose()
       }
       runtime.renderer.forceContextLoss()
@@ -1063,9 +938,7 @@ export function MaterialModelViewer() {
       data-look-version={lookVersion}
       data-postprocess={
         lookOverlayEnabled && lookStatus === 'ready'
-          ? lookVersion === 'v2'
-            ? 'gpu-look'
-            : 'legacy-canvas2d-look'
+          ? 'legacy-canvas2d-look'
           : 'raw'
       }
       role="region"

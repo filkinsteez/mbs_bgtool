@@ -99,15 +99,53 @@ export function renderStitch(ctx: CanvasRenderingContext2D, env: V2Env): void {
   // 2. Underlying form: the Meta mark (canonical placement), or the
   // captured frame's luminance when in 3D material mode.
   const lum = env.luminance
-  const form = lum ?? env.symbolField()
-  const threshold = lum ? 0.45 : 0.5
   const centerX = (i: number) => x0 + (i + 0.5) * c
   const centerY = (j: number) => y0 + (j + 0.5) * c
 
   const raw = new Uint8Array(cols * rows)
-  for (let j = 0; j < rows; j++) {
-    for (let i = 0; i < cols; i++) {
-      if (form(centerX(i), centerY(j)) > threshold) raw[j * cols + i] = 1
+  if (lum) {
+    // The captured frame's tonal range depends on scene lighting and the
+    // ground color, so a fixed luminance threshold can miss the subject
+    // entirely (an all-dark frame yields an empty mask and the render stops
+    // responding to the viewport). Split the frame adaptively instead:
+    // normalize the sampled tones, read the frame border as ground, and
+    // mask the tonal side away from it.
+    const samples = new Float32Array(cols * rows)
+    let lo = Infinity
+    let hi = -Infinity
+    for (let j = 0; j < rows; j++) {
+      for (let i = 0; i < cols; i++) {
+        const value = lum(centerX(i), centerY(j))
+        samples[j * cols + i] = value
+        if (value < lo) lo = value
+        if (value > hi) hi = value
+      }
+    }
+    const span = hi - lo
+    if (span > 0.045) {
+      let ringSum = 0
+      let ringCount = 0
+      for (let i = 0; i < cols; i++) {
+        ringSum += samples[i] + samples[(rows - 1) * cols + i]
+        ringCount += 2
+      }
+      for (let j = 1; j < rows - 1; j++) {
+        ringSum += samples[j * cols] + samples[j * cols + cols - 1]
+        ringCount += 2
+      }
+      const ringLevel = (ringSum / Math.max(1, ringCount) - lo) / span
+      const invert = ringLevel > 0.5
+      for (let k = 0; k < samples.length; k++) {
+        const level = (samples[k] - lo) / span
+        if ((invert ? 1 - level : level) > 0.55) raw[k] = 1
+      }
+    }
+  } else {
+    const form = env.symbolField()
+    for (let j = 0; j < rows; j++) {
+      for (let i = 0; i < cols; i++) {
+        if (form(centerX(i), centerY(j)) > 0.5) raw[j * cols + i] = 1
+      }
     }
   }
   // Fatten the mark: its drawn stroke is only 1-2 cells wide at this
