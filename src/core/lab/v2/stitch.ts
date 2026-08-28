@@ -362,7 +362,7 @@ export function renderStitch(ctx: CanvasRenderingContext2D, env: V2Env): void {
     for (let i = 0; i < cols; i++) {
       const cellId = j * 8192 + i
       const inMask = mask[j * cols + i] === 1
-      // drop ~6% of interior mask cells and bite harder into boundary
+      // drop ~5% of interior mask cells and bite harder into boundary
       // cells so the form's edge crumbles instead of tracing a clean
       // outline; blob-only cells are more porous still, so on inspection
       // the solid mark masses separate from their camouflage satellites
