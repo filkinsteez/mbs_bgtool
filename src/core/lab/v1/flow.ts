@@ -200,8 +200,12 @@ export function buildDabs(opts: {
   seed: number
   field: VectorField
   occupancy: number
+  // material mode: density gets an ambient floor INSIDE the subject
+  // (alpha > 0.5) so lit faces fill in instead of rendering hollow,
+  // and the background settles at a calm constant presence
+  material?: boolean
 }): Dab[] {
-  const { cells, maps, rect, seed, field, occupancy } = opts
+  const { cells, maps, rect, seed, field, occupancy, material } = opts
   const out: Dab[] = []
   for (const cell of cells) {
     if (cell.treatment !== 'dabs') continue
@@ -221,7 +225,12 @@ export function buildDabs(opts: {
           ? (1 - sampleMap(maps.lum, maps.w, maps.h, mx, my)) * a + cell.t * (1 - a)
           : cell.t
       // presence follows tone so dab density carries the image
-      if (chan(seed, id, `lab.dab.cull${k}`) > 0.15 + tone * 0.85) continue
+      const presence = material
+        ? a > 0.5
+          ? 0.5 + tone * 0.5
+          : 0.26
+        : 0.15 + tone * 0.85
+      if (chan(seed, id, `lab.dab.cull${k}`) > presence) continue
       const seedAngle = chan(seed, id, `lab.dab.a${k}`) * Math.PI * 2
       const pts = traceStream(
         field,
@@ -246,8 +255,11 @@ export function buildStreams(opts: {
   field: VectorField
   outW: number
   outH: number
+  // material mode: per-cell seed probability (default the classic 0.6
+  // everywhere) — density then concentrates where the subject is
+  presence?: (cell: CellNode) => number
 }): number[][] {
-  const { cells, seed, field, outW, outH } = opts
+  const { cells, seed, field, outW, outH, presence } = opts
   const streamCells = cells.filter((c) => c.treatment === 'streams')
   if (!streamCells.length) return []
   const minDim = Math.min(outW, outH)
@@ -257,7 +269,7 @@ export function buildStreams(opts: {
   for (const cell of streamCells) {
     const id = cellId(cell.level, cell.ix, cell.iy)
     // one start per cell, culled to keep density readable
-    if (chan(seed, id, 'lab.stream.cull') > 0.6) continue
+    if (chan(seed, id, 'lab.stream.cull') > (presence ? presence(cell) : 0.6)) continue
     const x0 = cell.x + chan(seed, id, 'lab.stream.x') * cell.size
     const y0 = cell.y + chan(seed, id, 'lab.stream.y') * cell.size
     const a0 = chan(seed, id, 'lab.stream.a') * Math.PI * 2

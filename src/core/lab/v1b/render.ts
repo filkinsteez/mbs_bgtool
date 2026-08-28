@@ -14,7 +14,7 @@ import { buildDabs, buildStreams, composeFlow, type VectorField } from './flow'
 import { buildColorField, hexToRgb, rgbCss } from '../colorField'
 import { buildBlockFills, buildShingleFills, regionValue } from './fills'
 import { getPaintRaster, reconcilePaint, type PaintRaster } from '../paintRuntime'
-import { borderDistanceField } from '../sourceMask'
+import { borderDistanceField, borderSilhouetteField } from '../sourceMask'
 import { sampleRGB } from '../analysis'
 import { stampProto } from '../stamp'
 import { createOrganicMotionWarp } from '../motion'
@@ -145,16 +145,48 @@ export function renderLabV1b(
     return
   }
 
+  // MATERIAL MODE — the 3D tab's overlay path (sourceAwareLabForRecipe is
+  // the only caller that sets sourceMask). The captured viewport frame
+  // drives everything through the shaded border-distance territory; the
+  // per-look adjustments below translate each 2D grammar into a true
+  // render layer over the lit model. The 2D path never takes any of it.
+  const material = lab.sourceMask === 'border-distance' && !!source
+  const lookId = lab.look?.id
+  // marks: the raw-frame 'photo' band would paste the untreated model
+  // into the composition — the shadow band stamps marks instead
+  const territoryState = material && lookId === 'marks'
+    ? {
+        ...lab.territory,
+        bands: lab.territory.bands.map((band) => band === 'photo' ? 'marks' as const : band),
+      }
+    : lab.territory
+  // pixels: keep the mosaic legible AS a mosaic at complexity 100 —
+  // below ~4% of the long edge the cells dissolve into the raw frame
+  const structureState = material && lookId === 'pixels'
+    ? {
+        ...lab.structure,
+        baseCell: Math.max(lab.structure.baseCell, Math.max(outW, outH) * 0.04),
+      }
+    : lab.structure
+  // the quilted fills read the model through per-cell color depth — the
+  // silhouette must survive even the coarsest complexity, so boundary
+  // cells keep one extra subdivision level
+  const edgeSplitLevels = material
+    && (lookId === 'frame' || lookId === 'quilt' || lookId === 'weave')
+    ? Math.min(3, structureState.maxLevels + 1)
+    : 0
+
   const cells = buildCells({
     T,
-    territory: lab.territory,
-    structure: lab.structure,
+    territory: territoryState,
+    structure: structureState,
     maps,
     rect,
     outW,
     outH,
     seed: lab.seed,
     restore,
+    edgeSplitLevels,
   })
 
   if (view === 'bands') {
@@ -314,6 +346,7 @@ export function renderLabV1b(
       paletteSize: K,
       seed: lab.seed,
       colorPlan,
+      materialDepth: material,
     })) {
       const { cell } = f
       ctx.fillStyle = palette[f.color]
@@ -370,7 +403,20 @@ export function renderLabV1b(
         // only decides how large and how present each bead is
         const id = row * 4099 + column
         const edge = Math.max(0, Math.min(1, (territory - 0.075) / 0.72))
-        const hero = edge > 0.58 && chan(lab.seed, id, 'lab.bead.hero') > 0.965
+        // material: hero beads gather where the mask gradient runs — the
+        // silhouette rim — instead of scattering across the interior
+        let rim = 0
+        if (material) {
+          const e = Math.max(2, minDim * 0.01)
+          rim = Math.min(
+            1,
+            Math.abs(compiledTerritory(cx + e, cy) - compiledTerritory(cx - e, cy))
+            + Math.abs(compiledTerritory(cx, cy + e) - compiledTerritory(cx, cy - e)),
+          )
+        }
+        const hero = edge > 0.58
+          ? chan(lab.seed, id, 'lab.bead.hero') > 0.965 - rim * 0.08
+          : material && rim > 0.4 && chan(lab.seed, id, 'lab.bead.hero') > 0.94
         const ring = !hero && chan(lab.seed, id, 'lab.bead.ring') > 0.84
         const pulse = 1 + Math.sin(
           phase + cx / Math.max(1, outW) * Math.PI * 2 + row * 0.17,
@@ -443,12 +489,24 @@ export function renderLabV1b(
   // SHINGLE — per-cell linear gradients between palette neighbors,
   // direction alternating in a weave, leaned by the flow angle
   if (cells.some((c) => c.treatment === 'shingle')) {
+    // material: the weave's gradient axis follows the mask gradient, so
+    // the woven light wraps the model instead of ignoring it
+    const shingleLean = material
+      ? (x: number, y: number): number | null => {
+          const e = Math.max(2, Math.min(outW, outH) * 0.012)
+          const gx = (compiledTerritory(x + e, y) - compiledTerritory(x - e, y)) / (2 * e)
+          const gy = (compiledTerritory(x, y + e) - compiledTerritory(x, y - e)) / (2 * e)
+          return Math.hypot(gx, gy) > 1e-4 ? Math.atan2(gy, gx) : null
+        }
+      : undefined
     const fills = buildShingleFills({
       cells,
       paletteSize: K,
       seed: lab.seed,
       lean: 0,
       colorPlan,
+      materialDepth: material,
+      leanField: shingleLean,
     })
     for (const f of fills) {
       const { cell } = f
@@ -507,7 +565,18 @@ export function renderLabV1b(
   }
 
   if (lab.look?.id === 'frame') {
-    const grid = territoryGrid(T, outW, outH, 160)
+    // material: contours of the shaded territory hug the silhouette edge
+    // (the mask is a step) — a signed distance of the pure silhouette
+    // makes the rings actually radiate: nested toward the tube's core
+    // inside, rippling into the ground outside, re-composed every pose
+    const grid = territoryGrid(
+      material
+        ? materialRingField(borderSilhouetteField(source!, rect), outW, outH)
+        : T,
+      outW,
+      outH,
+      160,
+    )
     const levels = 10 + Math.round((lab.look.complexity ?? 0.5) * 10)
     // ground-colored rings would vanish into the paper they band
     const ringColors = colorPlan
@@ -536,9 +605,12 @@ export function renderLabV1b(
   const needsVector =
     cells.some((c) => c.treatment === 'scan' || c.treatment === 'dabs' || c.treatment === 'streams') ||
     (lab.mark.echo > 0 && cells.some((c) => c.treatment === 'marks'))
+  // material: there is no curve source, so a 'curve' basis silently
+  // degrades to a fixed horizontal angle — the territory's own level
+  // sets are the pose-coupled replacement for every process treatment
   const vector: VectorField | null =
     needsVector
-      ? composeFlow(lab.flow, {
+      ? composeFlow(material ? { ...lab.flow, basis: 'contour' } : lab.flow, {
           seed: lab.seed,
           outW,
           outH,
@@ -552,7 +624,68 @@ export function renderLabV1b(
   // SCAN — calm horizontal scanlines with the source revealed by brighter
   // segments. The lines stay legible while their endpoints describe the mark.
   const scanCells = cells.filter((c) => c.treatment === 'scan')
-  if (scanCells.length) {
+  if (scanCells.length && material) {
+    // MATERIAL: engraving translation — one flat 'peak' per crossing
+    // renders the tube as a 2D sticker, so instead every sample carries
+    // its own line weight from the shaded territory: highlights whisper,
+    // shadow flanks swell, and the self-crossing reads as weight change.
+    const complexity = Math.max(0, Math.min(1, lab.look?.complexity ?? 0.5))
+    const minDim = Math.min(outW, outH)
+    // floor the pitch so the quiet ground rhythm survives complexity 100
+    const spacing = Math.max(4, minDim * Math.max(0.024 - complexity * 0.015, 0.0115))
+    const sampleStep = Math.max(2, outW / 360)
+    const rowOffset = chan(lab.seed, 0, 'lab.scan.offset') * spacing
+    const rhythm = lab.composition?.rhythm
+    ctx.save()
+    ctx.lineCap = 'round'
+    const baseWidth = Math.max(0.8, minDim * 0.00135)
+    let row = 0
+    for (let y = -spacing + rowOffset; y <= outH + spacing; y += spacing) {
+      const accented = rhythm?.pattern[row % Math.max(1, rhythm.steps)] ?? row % 5 === 0
+      ctx.beginPath()
+      ctx.moveTo(0, y)
+      ctx.lineTo(outW, y)
+      ctx.strokeStyle = hasPalette
+        ? dealInkPalette(outW * 0.5, y, 'lab.scan.ground')
+        : ink
+      ctx.lineWidth = baseWidth * (accented ? 1.08 : 0.72)
+      ctx.globalAlpha = accented ? 0.24 : 0.14
+      ctx.stroke()
+
+      let previousX: number | null = null
+      let previousY = 0
+      for (let x = 0; x <= outW + sampleStep; x += sampleStep) {
+        const clampedX = Math.min(outW, x)
+        const territory = compiledTerritory(clampedX, y)
+        if (territory > 0.1) {
+          const shading = Math.max(0, Math.min(1, (territory - 0.32) / 0.68))
+          const ripple = Math.sin(
+            clampedX / Math.max(1, outW) * Math.PI * 4
+            + row * 0.37,
+          ) * spacing * 0.035 * territory
+          const displacedY = y + ripple
+          if (previousX !== null) {
+            ctx.beginPath()
+            ctx.moveTo(previousX, previousY)
+            ctx.lineTo(clampedX, displacedY)
+            ctx.strokeStyle = hasPalette
+              ? dealInkPalette(clampedX, y, 'lab.scan.subject')
+              : ink
+            ctx.lineWidth = baseWidth * (0.75 + shading * 2.7 + (accented ? 0.2 : 0))
+            ctx.globalAlpha = Math.min(0.96, 0.48 + shading * 0.48)
+            ctx.stroke()
+          }
+          previousX = clampedX
+          previousY = displacedY
+        } else {
+          previousX = null
+        }
+      }
+      row += 1
+    }
+    ctx.globalAlpha = 1
+    ctx.restore()
+  } else if (scanCells.length) {
     const complexity = Math.max(0, Math.min(1, lab.look?.complexity ?? 0.5))
     const minDim = Math.min(outW, outH)
     const spacing = Math.max(4, minDim * (0.024 - complexity * 0.015))
@@ -643,6 +776,9 @@ export function renderLabV1b(
       outW,
       outH,
       complexity: lab.look?.complexity ?? 0.5,
+      // material: seeds mass on the model, hairlines bend along its
+      // level sets — the form is a density + flow event in the field
+      ...(material ? { territory: compiledTerritory, territoryBias: true } : {}),
     })
     // each stream takes a palette color where it starts — the walker
     // carries it, so neighbouring seeds make colored braids
@@ -652,11 +788,24 @@ export function renderLabV1b(
       const pts = stream.points
       const rhythm = lab.composition?.rhythm
       const accented = rhythm?.pattern[stream.id % rhythm.steps] ?? (stream.id % 7 === 0)
-      ctx.lineWidth = streamWidth * widthScales[stream.widthClass] * (accented ? 1.25 : 1)
-      ctx.globalAlpha = Math.min(0.94, (stream.alphaClass ? 0.86 : 0.68) + (accented ? 0.08 : 0))
-      ctx.strokeStyle = hasPalette
-        ? dealInkPalette(stream.seedX, stream.seedY, 'lab.stream.pal')
-        : ink
+      const tSeed = material ? compiledTerritory(stream.seedX, stream.seedY) : 0
+      ctx.lineWidth = streamWidth
+        * widthScales[stream.widthClass]
+        * (accented ? 1.25 : 1)
+        * (1 + tSeed * 0.6)
+      ctx.globalAlpha = Math.min(
+        0.94,
+        (stream.alphaClass ? 0.86 : 0.68) + (accented ? 0.08 : 0) + tSeed * 0.1,
+      )
+      const accentStream = material
+        && tSeed > 0.45
+        && colorPlan?.roles.accent != null
+        && chan(lab.seed, stream.id, 'lab.stream.accent') > 0.8
+      ctx.strokeStyle = accentStream
+        ? palette[colorPlan!.roles.accent!]
+        : hasPalette
+          ? dealInkPalette(stream.seedX, stream.seedY, 'lab.stream.pal')
+          : ink
       strokePolyline(ctx, pts)
     }
     ctx.globalAlpha = 1
@@ -673,6 +822,7 @@ export function renderLabV1b(
       occupancy: lab.mark.occupancy,
       complexity: lab.look?.complexity ?? 0.5,
       minDim: Math.min(outW, outH),
+      ...(material ? { territoryTone: compiledTerritory } : {}),
     })
     const mode = lab.mark.colorMode
     ctx.lineCap = 'round'
@@ -714,6 +864,7 @@ export function renderLabV1b(
       composition: lab.composition,
       outW,
       outH,
+      material,
     })
     const mode = lab.mark.colorMode
     const echo = Math.round(lab.mark.echo)
@@ -893,6 +1044,92 @@ function applyGrain(ctx: CanvasRenderingContext2D, amount: number, seed: number)
   ctx.fillStyle = pattern
   ctx.fillRect(0, 0, width, height)
   ctx.restore()
+}
+
+// MATERIAL frame rings: signed chamfer distance of the pure silhouette
+// on a lattice, mapped so 0.5 sits on the model's edge, values climb
+// toward 1 at the tube's medial core and fall toward 0 far into the
+// ground. Contours of this field are equidistant ripples radiating from
+// the pose — the material translation of the 2D look's nested rings.
+function materialRingField(
+  silhouette: Field,
+  outW: number,
+  outH: number,
+): Field {
+  const budget = 160
+  const cols = Math.max(8, Math.round((budget * outW) / Math.max(outW, outH)))
+  const rows = Math.max(8, Math.round((cols * outH) / Math.max(outW, 1)))
+  const cellW = outW / cols
+  const cellH = outH / rows
+  const w = cols + 1
+  const nodes = w * (rows + 1)
+  const inside = new Uint8Array(nodes)
+  for (let r = 0; r <= rows; r += 1) {
+    for (let c = 0; c <= cols; c += 1) {
+      inside[r * w + c] = silhouette(c * cellW, r * cellH) > 0.5 ? 1 : 0
+    }
+  }
+  const INF = 1e9
+  // dIn: each inside node's distance to the ground; dOut: each ground
+  // node's distance to the model — two chamfer transforms, lattice units
+  const dIn = new Float32Array(nodes)
+  const dOut = new Float32Array(nodes)
+  for (let i = 0; i < nodes; i += 1) {
+    dIn[i] = inside[i] ? INF : 0
+    dOut[i] = inside[i] ? 0 : INF
+  }
+  const chamfer = (dist: Float32Array) => {
+    for (let r = 0; r <= rows; r += 1) {
+      for (let c = 0; c <= cols; c += 1) {
+        const i = r * w + c
+        let best = dist[i]
+        if (c > 0) best = Math.min(best, dist[i - 1] + 1)
+        if (r > 0) {
+          best = Math.min(best, dist[i - w] + 1)
+          if (c > 0) best = Math.min(best, dist[i - w - 1] + Math.SQRT2)
+          if (c < cols) best = Math.min(best, dist[i - w + 1] + Math.SQRT2)
+        }
+        dist[i] = best
+      }
+    }
+    for (let r = rows; r >= 0; r -= 1) {
+      for (let c = cols; c >= 0; c -= 1) {
+        const i = r * w + c
+        let best = dist[i]
+        if (c < cols) best = Math.min(best, dist[i + 1] + 1)
+        if (r < rows) {
+          best = Math.min(best, dist[i + w] + 1)
+          if (c < cols) best = Math.min(best, dist[i + w + 1] + Math.SQRT2)
+          if (c > 0) best = Math.min(best, dist[i + w - 1] + Math.SQRT2)
+        }
+        dist[i] = best
+      }
+    }
+  }
+  chamfer(dIn)
+  chamfer(dOut)
+  const cellPx = (cellW + cellH) / 2
+  const minDim = Math.min(outW, outH)
+  const spanIn = minDim * 0.18
+  const spanOut = minDim * 0.42
+  const values = new Float32Array(nodes)
+  for (let i = 0; i < nodes; i += 1) {
+    values[i] = inside[i]
+      ? 0.5 + Math.min(0.5, (dIn[i] * cellPx / spanIn) * 0.5)
+      : 0.5 - Math.min(0.5, (dOut[i] * cellPx / spanOut) * 0.5)
+  }
+  return (x, y) => {
+    const gx = Math.max(0, Math.min(cols - 0.001, x / cellW))
+    const gy = Math.max(0, Math.min(rows - 0.001, y / cellH))
+    const c0 = Math.floor(gx)
+    const r0 = Math.floor(gy)
+    const fx = gx - c0
+    const fy = gy - r0
+    const i = r0 * w + c0
+    const top = values[i] * (1 - fx) + values[i + 1] * fx
+    const bottom = values[i + w] * (1 - fx) + values[i + w + 1] * fx
+    return top * (1 - fy) + bottom * fy
+  }
 }
 
 function compileTerritoryCached(

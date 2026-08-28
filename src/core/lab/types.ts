@@ -180,8 +180,18 @@ export type LabState = {
   sourceVisibility: number // 0..1 alpha of the source under everything
   // ink = hairline/mark color, paper = ground, palette = the color
   // system every fill treatment deals from — the references are all
-  // palette surfaces, not marks on paper
-  colors: { ink: string; paper: string; palette: string[]; plan?: LookColorPlan }
+  // palette surfaces, not marks on paper. distinct is material mode only
+  // (sourceAwareLabForRecipe): the palette deduplicated to its distinct
+  // colors in mix order, for slot arithmetic that degenerates on the
+  // 100-slot run-length palette (a shift of floor(t*100) mod 100 lands
+  // inside same-color runs). 2D recipes never set it.
+  colors: {
+    ink: string
+    paper: string
+    palette: string[]
+    distinct?: string[]
+    plan?: LookColorPlan
+  }
   flow: FlowState
   // shared surface pass over the whole composite
   finish: { grain: number }

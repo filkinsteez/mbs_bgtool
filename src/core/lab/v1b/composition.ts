@@ -59,8 +59,24 @@ export function buildCells(opts: {
   // was not enough when the top band itself is a treatment (a mosaic
   // near-band made faces impossible to un-blur)
   restore?: Field | null
+  // MATERIAL MODE (3D overlay): cells straddling the subject silhouette
+  // keep subdividing down to this level even when detail or maxLevels
+  // says stop, so the model's outline survives coarse complexity
+  // settings. 0 (the default) leaves the 2D behavior untouched.
+  edgeSplitLevels?: number
 }): CellNode[] {
-  const { T, territory, structure, maps, rect, outW, outH, seed, restore } = opts
+  const {
+    T,
+    territory,
+    structure,
+    maps,
+    rect,
+    outW,
+    outH,
+    seed,
+    restore,
+    edgeSplitLevels = 0,
+  } = opts
   // ONE square pitch — deriving separate x/y pitches and sizing cells
   // min(cw, ch) left unpainted paper gutters along the larger axis.
   // The last column/row overflows past the edge instead; the canvas
@@ -107,7 +123,20 @@ export function buildCells(opts: {
       treatment !== 'quiet' &&
       treatment !== 'flat' &&
       detailAt(cx, cy) * structure.subdivide > 0.16 / (level + 1)
-    if (canSplit) {
+    // material silhouette split: the border-distance territory is ~0
+    // outside the subject and >=0.17 inside, so a corner spread across
+    // that step marks a boundary cell — refine it regardless of detail
+    const straddlesEdge = (): boolean => {
+      if (edgeSplitLevels <= 0 || level >= edgeSplitLevels) return false
+      const v0 = T(x, y)
+      const v1 = T(x + size, y)
+      const v2 = T(x, y + size)
+      const v3 = T(x + size, y + size)
+      const low = Math.min(v0, v1, v2, v3, t)
+      const high = Math.max(v0, v1, v2, v3, t)
+      return low < 0.17 && high > 0.17
+    }
+    if (canSplit || straddlesEdge()) {
       const half = size / 2
       for (let j = 0; j < 2; j++)
         for (let i = 0; i < 2; i++)
@@ -139,6 +168,11 @@ export function buildCellMarks(opts: {
   composition?: CompositionPlan
   outW?: number
   outH?: number
+  // MATERIAL MODE (3D overlay): the captured model is bright, so the
+  // (1-lum)*alpha ink evidence reads ~0 across the whole subject and the
+  // marks grammar starves. The territory already carries the shaded
+  // silhouette — let it drive tone (and guarantee presence) instead.
+  material?: boolean
 }): MarkStamp[] {
   const {
     cells,
@@ -151,6 +185,7 @@ export function buildCellMarks(opts: {
     composition,
     outW = rect.w,
     outH = rect.h,
+    material = false,
   } = opts
   const region = coherenceField(
     seed,
@@ -178,8 +213,14 @@ export function buildCellMarks(opts: {
     // tone, shaded by the coherence field so a flat territory interior
     // still breathes instead of stamping one uniform size everywhere
     const a = inSource && maps ? sampleMap(maps.alpha, maps.w, maps.h, mx, my) : 0
-    const tone =
-      inSource && maps
+    const tone = material
+      ? Math.max(
+          cell.t,
+          inSource && maps
+            ? (1 - sampleMap(maps.lum, maps.w, maps.h, mx, my)) * a * 0.6
+            : 0,
+        )
+      : inSource && maps
         ? (1 - sampleMap(maps.lum, maps.w, maps.h, mx, my)) * a + cell.t * (1 - a)
         : cell.t * (0.6 + coh * 0.4)
     const edge = inSource && maps ? sampleMap(maps.edge, maps.w, maps.h, mx, my) : 0
@@ -195,7 +236,15 @@ export function buildCellMarks(opts: {
         * (1 - planSample.quiet * 0.9)
         * (planSample.pulse ? 1.14 : 0.72)
       : 1
-    const presence = Math.min(1, p.occupancy * (0.15 + 0.85 * value) * 1.35 * planActivity)
+    // material: the art-direction plan may declare the subject's area
+    // "quiet" — the model must still render, so the shaded silhouette
+    // floors the activity inside the subject
+    const activity = material ? Math.max(planActivity, tone) : planActivity
+    let presence = Math.min(1, p.occupancy * (0.15 + 0.85 * value) * 1.35 * activity)
+    // material: the lit faces of the model sit at the shading floor —
+    // guarantee enough stamps there that the treated form stays solid,
+    // leaving tone to grade SIZE while presence keeps the body covered
+    if (material && tone > 0.2) presence = Math.max(presence, 0.3 + tone * 0.25)
     if (chan(seed, id, 'lab.cull') >= presence) continue
 
     const hero = (planSample?.focus ?? 0) > 0.52

@@ -14,7 +14,7 @@ import { buildDabs, buildScanlines, buildStreams, composeFlow, type VectorField 
 import { buildColorField, hexToRgb, rgbCss } from './colorField'
 import { buildBlockFills, buildBeadFills, buildShingleFills, regionValue } from './fills'
 import { getPaintRaster, reconcilePaint, type PaintRaster } from '../paintRuntime'
-import { sampleRGB } from '../analysis'
+import { sampleMap, sampleRGB } from '../analysis'
 import { stampProto } from '../stamp'
 
 // The renderer below is the painter from git commit 67f7de1. Its only
@@ -225,13 +225,76 @@ export function renderLabV1(
       Math.min(K - 1, Math.floor(regionValue(lab.seed, x, y, lab.structure.baseCell * 2.8, channel) * K))
     ]
 
+  // MATERIAL recolor space. The v1 run palette is 100 weighted slots, so
+  // any slot shift is congruent to a near no-op (it rotates within
+  // same-color runs) and neighbor-slot gradient pairs collapse to one
+  // color. Material treatments therefore rotate through the DISTINCT
+  // colors: identical deal at t = 0, a real recolor inside the subject.
+  const distinct =
+    sourceAwareMaterial && lab.colors?.distinct && lab.colors.distinct.length > 1
+      ? lab.colors.distinct
+      : null
+  const D = distinct?.length ?? 0
+  const distinctIndex = distinct
+    ? new Map(distinct.map((color, index) => [color, index] as [string, number]))
+    : null
+  const materialWheel = (slotColor: string, steps: number): string => {
+    if (!distinct || !distinctIndex) return slotColor
+    const s = ((steps % D) + D) % D
+    if (!s) return slotColor
+    return distinct[((distinctIndex.get(slotColor) ?? 0) + s) % D]
+  }
+  const materialShift = (slotColor: string, t: number): string =>
+    materialWheel(slotColor, Math.min(D - 1, Math.floor(t * D)))
+  // the distinct colors sorted light -> dark: a tonal ramp for the fill
+  // treatments' SUBJECT interiors. The shaded territory indexes it, so
+  // blocks and shingles render the lit form as quantized tone while the
+  // ground keeps its region-dealt camo.
+  const materialRamp = distinct
+    ? [...distinct].sort((a, b) => {
+        const [ar, ag, ab] = hexToRgb(a)
+        const [br, bg, bb] = hexToRgb(b)
+        return (
+          0.2126 * br + 0.7152 * bg + 0.0722 * bb
+          - (0.2126 * ar + 0.7152 * ag + 0.0722 * ab)
+        )
+      })
+    : null
+  const rampIndex = materialRamp
+    ? new Map(materialRamp.map((color, index) => [color, index] as [string, number]))
+    : null
+  // normalized lit-form shading recovered from the shaded border mask
+  // (0 on lit faces, 1 in the deepest shadow; only meaningful inside)
+  const materialShade = (t: number): number =>
+    Math.max(0, Math.min(1, (t - 0.35) / 0.65))
+  // the complexity dial recovered from the v1 detail mapping (baseCell
+  // 16..88) — material-only responses hang off this so the slider drives
+  // posterization depth and color feature size, not just cell pitch
+  const materialDetail = Math.max(0, Math.min(1, (88 - lab.structure.baseCell) / 72))
+
   // mosaic: the source quantized to the cell grid — or, with no photo,
   // the GENERATED color field quantized the same way (the pixel-
   // gradient read: a gorgeous smooth field, sampled coarsely)
   if (cells.some((c) => c.treatment === 'mosaic')) {
     const field = !maps || sourceAwareMaterial
-      ? buildColorField({ palette, seed: lab.seed, T, outW, outH })
+      ? buildColorField({
+          palette,
+          seed: lab.seed,
+          T,
+          outW,
+          outH,
+          // complexity shrinks the color features too, so a finer pitch
+          // re-samples a busier field instead of the same broad gradient
+          ...(sourceAwareMaterial
+            ? { featurePx: Math.min(outW, outH) * (0.34 - materialDetail * 0.26) }
+            : {}),
+        })
       : null
+    // material posterization depth: few chunky levels at low complexity,
+    // many at high — the render itself pixelates through the cell grid
+    const levels = 3 + Math.round(materialDetail * 9)
+    const q = (v: number) =>
+      Math.round((Math.round((v / 255) * (levels - 1)) / (levels - 1)) * 255)
     for (const c of cells) {
       if (c.treatment !== 'mosaic') continue
       const cx = c.x + c.size / 2
@@ -242,6 +305,26 @@ export function renderLabV1(
         if (u < 0 || u > 1 || v < 0 || v > 1) continue
         const [r, g, b] = sampleRGB(maps, u * maps.w - 0.5, v * maps.h - 0.5)
         ctx.fillStyle = `rgb(${r} ${g} ${b})`
+      } else if (sourceAwareMaterial && maps) {
+        // the actual render, quantized to the cell grid inside the
+        // silhouette; the generated palette field carries the ground
+        const u = (cx - rect.x) / rect.w
+        const v = (cy - rect.y) / rect.h
+        const mx = u * maps.w - 0.5
+        const my = v * maps.h - 0.5
+        const inside =
+          u >= 0 && u <= 1 && v >= 0 && v <= 1 &&
+          sampleMap(maps.alpha, maps.w, maps.h, mx, my) > 0.5
+        if (inside) {
+          // amplify the lit form before quantizing — the near-white
+          // model's own contrast is too shallow for posterization to
+          // read, so the normalized shading deepens it
+          const deepen = 1 - 0.45 * materialShade(T(cx, cy))
+          const [r, g, b] = sampleRGB(maps, mx, my)
+          ctx.fillStyle = `rgb(${q(r * deepen)} ${q(g * deepen)} ${q(b * deepen)})`
+        } else {
+          ctx.fillStyle = rgbCss(field!(cx, cy))
+        }
       } else {
         ctx.fillStyle = rgbCss(field!(cx, cy))
       }
@@ -254,6 +337,28 @@ export function renderLabV1(
   if (cells.some((c) => c.treatment === 'blocks')) {
     for (const f of buildBlockFills({ cells, paletteSize: K, seed: lab.seed })) {
       const { cell } = f
+      if (distinct) {
+        // subject interior: the tonal ramp indexed by the lit form (with
+        // region jitter keeping the quilt texture); ground keeps the
+        // weighted camo — the run-palette shift was congruent to a no-op
+        if (cell.t > 0.05 && materialRamp) {
+          const jitter = ((f.color + 0.5) / K - 0.5) * 1.6
+          const idx = Math.max(
+            0,
+            Math.min(D - 1, Math.round(materialShade(cell.t) * (D - 1) + jitter)),
+          )
+          ctx.fillStyle = materialRamp[idx]
+        } else {
+          ctx.fillStyle = materialShift(palette[f.color % K], cell.t)
+        }
+        ctx.fillRect(cell.x, cell.y, cell.size + 0.35, cell.size + 0.35)
+        if (f.accent !== null) {
+          const inset = cell.size * 0.3
+          ctx.fillStyle = materialShift(palette[f.accent % K], cell.t)
+          ctx.fillRect(cell.x + inset, cell.y + inset, cell.size - inset * 2, cell.size - inset * 2)
+        }
+        continue
+      }
       const sourceShift = integratesLookField
         ? Math.min(K - 1, Math.floor(cell.t * K))
         : 0
@@ -272,10 +377,41 @@ export function renderLabV1(
   if (cells.some((c) => c.treatment === 'beads')) {
     const pg = hexToRgb(paper)
     const groundBead = rgbCss([pg[0] * 0.94 + 8, pg[1] * 0.94 + 8, pg[2] * 0.94 + 8])
-    for (const f of buildBeadFills({ cells, paletteSize: K, seed: lab.seed })) {
+    const beadFills = buildBeadFills({
+      cells,
+      paletteSize: K,
+      seed: lab.seed,
+      // material: quiet the background columns so colored runs
+      // concentrate on the subject instead of matching its brightness
+      ...(sourceAwareMaterial
+        ? { activityScale: (cell: { t: number }) => 0.42 + 0.25 * cell.t }
+        : {}),
+    })
+    for (const f of beadFills) {
       const { cell } = f
       const cx = cell.x + cell.size / 2
       const cy = cell.y + cell.size / 2
+      if (sourceAwareMaterial) {
+        const active = f.active || cell.t > 0.18
+        const base = palette[f.color % K]
+        ctx.fillStyle = active ? materialShift(base, cell.t) : groundBead
+        ctx.beginPath()
+        // radius carries the lit form: small on the ground and on lit
+        // faces, swelling through the shaded T into the shadows
+        ctx.arc(cx, cy, cell.size * (0.33 + cell.t * 0.17), 0, Math.PI * 2)
+        ctx.fill()
+        if (f.inner !== null || cell.t > 0.42) {
+          const innerBase = f.inner !== null ? palette[f.inner % K] : base
+          ctx.fillStyle = materialWheel(
+            innerBase,
+            Math.min(D - 1, Math.floor(cell.t * D)) + 1,
+          )
+          ctx.beginPath()
+          ctx.arc(cx, cy, cell.size * 0.2, 0, Math.PI * 2)
+          ctx.fill()
+        }
+        continue
+      }
       const sourceShift = integratesLookField
         ? Math.min(K - 1, Math.floor(cell.t * K))
         : 0
@@ -307,12 +443,34 @@ export function renderLabV1(
   if (cells.some((c) => c.treatment === 'shingle')) {
     // lean deliberately 0: the flow-angle coupling was unreachable from
     // the UI (shingle never opens the Direction section) — a hidden
-    // input that could silently tilt the weave is worse than none
+    // input that could silently tilt the weave is worse than none.
+    // MATERIAL: shingles inside the silhouette lean with the captured
+    // frame's edge orientation, so the weave follows the lit form.
+    const materialLean =
+      sourceAwareMaterial && maps
+        ? (cell: { x: number; y: number; size: number }) => {
+            const cx = cell.x + cell.size / 2
+            const cy = cell.y + cell.size / 2
+            const u = (cx - rect.x) / rect.w
+            const v = (cy - rect.y) / rect.h
+            if (u < 0 || u > 1 || v < 0 || v > 1) return 0
+            const mx = u * maps.w - 0.5
+            const my = v * maps.h - 0.5
+            if (sampleMap(maps.alpha, maps.w, maps.h, mx, my) < 0.5) return 0
+            const ox = sampleMap(maps.orientX, maps.w, maps.h, mx, my)
+            const oy = sampleMap(maps.orientY, maps.w, maps.h, mx, my)
+            const confidence = Math.min(1, Math.hypot(ox, oy) * 6)
+            return 0.5 * Math.atan2(oy, ox) * confidence
+          }
+        : undefined
     const fills = buildShingleFills({
       cells,
-      paletteSize: K,
+      // the distinct palette restores REAL neighbor gradients — over the
+      // 100-slot run palette a and a+1 are almost always the same color
+      paletteSize: distinct ? D : K,
       seed: lab.seed,
       lean: 0,
+      ...(materialLean ? { leanAt: materialLean } : {}),
     })
     for (const f of fills) {
       const { cell } = f
@@ -321,11 +479,41 @@ export function renderLabV1(
       const dx = (Math.cos(f.angle) * cell.size) / 2
       const dy = (Math.sin(f.angle) * cell.size) / 2
       const g = ctx.createLinearGradient(cx - dx, cy - dy, cx + dx, cy + dy)
-      const sourceShift = integratesLookField
-        ? Math.min(K - 1, Math.floor(cell.t * K))
-        : 0
-      g.addColorStop(0, palette[(f.a + sourceShift) % K])
-      g.addColorStop(1, palette[(f.b + sourceShift) % K])
+      if (distinct) {
+        // subject interior: gradient pairs walk the tonal ramp with the
+        // lit form (region jitter keeps the woven texture); the ground
+        // weaves neighbor gradients over the distinct colors
+        if (cell.t > 0.05 && materialRamp) {
+          const jitter = ((f.a + 0.5) / D - 0.5) * 1.4
+          const a = Math.max(
+            0,
+            Math.min(D - 2, Math.round(materialShade(cell.t) * (D - 1) + jitter)),
+          )
+          g.addColorStop(0, materialRamp[a])
+          g.addColorStop(1, materialRamp[a + 1])
+        } else if (materialRamp && rampIndex) {
+          // ground: WEIGHTED color frequency (the same region deal the
+          // classic shingle makes) paired with its tonal ramp neighbor —
+          // a calm silky weave; uniform distinct pairs overweighted the
+          // dark colors and camouflaged the subject
+          const r = regionValue(lab.seed, cx, cy, cell.size * 3.2, 'lab.shingle')
+          const slotColor = palette[Math.min(K - 1, Math.floor(r * K))]
+          // the deepest tones are reserved for the subject's shading —
+          // a ground that also goes full-dark camouflages the model
+          const ai = Math.max(0, Math.min(rampIndex.get(slotColor) ?? 0, D - 3))
+          g.addColorStop(0, materialRamp[ai])
+          g.addColorStop(1, materialRamp[Math.min(D - 2, ai + 1)])
+        } else {
+          g.addColorStop(0, distinct[f.a % D])
+          g.addColorStop(1, distinct[f.b % D])
+        }
+      } else {
+        const sourceShift = integratesLookField
+          ? Math.min(K - 1, Math.floor(cell.t * K))
+          : 0
+        g.addColorStop(0, palette[(f.a + sourceShift) % K])
+        g.addColorStop(1, palette[(f.b + sourceShift) % K])
+      }
       ctx.fillStyle = g
       ctx.fillRect(cell.x, cell.y, cell.size + 0.35, cell.size + 0.35)
     }
@@ -366,13 +554,20 @@ export function renderLabV1(
     (lab.mark.echo > 0 && cells.some((c) => c.treatment === 'marks'))
   const vector: VectorField | null =
     needsVector
-      ? composeFlow(lab.flow, {
-          seed: lab.seed,
-          outW,
-          outH,
-          curveAngle: curveAngleFor(lab, outW, outH),
-          T,
-        })
+      ? composeFlow(
+          // material: the curve source is stripped, so a 'curve' basis
+          // would silently fall to a fixed angle. The contour basis over
+          // the shaded border-distance T flows along the silhouette and
+          // its shading level-sets — the render steers the flow.
+          sourceAwareMaterial ? { ...lab.flow, basis: 'contour' } : lab.flow,
+          {
+            seed: lab.seed,
+            outW,
+            outH,
+            curveAngle: curveAngleFor(lab, outW, outH),
+            T,
+          },
+        )
       : null
 
   // SCAN — slit-scan hairlines displaced by the image, clipped to their
@@ -412,6 +607,26 @@ export function renderLabV1(
         const startAmount = T(startX, startY)
         const endAmount = T(endX, endY)
         const amount = (startAmount + endAmount) / 2
+        if (sourceAwareMaterial) {
+          // the model's own shading lifts the lines (shaded T: silhouette
+          // × normalized lit form) — a ridge-line read of the render
+          // instead of the synthetic sine ramp; color deals per segment
+          // so a line can't vanish full-width against the ground
+          const disp = Math.max(4, lab.structure.baseCell * 0.6)
+          const segColor = hasPalette
+            ? dealPalette(startX, startY, 'lab.scan.pal')
+            : ink
+          ctx.strokeStyle = amount > 0.18
+            ? (lineIndex % 3 === 0 ? paper : ink)
+            : segColor
+          ctx.globalAlpha = 0.72 + amount * 0.25
+          ctx.lineWidth = 0.9 + amount * 1.35
+          ctx.beginPath()
+          ctx.moveTo(startX, startY - startAmount * disp)
+          ctx.lineTo(endX, endY - endAmount * disp)
+          ctx.stroke()
+          continue
+        }
         const displacement = Math.max(1.5, lab.structure.baseCell * 0.12)
         const displace = (x: number, y: number, influence: number) =>
           y + Math.sin(
@@ -436,7 +651,18 @@ export function renderLabV1(
   // STREAMS — long field-line hairlines. Seeded BY their territory but
   // free to travel: walkers obey the field, not the band boundary
   if (vector && cells.some((c) => c.treatment === 'streams')) {
-    const streams = buildStreams({ cells, seed: lab.seed, field: vector, outW, outH })
+    const streams = buildStreams({
+      cells,
+      seed: lab.seed,
+      field: vector,
+      outW,
+      outH,
+      // material: seed density concentrates on the subject — sparse
+      // ground, dense braids tracing the silhouette and its shading
+      ...(sourceAwareMaterial
+        ? { presence: (cell: { t: number }) => 0.22 + 0.7 * Math.min(1, cell.t * 1.4) }
+        : {}),
+    })
     ctx.lineWidth = 1
     ctx.globalAlpha = 0.85
     // each stream takes a palette color where it starts — the walker
@@ -457,6 +683,7 @@ export function renderLabV1(
       seed: lab.seed,
       field: vector,
       occupancy: lab.mark.occupancy,
+      ...(sourceAwareMaterial ? { material: true } : {}),
     })
     const mode = lab.mark.colorMode
     ctx.lineCap = 'round'
@@ -465,8 +692,18 @@ export function renderLabV1(
       let alpha = 1
       if (mode === 'tint') alpha = tintFor(d.tone)
       else if (mode === 'source' && maps) {
-        const [r, g, b] = sampleRGB(maps, d.mx, d.my)
-        stroke = `rgb(${r} ${g} ${b})`
+        // material ground dabs deal from the palette — sampling the
+        // ground color painted invisible (formerly black) strokes
+        if (
+          sourceAwareMaterial &&
+          sampleMap(maps.alpha, maps.w, maps.h, d.mx, d.my) < 0.5
+        ) {
+          stroke = dealPalette(d.pts[0], d.pts[1], 'lab.dab.pal')
+          alpha = 0.9
+        } else {
+          const [r, g, b] = sampleRGB(maps, d.mx, d.my)
+          stroke = `rgb(${r} ${g} ${b})`
+        }
       } else if (mode === 'palette') stroke = dealPalette(d.pts[0], d.pts[1], 'lab.dab.pal')
       ctx.strokeStyle = stroke
       ctx.globalAlpha = alpha
@@ -485,17 +722,32 @@ export function renderLabV1(
     const markCells = fullFrameMarkCarrier
       ? cells.map((cell) =>
           cell.treatment === 'marks'
-            ? { ...cell, t: 0.32 + cell.t * 0.68 }
+            ? {
+                ...cell,
+                // material: the subject interior gets a HIGH tone floor
+                // (dense mass, shading modulating on top) while the
+                // ground keeps its calm 0.32 — without the floor the lit
+                // faces of a bright model render hollow
+                t: sourceAwareMaterial
+                  ? cell.t <= 0.05
+                    ? 0.32
+                    : 0.7 + 0.3 * materialShade(cell.t)
+                  : 0.32 + cell.t * 0.68,
+              }
             : cell)
       : cells
     const stamps = buildCellMarks({
       cells: markCells,
       params: lab.mark,
-      maps: sourceAwareMaterial ? null : maps,
+      // material: maps stay CONNECTED — edge/detail select and rotate the
+      // stamps from the real render; tone comes from the shaded territory
+      // (raw 1-lum on a near-white model would hollow out the lit form)
+      maps,
       rect,
       seed: lab.seed,
       bankSize: Math.max(1, protos.length),
       flowField: flowFieldFor(lab, outW, outH),
+      ...(sourceAwareMaterial ? { toneFromTerritory: true } : {}),
     })
     const mode = lab.mark.colorMode
     const echo = Math.round(lab.mark.echo)

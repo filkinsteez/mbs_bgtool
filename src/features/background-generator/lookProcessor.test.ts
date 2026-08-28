@@ -36,6 +36,7 @@ describe('3D Look processing', () => {
       ink: '#EEEEEE',
       palette: ['#111111', '#EEEEEE'],
     })
+    expect(lab.colors.distinct).toEqual(['#111111', '#EEEEEE'])
     expect(lab.colors.plan?.swatches.map((swatch) => swatch.hex)).toEqual([
       '#111111',
       '#EEEEEE',
@@ -72,6 +73,9 @@ describe('3D Look processing', () => {
     expect(lab.colors.palette).toHaveLength(100)
     expect(lab.colors.palette.filter((color) => color === '#111111')).toHaveLength(28)
     expect(lab.colors.palette.filter((color) => color === '#EEEEEE')).toHaveLength(72)
+    // the run-length palette deduplicated in mix order, for slot
+    // arithmetic that degenerates on 100 same-color runs
+    expect(lab.colors.distinct).toEqual(['#111111', '#EEEEEE'])
     expect(lab.sourceMask).toBe('border-distance')
     expect(lab.territory.sources.map((item) => item.kind)).toEqual(['tone'])
   })

@@ -118,8 +118,14 @@ export function buildCellMarks(opts: {
   seed: number
   bankSize: number
   flowField: ((x: number, y: number) => number) | null // angle, radians
+  // material mode: tone comes from cell.t (the shaded border-distance
+  // territory, already normalized to the subject's own luminance range)
+  // while edge/detail/orientation still read the captured frame — raw
+  // (1-lum) on a near-white model would make lit faces SPARSER than the
+  // background and hollow the form out
+  toneFromTerritory?: boolean
 }): MarkStamp[] {
-  const { cells, params: p, maps, rect, seed, bankSize, flowField } = opts
+  const { cells, params: p, maps, rect, seed, bankSize, flowField, toneFromTerritory } = opts
   const region = coherenceField(
     seed,
     rect,
@@ -144,8 +150,9 @@ export function buildCellMarks(opts: {
     // still territory — marks fall back to the territory value as their
     // tone so the curve can carry composition beyond the photo's edge
     const a = inSource && maps ? sampleMap(maps.alpha, maps.w, maps.h, mx, my) : 0
-    const tone =
-      inSource && maps
+    const tone = toneFromTerritory
+      ? cell.t
+      : inSource && maps
         ? (1 - sampleMap(maps.lum, maps.w, maps.h, mx, my)) * a + cell.t * (1 - a)
         : cell.t
     const edge = inSource && maps ? sampleMap(maps.edge, maps.w, maps.h, mx, my) : 0

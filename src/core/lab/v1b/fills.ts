@@ -53,8 +53,16 @@ export function buildBlockFills(opts: {
   paletteSize: number
   seed: number
   colorPlan?: LookColorPlan
+  // MATERIAL MODE (3D overlay): the probabilistic territory lean is
+  // statistically invisible under a same-hue palette. Instead the shaded
+  // silhouette picks the block's depth band outright — exterior cells
+  // deal the ground-adjacent end of depthOrder, interior cells climb
+  // toward the high-contrast end with the model's shading — and the
+  // region lattice only perturbs within that choice, so the quilt still
+  // reads as patchwork while re-composing with every pose.
+  materialDepth?: boolean
 }): BlockFill[] {
-  const { cells, paletteSize, seed, colorPlan } = opts
+  const { cells, paletteSize, seed, colorPlan, materialDepth = false } = opts
   const out: BlockFill[] = []
   for (const cell of cells) {
     if (cell.treatment !== 'blocks') continue
@@ -69,9 +77,26 @@ export function buildBlockFills(opts: {
     const r = colorPlan
       ? Math.max(0, Math.min(1, raw + (1 - cell.t) * 0.5 - 0.28))
       : raw
-    const color = colorPlan
-      ? weightedColorIndex(colorPlan, r)
-      : Math.min(paletteSize - 1, Math.floor(r * paletteSize))
+    const color = colorPlan && materialDepth
+      ? (() => {
+          const order = colorPlan.depthOrder
+          // ground: a quiet two-tone camo between the two ground-adjacent
+          // depth slots, patched by the region lattice (the look's 2D
+          // patchwork identity, kept deliberately calmer than the model)
+          if (cell.t < 0.17) {
+            return order[raw > 0.72 && order.length > 1 ? 1 : 0]
+          }
+          // subject: shading climbs the depth order — lit faces hold the
+          // mid slots, shadow reaches the strongest-contrast ink
+          const depth = Math.max(
+            0,
+            Math.min(0.999999, 0.36 + cell.t * 0.55 + (raw - 0.5) * 0.28),
+          )
+          return order[Math.min(order.length - 1, Math.floor(depth * order.length))]
+        })()
+      : colorPlan
+        ? weightedColorIndex(colorPlan, r)
+        : Math.min(paletteSize - 1, Math.floor(r * paletteSize))
     // occasional nested square in a contrasting palette slot
     const accentRoll = chan(seed, id, 'lab.block.accent')
     const accent =
@@ -154,8 +179,23 @@ export function buildShingleFills(opts: {
   seed: number
   lean: number // radians added to every shingle
   colorPlan?: LookColorPlan
+  // MATERIAL MODE (3D overlay): territory picks the gradient PAIR
+  // outright — exterior shingles weave between the two ground-adjacent
+  // depth slots, interior shingles climb depthOrder with the model's
+  // shading — and the mask gradient leans each shingle's gradient axis
+  // so the weave's light wraps the form.
+  materialDepth?: boolean
+  leanField?: (x: number, y: number) => number | null
 }): ShingleFill[] {
-  const { cells, paletteSize, seed, lean, colorPlan } = opts
+  const {
+    cells,
+    paletteSize,
+    seed,
+    lean,
+    colorPlan,
+    materialDepth = false,
+    leanField,
+  } = opts
   const out: ShingleFill[] = []
   for (const cell of cells) {
     if (cell.treatment !== 'shingle') continue
@@ -170,15 +210,35 @@ export function buildShingleFills(opts: {
     const r = colorPlan
       ? Math.max(0, Math.min(1, raw + (1 - cell.t) * 0.45 - 0.24))
       : raw
-    const a = colorPlan
-      ? weightedColorIndex(colorPlan, r)
-      : Math.min(paletteSize - 1, Math.floor(r * paletteSize))
-    const b = colorPlan
-      ? distinctColorIndex(colorPlan, a, regionValue(seed, cx, cy, cell.size * 3.2, 'lab.shingle.pair'))
-      : (a + 1) % Math.max(1, paletteSize)
+    let a: number
+    let b: number
+    if (colorPlan && materialDepth) {
+      const order = colorPlan.depthOrder
+      const depth = Math.max(
+        0,
+        Math.min(0.999999, cell.t * 0.8 + (raw - 0.5) * 0.26 + 0.05),
+      )
+      const ia = Math.min(order.length - 1, Math.floor(depth * order.length))
+      const ib = ia + 1 < order.length ? ia + 1 : Math.max(0, ia - 1)
+      a = order[ia]
+      b = order[ib]
+    } else {
+      a = colorPlan
+        ? weightedColorIndex(colorPlan, r)
+        : Math.min(paletteSize - 1, Math.floor(r * paletteSize))
+      b = colorPlan
+        ? distinctColorIndex(colorPlan, a, regionValue(seed, cx, cy, cell.size * 3.2, 'lab.shingle.pair'))
+        : (a + 1) % Math.max(1, paletteSize)
+    }
     // alternate direction by row parity, flip some columns for weave
     const flip = (cell.iy & 1) === 1 !== ((cell.ix & 3) === 3)
-    out.push({ cell, a, b, angle: (flip ? Math.PI : 0) + lean })
+    const leaned = leanField ? leanField(cx, cy) : null
+    out.push({
+      cell,
+      a,
+      b,
+      angle: leaned !== null ? leaned + (flip ? Math.PI : 0) : (flip ? Math.PI : 0) + lean,
+    })
   }
   return out
 }

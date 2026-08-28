@@ -396,8 +396,14 @@ export function buildDabs(opts: {
   occupancy: number
   complexity?: number
   minDim?: number
+  // MATERIAL MODE (3D overlay): the capture's (1-lum)*alpha ink evidence
+  // is ~0 on a bright model AND on the alpha-0 ground, so dabs cull to
+  // the noise floor everywhere. When set, the shaded-silhouette
+  // territory is the tone evidence at each dab's own position instead —
+  // the subject accumulates real coverage that grades with its lit form.
+  territoryTone?: Field
 }): Dab[] {
-  const { cells, maps, rect, seed, field, occupancy, complexity = 0.5 } = opts
+  const { cells, maps, rect, seed, field, occupancy, complexity = 0.5, territoryTone } = opts
   const minDim = opts.minDim ?? Math.min(rect.w, rect.h)
   const out: Dab[] = []
   for (const cell of cells) {
@@ -418,8 +424,9 @@ export function buildDabs(opts: {
       const mx = maps ? u * maps.w - 0.5 : 0
       const my = maps ? v * maps.h - 0.5 : 0
       const a = inSrc && maps ? sampleMap(maps.alpha, maps.w, maps.h, mx, my) : 0
-      const tone =
-        inSrc && maps
+      const tone = territoryTone
+        ? territoryTone(x0, y0)
+        : inSrc && maps
           ? (1 - sampleMap(maps.lum, maps.w, maps.h, mx, my)) * a + cell.t * (1 - a)
           : cell.t
       // presence follows tone steeply, so the far field stays sparse and
@@ -472,8 +479,23 @@ export function buildStreams(opts: {
   outH: number
   complexity?: number
   territory?: Field
+  // MATERIAL MODE (3D overlay): instead of the hard territory gate
+  // (seeds culled outside, traces clipped at the boundary), seeds
+  // concentrate ON the subject while the far field stays sparsely
+  // covered and traces run free — the model reads as a density and
+  // flow-distortion event inside a full-frame stream field.
+  territoryBias?: boolean
 }): Streamline[] {
-  const { cells, seed, field, outW, outH, complexity = 0.5, territory } = opts
+  const {
+    cells,
+    seed,
+    field,
+    outW,
+    outH,
+    complexity = 0.5,
+    territory,
+    territoryBias = false,
+  } = opts
   const streamCells = cells.filter((c) => c.treatment === 'streams')
   if (!streamCells.length) return []
   const minDim = Math.min(outW, outH)
@@ -514,7 +536,11 @@ export function buildStreams(opts: {
     const column = Math.min(cols - 1, Math.floor(x / gridSize))
     const row = Math.min(rows - 1, Math.floor(y / gridSize))
     if (!coverage[row * cols + column]) continue
-    if (territory && territory(x, y) < 0.12) continue
+    if (territory && territoryBias) {
+      // soft deal: subject seeds always land, ground seeds thin to ~35%
+      const keep = 0.35 + Math.min(1, territory(x, y) * 1.6) * 0.65
+      if (chan(seed, id, 'lab.stream.bias') > keep) continue
+    } else if (territory && territory(x, y) < 0.12) continue
     let clear = true
     for (let yy = Math.max(0, row - 2); yy <= Math.min(rows - 1, row + 2) && clear; yy += 1) {
       for (let xx = Math.max(0, column - 2); xx <= Math.min(cols - 1, column + 2); xx += 1) {
@@ -546,7 +572,7 @@ export function buildStreams(opts: {
     const angle = fieldAngle + chanGauss(seed, id, 'lab.stream.angle') * 0.24
     const dir: Vec = [Math.cos(angle), Math.sin(angle)]
     const steps = Math.max(10, Math.round(baseSteps * (0.72 + chan(seed, id, 'lab.stream.length') * 0.5)))
-    const accepts = territory
+    const accepts = territory && !territoryBias
       ? (x: number, y: number) =>
           x >= 0 && x <= outW && y >= 0 && y <= outH && territory(x, y) > 0.08
       : undefined

@@ -71,6 +71,53 @@ export function createLabSourceFromImage(
   }
 }
 
+// Material-mode capture: color arrives as an OPAQUE composited frame and
+// the subject silhouette as a separate transparent render. The two merge on
+// straight-alpha typed arrays AFTER the canonical downscale — writing the
+// silhouette into a canvas alpha channel first would let premultiplication
+// zero every background RGB (black grounds, black luminance). Analysis runs
+// while the frame is still opaque, so lum/edge/detail read the real
+// composited scene at every pixel instead of paper-white background;
+// maps.alpha and the kept rgba alpha then carry the subject silhouette.
+export function createLabSourceFromOpaqueWithSilhouette(
+  opaqueFrame: CanvasImageSource,
+  silhouetteFrame: CanvasImageSource,
+  fullW: number,
+  fullH: number,
+  options: LabSourceOptions = {},
+): LabSource {
+  if (!fullW || !fullH) throw new Error('Source decoded to zero size.')
+  const k = Math.min(1, ANALYSIS_MAX / Math.max(fullW, fullH))
+  const aw = Math.max(8, Math.round(fullW * k))
+  const ah = Math.max(8, Math.round(fullH * k))
+  const read = (image: CanvasImageSource): Uint8ClampedArray => {
+    const scratch = document.createElement('canvas')
+    scratch.width = aw
+    scratch.height = ah
+    const ctx = scratch.getContext('2d', { willReadFrequently: true })
+    if (!ctx) throw new Error('2D context unavailable.')
+    ctx.drawImage(image, 0, 0, aw, ah)
+    return ctx.getImageData(0, 0, aw, ah).data
+  }
+  const color = read(opaqueFrame)
+  const silhouette = read(silhouetteFrame)
+  const maps = analyzeRGBA(color, aw, ah)
+  for (let index = 0; index < aw * ah; index += 1) {
+    const alpha = silhouette[index * 4 + 3]
+    color[index * 4 + 3] = alpha
+    maps.alpha[index] = alpha / 255
+  }
+  return {
+    image: silhouetteFrame,
+    url: options.url,
+    fullW,
+    fullH,
+    maps,
+    hash: labContentHash(color, aw, ah),
+    filename: options.filename ?? 'rgba-source',
+  }
+}
+
 // Freeze a canvas before analysis and compositing. WebGL's drawing buffer can
 // change or be discarded after the current task; the 2D snapshot guarantees
 // photo cells and every analysis map observe the exact same frame.

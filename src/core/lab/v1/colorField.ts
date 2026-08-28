@@ -50,13 +50,18 @@ export function buildColorField(opts: {
   T: Field
   outW: number
   outH: number
+  // material mode: noise feature size in px (default keeps the classic
+  // minDim * 0.3) — complexity shrinks it so a finer mosaic pitch also
+  // means busier color, not the same gradient resampled
+  featurePx?: number
 }): ColorField {
   const { palette, seed, T, outW, outH } = opts
   const colors = (palette.length ? palette : ['#141412', '#f4f2ed']).map(hexToRgb)
   const K = colors.length
   const minDim = Math.min(outW, outH)
-  const noises = colors.map((_, k) => slotNoise(seed, k, minDim * 0.3))
-  const weather = slotNoise(seed, K, minDim * 0.18)
+  const featurePx = opts.featurePx ?? minDim * 0.3
+  const noises = colors.map((_, k) => slotNoise(seed, k, featurePx))
+  const weather = slotNoise(seed, K, featurePx * 0.6)
   const sigma = 1.1 / K
   return (x, y) => {
     const t = T(x, y)

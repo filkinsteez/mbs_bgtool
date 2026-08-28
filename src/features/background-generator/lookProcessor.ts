@@ -43,6 +43,11 @@ export function sourceAwareLabForRecipe(
   const palette = isV1
     ? buildWeightedPalette(recipe.palette.mix, 100)
     : colorPlan!.swatches.map((swatch) => swatch.hex)
+  // The DISTINCT colors in first-appearance (mix) order. V1's 100-slot
+  // run-length palette makes any slot shift congruent to a no-op (interior
+  // recolors rotate within same-color runs) — material treatments that
+  // recolor by slot shift or neighbor pairing deal over this instead.
+  const distinct = [...new Set(palette)]
   const tone = lab.territory.sources.find((item) => item.kind === 'tone')
   return {
     ...lab,
@@ -62,6 +67,7 @@ export function sourceAwareLabForRecipe(
       paper: recipe.palette.ground,
       ink: recipe.palette.ink,
       palette,
+      distinct,
       ...(colorPlan ? { plan: colorPlan } : {}),
     },
     territory: {

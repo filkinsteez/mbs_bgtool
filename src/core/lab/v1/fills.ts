@@ -69,8 +69,12 @@ export function buildBeadFills(opts: {
   cells: CellNode[]
   paletteSize: number
   seed: number
+  // material mode: scales a cell's run-activation probability (1 = the
+  // classic 0.85 everywhere). Lets colored runs concentrate on the
+  // subject instead of competing with equally bright background columns.
+  activityScale?: (cell: CellNode) => number
 }): BeadFill[] {
-  const { cells, paletteSize, seed } = opts
+  const { cells, paletteSize, seed, activityScale } = opts
   const out: BeadFill[] = []
   for (const cell of cells) {
     if (cell.treatment !== 'beads') continue
@@ -81,7 +85,7 @@ export function buildBeadFills(opts: {
     const runLen = 3 + Math.floor(chan(seed, ix + cell.level * 8192, 'lab.bead.len') * 9)
     const run = Math.floor(iy / runLen)
     const runRoll = chan(seed, ix * 4096 + run, 'lab.bead.run')
-    const active = runRoll < colActivity * 0.85
+    const active = runRoll < colActivity * 0.85 * (activityScale ? activityScale(cell) : 1)
     const color = Math.min(
       paletteSize - 1,
       Math.floor(chan(seed, ix * 4096 + run, 'lab.bead.color') * paletteSize),
@@ -105,8 +109,12 @@ export function buildShingleFills(opts: {
   paletteSize: number
   seed: number
   lean: number // radians added to every shingle
+  // material mode: per-cell lean on top of `lean` — the render layer
+  // hands in the captured frame's edge orientation so shingles follow
+  // the subject's form instead of staying axis-locked.
+  leanAt?: (cell: CellNode) => number
 }): ShingleFill[] {
-  const { cells, paletteSize, seed, lean } = opts
+  const { cells, paletteSize, seed, lean, leanAt } = opts
   const out: ShingleFill[] = []
   for (const cell of cells) {
     if (cell.treatment !== 'shingle') continue
@@ -118,7 +126,7 @@ export function buildShingleFills(opts: {
     const b = (a + 1) % Math.max(1, paletteSize)
     // alternate direction by row parity, flip some columns for weave
     const flip = (cell.iy & 1) === 1 !== ((cell.ix & 3) === 3)
-    out.push({ cell, a, b, angle: (flip ? Math.PI : 0) + lean })
+    out.push({ cell, a, b, angle: (flip ? Math.PI : 0) + lean + (leanAt ? leanAt(cell) : 0) })
   }
   return out
 }

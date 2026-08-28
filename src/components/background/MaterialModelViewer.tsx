@@ -13,7 +13,7 @@ import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { createLabSourceFromImage } from '@/core/lab/sourceCache'
+import { createLabSourceFromOpaqueWithSilhouette } from '@/core/lab/sourceCache'
 import type { LookId } from '@/core/lab/looks'
 import { sourceAwareLabForRecipe, renderRecipeLookToCanvas } from '@/features/background-generator/lookProcessor'
 import type { MaterialId } from '@/features/background-generator/material/catalog'
@@ -182,37 +182,41 @@ function captureLookSource(runtime: ViewerRuntime) {
   if (colorFrame.height !== canvas.height) colorFrame.height = canvas.height
   const colorContext = colorFrame.getContext('2d')
   if (!colorContext) throw new Error('2D color capture context unavailable')
-  colorContext.clearRect(0, 0, colorFrame.width, colorFrame.height)
-  colorContext.drawImage(canvas, 0, 0)
-
-  const previousBackground = runtime.scene.background
-  const previousClearAlpha = runtime.renderer.getClearAlpha()
   const maskFrame = runtime.lookMaskFrame
   if (maskFrame.width !== canvas.width) maskFrame.width = canvas.width
   if (maskFrame.height !== canvas.height) maskFrame.height = canvas.height
-  const maskContext = maskFrame.getContext('2d', { willReadFrequently: true })
+  const maskContext = maskFrame.getContext('2d')
   if (!maskContext) throw new Error('2D mask capture context unavailable')
+
+  const previousBackground = runtime.scene.background
+  const previousClearAlpha = runtime.renderer.getClearAlpha()
   try {
+    // One transparent render feeds both captures: the silhouette (alpha
+    // cutout) and, composited over the recipe's ground while everything
+    // is OPAQUE, the color frame the Look treatments sample. Baking the
+    // silhouette into the color canvas's alpha instead premultiplies
+    // every background RGB to black — the audited "black ground" bug.
     runtime.scene.background = null
     runtime.renderer.setClearAlpha(0)
     runtime.renderer.render(runtime.scene, runtime.camera)
     maskContext.clearRect(0, 0, maskFrame.width, maskFrame.height)
     maskContext.drawImage(canvas, 0, 0)
+    colorContext.fillStyle = runtime.recipe.palette.ground
+    colorContext.fillRect(0, 0, colorFrame.width, colorFrame.height)
+    colorContext.drawImage(canvas, 0, 0)
   } finally {
     runtime.scene.background = previousBackground
     runtime.renderer.setClearAlpha(previousClearAlpha)
     runtime.renderer.render(runtime.scene, runtime.camera)
   }
 
-  const color = colorContext.getImageData(0, 0, colorFrame.width, colorFrame.height)
-  const mask = maskContext.getImageData(0, 0, maskFrame.width, maskFrame.height)
-  for (let offset = 3; offset < color.data.length; offset += 4) {
-    color.data[offset] = mask.data[offset]
-  }
-  colorContext.putImageData(color, 0, 0)
-  return createLabSourceFromImage(colorFrame, colorFrame.width, colorFrame.height, {
-    filename: 'three-material-frame.rgba',
-  })
+  return createLabSourceFromOpaqueWithSilhouette(
+    colorFrame,
+    maskFrame,
+    colorFrame.width,
+    colorFrame.height,
+    { filename: 'three-material-frame.rgba' },
+  )
 }
 
 function orientModel(model: THREE.Group): {
