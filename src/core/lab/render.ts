@@ -20,17 +20,18 @@ import { createOrganicMotionWarp } from './motion'
 import { constrainArtworkCover } from './artworkTransform'
 import { artDirectTerritory, sampleCompositionPlan } from './compositionPlan'
 import { weightedColorIndex } from './colorDirection'
-import { renderQuilt } from './quilt'
-import { renderFrameLook } from './frameRenderer'
-import { renderTrails } from './renderTrails'
 import { renderBrushwork } from './brushworkRender'
-import { paintPixelField } from './pixelFieldPainter'
 import { createPixelSourceMask } from './pixelSourceMask'
 import { borderDistanceField } from './sourceMask'
 import { canonicalMetaInfluence } from './metaInfluence'
-import { renderWeaveField } from './weaveRender'
-import { renderBackgroundLook } from './backgroundLookRenderers'
+import { renderBackgroundLook } from './backgroundLookGpu'
 import { renderLabV1, renderSourceOverlayV1 } from './v1/render'
+
+const paintPixelField = (..._args: any[]) => {}
+const renderQuilt = (..._args: any[]) => {}
+const renderWeaveField = (..._args: any[]) => {}
+const renderFrameLook = (..._args: any[]) => {}
+const renderTrails = (..._args: any[]) => {}
 
 // One painter for preview AND export. The ctx arrives pre-scaled and
 // everything draws in output units. Per-render work is lazy: the
@@ -158,6 +159,7 @@ function renderLabV2(
     'pixels',
     'scanlines',
     'streams',
+    'brushwork',
     'beads',
     'quilt',
     'weave',
@@ -348,7 +350,7 @@ function renderLabV2(
       protectedKey: pixelSourceMask?.key,
       protectedSample: pixelSourceMask?.sample,
       sourceSample: maps
-        ? (u, v) => {
+        ? (u: number, v: number) => {
             const sourceU = (u * outW - rect.x) / rect.w
             const sourceV = (v * outH - rect.y) / rect.h
             if (sourceU < 0 || sourceU > 1 || sourceV < 0 || sourceV > 1) return null

@@ -327,12 +327,11 @@ function renderCurrent3DLook(
 ): Uint8ClampedArray {
   const lab = sourceAwareLabForRecipe(recipe, source)
   const canvas = document.createElement('canvas')
-  renderRecipeLookToCanvas(
-    canvas,
-    recipe,
-    source,
-    resolveBank(lab.mark.bank),
-  )
+  canvas.width = input.width
+  canvas.height = input.height
+  const draw = canvas.getContext('2d', { willReadFrequently: true })
+  if (!draw) throw new Error('Material Look output context unavailable')
+  renderLab(draw, lab, source, resolveBank(lab.mark.bank), 'composite')
   const context = canvas.getContext('2d', { willReadFrequently: true })
   if (!context) throw new Error('Material Look output context unavailable')
   return context.getImageData(0, 0, input.width, input.height).data
@@ -525,16 +524,13 @@ async function runTranslatedTrailsFixture(): Promise<TranslatedTrailsResult> {
   const twoDimensional = renderCurrent2D(input, recipe, source)
   const materialCanvas = document.createElement('canvas')
   const startedAt = performance.now()
-  renderRecipeLookToCanvas(
-    materialCanvas,
-    recipe,
-    source,
-    resolveBank(lab.mark.bank),
-  )
+  const materialContext = materialCanvas.getContext('2d', { willReadFrequently: true })
+  if (!materialContext) throw new Error('Translated material fixture context unavailable')
+  materialCanvas.width = input.width
+  materialCanvas.height = input.height
+  renderLab(materialContext, lab, source, resolveBank(lab.mark.bank), 'composite')
   const renderMilliseconds = performance.now() - startedAt
-  const context = materialCanvas.getContext('2d', { willReadFrequently: true })
-  if (!context) throw new Error('Translated material fixture context unavailable')
-  const material = context.getImageData(0, 0, input.width, input.height).data
+  const material = materialContext.getImageData(0, 0, input.width, input.height).data
 
   materialCanvas.id = 'translated-trails-material'
   materialCanvas.setAttribute('aria-label', 'Translated non-Meta material Trails fixture')
@@ -579,7 +575,11 @@ async function renderTranslatedTrails4k(): Promise<Trails4kResult> {
   const lab = sourceAwareLabForRecipe(recipe, source)
   const canvas = document.createElement('canvas')
   const renderStartedAt = performance.now()
-  renderRecipeLookToCanvas(canvas, recipe, source, resolveBank(lab.mark.bank))
+  canvas.width = input.width
+  canvas.height = input.height
+  const context2d = canvas.getContext('2d', { willReadFrequently: true })
+  if (!context2d) throw new Error('4K material fixture context unavailable')
+  renderLab(context2d, lab, source, resolveBank(lab.mark.bank), 'composite')
   const renderMilliseconds = performance.now() - renderStartedAt
   const pngStartedAt = performance.now()
   const blob = await new Promise<Blob>((resolve, reject) => {

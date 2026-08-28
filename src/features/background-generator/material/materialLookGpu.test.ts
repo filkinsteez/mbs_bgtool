@@ -8,7 +8,7 @@ import {
 } from './materialLookGpu'
 
 describe('material GPU Looks', () => {
-  it('assigns one stable shader identity to every V2 Look', () => {
+  it('maps every V2 Look onto one of the five stable GPU systems', () => {
     expect(Object.keys(MATERIAL_GPU_LOOK_INDEX)).toEqual([
       'frame',
       'pixels',
@@ -21,7 +21,7 @@ describe('material GPU Looks', () => {
       'marks',
       'trails',
     ])
-    expect(new Set(Object.values(MATERIAL_GPU_LOOK_INDEX)).size).toBe(10)
+    expect(new Set(Object.values(MATERIAL_GPU_LOOK_INDEX)).size).toBe(5)
   })
 
   it('uses an exact normalized loop seam independent of Energy', () => {

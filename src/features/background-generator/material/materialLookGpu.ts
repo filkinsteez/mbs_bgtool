@@ -11,14 +11,14 @@ import type { BackgroundRecipeV2 } from '../recipe'
 export const MATERIAL_GPU_LOOK_INDEX: Record<LookId, number> = {
   frame: 0,
   pixels: 1,
-  scanlines: 2,
-  streams: 3,
-  brushwork: 4,
-  beads: 5,
-  quilt: 6,
-  weave: 7,
-  marks: 8,
-  trails: 9,
+  scanlines: 1,
+  streams: 4,
+  brushwork: 2,
+  beads: 3,
+  quilt: 3,
+  weave: 3,
+  marks: 4,
+  trails: 4,
 }
 
 export const MAX_MATERIAL_GPU_PALETTE_COLORS = 16

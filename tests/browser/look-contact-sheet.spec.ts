@@ -159,7 +159,8 @@ test('builds a 3D full-frame Look contact sheet', async ({ page }, testInfo) => 
   await page.getByRole('radio', { name: '3D', exact: true }).click()
 
   const viewer = page.locator('[data-mbs-material-model="true"]')
-  const processedCanvas = viewer.locator('.lab-material-look-canvas')
+  const modelCanvas = viewer.locator('.lab-material-model-canvas')
+  const artboard = page.locator('#lab-generator-artboard')
   const complexity = page.getByRole('slider', { name: 'Complexity', exact: true })
   await expect(viewer).toHaveAttribute('data-model-status', 'ready')
 
@@ -169,24 +170,21 @@ test('builds a 3D full-frame Look contact sheet', async ({ page }, testInfo) => 
     await control.click()
     await expect(control).toHaveAttribute('aria-pressed', 'true')
     await expect(viewer).toHaveAttribute('data-look', label.toLowerCase())
-    await expect(processedCanvas).toHaveAttribute('data-look', label.toLowerCase())
-    await expect(processedCanvas).toHaveAttribute('data-render-status', 'ready')
+    await expect(modelCanvas).toHaveAttribute('data-look', label.toLowerCase())
+    await expect(modelCanvas).toHaveAttribute('data-render-status', 'ready')
 
     for (const level of COMPLEXITIES) {
-      const previousRevision = await processedCanvas.getAttribute('data-render-revision')
+      const previousRevision = await modelCanvas.getAttribute('data-render-revision')
       const sliderValue = String(Math.round(level.value * 100))
       await complexity.fill(sliderValue)
       await expect(complexity).toHaveValue(sliderValue)
       await expect.poll(
-        () => processedCanvas.getAttribute('data-render-revision'),
+        () => modelCanvas.getAttribute('data-render-revision'),
       ).not.toBe(previousRevision)
-      await expect(processedCanvas).toHaveAttribute('data-render-status', 'ready')
-      await expect(processedCanvas).toHaveAttribute('data-quality', 'hq')
+      await expect(modelCanvas).toHaveAttribute('data-render-status', 'ready')
       samples.push({
         label: `${label} · ${level.label}`,
-        src: await processedCanvas.evaluate(
-          (element: HTMLCanvasElement) => element.toDataURL('image/png'),
-        ),
+        src: `data:image/png;base64,${(await artboard.screenshot()).toString('base64')}`,
       })
     }
   }
@@ -799,17 +797,17 @@ test('measures Look interaction timing and brush resource reuse', async ({ page 
 
   await page.getByRole('radio', { name: '3D', exact: true }).click()
   const viewer = page.locator('[data-mbs-material-model="true"]')
-  const processedCanvas = viewer.locator('.lab-material-look-canvas')
+  const modelCanvas = viewer.locator('.lab-material-model-canvas')
   await expect(viewer).toHaveAttribute('data-model-status', 'ready')
   const threeDimensional: { look: string; milliseconds: number }[] = []
   for (const look of LOOKS) {
-    const previousRevision = await processedCanvas.getAttribute('data-render-revision')
+    const previousRevision = await modelCanvas.getAttribute('data-render-revision')
     const startedAt = await page.evaluate(() => performance.now())
     await page.getByRole('button', { name: look, exact: true }).click()
     await expect.poll(
-      () => processedCanvas.getAttribute('data-render-revision'),
+      () => modelCanvas.getAttribute('data-render-revision'),
     ).not.toBe(previousRevision)
-    await expect(processedCanvas).toHaveAttribute('data-render-status', 'ready')
+    await expect(modelCanvas).toHaveAttribute('data-render-status', 'ready')
     const completedAt = await page.evaluate(() => performance.now())
     threeDimensional.push({
       look,

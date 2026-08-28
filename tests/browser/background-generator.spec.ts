@@ -1693,7 +1693,7 @@ test('processes the live 3D frame through canonical Canvas2D Looks and supports 
   const modelCanvas = viewer.locator('.lab-material-model-canvas')
   const processedCanvas = viewer.locator('.lab-material-look-canvas')
   const screenshotView = async () => (
-    await viewer.getAttribute('data-postprocess') === 'canvas2d-look'
+    await viewer.getAttribute('data-postprocess') === 'legacy-canvas2d-look'
       ? processedCanvas.screenshot()
       : modelCanvas.screenshot()
   )
@@ -1714,7 +1714,7 @@ test('processes the live 3D frame through canonical Canvas2D Looks and supports 
   await scanlinesButton.click()
   await expect(scanlinesButton).toHaveAttribute('aria-pressed', 'true')
   await expect(viewer).toHaveAttribute('data-look', 'scanlines')
-  await expect(viewer).toHaveAttribute('data-postprocess', 'canvas2d-look')
+  await expect(viewer).toHaveAttribute('data-postprocess', 'gpu-look')
   await page.getByRole('radio', { name: 'Clean', exact: true }).click()
   await expect(viewer).toHaveAttribute('data-material', 'clean')
   await expect(processedCanvas).toHaveAttribute('data-look', 'scanlines')
@@ -1779,7 +1779,7 @@ test('processes the live 3D frame through canonical Canvas2D Looks and supports 
   const orbitDifference = await pixelDifference(page, beforeOrbit, afterOrbit)
   expect(orbitDifference.changedFraction).toBeGreaterThan(0.05)
   expect(orbitDifference.centerMean).toBeGreaterThan(2)
-  await expect(viewer).toHaveAttribute('data-postprocess', 'canvas2d-look')
+  await expect(viewer).toHaveAttribute('data-postprocess', 'gpu-look')
 
   const trailsButton = page.getByRole('button', { name: 'Trails', exact: true })
   await trailsButton.click()
@@ -1814,7 +1814,7 @@ test('processes the live 3D frame through canonical Canvas2D Looks and supports 
   await expect(trailsButton).toHaveAttribute('aria-pressed', 'false')
   await expect(scanlinesButton).toHaveAttribute('aria-pressed', 'true')
   await expect(viewer).toHaveAttribute('data-look', 'scanlines')
-  await expect(viewer).toHaveAttribute('data-postprocess', 'canvas2d-look')
+  await expect(viewer).toHaveAttribute('data-postprocess', 'gpu-look')
   await page.getByRole('radio', { name: 'Stainless Steel', exact: true }).click()
   await expect(viewer).toHaveAttribute('data-material', 'metal')
   await page.mouse.move(
@@ -1833,7 +1833,7 @@ test('processes the live 3D frame through canonical Canvas2D Looks and supports 
     sidebar.scrollTop = 0
   })
   await page.screenshot({
-    path: 'test-results/3d-canvas2d-look-scanlines.png',
+    path: 'test-results/3d-gpu-look-scanlines.png',
     fullPage: true,
   })
 
