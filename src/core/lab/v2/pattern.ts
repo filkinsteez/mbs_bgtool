@@ -2,18 +2,27 @@ import type { V2Env } from './system'
 import type { Field } from '../field'
 import { chan } from '@/core/organic/random'
 
-// 'Pattern' — a bold two-color half-drop tile pattern whose motif is a
-// PIXEL-CROP of the Meta mark itself. A seeded fragment of the symbol field
-// (oversized, pushed off-center, tilted) is rasterized onto a small motif
-// grid and thresholded, so every tile is a stepped curved fragment carrying
-// the mark's arc DNA — never the whole logo. The fragment is packed to fill
+// 'Pattern' — a bold half-drop tile pattern whose motif is a PIXEL-CROP of
+// the Meta mark itself. A seeded fragment of the symbol field (oversized,
+// pushed off-center, tilted) is rasterized onto a small motif grid and
+// thresholded, so every tile is a stepped curved fragment carrying the
+// mark's arc DNA — never the whole logo. The fragment is packed to fill
 // its tile (bounding-box crop stretched to the grid) and crops are accepted
 // dense (42-68% of cells), so figure masses from neighboring half-drop
 // mirrored columns nearly touch and the ground reads as channels between
-// them — a dense interlocking two-color textile, not spot motifs on ground.
+// them — a dense interlocking textile, not spot motifs on ground.
 // The tiling itself is unchanged from round 2: strict grid, half-drop
-// columns, seeded mirrored-column phase, exactly two colors, whole-pixel
-// cells, diagonal whole-period motion scroll.
+// columns, seeded mirrored-column phase, whole-pixel cells, diagonal
+// whole-period motion scroll.
+//
+// Colors: the motif carries CONCENTRIC LAYERS quilted from the enabled
+// palette mix. Every cell knows its erosion depth (BFS distance to ground,
+// where the tile border also counts as ground); the depth range is banded
+// into up to four rings and each ring takes one ink from the pool, largest
+// ring to heaviest ink. With more inks than rings, the mirrored columns run
+// a rotated colorway so the leftover inks surface — tile-locally, so the
+// 2-column / 1-row motion loop period is untouched. A single-ink pool
+// collapses to the classic two-color render.
 
 const C = 'v2.pattern.'
 
@@ -257,15 +266,17 @@ function buildMotif(env: V2Env, n: number): Uint8Array {
 let tileNormal: HTMLCanvasElement | null = null
 let tileMirror: HTMLCanvasElement | null = null
 
-// Paint the motif bitmap into an offscreen tile as filled raster squares.
+// Paint the motif bands into an offscreen tile as filled raster squares.
 // Each cell overdraws 1px right and down so adjacent cells fuse into stepped
 // masses with no hairline seams; the tile canvas carries the 1px apron.
+// Bands are painted outer ring first, so inner rings win the shared seam
+// pixels — a fixed order that keeps repeat renders byte-identical.
 function paintTile(
   existing: HTMLCanvasElement | null,
-  motif: Uint8Array,
+  bands: Int8Array,
+  colors: readonly string[],
   n: number,
   cell: number,
-  color: string,
   mirrored: boolean,
 ): HTMLCanvasElement {
   const canvas = existing ?? document.createElement('canvas')
@@ -277,36 +288,196 @@ function paintTile(
   const tctx = canvas.getContext('2d')
   if (!tctx) return canvas
   tctx.clearRect(0, 0, size, size)
-  tctx.fillStyle = color
-  for (let j = 0; j < n; j++) {
-    for (let i = 0; i < n; i++) {
-      if (!motif[j * n + i]) continue
-      const x = (mirrored ? n - 1 - i : i) * cell
-      tctx.fillRect(x, j * cell, cell + 1, cell + 1)
+  for (let band = 0; band < colors.length; band++) {
+    tctx.fillStyle = colors[band]
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        if (bands[j * n + i] !== band) continue
+        const x = (mirrored ? n - 1 - i : i) * cell
+        tctx.fillRect(x, j * cell, cell + 1, cell + 1)
+      }
     }
   }
   return canvas
 }
 
 // ---------------------------------------------------------------------------
-// Colors
+// Colors: ink pool + concentric erosion bands
 // ---------------------------------------------------------------------------
 
-// Figure color: highest-weight plan swatch that is not the ground role.
-// With 3+ candidate inks the seed picks among the top two by weight.
-function pickFigure(env: V2Env): string {
-  const plan = env.plan
-  if (!plan) return env.ink
-  const groundLower = env.ground.trim().toLowerCase()
-  const candidates = plan.swatches
-    .map((swatch, index) => ({ swatch, index }))
-    .filter(({ swatch, index }) => index !== plan.roles.ground && swatch.hex.trim().toLowerCase() !== groundLower)
-    .sort((a, b) => b.swatch.weight - a.swatch.weight)
-  if (candidates.length === 0) return env.ink
-  if (candidates.length >= 3 && chan(env.seed, 0, C + 'figurePick') < 0.5) {
-    return candidates[1].swatch.hex
+type PoolInk = { hex: string; weight: number; lab: [number, number, number] }
+
+// oklab of a hex color (same transform the color plan uses), so ground
+// proximity and band adjacency are judged perceptually, not by raw RGB.
+function hexToOklab(hex: string): [number, number, number] {
+  const match = hex.trim().match(/^#?([0-9a-f]{6})$/i)
+  const value = match ? Number.parseInt(match[1], 16) : 0
+  const lin = (c: number) => {
+    const u = c / 255
+    return u <= 0.04045 ? u / 12.92 : ((u + 0.055) / 1.055) ** 2.4
   }
-  return candidates[0].swatch.hex
+  const r = lin((value >> 16) & 255)
+  const g = lin((value >> 8) & 255)
+  const b = lin(value & 255)
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  ]
+}
+
+// The enabled plan swatches that can act as ink — everything far enough from
+// the ground to stay legible over it (dither's pool recipe), heaviest first.
+// Falls back to the single highest-contrast swatch (the classic two-color
+// render) when the plan is missing or the filter empties the pool.
+function buildInkPool(env: V2Env): PoolInk[] {
+  const plan = env.plan
+  if (!plan || plan.depthOrder.length === 0) {
+    return [{ hex: env.ink, weight: 1, lab: hexToOklab(env.ink) }]
+  }
+  const [gl, ga, gb] = hexToOklab(env.ground)
+  const pool: PoolInk[] = []
+  for (const sw of plan.swatches) {
+    const sa = Math.cos(sw.hue) * sw.chroma
+    const sb = Math.sin(sw.hue) * sw.chroma
+    const dist = Math.hypot(sw.lightness - gl, sa - ga, sb - gb)
+    if (dist >= 0.09) {
+      pool.push({ hex: sw.hex, weight: Math.max(1e-4, sw.weight), lab: [sw.lightness, sa, sb] })
+    }
+  }
+  if (pool.length === 0) {
+    const idx = plan.depthOrder[plan.depthOrder.length - 1]
+    const hex = plan.swatches[idx]?.hex ?? env.ink
+    return [{ hex, weight: 1, lab: hexToOklab(hex) }]
+  }
+  // stable sort: equal weights keep plan swatch order, so the deal is
+  // deterministic without any random channel
+  return pool.sort((a, b) => b.weight - a.weight)
+}
+
+// Erosion depth per cell: BFS distance (4-connected) to the nearest ground
+// cell, where both off-cells inside the tile AND the tile border count as
+// ground sources. Depth 1 is the silhouette ring, rising toward the core.
+function erosionDepth(motif: Uint8Array, n: number): { depth: Uint16Array; maxDepth: number } {
+  const INF = 0xffff
+  const total = n * n
+  const depth = new Uint16Array(total) // stays 0 on ground cells
+  const queue = new Int32Array(total)
+  let head = 0
+  let tail = 0
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < n; i++) {
+      const idx = j * n + i
+      if (!motif[idx]) continue
+      const touchesGround =
+        i === 0 ||
+        i === n - 1 ||
+        j === 0 ||
+        j === n - 1 ||
+        !motif[idx - 1] ||
+        !motif[idx + 1] ||
+        !motif[idx - n] ||
+        !motif[idx + n]
+      depth[idx] = touchesGround ? 1 : INF
+      if (touchesGround) queue[tail++] = idx
+    }
+  }
+  let maxDepth = tail > 0 ? 1 : 0
+  while (head < tail) {
+    const idx = queue[head++]
+    const next = depth[idx] + 1
+    const i = idx % n
+    const j = (idx - i) / n
+    if (i > 0 && depth[idx - 1] === INF) {
+      depth[idx - 1] = next
+      queue[tail++] = idx - 1
+    }
+    if (i < n - 1 && depth[idx + 1] === INF) {
+      depth[idx + 1] = next
+      queue[tail++] = idx + 1
+    }
+    if (j > 0 && depth[idx - n] === INF) {
+      depth[idx - n] = next
+      queue[tail++] = idx - n
+    }
+    if (j < n - 1 && depth[idx + n] === INF) {
+      depth[idx + n] = next
+      queue[tail++] = idx + n
+    }
+    if (next > maxDepth) maxDepth = next
+  }
+  return { depth, maxDepth }
+}
+
+// Band the depth range into `layers` concentric rings (equal depth spans).
+// BFS populates every integer depth 1..maxDepth, and layers <= maxDepth, so
+// no band comes out empty. Ground cells stay -1.
+function bandCells(depth: Uint16Array, maxDepth: number, layers: number): Int8Array {
+  const bands = new Int8Array(depth.length).fill(-1)
+  if (maxDepth <= 0) return bands
+  for (let idx = 0; idx < depth.length; idx++) {
+    const d = depth[idx]
+    if (d === 0) continue
+    const clamped = d < maxDepth ? d : maxDepth
+    const band = Math.floor(((clamped - 1) * layers) / maxDepth)
+    bands[idx] = band < layers - 1 ? band : layers - 1
+  }
+  return bands
+}
+
+// Deal the chosen inks (already weight-ranked) onto the bands. Baseline:
+// area rank follows weight rank — the heaviest ink covers the largest band.
+// Then search the (at most 4! = 24) permutations for the one with the
+// fewest adjacent rings closer than ~0.07 in oklab, breaking ties by least
+// deviation from the weight ordering, then permutation order. Fully
+// deterministic — no random channel involved.
+function assignBandInks(counts: readonly number[], inks: readonly PoolInk[]): string[] {
+  const layers = counts.length
+  // bands ranked by area, outer band first on ties
+  const byArea = counts
+    .map((count, band) => ({ count, band }))
+    .sort((a, b) => b.count - a.count || a.band - b.band)
+    .map((entry) => entry.band)
+  const perms: number[][] = []
+  const build = (acc: number[], rest: number[]) => {
+    if (rest.length === 0) {
+      perms.push(acc)
+      return
+    }
+    for (let k = 0; k < rest.length; k++) {
+      build([...acc, rest[k]], rest.filter((_, r) => r !== k))
+    }
+  }
+  build([], Array.from({ length: layers }, (_, k) => k))
+  let best: string[] = []
+  let bestViol = Infinity
+  let bestDev = Infinity
+  for (const p of perms) {
+    const colors = new Array<string>(layers)
+    const labs = new Array<[number, number, number]>(layers)
+    for (let k = 0; k < layers; k++) {
+      const ink = inks[p[k]]
+      colors[byArea[k]] = ink.hex
+      labs[byArea[k]] = ink.lab
+    }
+    let viol = 0
+    for (let b = 0; b + 1 < layers; b++) {
+      const a = labs[b]
+      const c = labs[b + 1]
+      if (Math.hypot(a[0] - c[0], a[1] - c[1], a[2] - c[2]) < 0.07) viol++
+    }
+    let dev = 0
+    for (let k = 0; k < layers; k++) dev += Math.abs(p[k] - k)
+    if (viol < bestViol || (viol === bestViol && dev < bestDev)) {
+      best = colors
+      bestViol = viol
+      bestDev = dev
+    }
+  }
+  return best
 }
 
 // ---------------------------------------------------------------------------
@@ -316,7 +487,7 @@ function pickFigure(env: V2Env): string {
 export function renderPattern(ctx: CanvasRenderingContext2D, env: V2Env): void {
   const { outW, outH, seed, complexity } = env
 
-  // Ground first — the whole canvas is one of the two colors.
+  // Ground first — the channels between figure masses are always ground.
   ctx.fillStyle = env.ground
   ctx.fillRect(0, 0, outW, outH)
 
@@ -350,9 +521,36 @@ export function renderPattern(ctx: CanvasRenderingContext2D, env: V2Env): void {
   const offsetY = Math.round(wrap(travel * dirY * unit, unit))
 
   const motif = buildMotif(env, n)
-  const figure = pickFigure(env)
-  tileNormal = paintTile(tileNormal, motif, n, cell, figure, false)
-  tileMirror = paintTile(tileMirror, motif, n, cell, figure, true)
+
+  // Concentric layer coloring: band the motif by erosion depth and quilt the
+  // ink pool over the bands. Depth, bands and both colorways depend only on
+  // tile-local structure plus the normal/mirror distinction — never on the
+  // column or row index — so the 2-column horizontal / 1-tile vertical
+  // motion period is preserved exactly.
+  const pool = buildInkPool(env)
+  const { depth, maxDepth } = erosionDepth(motif, n)
+  const layers = Math.max(1, Math.min(pool.length, maxDepth, 4))
+  const bands = bandCells(depth, maxDepth, layers)
+  const counts = new Array<number>(layers).fill(0)
+  for (let idx = 0; idx < bands.length; idx++) {
+    if (bands[idx] >= 0) counts[bands[idx]]++
+  }
+  // With more inks than rings, the mirrored columns run a rotated colorway
+  // through the weight-ranked pool so the leftover inks surface — enabling
+  // an extra swatch visibly changes the render. With N <= rings every ink
+  // already shows, and both colorways match (single-ink pools collapse to
+  // the classic two-color look).
+  const rotation =
+    pool.length > layers ? Math.max(1, Math.min(pool.length - layers, layers)) : 0
+  const normalInks = pool.slice(0, layers)
+  const mirrorInks =
+    rotation === 0
+      ? normalInks
+      : Array.from({ length: layers }, (_, k) => pool[(k + rotation) % pool.length])
+  const normalColors = assignBandInks(counts, normalInks)
+  const mirrorColors = rotation === 0 ? normalColors : assignBandInks(counts, mirrorInks)
+  tileNormal = paintTile(tileNormal, bands, normalColors, n, cell, false)
+  tileMirror = paintTile(tileMirror, bands, mirrorColors, n, cell, true)
 
   const cols = Math.ceil(outW / unit)
   const rows = Math.ceil(outH / unit)
