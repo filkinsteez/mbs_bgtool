@@ -185,7 +185,10 @@ const CROP_RETRIES = 10
 // figure, so the returned field is 0 on the ground side rising to 1 on the
 // model side. A near-flat frame returns the zero field — every tile deals
 // the ground colorway and the weave stays uniform.
-function normalizedLuminance(env: V2Env): Field {
+// Shared with the other V2 material branches (mandala's ring ramp, dither's
+// figure-interior evidence), so all four looks read the captured frame with
+// the same border-referenced polarity.
+export function normalizedLuminance(env: V2Env): Field {
   const lum = env.luminance
   if (!lum) return () => 0
   const { outW, outH } = env
@@ -541,9 +544,11 @@ function assignBandInks(counts: readonly number[], inks: readonly PoolInk[]): st
 // Render: 3D material mode — a jacquard weave over the captured frame
 // ---------------------------------------------------------------------------
 
-// Prerendered tile canvases per (colorway level, mirrored) — at most 3 x 2.
-// Painting per combination (never per tile) keeps the draw loop drawImage-only.
-const materialTiles: (HTMLCanvasElement | null)[] = [null, null, null, null, null, null]
+// Prerendered tile canvases per (colorway level, mirrored) — ground + mid +
+// four figure shading steps = at most 6 x 2. Painting per combination (never
+// per tile) keeps the draw loop drawImage-only.
+const FIGURE_SHADES = 4
+const materialTiles: (HTMLCanvasElement | null)[] = new Array(12).fill(null)
 
 function renderPatternMaterial(ctx: CanvasRenderingContext2D, env: V2Env): void {
   const { outW, outH, seed, complexity } = env
@@ -555,11 +560,12 @@ function renderPatternMaterial(ctx: CanvasRenderingContext2D, env: V2Env): void 
   const level = Math.max(0, Math.min(1, complexity))
 
   // Motif resolution matches the 2D branch, but the TILING runs much finer —
-  // ~14 tiles across at complexity 0, ~24 at the default 0.5, ~34 at 1 — so
-  // the model's silhouette owns enough tile-pixels to read. Cells stay
-  // whole-pixel, so the weave stays raster-crisp at any output size.
+  // ~20 tiles across at complexity 0, ~27 at the default 0.5, ~34 at 1 — so
+  // the model's silhouette owns enough tile-pixels to read even at the
+  // coarse end (14 tiles dissolved the tube into unreadable columns). Cells
+  // stay whole-pixel, so the weave stays raster-crisp at any output size.
   const n = 10 + Math.round(4 * level)
-  const divisor = 14 + 20 * level
+  const divisor = 20 + 14 * level
   const cell = Math.max(2, Math.round(outW / divisor / n))
   const unit = cell * n
   const half = Math.floor(unit / 2)
@@ -644,14 +650,21 @@ function renderPatternMaterial(ctx: CanvasRenderingContext2D, env: V2Env): void 
         : env.ground
       : hex,
   )
+  // Figure tiles additionally MODEL: the flood ink steps up to 25% toward
+  // ground with the tile's mean captured tone, so the tube's lit side and
+  // shaded side deal slightly different figure colorways and the 3D form
+  // reads inside the mass instead of stamping flat. Quantized to
+  // FIGURE_SHADES prerendered steps so the draw loop stays drawImage-only.
   const levelCount = pool.length >= 2 ? 3 : 2
-  const colorways: { colors: string[]; bg?: string }[] = levelCount === 3
-    ? [
-        { colors: mutedColors },
-        { colors: classicColors },
-        { colors: figureColors, bg: figureInk.hex },
-      ]
-    : [{ colors: mutedColors }, { colors: figureColors, bg: figureInk.hex }]
+  const colorways: { colors: string[]; bg?: string }[] = [{ colors: mutedColors }]
+  if (levelCount === 3) colorways.push({ colors: classicColors })
+  const figureBase = colorways.length
+  for (let s = 0; s < FIGURE_SHADES; s++) {
+    colorways.push({
+      colors: figureColors,
+      bg: mixHex(figureInk.hex, env.ground, (0.25 * s) / (FIGURE_SHADES - 1)),
+    })
+  }
   const tiles = colorways.map((way, w) => [
     (materialTiles[w * 2] = paintTile(
       materialTiles[w * 2], bands, way.colors, n, cell, false, way.bg,
@@ -662,21 +675,23 @@ function renderPatternMaterial(ctx: CanvasRenderingContext2D, env: V2Env): void 
   ])
 
   // Per-tile colorway from the frame: binarize the normalized tone at each
-  // of a 4x4 deterministic sample grid over the tile's footprint (clamped
+  // of a 6x6 deterministic sample grid over the tile's footprint (clamped
   // into frame) and quantize the model COVERAGE — coverage, not mean, so the
-  // model's own shading cannot fragment its mass into speckle. Border-side
-  // tiles deal ground, solidly-covered tiles figure, the partial rim mid.
-  // Same frame + seed => same deal; material renders are motionless stills,
-  // so reading the frame per tile cannot touch the 2D branch's loop
-  // constraint.
+  // model's own shading cannot fragment its mass into speckle; 6x6 (up from
+  // 4x4) steps the rim band finer. Border-side tiles deal ground,
+  // solidly-covered tiles figure (shade-stepped by the tile's MEAN tone),
+  // the partial rim mid. Same frame + seed => same deal; material renders
+  // are motionless stills, so reading the frame per tile cannot touch the
+  // 2D branch's loop constraint.
   const tone = normalizedLuminance(env)
+  const SAMPLES = 6
   const pick = levelCount === 3
-    ? (m: number) => (m >= 0.5 ? 2 : m >= 0.15 ? 1 : 0)
-    : (m: number) => (m >= 0.4 ? 1 : 0)
+    ? (m: number) => (m >= 0.5 ? -1 : m >= 0.15 ? 1 : 0)
+    : (m: number) => (m >= 0.4 ? -1 : 0)
 
   const cols = Math.ceil(outW / unit)
   const rows = Math.ceil(outH / unit)
-  const step = unit / 4
+  const step = unit / SAMPLES
   for (let i = -1; i <= cols + 1; i++) {
     const parity = ((i % 2) + 2) % 2
     const drop = parity === 1 ? dropDir * half : 0
@@ -685,14 +700,26 @@ function renderPatternMaterial(ctx: CanvasRenderingContext2D, env: V2Env): void 
     for (let j = -1; j <= rows + 1; j++) {
       const y = j * unit + drop
       let cover = 0
-      for (let sj = 0; sj < 4; sj++) {
+      let sum = 0
+      for (let sj = 0; sj < SAMPLES; sj++) {
         const py = Math.max(0, Math.min(outH - 1, y + (sj + 0.5) * step))
-        for (let si = 0; si < 4; si++) {
+        for (let si = 0; si < SAMPLES; si++) {
           const px = Math.max(0, Math.min(outW - 1, x + (si + 0.5) * step))
-          if (tone(px, py) >= 0.5) cover += 1
+          const value = tone(px, py)
+          sum += value
+          if (value >= 0.5) cover += 1
         }
       }
-      ctx.drawImage(tiles[pick(cover / 16)][mirrored], x, y)
+      let way = pick(cover / (SAMPLES * SAMPLES))
+      if (way < 0) {
+        const meanTone = sum / (SAMPLES * SAMPLES)
+        const shade = Math.max(
+          0,
+          Math.min(FIGURE_SHADES - 1, Math.round((1 - meanTone) * (FIGURE_SHADES - 1))),
+        )
+        way = figureBase + shade
+      }
+      ctx.drawImage(tiles[way][mirrored], x, y)
     }
   }
 }

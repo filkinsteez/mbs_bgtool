@@ -1,5 +1,6 @@
 import { motionHarmonic, type V2Env } from './system'
 import { chan } from '@/core/organic/random'
+import { normalizedLuminance } from './pattern'
 
 // 'Dither' — a patchwork of dithering styles over one continuous tone field.
 // The canvas is guillotine-partitioned into 5-9 rectangular zones with hard
@@ -384,9 +385,43 @@ export function renderDither(ctx: CanvasRenderingContext2D, env: V2Env): void {
   let tone: Tone
   if (env.luminance) {
     // 3D material mode: the captured frame's tone, with the same pump so
-    // captured dithers animate too
+    // captured dithers animate too. tone = 1 - lum alone sends the bright
+    // model to ~0 ink — a flat paper stencil that discards all interior
+    // shading — so the figure gets its own evidence: a border-referenced
+    // normalized level L (0 ground side, 1 model side) times a
+    // subject-shading term s (the model's own tonal range, normalized so
+    // its darkest turns hit 1), floored into the tone. Shaded turns then
+    // carry a light dither inside the silhouette — the tube's roundness
+    // and the crossing's self-shadow model — while lit crowns stay
+    // near-clean and the ground keeps its full dither patchwork.
     const lum = env.luminance
-    tone = (x, y) => clamp01(1 - lum(x, y) + pump(x, y))
+    const level = normalizedLuminance(env)
+    // subject tonal range: robust 5th..95th percentile of the captured
+    // luminance where the normalized level reads "figure", so s spans the
+    // model's own shading whatever the exposure
+    const cols = 64
+    const rows = Math.max(2, Math.round((cols * H) / Math.max(1, W)))
+    const subject: number[] = []
+    for (let j = 0; j < rows; j++) {
+      for (let i = 0; i < cols; i++) {
+        const x = ((i + 0.5) / cols) * W
+        const y = ((j + 0.5) / rows) * H
+        if (level(x, y) > 0.6) subject.push(lum(x, y))
+      }
+    }
+    subject.sort((a, b) => a - b)
+    const sLo = subject.length > 0 ? subject[Math.floor(subject.length * 0.05)] : 0
+    const sHi =
+      subject.length > 0
+        ? subject[Math.min(subject.length - 1, Math.floor(subject.length * 0.95))]
+        : 1
+    const sSpan = sHi - sLo
+    const shade =
+      sSpan > 0.02 ? (x: number, y: number) => clamp01((sHi - lum(x, y)) / sSpan) : () => 0
+    tone = (x, y) =>
+      clamp01(
+        Math.max(1 - lum(x, y), level(x, y) * (0.15 + 0.45 * shade(x, y))) + pump(x, y),
+      )
   } else {
     const scale = 1.5 + chan(seed, 1, C + 'symScale') * 0.8
     const dir = chan(seed, 1, C + 'symDir') * Math.PI * 2

@@ -109,13 +109,25 @@ export function renderStitch(ctx: CanvasRenderingContext2D, env: V2Env): void {
     // entirely (an all-dark frame yields an empty mask and the render stops
     // responding to the viewport). Split the frame adaptively instead:
     // normalize the sampled tones, read the frame border as ground, and
-    // mask the tonal side away from it.
+    // mask the tonal side away from it. Each cell is judged by the MEAN of
+    // a 3x3 sample over its footprint — a single center probe let the
+    // subject slip between cells — and thresholded at 0.4 rather than the
+    // highlight-only 0.55, so the tube's full width (shaded edges included)
+    // enters the mask and the beadwork reads as filled masses, not the
+    // thinned contour of the model's highlight core.
     const samples = new Float32Array(cols * rows)
     let lo = Infinity
     let hi = -Infinity
     for (let j = 0; j < rows; j++) {
       for (let i = 0; i < cols; i++) {
-        const value = lum(centerX(i), centerY(j))
+        let sum = 0
+        for (let sj = 0; sj < 3; sj++) {
+          const sy = y0 + (j + (sj + 0.5) / 3) * c
+          for (let si = 0; si < 3; si++) {
+            sum += lum(x0 + (i + (si + 0.5) / 3) * c, sy)
+          }
+        }
+        const value = sum / 9
         samples[j * cols + i] = value
         if (value < lo) lo = value
         if (value > hi) hi = value
@@ -137,7 +149,7 @@ export function renderStitch(ctx: CanvasRenderingContext2D, env: V2Env): void {
       const invert = ringLevel > 0.5
       for (let k = 0; k < samples.length; k++) {
         const level = (samples[k] - lo) / span
-        if ((invert ? 1 - level : level) > 0.55) raw[k] = 1
+        if ((invert ? 1 - level : level) > 0.4) raw[k] = 1
       }
     }
   } else {
@@ -148,28 +160,31 @@ export function renderStitch(ctx: CanvasRenderingContext2D, env: V2Env): void {
       }
     }
   }
-  // Fatten the mark: its drawn stroke is only 1-2 cells wide at this
-  // coarse grid, so dilate the mask ~2 cells until the stroke spans 4-8
-  // cells and reads as chunky filled masses, not a traced outline.
-  // (Captured-frame luminance is already massy — dilating it would only
-  // smear the source detail, so it keeps the raw mask.)
-  let mask = raw
-  if (!lum) {
-    mask = new Uint8Array(cols * rows)
+  // Fatten the mark. Generated: the drawn stroke is only 1-2 cells wide at
+  // this coarse grid, so dilate the mask ~2 cells until the stroke spans
+  // 4-8 cells and reads as chunky filled masses, not a traced outline.
+  // Material: the thresholded capture still sheds the tube's outermost
+  // shaded cells, so a 1-cell dilation restores the stroke to 3-5 cells —
+  // enough that boundary drop-outs bite into a mass instead of severing a
+  // 1-2 cell trail (the full radius-2 disk would smear the source detail).
+  const dilated = (radius: number, maxDistSq: number): Uint8Array => {
+    const grown = new Uint8Array(cols * rows)
     for (let j = 0; j < rows; j++) {
       for (let i = 0; i < cols; i++) {
         if (raw[j * cols + i] !== 1) continue
-        for (let dj = -2; dj <= 2; dj++) {
-          for (let di = -2; di <= 2; di++) {
-            if (di * di + dj * dj > 4) continue
+        for (let dj = -radius; dj <= radius; dj++) {
+          for (let di = -radius; di <= radius; di++) {
+            if (di * di + dj * dj > maxDistSq) continue
             const ii = i + di
             const jj = j + dj
-            if (ii >= 0 && jj >= 0 && ii < cols && jj < rows) mask[jj * cols + ii] = 1
+            if (ii >= 0 && jj >= 0 && ii < cols && jj < rows) grown[jj * cols + ii] = 1
           }
         }
       }
     }
+    return grown
   }
+  const mask = lum ? dilated(1, 2) : dilated(2, 4)
   let maskCells = 0
   for (let k = 0; k < mask.length; k++) maskCells += mask[k]
 
@@ -481,10 +496,15 @@ export function renderStitch(ctx: CanvasRenderingContext2D, env: V2Env): void {
       // drop ~5% of interior mask cells and bite harder into boundary
       // cells so the form's edge crumbles instead of tracing a clean
       // outline; blob-only cells are more porous still, so on inspection
-      // the solid mark masses separate from their camouflage satellites
+      // the solid mark masses separate from their camouflage satellites.
+      // Material masks bite gently (0.08): the captured stroke runs 3-5
+      // cells, so nearly every cell is a boundary cell and the 2D rate
+      // would fray the form into fragments at oblique poses.
       const dropRate = inMask
         ? !isMask(i - 1, j) || !isMask(i + 1, j) || !isMask(i, j - 1) || !isMask(i, j + 1)
-          ? 0.12 + 0.12 * complexity
+          ? lum
+            ? 0.08
+            : 0.12 + 0.12 * complexity
           : 0.05
         : 0.2
       let twinkle = 0

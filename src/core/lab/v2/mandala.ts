@@ -2,6 +2,7 @@ import { motionHarmonic, type V2Env } from './system'
 import type { Field } from '../field'
 import { chan } from '@/core/organic/random'
 import { hexToRgb, rgbCss, type RGB } from '@/core/lab/colorField'
+import { normalizedLuminance } from './pattern'
 
 // V2 'Mandala' — a pixel-mandala built entirely from small squares on a
 // fixed lattice. Concentric irregular ZONES of palette color emanate from
@@ -37,8 +38,33 @@ function mixRgb(a: RGB, b: RGB, t: number): RGB {
   return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
 }
 
-function relLum([r, g, b]: RGB): number {
-  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
+// Separable box blur over a w x h grid, edge-clamped. The 3D material branch
+// stacks blurred copies of the captured tone field — the material analogue of
+// the generated branch's SOFT_STACK — so the summed field's level sets ring
+// the model's silhouette the way the 2D level sets ring the mark.
+function boxBlur(src: Float32Array, w: number, h: number, r: number): Float32Array {
+  const tmp = new Float32Array(src.length)
+  const out = new Float32Array(src.length)
+  const inv = 1 / (2 * r + 1)
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      let acc = 0
+      for (let d = -r; d <= r; d++) {
+        acc += src[j * w + Math.max(0, Math.min(w - 1, i + d))]
+      }
+      tmp[j * w + i] = acc * inv
+    }
+  }
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      let acc = 0
+      for (let d = -r; d <= r; d++) {
+        acc += tmp[Math.max(0, Math.min(h - 1, j + d)) * w + i]
+      }
+      out[j * w + i] = acc * inv
+    }
+  }
+  return out
 }
 
 // OKLab lightness of an sRGB color — same scale as plan swatch .lightness
@@ -230,16 +256,100 @@ export function renderMandala(ctx: CanvasRenderingContext2D, env: V2Env): void {
   const bRows = Math.ceil(rows / 4)
   const blockT = new Float32Array(bCols * bRows)
   const lum = env.luminance
-  const groundIsLight = relLum(groundRgb) > 0.45
-  if (lum) {
-    // 3D material mode: captured-frame tone drives the ramp instead of
-    // the symbol field (contrast-vs-ground direction) — unchanged
+
+  // Ramp finish shared by the generated branch AND the 3D material branch:
+  // histogram-equalize the sampled field over the frame. The mapping is
+  // monotone, so t's level sets still flow around the form, but every zone
+  // is guaranteed a real share of the canvas however steep (or bimodal) the
+  // field is: the bottom R0 of blocks sit below t=0 (fringe scatter fading
+  // into bare ground on the field's far side), the rest split evenly into
+  // the stepped zones, core = deepest inside the form. The angular wobble
+  // rides on t through a mid-band window (zero at both extremes: far ground
+  // stays clean, core stays coherent) so the contour bands stay
+  // chunky-organic and the outline never sharpens.
+  const equalizeAndWobble = (anchorX: number, anchorY: number): void => {
+    const R0 = 0.32
+    const sorted = blockT.slice()
+    sorted.sort()
+    const nB = sorted.length
+    const cdf = (v: number): number => {
+      let lo = 0
+      let hi = nB
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1
+        if (sorted[mid] < v) lo = mid + 1
+        else hi = mid
+      }
+      const first = lo
+      hi = nB
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1
+        if (sorted[mid] <= v) lo = mid + 1
+        else hi = mid
+      }
+      return (first + lo) / 2 / nB
+    }
     for (let by = 0; by < bRows; by++) {
       for (let bx = 0; bx < bCols; bx++) {
-        const l = lum((bx * 4 + 2) * p, (by * 4 + 2) * p)
-        const tone = groundIsLight ? 1 - l : l
-        blockT[by * bCols + bx] = tone * 1.3 - 0.15
+        const i = by * bCols + bx
+        const n = (cdf(blockT[i]) - R0) / (1 - R0)
+        const th = Math.atan2((by * 4 + 2) * p - anchorY, (bx * 4 + 2) * p - anchorX)
+        const wob = wobble(th)
+        const m = Math.max(0, Math.min(1, n))
+        blockT[i] = n + wob * Math.min(1, 4 * m * (1 - m))
       }
+    }
+  }
+
+  if (lum) {
+    // 3D material mode: the captured frame's tone drives the ramp through
+    // the SAME ring machinery as the generated branch. The raw frame is
+    // bimodal (bright model over dark recipe ground), so a linear map
+    // collapses the mandala grammar to a two-zone posterize; instead:
+    // (1) border-referenced normalization (pattern's normalizedLuminance)
+    // so exposure and ground color can never flip polarity — 0 ground side,
+    // 1 model side; (2) a stack of box-blurred copies (the material
+    // analogue of SOFT_STACK) summed in ascending weights, so the field
+    // ramps outward from the silhouette and the outer zones RING the model;
+    // (3) the shared histogram equalization + angular wobble, anchored at
+    // the frame tone's centroid, so every zone owns a real share of the
+    // frame and the boundaries go chunky-organic. Material renders are
+    // motionless stills, so none of this touches the 2D loop constraint.
+    const tone = normalizedLuminance(env)
+    const base = new Float32Array(bCols * bRows)
+    let toneSum = 0
+    let toneX = 0
+    let toneY = 0
+    for (let by = 0; by < bRows; by++) {
+      for (let bx = 0; bx < bCols; bx++) {
+        const px = (bx * 4 + 2) * p
+        const py = (by * 4 + 2) * p
+        const v = tone(px, py)
+        base[by * bCols + bx] = v
+        toneSum += v
+        toneX += v * px
+        toneY += v * py
+      }
+    }
+    const r1 = Math.max(1, Math.round(Math.min(bCols, bRows) / 9))
+    const blur1 = boxBlur(base, bCols, bRows, r1)
+    const blur2 = boxBlur(blur1, bCols, bRows, r1 * 2)
+    let fMin = Infinity
+    let fMax = -Infinity
+    for (let i = 0; i < blockT.length; i++) {
+      const v = base[i] * 0.55 + blur1[i] * 0.85 + blur2[i] * 1.3
+      blockT[i] = v
+      if (v < fMin) fMin = v
+      if (v > fMax) fMax = v
+    }
+    if (fMax - fMin > 1e-4) {
+      equalizeAndWobble(
+        toneSum > 1e-6 ? toneX / toneSum : outW / 2,
+        toneSum > 1e-6 ? toneY / toneSum : outH / 2,
+      )
+    } else {
+      // flat frame (no model in view): bare ground, nothing to ring
+      blockT.fill(-1)
     }
   } else {
     // pass 1: sample the mark's graded field once per block
@@ -255,47 +365,9 @@ export function renderMandala(ctx: CanvasRenderingContext2D, env: V2Env): void {
     }
     const span = fMax - fMin
     if (span > 1e-4) {
-      // pass 2: histogram-equalize the sampled field over the frame. The
-      // mapping is monotone, so t's level sets still flow around the
-      // mark's form, but every zone is guaranteed a real share of the
-      // canvas however steep the silhouette's native falloff is: the
-      // bottom R0 of blocks sit below t=0 (fringe scatter fading into
-      // bare ground on the field's far side), the rest split evenly into
-      // the stepped zones, core = deepest inside the mark. The angular
-      // wobble rides on t through a mid-band window (zero at both
-      // extremes: far ground stays clean, core stays coherent) so the
-      // contour bands stay chunky-organic and the outline never sharpens.
-      const R0 = 0.32
-      const sorted = blockT.slice()
-      sorted.sort()
-      const nB = sorted.length
-      const cdf = (v: number): number => {
-        let lo = 0
-        let hi = nB
-        while (lo < hi) {
-          const mid = (lo + hi) >> 1
-          if (sorted[mid] < v) lo = mid + 1
-          else hi = mid
-        }
-        const first = lo
-        hi = nB
-        while (lo < hi) {
-          const mid = (lo + hi) >> 1
-          if (sorted[mid] <= v) lo = mid + 1
-          else hi = mid
-        }
-        return (first + lo) / 2 / nB
-      }
-      for (let by = 0; by < bRows; by++) {
-        for (let bx = 0; bx < bCols; bx++) {
-          const i = by * bCols + bx
-          const n = (cdf(blockT[i]) - R0) / (1 - R0)
-          const th = Math.atan2((by * 4 + 2) * p - ay, (bx * 4 + 2) * p - ax)
-          const wob = wobble(th)
-          const m = Math.max(0, Math.min(1, n))
-          blockT[i] = n + wob * Math.min(1, 4 * m * (1 - m))
-        }
-      }
+      // pass 2: the shared equalization + wobble, anchored at the mark's
+      // placement center
+      equalizeAndWobble(ax, ay)
     } else {
       // no mark loaded: fall back to the point-radial composition
       for (let by = 0; by < bRows; by++) {
