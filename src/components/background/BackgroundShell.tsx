@@ -6,6 +6,7 @@ import { LooksPanel } from '@/components/lab/LooksPanel'
 import { LabCanvas } from '@/components/lab/LabCanvas'
 import { ColorsPanel } from '@/components/lab/ColorsPanel'
 import { LabExportPanel } from '@/components/lab/LabExportPanel'
+import { SeedSheetButton } from '@/components/lab/SeedSheet'
 import { CANVAS_FIT_VIEW_EVENT } from '@/components/lab/canvasEvents'
 import {
   BACKGROUND_AUTOSAVE_KEY,
@@ -154,6 +155,7 @@ export function BackgroundShell() {
           <button type="button" className="lab-chip" onClick={newVariation}>
             New variation
           </button>
+          <SeedSheetButton />
           <button type="button" className="lab-chip" onClick={() => setConfirmReset(true)}>
             Reset all
           </button>

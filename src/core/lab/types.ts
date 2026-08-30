@@ -14,7 +14,9 @@ export type LabFit = 'contain' | 'cover'
 // V1b is a comparison variant of the V1-era Canvas2D pipeline carrying the
 // texture-on-paper color direction. It lives in `./v1b` and does not share
 // renderers with V1 or V2, so neither is affected by changes to it.
-export type LookVersion = 'v1' | 'v1b' | 'v2'
+// V4 is the next catalog generation: three systems rendered through
+// src/core/lab/v4/ over the same V2Env the V3-tab systems consume.
+export type LookVersion = 'v1' | 'v1b' | 'v2' | 'v4'
 
 export type LabSourceMeta = {
   filename?: string

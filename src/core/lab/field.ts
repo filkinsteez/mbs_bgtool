@@ -30,17 +30,20 @@ export function fitRect(
 }
 
 // output coords -> map pixel coords through the fit rect; outside the
-// rect the field is 0 (no evidence, no marks)
+// rect the field is `outside` — 0 by default (no evidence, no marks),
+// overridable for planes whose empty value is not 0 (depth reads 1 in
+// empty space, packed normals read 0.5)
 export function fieldFromMap(
   data: Float32Array,
   mw: number,
   mh: number,
   rect: FitRect,
+  outside = 0,
 ): Field {
   return (x, y) => {
     const u = (x - rect.x) / rect.w
     const v = (y - rect.y) / rect.h
-    if (u < 0 || u > 1 || v < 0 || v > 1) return 0
+    if (u < 0 || u > 1 || v < 0 || v > 1) return outside
     return sampleMap(data, mw, mh, u * mw - 0.5, v * mh - 0.5)
   }
 }

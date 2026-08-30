@@ -22,13 +22,14 @@ import type { LookVersion } from '@/core/lab/types'
 // leak in.
 
 const GENERIC_3D_BASE_RECIPE = createDefaultBackgroundRecipe(1913)
-const LOOK_VERSIONS: readonly LookVersion[] = ['v1', 'v1b', 'v2']
-// Display names count 1-2-3; the stored version ids stay as-is so saved
+const LOOK_VERSIONS: readonly LookVersion[] = ['v1', 'v1b', 'v2', 'v4']
+// Display names count 1-2-3-4; the stored version ids stay as-is so saved
 // recipes and share links keep deserializing.
 const LOOK_VERSION_LABELS: Record<LookVersion, string> = {
   v1: 'V1',
   v1b: 'V2',
   v2: 'V3',
+  v4: 'V4',
 }
 const GENERIC_3D_RECIPE = {
   ...GENERIC_3D_BASE_RECIPE,

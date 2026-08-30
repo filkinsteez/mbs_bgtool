@@ -23,6 +23,9 @@ export type LookId =
   | 'mandala'
   | 'stitch'
   | 'dither'
+  | 'composite'
+  | 'plates'
+  | 'loom'
   | 'frame'
   | 'pixels'
   | 'scanlines'
@@ -48,12 +51,26 @@ export const V2_LOOKS: Look[] = [
 
 export const V2_SYSTEM_IDS = new Set<LookId>(['pattern', 'mandala', 'stitch', 'dither'])
 
+// The V4 catalog: three systems rendered through src/core/lab/v4/ over the
+// same V2Env the V3-tab systems consume. Like the V2 systems their patches
+// stay minimal — every dial they honor is read from the env at render time.
+export const V4_LOOKS: Look[] = [
+  { id: 'composite', label: 'Composite', patch: { sourceVisibility: 0 } },
+  { id: 'plates', label: 'Plates', patch: { sourceVisibility: 0 } },
+  { id: 'loom', label: 'Loom', patch: { sourceVisibility: 0 } },
+]
+
+export const V4_SYSTEM_IDS = new Set<LookId>(['composite', 'plates', 'loom'])
+
 export function looksForVersion(version: LookVersion): Look[] {
+  if (version === 'v4') return V4_LOOKS
   return version === 'v2' ? V2_LOOKS : LOOKS
 }
 
 export function lookById(id: LookId): Look | undefined {
-  return LOOKS.find((look) => look.id === id) ?? V2_LOOKS.find((look) => look.id === id)
+  return LOOKS.find((look) => look.id === id)
+    ?? V2_LOOKS.find((look) => look.id === id)
+    ?? V4_LOOKS.find((look) => look.id === id)
 }
 
 export const LOOKS: Look[] = [
@@ -232,8 +249,8 @@ export function lookComplexityPatch(
 ): LabPatch {
   if (version === 'v1') return v1DetailPatch(value)
   if (version === 'v1b') return lookComplexityPatchV1b(lookId, value)
-  // the V2 systems read look.complexity directly at render time
-  if (V2_SYSTEM_IDS.has(lookId)) return {}
+  // the V2 and V4 systems read look.complexity directly at render time
+  if (V2_SYSTEM_IDS.has(lookId) || V4_SYSTEM_IDS.has(lookId)) return {}
   const complexity = Math.max(0, Math.min(1, value))
   const profile = COMPLEXITY_PROFILES[lookId]
   if (!profile) return {}
@@ -280,7 +297,7 @@ export function lookPatchFor(
 ): LabPatch {
   if (version === 'v1') return v1LookPatchFor(look, hasSource)
   if (version === 'v1b') return lookPatchForV1b(look.id, hasSource)
-  if (V2_SYSTEM_IDS.has(look.id)) return look.patch
+  if (V2_SYSTEM_IDS.has(look.id) || V4_SYSTEM_IDS.has(look.id)) return look.patch
   const patch = look.patch
   if (hasSource) return patch
   const bands = patch.territory?.bands

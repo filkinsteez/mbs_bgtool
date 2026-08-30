@@ -284,6 +284,7 @@ export function deserializeBackgroundRecipe(json: string): BackgroundRecipeV2 | 
       : serializedLookVersion === 'v1'
         || serializedLookVersion === 'v1b'
         || serializedLookVersion === 'v2'
+        || serializedLookVersion === 'v4'
         ? serializedLookVersion
         : 'v1'
     const migratedLook = LEGACY_MATERIAL_LOOKS[recipe.material.id as string]

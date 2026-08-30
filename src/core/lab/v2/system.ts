@@ -34,6 +34,19 @@ export type V2Env = {
   // source luminance 0..1 when processing a captured frame (3D mode),
   // null for generated backgrounds
   luminance: Field | null
+  // 3D material mode only — captured with the frame at the settled pose,
+  // null/absent in 2D and whenever the passes are unavailable (context
+  // loss, capture failure). Sampled over the same fit rect as luminance.
+  //   depth    0..1 view depth normalized over the MODEL's own span:
+  //            0 = nearest model point, 1 = farthest; background (and
+  //            outside the source rect) reads exactly 1.
+  //   normalX  view-space surface normal X packed 0..1 (value*2-1
+  //            recovers the component; +X = screen right); background 0.5.
+  //   normalY  view-space surface normal Y packed 0..1 (+Y = screen UP);
+  //            background 0.5. 0.5/0.5 together = facing the camera.
+  depth?: Field | null
+  normalX?: Field | null
+  normalY?: Field | null
   motionPhase: number // 0..1, exactly loopable
   motionAmount: number // 0..1
   motionEnergy: number // 0..1, from the Energy slider (motion.speed 0.1..2)
@@ -93,9 +106,18 @@ export function buildV2Env(lab: LabState, source: LabSource | null): V2Env {
   }
 
   let luminance: Field | null = null
+  let depth: Field | null = null
+  let normalX: Field | null = null
+  let normalY: Field | null = null
   const maps = source?.maps
   if (maps) {
     const rect = fitRect(source.fullW, source.fullH, outW, outH, lab.source?.fit ?? 'cover')
+    const aux = source.aux
+    if (aux) {
+      depth = fieldFromMap(aux.depth, aux.w, aux.h, rect, 1)
+      normalX = fieldFromMap(aux.normalX, aux.w, aux.h, rect, 0.5)
+      normalY = fieldFromMap(aux.normalY, aux.w, aux.h, rect, 0.5)
+    }
     if (lab.sourceMask === 'border-distance') {
       // 3D material mode (the only path that sets this mask): the live
       // capture carries the model silhouette in ALPHA, and the shared
@@ -131,6 +153,9 @@ export function buildV2Env(lab: LabState, source: LabSource | null): V2Env {
     plan: lab.colors.plan,
     symbolField,
     luminance,
+    depth,
+    normalX,
+    normalY,
     motionPhase: (((lab.motion.frame?.phase ?? 0) % 1) + 1) % 1,
     motionAmount: lab.motion.enabled ? Math.max(0, Math.min(1, lab.motion.amount)) : 0,
     // motion.speed runs 0.1..2 (see MotionState); normalize to 0..1 with the

@@ -28,6 +28,7 @@ import { renderBackgroundLook } from './backgroundLookGpu'
 import { renderLabV1, renderSourceOverlayV1 } from './v1/render'
 import { renderLabV1b, renderSourceOverlayV1b } from './v1b/render'
 import { renderLabV2System } from './v2/render'
+import { renderLabV4System } from './v4/render'
 
 const paintPixelField = (..._args: any[]) => {}
 const renderQuilt = (..._args: any[]) => {}
@@ -96,6 +97,7 @@ export function renderLab(
     return
   }
   if (renderLabV2System(ctx, lab, source, view)) return
+  if (renderLabV4System(ctx, lab, source, view)) return
   renderLabV2(ctx, lab, source, protos, view, paintRaster)
 }
 

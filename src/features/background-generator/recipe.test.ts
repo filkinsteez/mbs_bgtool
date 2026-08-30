@@ -220,6 +220,66 @@ describe('background recipe', () => {
     expect(backgroundRecipeToLab(recipe)).toEqual(backgroundRecipeToLab(recipe))
   })
 
+  it('round-trips V4 recipes and heals foreign look ids into the V4 catalog', () => {
+    const recipe = createDefaultBackgroundRecipe(42)
+    const v4 = {
+      ...recipe,
+      look: { id: 'plates' as const, detail: 0.5, version: 'v4' as const },
+    }
+    expect(deserializeBackgroundRecipe(JSON.stringify(v4))).toEqual(v4)
+
+    // a look from another catalog heals to the V4 catalog's first slot
+    const alien = {
+      ...recipe,
+      look: { id: 'pattern' as const, detail: 0.5, version: 'v4' as const },
+    }
+    expect(deserializeBackgroundRecipe(JSON.stringify(alien))?.look).toEqual({
+      id: 'composite',
+      detail: 0.5,
+      version: 'v4',
+    })
+
+    // and a V4 id on another tab heals into THAT catalog
+    const strayed = {
+      ...recipe,
+      look: { id: 'loom' as const, detail: 0.5, version: 'v2' as const },
+    }
+    expect(deserializeBackgroundRecipe(JSON.stringify(strayed))?.look).toEqual({
+      id: 'pattern',
+      detail: 0.5,
+      version: 'v2',
+    })
+  })
+
+  it('routes V4 looks through the V2-shaped lab environment', () => {
+    const recipe = createDefaultBackgroundRecipe(42)
+    const v4 = {
+      ...recipe,
+      look: { id: 'loom' as const, detail: 0.7, version: 'v4' as const },
+    }
+    const lab = backgroundRecipeToLab(v4)
+    expect(lab.look).toMatchObject({
+      id: 'loom',
+      version: 'v4',
+      complexity: 0.7,
+    })
+    // V4 systems read complexity from the env, so the minimal patch must
+    // not disturb the default carrier the way band looks do
+    expect(lab.sourceVisibility).toBe(0)
+    expect(lab.composition).toBeDefined()
+    expect(lab.colors.plan).toBeDefined()
+    // canonical centered mark placement, never reoriented
+    const curve = lab.territory.sources.find((source) => source.curve)
+    expect(curve?.curve).toMatchObject({
+      amplitudeX: CANONICAL_META_SAFE_AREA.width,
+      amplitudeY: CANONICAL_META_SAFE_AREA.height,
+      offsetX: 0,
+      offsetY: 0,
+      rotation: 0,
+      silhouette: 'meta-symbol',
+    })
+  })
+
   it('routes V1 and V2 through their matching Look recipes', () => {
     const current = createDefaultBackgroundRecipe(42)
     const v1 = {

@@ -14,6 +14,24 @@ import { labContentHash } from './recipe'
 
 const ANALYSIS_MAX = 1024
 
+// Depth/normal planes captured alongside a 3D material frame. Bounded to
+// their own small resolution (the capture decides — at most the analysis
+// budget), same top-down row order as the analysis maps, and sampled
+// bilinearly like lum. Value conventions:
+//   depth    0..1 view depth normalized over the MODEL's own span —
+//            0 = nearest model point, 1 = farthest; background = exactly 1.
+//   normalX  view-space normal X packed 0..1 (value*2-1 recovers the
+//            component; +X = screen right). Background = exactly 0.5.
+//   normalY  view-space normal Y packed 0..1 (+Y = screen UP, WebGL view
+//            space). Background = exactly 0.5.
+export type LabAuxPlanes = {
+  w: number
+  h: number
+  depth: Float32Array
+  normalX: Float32Array
+  normalY: Float32Array
+}
+
 export type LabSource = {
   image: CanvasImageSource
   url?: string // object URL, revoked on replace
@@ -22,11 +40,56 @@ export type LabSource = {
   maps: AnalysisMaps
   hash: string
   filename: string
+  // present only when the capture rendered the aux passes (3D material
+  // mode); 2D imports and generated fixtures never carry them
+  aux?: LabAuxPlanes
 }
 
 export type LabSourceOptions = {
   filename?: string
   url?: string
+  aux?: LabAuxPlanes | null
+}
+
+// FNV-1a over quantized strided samples of the aux planes. Joined to the
+// content hash as a suffix so a pose change that only moves depth/normals
+// still re-treats, while the color+silhouette component stays identical.
+function auxPlanesHash(aux: LabAuxPlanes): string {
+  let hsh = 0x811c9dc5
+  const mix = (value: number) => {
+    hsh ^= value & 0xff
+    hsh = Math.imul(hsh, 0x01000193) >>> 0
+  }
+  const plane = (data: Float32Array) => {
+    const stride = Math.max(1, Math.floor(data.length / 4096))
+    for (let i = 0; i < data.length; i += stride) mix(Math.round(data[i] * 255))
+  }
+  mix(aux.w)
+  mix(aux.w >> 8)
+  mix(aux.h)
+  mix(aux.h >> 8)
+  plane(aux.depth)
+  plane(aux.normalX)
+  plane(aux.normalY)
+  return hsh.toString(16).padStart(8, '0')
+}
+
+function withAux(hash: string, aux: LabAuxPlanes | null | undefined): string {
+  return aux ? `${hash}-${auxPlanesHash(aux)}` : hash
+}
+
+// Aux planes for a frozen capture canvas travel OUT OF BAND: the export
+// path hands the raw frame canvas across module boundaries as a plain
+// HTMLCanvasElement, so the capture attaches its planes here and
+// createLabSourceFromCanvas picks them up. WeakMap-keyed — no lifetime
+// management, the planes die with the canvas.
+const auxByImage = new WeakMap<object, LabAuxPlanes>()
+
+export function attachLabAuxPlanes(
+  image: CanvasImageSource,
+  aux: LabAuxPlanes,
+): void {
+  auxByImage.set(image as object, aux)
 }
 
 let current: LabSource | null = null
@@ -66,8 +129,9 @@ export function createLabSourceFromImage(
     fullW,
     fullH,
     maps: analyzeRGBA(data.data, aw, ah),
-    hash: labContentHash(data.data, aw, ah),
+    hash: withAux(labContentHash(data.data, aw, ah), options.aux),
     filename: options.filename ?? 'rgba-source',
+    ...(options.aux ? { aux: options.aux } : {}),
   }
 }
 
@@ -113,8 +177,9 @@ export function createLabSourceFromOpaqueWithSilhouette(
     fullW,
     fullH,
     maps,
-    hash: labContentHash(color, aw, ah),
+    hash: withAux(labContentHash(color, aw, ah), options.aux),
     filename: options.filename ?? 'rgba-source',
+    ...(options.aux ? { aux: options.aux } : {}),
   }
 }
 
@@ -135,7 +200,11 @@ export function createLabSourceFromCanvas(
     snapshot,
     snapshot.width,
     snapshot.height,
-    { ...options, filename: options.filename ?? 'canvas-frame.rgba' },
+    {
+      aux: auxByImage.get(canvas) ?? null,
+      ...options,
+      filename: options.filename ?? 'canvas-frame.rgba',
+    },
   )
 }
 

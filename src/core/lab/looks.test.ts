@@ -2,8 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   LOOKS,
   V1_LOOK_PATCHES,
+  V2_LOOKS,
+  V4_LOOKS,
+  V4_SYSTEM_IDS,
+  lookById,
   lookComplexityPatch,
   lookPatchFor,
+  looksForVersion,
 } from './looks'
 
 describe('approved looks', () => {
@@ -135,5 +140,36 @@ describe('approved looks', () => {
       'marks',
       'mosaic',
     ])
+  })
+})
+
+describe('version catalogs', () => {
+  it('serves each version its own catalog', () => {
+    expect(looksForVersion('v1')).toBe(LOOKS)
+    expect(looksForVersion('v1b')).toBe(LOOKS)
+    expect(looksForVersion('v2')).toBe(V2_LOOKS)
+    expect(looksForVersion('v4')).toBe(V4_LOOKS)
+    expect(V2_LOOKS.map((look) => look.id)).toEqual([
+      'pattern',
+      'mandala',
+      'stitch',
+      'dither',
+    ])
+  })
+
+  it('keeps the three V4 systems minimal and resolvable', () => {
+    expect(V4_LOOKS.map((look) => look.id)).toEqual(['composite', 'plates', 'loom'])
+    expect(V4_LOOKS.map((look) => look.label)).toEqual(['Composite', 'Plates', 'Loom'])
+    for (const look of V4_LOOKS) {
+      expect(V4_SYSTEM_IDS.has(look.id)).toBe(true)
+      expect(look.patch).toEqual({ sourceVisibility: 0 })
+      expect(lookById(look.id)).toBe(look)
+      // like the V2 systems, complexity and the preset stay out of the
+      // patch path — the renderers read the env at render time
+      expect(lookComplexityPatch(look.id, 0.15)).toEqual({})
+      expect(lookComplexityPatch(look.id, 0.85)).toEqual({})
+      expect(lookPatchFor(look, false)).toBe(look.patch)
+      expect(lookPatchFor(look, true)).toBe(look.patch)
+    }
   })
 })
