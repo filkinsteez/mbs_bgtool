@@ -1,11 +1,17 @@
 'use client'
 
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
   getMaterialModelStatus,
   subscribeMaterialModelStatus,
 } from '@/components/background/materialModelEvents'
 import { exportMaterialAtTarget } from '@/features/background-generator/material/exportMaterial'
+import {
+  defaultPresetName,
+  parseLookPreset,
+  presetFilename,
+  serializeLookPreset,
+} from '@/features/background-generator/lookPreset'
 import { canonicalizeFormat } from '@/features/background-generator/recipe'
 import {
   exportBackground2DPng,
@@ -35,6 +41,7 @@ export function LabExportPanel() {
   const recipe = useBackgroundStore((state) => state.recipe)
   const mode = useBackgroundStore((state) => state.mode)
   const output = recipe.format
+  const presetInputRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   const [noteKind, setNoteKind] = useState<'status' | 'error'>('status')
@@ -76,6 +83,30 @@ export function LabExportPanel() {
     }
   }
 
+  const doSaveLook = () => {
+    const state = useBackgroundStore.getState()
+    const name = defaultPresetName(state.recipe, state.mode)
+    const json = serializeLookPreset(state.recipe, state.mode, name)
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
+    a.download = presetFilename(name)
+    a.click()
+    URL.revokeObjectURL(a.href)
+    flash('Look saved')
+  }
+
+  const doOpenLook = async (file: File) => {
+    const parsed = parseLookPreset(await file.text())
+    if (!parsed) {
+      flash('Not a look file', 'error')
+      return
+    }
+    const store = useBackgroundStore.getState()
+    store.replaceRecipe(parsed.recipe)
+    store.setMode(parsed.recipe.mode)
+    flash(`Loaded ${parsed.name}`)
+  }
+
   // dev capture hook — the REAL export as a dataURL for the devshot loop
   useEffect(() => {
     if (process.env.NODE_ENV === 'production') return
@@ -104,6 +135,31 @@ export function LabExportPanel() {
       >
         {busy ? 'Rendering…' : 'Export'}
       </button>
+      <div className="lab-look-preset-row">
+        <button type="button" className="ctl-action" onClick={doSaveLook}>
+          Save look
+        </button>
+        <button
+          type="button"
+          className="ctl-action"
+          onClick={() => presetInputRef.current?.click()}
+        >
+          Open look
+        </button>
+        <input
+          ref={presetInputRef}
+          type="file"
+          accept="application/json,.json"
+          className="lab-visually-hidden"
+          aria-label="Open look file"
+          tabIndex={-1}
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0]
+            event.currentTarget.value = ''
+            if (file) void doOpenLook(file)
+          }}
+        />
+      </div>
       {note ? (
         <div
           className="panel-note"
