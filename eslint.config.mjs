@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Gitignored scratch space for dev harnesses and their generated
+    // bundles — never part of the shipped source.
+    ".devshots/**",
   ]),
 ]);
 
