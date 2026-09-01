@@ -398,3 +398,29 @@ describe('background recipe', () => {
     expect(backgroundRecipeToLab(changedMaterial)).toEqual(backgroundRecipeToLab(background))
   })
 })
+
+describe('legacy brand hex migration', () => {
+  it('heals pre-correction hexes in saved mixes, roles, and material colors', () => {
+    const stale = createDefaultBackgroundRecipe(11)
+    stale.palette.packId = 'bold'
+    stale.palette.mix = [
+      { color: '#0064E0', enabled: true, ratio: 40 },
+      { color: '#FED61F', enabled: true, ratio: 30 },
+      { color: '#FF5001', enabled: true, ratio: 20 },
+      { color: '#26C8EE', enabled: true, ratio: 10 },
+    ]
+    stale.palette.ink = '#FED61F'
+    stale.palette.ground = '#1C2A33'
+    stale.material.backgroundColor = '#1C2A33'
+    stale.material.highlightColor = '#D6E7EE'
+    const healed = deserializeBackgroundRecipe(JSON.stringify(stale))
+    expect(healed).not.toBeNull()
+    expect(healed!.palette.mix.map((item) => item.color)).toEqual([
+      '#0064E0', '#FFD61E', '#FF4F00', '#25C8EE',
+    ])
+    expect(healed!.palette.ink).toBe('#FFD61E')
+    expect(healed!.palette.ground).toBe('#1C2B33')
+    expect(healed!.material.backgroundColor).toBe('#1C2B33')
+    expect(healed!.material.highlightColor).toBe('#D7E7EE')
+  })
+})

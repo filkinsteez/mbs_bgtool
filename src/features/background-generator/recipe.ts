@@ -17,6 +17,7 @@ import {
   colorMixForPack,
   CUSTOM_PALETTE_ID,
   META_BLUE,
+  migrateLegacyHex,
   PALETTE_PACKS,
   type ColorMix,
 } from './palette/registry'
@@ -325,6 +326,12 @@ export function deserializeBackgroundRecipe(json: string): BackgroundRecipeV2 | 
     })
     recipe.materialLookOverlay.enabled = recipe.materialLookOverlay.enabled === true
     recipe.symbol.enabled = recipe.symbol.enabled !== false
+    // Saved sessions and preset files may still carry the pre-correction
+    // brand hexes; heal them everywhere a color is stored.
+    recipe.palette.mix = recipe.palette.mix.map((item) => ({
+      ...item,
+      color: migrateLegacyHex(item.color),
+    }))
     const weightedPalette = buildWeightedPalette(recipe.palette.mix, 100)
     recipe.palette.ground = normalizeHexColor(
       rawPalette?.ground,
@@ -334,14 +341,20 @@ export function deserializeBackgroundRecipe(json: string): BackgroundRecipeV2 | 
       rawPalette?.ink,
       weightedPalette[0] ?? META_BLUE,
     )
+    recipe.palette.ground = migrateLegacyHex(recipe.palette.ground)
+    recipe.palette.ink = migrateLegacyHex(recipe.palette.ink)
     recipe.transforms.background = constrainBackgroundTransform(
       recipe.transforms.background,
       recipe.format.width,
       recipe.format.height,
     )
     recipe.transforms.material = normalizeSubjectTransform(recipe.transforms.material)
-    recipe.material.backgroundColor = normalizeHexColor(recipe.material.backgroundColor, META_BLUE)
-    recipe.material.highlightColor = normalizeHexColor(recipe.material.highlightColor, '#FFFFFF')
+    recipe.material.backgroundColor = migrateLegacyHex(
+      normalizeHexColor(recipe.material.backgroundColor, META_BLUE),
+    )
+    recipe.material.highlightColor = migrateLegacyHex(
+      normalizeHexColor(recipe.material.highlightColor, '#FFFFFF'),
+    )
     recipe.material.intensity = clamp01(recipe.material.intensity)
     recipe.material.light = clamp01(recipe.material.light)
     recipe.material.depth = clamp01(recipe.material.depth)

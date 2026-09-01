@@ -17,6 +17,27 @@ export type PalettePack = {
 export { META_BLUE }
 export const CUSTOM_PALETTE_ID = 'custom'
 
+// Eleven swatches shipped one digit off the official brand cards before
+// 2026-08-29. Saved recipes and preset files carry those bytes forever, so
+// loading heals them to the corrected values.
+export const LEGACY_HEX_MIGRATION: Readonly<Record<string, string>> = {
+  '#26C8EE': '#25C8EE',
+  '#FED61F': '#FFD61E',
+  '#FF5001': '#FF4F00',
+  '#1CC5EE': '#1AC5ED',
+  '#AE4FC3': '#AF4EC5',
+  '#824DFF': '#814DFF',
+  '#4F43FF': '#5043FF',
+  '#D6E7EE': '#D7E7EE',
+  '#7CA0B8': '#7CA0B7',
+  '#526069': '#53606A',
+  '#1C2A33': '#1C2B33',
+}
+
+export function migrateLegacyHex(color: string): string {
+  return LEGACY_HEX_MIGRATION[color.trim().toUpperCase()] ?? color
+}
+
 export const APPROVED_COLOR_GROUPS = [
   {
     id: 'blue',

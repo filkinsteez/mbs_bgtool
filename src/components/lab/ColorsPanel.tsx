@@ -35,8 +35,9 @@ export function ColorsPanel() {
     .map((item, index) => ({ item, index }))
     .filter(({ item }) => customActive || item.enabled)
 
+  // Re-clicking the active pack re-deals it — the recovery path when a
+  // saved mix has drifted from the pack's current colors.
   const setPack = (packId: string) => {
-    if (palette.packId === packId) return
     const nextPack = PALETTE_PACKS.find((p) => p.id === packId) ?? PALETTE_PACKS[0]
     const nextMix = colorMixForPack(nextPack)
     const enabled = nextMix.filter((item) => item.enabled)
