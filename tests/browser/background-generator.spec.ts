@@ -296,7 +296,7 @@ test('rewrites legacy format metadata before exposing the generator', async ({ p
 
   await page.goto('/')
   await expect(page.locator('[data-hydrated="true"]')).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Export', exact: true })).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Export image', exact: true })).toHaveCount(1)
   expect(await page.evaluate(() => {
     const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
     return recipe.format
@@ -1201,7 +1201,7 @@ test('pins the accessible mode switch to the stage and keeps mode-specific contr
   await expect(page.getByRole('button', { name: 'Metal', exact: true })).toHaveCount(0)
   await expect(page.locator('.lab-material-quick-colors').getByRole('radio')).toHaveCount(14)
   await page.getByRole('radio', {
-    name: 'Use #FF5001 for material highlight',
+    name: 'Use #FF4F00 for material highlight',
     exact: true,
   }).click()
   await expect.poll(async () =>
@@ -1209,7 +1209,7 @@ test('pins the accessible mode switch to the stage and keeps mode-specific contr
       const recipe = JSON.parse(localStorage.getItem('mbs-bg-generator-autosave-v2') ?? '{}')
       return { mode: recipe.mode, highlight: recipe.material?.highlightColor }
     }),
-  ).toEqual({ mode: 'background', highlight: '#FF5001' })
+  ).toEqual({ mode: 'background', highlight: '#FF4F00' })
   await resetAll(page)
   await expect(materialTab).toHaveAttribute('aria-checked', 'true')
   const viewer = page.locator('[data-mbs-material-model="true"]')
@@ -1458,7 +1458,7 @@ test('opens a picker from a mix swatch and preserves its weight', async ({ page 
   const picker = page.getByRole('dialog', { name: 'Mix color', exact: true })
   await expect(picker).toBeVisible()
   await picker.getByRole('radio', {
-    name: 'Use approved color #FF5001',
+    name: 'Use approved color #FF4F00',
     exact: true,
   }).click()
 
@@ -1473,7 +1473,7 @@ test('opens a picker from a mix swatch and preserves its weight', async ({ page 
       color: palette?.mix?.[0]?.color,
       ratio: palette?.mix?.[0]?.ratio,
     }
-  })).toEqual({ packId: 'custom', color: '#FF5001', ratio: 60 })
+  })).toEqual({ packId: 'custom', color: '#FF4F00', ratio: 60 })
 
   await pressUndo(page)
   await expect.poll(() => page.evaluate(() =>
@@ -2611,7 +2611,7 @@ test('exports both modes as exact 4K PNGs', async ({ page }) => {
 
   const formatSection = page.getByRole('region', { name: 'Aspect ratio', exact: true })
   const exportSection = page.getByRole('region', { name: 'Export', exact: true })
-  await expect(page.getByRole('button', { name: 'Export', exact: true })).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Export image', exact: true })).toHaveCount(1)
   await expect(formatSection.getByRole('radiogroup', { name: 'Aspect ratio', exact: true })).toBeVisible()
   await expect(
     formatSection.getByRole('group', { name: 'Export resolution', exact: true }),
@@ -2624,7 +2624,7 @@ test('exports both modes as exact 4K PNGs', async ({ page }) => {
   await expect(exportSection.getByRole('spinbutton')).toHaveCount(0)
 
   const backgroundDownloadPromise = page.waitForEvent('download')
-  await exportSection.getByRole('button', { name: 'Export', exact: true }).click()
+  await exportSection.getByRole('button', { name: 'Export image', exact: true }).click()
   const backgroundDownload = await backgroundDownloadPromise
   const backgroundPath = await backgroundDownload.path()
   expect(backgroundPath).not.toBeNull()
@@ -2635,7 +2635,7 @@ test('exports both modes as exact 4K PNGs', async ({ page }) => {
   await expect(page.locator('[data-mbs-material-model="true"]'))
     .toHaveAttribute('data-model-status', 'ready')
   const materialDownloadPromise = page.waitForEvent('download')
-  await exportSection.getByRole('button', { name: 'Export', exact: true }).click()
+  await exportSection.getByRole('button', { name: 'Export image', exact: true }).click()
   const materialDownload = await materialDownloadPromise
   const materialPath = await materialDownload.path()
   expect(materialPath).not.toBeNull()
@@ -2734,7 +2734,7 @@ test('exports the shared WebGL 3D scene without WebGPU', async ({ page }) => {
   await expect(viewer.locator('.lab-material-model-canvas')).toBeVisible()
   await expect(page.getByText('GPU effect unavailable · choose Clean')).toHaveCount(0)
   const downloadPromise = page.waitForEvent('download')
-  await page.getByRole('button', { name: 'Export', exact: true }).click()
+  await page.getByRole('button', { name: 'Export image', exact: true }).click()
   const download = await downloadPromise
   expect(await download.path()).not.toBeNull()
   await expect(page.getByText(/Export failed:/)).toHaveCount(0)

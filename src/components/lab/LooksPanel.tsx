@@ -9,6 +9,7 @@ import { useBackgroundStore } from '@/features/background-generator/store'
 import { createDefaultBackgroundRecipe } from '@/features/background-generator/recipe'
 import { renderBackground2DCanvas } from '@/features/background-generator/render2d'
 import { handleRadioGroupKeyDown } from '@/components/controls/radioKeyboard'
+import { SegmentedControl } from '@/components/controls/SegmentedControl'
 import { Slider } from '@/components/controls/Slider'
 import {
   renderRecipeLookToCanvas,
@@ -40,8 +41,8 @@ const GENERIC_3D_RECIPE = {
   },
   material: {
     ...GENERIC_3D_BASE_RECIPE.material,
-    backgroundColor: '#1C2A33',
-    highlightColor: '#D6E7EE',
+    backgroundColor: '#1C2B33',
+    highlightColor: '#D7E7EE',
   },
 }
 
@@ -77,6 +78,7 @@ export function LooksPanel() {
   const lookId = useBackgroundStore((state) => state.recipe.look.id)
   const lookDetail = useBackgroundStore((state) => state.recipe.look.detail)
   const lookVersion = useBackgroundStore((state) => state.recipe.look.version)
+  const symbolEnabled = useBackgroundStore((state) => state.recipe.symbol.enabled)
   const materialOverlayEnabled = useBackgroundStore(
     (state) => state.recipe.materialLookOverlay.enabled,
   )
@@ -85,6 +87,7 @@ export function LooksPanel() {
     return [
       recipe.seed,
       recipe.look.version,
+      recipe.symbol.enabled ? 1 : 0,
       recipe.palette.mix.map((item) =>
         `${item.color}:${item.enabled ? 1 : 0}:${item.ratio}`,
       ).join(','),
@@ -267,6 +270,17 @@ export function LooksPanel() {
           onChange={(detail) => setTransient({ look: { detail } })}
           onCommit={commitTransaction}
         />
+        {mode === 'background' ? (
+          <SegmentedControl
+            label="Symbol"
+            value={symbolEnabled ? 'on' : 'off'}
+            options={[
+              { value: 'on', label: 'On' },
+              { value: 'off', label: 'Off' },
+            ]}
+            onChange={(value) => updateRecipe({ symbol: { enabled: value === 'on' } })}
+          />
+        ) : null}
       </div>
     </div>
   )

@@ -133,7 +133,7 @@ export function LabExportPanel() {
         aria-busy={busy}
         onClick={() => void doExport()}
       >
-        {busy ? 'Rendering…' : 'Export'}
+        {busy ? 'Rendering…' : 'Export image'}
       </button>
       <div className="lab-look-preset-row">
         <button type="button" className="ctl-action" onClick={doSaveLook}>

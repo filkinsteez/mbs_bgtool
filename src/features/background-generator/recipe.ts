@@ -70,6 +70,9 @@ export type BackgroundRecipeV2 = {
   materialLookOverlay: {
     enabled: boolean
   }
+  symbol: {
+    enabled: boolean
+  }
   palette: {
     packId: string
     mix: ColorMix[]
@@ -239,6 +242,7 @@ export function createDefaultBackgroundRecipe(seed = 1913): BackgroundRecipeV2 {
       camera: null,
     },
     motion: { enabled: false, amount: 0, speed: 0.5, loopSeconds: 8 },
+    symbol: { enabled: true },
   }
 }
 
@@ -320,6 +324,7 @@ export function deserializeBackgroundRecipe(json: string): BackgroundRecipeV2 | 
       height: raw.format?.height,
     })
     recipe.materialLookOverlay.enabled = recipe.materialLookOverlay.enabled === true
+    recipe.symbol.enabled = recipe.symbol.enabled !== false
     const weightedPalette = buildWeightedPalette(recipe.palette.mix, 100)
     recipe.palette.ground = normalizeHexColor(
       rawPalette?.ground,
@@ -539,6 +544,13 @@ export function backgroundRecipeToLab(
                     silhouette: 'meta-symbol' as const,
                   },
             }
+          : source,
+      // The symbol toggle: the curve source stays present but disabled, so
+      // every renderer's mark-free fallback engages instead of the canonical
+      // placement the material path synthesizes when no source exists.
+      ).map((source) =>
+        source.kind === 'curve' && recipe.symbol.enabled === false
+          ? { ...source, enabled: false }
           : source,
       ),
     },

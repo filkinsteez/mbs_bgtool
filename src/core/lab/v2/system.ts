@@ -80,12 +80,20 @@ const CANONICAL_META_SNAPSHOT: CurveSnapshot = {
 
 export function buildV2Env(lab: LabState, source: LabSource | null): V2Env {
   const { width: outW, height: outH } = lab.output
-  const curveSource = lab.territory.sources.find(
-    (item) => item.kind === 'curve' && item.enabled && item.curve,
+  // A curve source that exists but is DISABLED is the symbol toggle saying
+  // "no mark": the field must go flat so every look's mark-free fallback
+  // engages. Only a lab with no curve source at all (the material path)
+  // falls back to the canonical placement.
+  const anyCurveSource = lab.territory.sources.find(
+    (item) => item.kind === 'curve' && item.curve,
   )
-  const snapshot = curveSource?.curve ?? CANONICAL_META_SNAPSHOT
+  const curveSource = anyCurveSource?.enabled ? anyCurveSource : undefined
+  const snapshot = anyCurveSource
+    ? curveSource?.curve
+    : CANONICAL_META_SNAPSHOT
 
   const symbolField = (options: SymbolFieldOptions = {}): Field => {
+    if (!snapshot) return () => 0
     const resolved: CurveSnapshot = {
       ...snapshot,
       amplitudeX: snapshot.amplitudeX * (options.scale ?? 1),
