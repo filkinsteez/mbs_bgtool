@@ -175,13 +175,31 @@ export type ColorMix = {
 }
 
 export function colorMixForPack(pack: PalettePack): ColorMix[] {
+  // Applying a pack deals EVERY one of its colors (owner directive): the
+  // lead color carries 40 and the rest split the remaining 60 evenly. The
+  // extended tier is the 49-swatch approved library, not a real pack — it
+  // keeps its curated three-color starting deal.
+  if (pack.tier === 'extended') {
+    return pack.colors.map((color, index) => {
+      const position = pack.defaultMix.indexOf(index)
+      return {
+        color,
+        enabled: position >= 0,
+        ratio: position === 0 ? 60 : position > 0 ? 20 : 0,
+      }
+    })
+  }
+  const rest = pack.colors.length - 1
+  if (rest <= 0) {
+    return pack.colors.map((color) => ({ color, enabled: true, ratio: 100 }))
+  }
+  const base = Math.floor(60 / rest)
+  let remainder = 60 - base * rest
   return pack.colors.map((color, index) => {
-    const position = pack.defaultMix.indexOf(index)
-    return {
-      color,
-      enabled: position >= 0,
-      ratio: position === 0 ? 60 : position > 0 ? 20 : 0,
-    }
+    if (index === 0) return { color, enabled: true, ratio: 40 }
+    const extra = remainder > 0 ? 1 : 0
+    remainder -= extra
+    return { color, enabled: true, ratio: base + extra }
   })
 }
 

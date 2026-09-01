@@ -55,11 +55,21 @@ describe('palette registry', () => {
     }
   })
 
-  it('uses one default mix for initial load and pack selection', () => {
-    expect(colorMixForPack(PALETTE_PACKS[0]).filter((item) => item.enabled)).toEqual([
-      { color: META_BLUE, enabled: true, ratio: 60 },
-      { color: '#0288F9', enabled: true, ratio: 20 },
-      { color: '#132682', enabled: true, ratio: 20 },
+  it('deals every pack color, lead-weighted, summing to 100', () => {
+    for (const pack of PALETTE_PACKS) {
+      if (pack.tier === 'extended') continue
+      const mix = colorMixForPack(pack)
+      expect(mix.map((item) => item.color)).toEqual([...pack.colors])
+      expect(mix.every((item) => item.enabled)).toBe(true)
+      expect(mix[0].ratio).toBe(40)
+      expect(mix.reduce((acc, item) => acc + item.ratio, 0)).toBe(100)
+    }
+    const bold = PALETTE_PACKS.find((pack) => pack.id === 'bold')!
+    expect(colorMixForPack(bold)).toEqual([
+      { color: META_BLUE, enabled: true, ratio: 40 },
+      { color: '#FFD61E', enabled: true, ratio: 20 },
+      { color: '#FF4F00', enabled: true, ratio: 20 },
+      { color: '#25C8EE', enabled: true, ratio: 20 },
     ])
   })
 

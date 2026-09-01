@@ -343,6 +343,28 @@ export function deserializeBackgroundRecipe(json: string): BackgroundRecipeV2 | 
     )
     recipe.palette.ground = migrateLegacyHex(recipe.palette.ground)
     recipe.palette.ink = migrateLegacyHex(recipe.palette.ink)
+    // A non-custom packId guarantees the whole palette is a pack deal (any
+    // manual edit flips the recipe to the custom palette), so when the
+    // pack's definition has changed since the save — colors added, order
+    // fixed — the deal refreshes from the current pack, exactly as
+    // re-selecting it in the Colors panel would.
+    const savedPack = PALETTE_PACKS.find((item) => item.id === recipe.palette.packId)
+    if (savedPack) {
+      const dealt = colorMixForPack(savedPack)
+      const matchesPack = recipe.palette.mix.length === dealt.length
+        && dealt.every((item, index) => {
+          const mixItem = recipe.palette.mix[index]
+          return mixItem
+            && mixItem.color.toUpperCase() === item.color.toUpperCase()
+            && mixItem.enabled === item.enabled
+        })
+      if (!matchesPack) {
+        const enabled = dealt.filter((item) => item.enabled)
+        recipe.palette.mix = dealt
+        recipe.palette.ink = enabled[0]?.color ?? recipe.palette.ink
+        recipe.palette.ground = enabled.at(-1)?.color ?? recipe.palette.ground
+      }
+    }
     recipe.transforms.background = constrainBackgroundTransform(
       recipe.transforms.background,
       recipe.format.width,
