@@ -29,7 +29,7 @@ export const APPROVED_COLOR_GROUPS = [
     id: 'cyan',
     label: 'Cyans & teals',
     colors: sortColorsLightToDark([
-      '#B9E9F3', '#26C8EE', '#1CC5EE', '#25C8F1', '#20C3B8', '#058382', '#043F4D',
+      '#B9E9F3', '#25C8EE', '#1AC5ED', '#25C8F1', '#20C3B8', '#058382', '#043F4D',
     ]),
   },
   {
@@ -43,7 +43,7 @@ export const APPROVED_COLOR_GROUPS = [
     id: 'warm',
     label: 'Yellows & oranges',
     colors: sortColorsLightToDark([
-      '#FCEBA6', '#FFE7CF', '#FED61F', '#FF5001', '#8C4F00',
+      '#FCEBA6', '#FFE7CF', '#FFD61E', '#FF4F00', '#8C4F00',
     ]),
   },
   {
@@ -57,15 +57,15 @@ export const APPROVED_COLOR_GROUPS = [
     id: 'purple',
     label: 'Purples',
     colors: sortColorsLightToDark([
-      '#E7DCFE', '#AE4FC3', '#824DFF', '#4F43FF', '#7852FF', '#3D2A83',
+      '#E7DCFE', '#AF4EC5', '#814DFF', '#5043FF', '#7852FF', '#3D2A83',
     ]),
   },
   {
     id: 'neutral',
     label: 'Neutrals',
     colors: sortColorsLightToDark([
-      '#FFFFFF', '#DAE3EA', '#D6E7EE', '#D1D4DB', '#8D9DAC', '#8B9BAA',
-      '#7CA0B8', '#526069', '#506171', '#27353E', '#1C2B32', '#1C2A33', '#000000',
+      '#FFFFFF', '#DAE3EA', '#D7E7EE', '#D1D4DB', '#8D9DAC', '#8B9BAA',
+      '#7CA0B7', '#53606A', '#506171', '#27353E', '#1C2B32', '#1C2B33', '#000000',
     ]),
   },
 ] as const
@@ -102,7 +102,7 @@ export const PALETTE_PACKS: readonly PalettePack[] = [
     source: 'bold-palette-reference.png',
     hue: 'cyan, yellow, orange',
     tone: 'vivid',
-    colors: [META_BLUE, '#26C8EE', '#FED61F', '#FF5001'],
+    colors: [META_BLUE, '#FFD61E', '#FF4F00', '#25C8EE'],
     defaultMix: [0, 1, 2],
   },
   {
@@ -112,7 +112,7 @@ export const PALETTE_PACKS: readonly PalettePack[] = [
     source: 'harmonious-palette-reference.png',
     hue: 'violet and cyan',
     tone: 'vivid',
-    colors: [META_BLUE, '#AE4FC3', '#824DFF', '#1CC5EE', '#4F43FF'],
+    colors: [META_BLUE, '#1AC5ED', '#AF4EC5', '#814DFF', '#5043FF'],
     defaultMix: [0, 1, 3],
   },
   {
@@ -122,7 +122,7 @@ export const PALETTE_PACKS: readonly PalettePack[] = [
     source: 'atmospheric-palette-reference.png',
     hue: 'blue grey',
     tone: 'soft',
-    colors: [META_BLUE, '#D6E7EE', '#7CA0B8', '#526069', '#1C2A33'],
+    colors: [META_BLUE, '#D7E7EE', '#7CA0B7', '#53606A', '#1C2B33'],
     defaultMix: [0, 1, 4],
   },
   {
@@ -132,7 +132,7 @@ export const PALETTE_PACKS: readonly PalettePack[] = [
     source: 'neutral-palette-reference.png',
     hue: 'neutral',
     tone: 'light to dark',
-    colors: [META_BLUE, '#FFFFFF', '#DAE3EA', '#8D9DAC', '#526069', '#1C2B32', '#000000'],
+    colors: [META_BLUE, '#FFFFFF', '#DAE3EA', '#8D9DAC', '#53606A', '#1C2B32', '#000000'],
     defaultMix: [0, 1, 6],
   },
   {

@@ -114,7 +114,7 @@ const DEFAULT_INPUT = {
   width: 320,
   height: 180,
   seed: 0x05eed123,
-  palette: ['#0064E0', '#0288F9', '#2DC9E5', '#7C3AED', '#FF5001', '#FFFFFF'],
+  palette: ['#0064E0', '#0288F9', '#2DC9E5', '#7C3AED', '#FF4F00', '#FFFFFF'],
   detail: 0.5,
 } as const
 
@@ -124,7 +124,7 @@ const FIXTURE_SOURCE_COLORS = [
   '#0064E0',
   '#2DC9E5',
   '#7C3AED',
-  '#FF5001',
+  '#FF4F00',
   '#FFFFFF',
 ] as const
 

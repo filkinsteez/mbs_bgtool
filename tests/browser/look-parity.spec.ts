@@ -123,7 +123,7 @@ const LOOKS: LookId[] = [
 
 const VARIANT_INPUT = {
   seed: 0x31ced00d,
-  palette: ['#111111', '#FF5001', '#FDE047', '#22D3EE', '#4F43FF', '#FAFAFA'],
+  palette: ['#111111', '#FF4F00', '#FDE047', '#22D3EE', '#5043FF', '#FAFAFA'],
   detail: 0.82,
 }
 
@@ -270,7 +270,7 @@ test('keeps the broad source-aware matrix byte-exact', async ({ page }, testInfo
   )
   test.setTimeout(120_000)
   await openHarness(page)
-  const bold = ['#0064E0', '#0288F9', '#2DC9E5', '#7C3AED', '#FF5001', '#FFFFFF']
+  const bold = ['#0064E0', '#0288F9', '#2DC9E5', '#7C3AED', '#FF4F00', '#FFFFFF']
   const atmospheric = ['#09111F', '#18324A', '#5D7890', '#A9C4D6', '#F8FAFC']
   const cases = [
     { label: '16x9-low-bold', width: 320, height: 180, seed: 42, detail: 0.15, palette: bold },

@@ -34,10 +34,10 @@ describe('material hue groups', () => {
     const groups = groupColorsByHue([
       '#0064E0',
       '#FFFFFF',
-      '#FF5001',
-      '#AE4FC3',
-      '#26C8EE',
-      '#FED61F',
+      '#FF4F00',
+      '#AF4EC5',
+      '#25C8EE',
+      '#FFD61E',
     ])
     expect(groups.map((group) => group.id)).toEqual([
       'blue',

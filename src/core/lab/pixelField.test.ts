@@ -7,7 +7,7 @@ import {
   type PixelFieldInput,
 } from './pixelField'
 
-const PALETTE = ['#0064E0', '#0288F9', '#2DC9E5', '#7C3AED', '#FF5001', '#FFFFFF']
+const PALETTE = ['#0064E0', '#0288F9', '#2DC9E5', '#7C3AED', '#FF4F00', '#FFFFFF']
 
 function input(
   seed = 1913,

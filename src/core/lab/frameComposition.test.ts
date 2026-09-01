@@ -21,7 +21,7 @@ const META_SNAPSHOT: CurveSnapshot = {
   silhouette: 'meta-symbol',
 }
 
-const COLORS = ['#111111', '#0064E0', '#2DC9E5', '#7C3AED', '#FF5001', '#FFFFFF']
+const COLORS = ['#111111', '#0064E0', '#2DC9E5', '#7C3AED', '#FF4F00', '#FFFFFF']
 
 function fixture(width: number, height: number, seed = 1913, complexity = 0.75) {
   const colorPlan = resolveLookColorPlan({

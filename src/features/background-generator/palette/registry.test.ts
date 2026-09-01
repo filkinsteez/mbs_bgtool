@@ -71,11 +71,11 @@ describe('palette registry', () => {
 
   it('adds approved colors without replacing the existing mix', () => {
     const original = [{ color: '#22C55E', ratio: 100, enabled: true }]
-    const next = addColorToMix(original, '#FF5001')
+    const next = addColorToMix(original, '#FF4F00')
 
     expect(next).toEqual([
       { color: '#22C55E', ratio: 100, enabled: true },
-      { color: '#FF5001', ratio: 50, enabled: true },
+      { color: '#FF4F00', ratio: 50, enabled: true },
     ])
     expect(original).toEqual([{ color: '#22C55E', ratio: 100, enabled: true }])
   })
@@ -83,13 +83,13 @@ describe('palette registry', () => {
   it('re-enables an existing color instead of duplicating it', () => {
     const next = addColorToMix([
       { color: '#0064E0', ratio: 100, enabled: true },
-      { color: '#ff5001', ratio: 0, enabled: false },
-    ], '#FF5001')
+      { color: '#ff4f00', ratio: 0, enabled: false },
+    ], '#FF4F00')
 
     expect(next).toHaveLength(2)
     expect(next).toEqual([
       { color: '#0064E0', ratio: 100, enabled: true },
-      { color: '#FF5001', ratio: 50, enabled: true },
+      { color: '#FF4F00', ratio: 50, enabled: true },
     ])
   })
 
