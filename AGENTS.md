@@ -20,6 +20,13 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - The canonical Meta geometry above is still the source of FORM; render
   it however raster techniques serve the look.
 
+## Plain language only (owner directive)
+
+- No poetic or marketing phrasing anywhere: chat replies, commit
+  messages, comments, docs, UI copy. Say what the code does in plain
+  words ("old saves get the new colors when the page loads", not
+  "sessions self-heal").
+
 ## No status badges or explanatory chrome (owner directive)
 
 - Never add passive UI labels, status badges, or explanatory meta text
