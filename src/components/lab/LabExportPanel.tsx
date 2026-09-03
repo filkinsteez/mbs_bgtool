@@ -162,7 +162,7 @@ export function LabExportPanel() {
       </div>
       {note ? (
         <div
-          className="panel-note"
+          className={noteKind === 'error' ? 'lab-toast error' : 'lab-toast'}
           role={noteKind === 'error' ? 'alert' : 'status'}
           aria-live={noteKind === 'error' ? 'assertive' : 'polite'}
         >

@@ -1348,6 +1348,48 @@
   line-height: 1.4;
 }
 
+/* Transient action feedback floats over the canvas instead of pushing
+   panel content down. */
+.lab-toast {
+  position: fixed;
+  z-index: 40;
+  right: 16px;
+  bottom: 16px;
+  max-width: 280px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--chrome-1);
+  box-shadow: 0 8px 22px rgb(0 0 0 / 0.38);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: none;
+  animation: lab-toast-in 160ms ease;
+}
+
+.lab-toast.error {
+  color: #ff8d8d;
+}
+
+@keyframes lab-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lab-toast {
+    animation: none;
+  }
+}
+
 .ctl-dial {
   padding: 0;
 }
