@@ -122,6 +122,9 @@ Every current Look version uses the same material-overlay flow:
 5. Run that source through the same Canvas2D Look renderer used by 2D.
 6. Display the treated canvas over the viewport.
 
+Plates and Loom consume captured depth. Current V3/V4 renderers do not consume
+the captured `normalX` or `normalY` planes.
+
 While the camera is moving, the raw Three.js viewport stays visible. The
 Canvas2D overlay is regenerated after the view settles. Material motion is
 disabled in `sourceAwareLabForRecipe`.
@@ -161,7 +164,11 @@ has paths that need explicit verification:
 
 - V1 uses the archived `V1_META_SYMBOL_PATH` in
   `src/core/lab/v1/metaSymbol.ts`.
-- Some generated transforms rotate or reposition symbol-driven structure.
+- V2 / stored `v1b` rotates the symbol field in
+  `src/features/background-generator/recipe.ts`.
+- V3 Pattern mirrors, rotates, and non-uniformly stretches cropped
+  canonical-derived geometry. V3 Mandala and Dither also rotate
+  canonical-derived fields.
 - The Material mode loads a separate OBJ through
   `src/app/api/material-model/route.ts`; its exact equivalence to
   `META_SYMBOL_PATH` has not been proven in the current tests.
@@ -192,6 +199,36 @@ V4 was committed as work in progress. Verify Composite, Plates, and Loom across
 formats, seeds, palettes, complexity values, Background mode, Material mode,
 preview, and export before calling them complete.
 
+No Vitest file imports the V4 renderers, and no Playwright test selects V4,
+Composite, Plates, or Loom. Existing V4 tests cover only catalog and recipe
+plumbing.
+
+Composite caches fields and geometry without including Symbol/source state in
+its cache key. A warmed cache can retain symbol influence after Symbol is
+switched off.
+
+### Browser tests use stale Look catalogs
+
+Current Playwright setup still treats stored `v2` as the old ten-Look catalog.
+Stored `v2` now means UI V3 and defaults to Pattern, so tests that look for
+Frame, Pixels, Quilt, or Trails can fail before exercising their target
+behavior.
+
+The parity harness also labels classic IDs as `v2`, and its “2D” and “3D”
+functions call the same source-aware renderer. Byte equality there is not
+independent proof of 2D/3D or preview/export parity.
+
+Repair catalog setup before relying on the default browser suite or opt-in
+contact sheets.
+
+### Missing workflow coverage
+
+- `SeedSheet.tsx` has no tests.
+- Look preset serialization has unit tests, but Save/Open has no browser
+  workflow test.
+- Fixed toast feedback has no direct test.
+- Current V3/V4 renderer behavior lacks direct unit coverage.
+
 ### Documentation lag
 
 `README.md` still describes only V1 and V2 tabs. The code now exposes four UI
@@ -203,14 +240,20 @@ Run on September 10, 2026:
 
 - `npm test`: **362 passed**.
 - `npx tsc --noEmit`: **passed**.
+- `npm run build`: **passed**.
 - `npm run lint`: **failed** only on the five placeholder functions described
   above.
 
-The production build and full Playwright suite were not used as gates for this
-handoff upload. Run them before claiming the whole app is release-ready:
+Focused Playwright checks confirm stale catalog failures: current tests cannot
+find Frame or Pixels while the default UI is on V3 Pattern. One focused V3
+material-overlay case passed. The full Playwright suite was not used as a gate
+for this handoff upload.
+
+Playwright currently collects 85 tests. Seventeen visual jobs are
+environment-gated by default, with one additional capability-dependent skip.
+Do not claim broad browser coverage or release readiness.
 
 ```sh
-npm run build
 npm run test:browser
 ```
 
@@ -268,7 +311,9 @@ See commits `32d2054` through `2805622`.
 1. Keep the canonical Meta geometry and owner directives intact.
 2. Finish and visually review one V4 system before expanding the catalog.
 3. Resolve the five placeholder functions and restore a clean lint run.
-4. Verify all four catalogs in Background and Material modes.
-5. Run the production build and default browser suite.
-6. Show rendered output to the user before making any claim about visual
+4. Repair browser fixtures so they select the intended stored/UI catalog.
+5. Add direct V3/V4 renderer and workflow coverage.
+6. Verify all four catalogs in Background and Material modes.
+7. Run the default browser suite.
+8. Show rendered output to the user before making any claim about visual
    quality.
