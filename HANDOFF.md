@@ -9,7 +9,7 @@ Application snapshot: `2805622` on branch `mbs-background-generator`.
 The active app is the standalone MBS Background Generator at `/`. It has
 Background (2D) and Material (3D) modes, four Look-version tabs, approved color
 packs, motion controls, separate 2D/3D transforms, local autosave, portable
-Look presets, and fixed-size PNG export.
+recipe presets labeled as Looks, and fixed-size PNG export.
 
 The old August 27 handoff no longer described the app. Since then, the Look
 catalogs and 3D renderer have been replaced, V4 work has started, palettes were
@@ -84,6 +84,11 @@ The default recipe is Background mode, seed 1913, 16:9 at 3840 × 2160, UI V3
 Pattern at 50 complexity, motion off, Symbol on, Clean material, and material
 Look overlay off.
 
+In 2D, Looks act as a radio group. In 3D, clicking a Look enables its overlay;
+clicking the active Look again disables it. Material thumbnails and 3D
+Variations use a fixed generic frame rather than the live material, camera, or
+surface colors.
+
 ## Current 2D rendering
 
 The active path is:
@@ -108,6 +113,10 @@ recipe but disables it so each renderer uses its mark-free fallback.
 
 The format presets are 16:9, 9:16, 1:1, and 4:5. PNG export uses a fixed
 3840-pixel long edge.
+
+Motion is preview-only and 2D-only. Export renders the static base frame rather
+than the currently visible animation phase. Imported recipes can contain a
+30-second loop even though the visible slider stops at 20 seconds.
 
 ## Current 3D rendering
 
@@ -147,15 +156,44 @@ the deleted `materialLookGpu.ts` path without direct user approval.
 ## Current controls and persistence
 
 - Background/Material view mode lives separately from the saved recipe.
-- Recipe edits are undoable; view-mode switching is not.
+- A reload starts in 2D because view mode is not autosaved.
+- Recipe edits are undoable; view-mode switching is not. History is in memory,
+  stores whole recipes, and is capped at 100 entries.
+- Undo is Cmd/Ctrl-Z and redo is Cmd/Ctrl-Shift-Z. Ctrl-Y is not wired.
 - Autosave stores the recipe in local storage.
-- **Save look** downloads a portable JSON preset.
-- **Open look** validates and loads a preset, including its saved mode.
+- **Save look** downloads the entire recipe, not only the selected Look. The
+  file includes seed, colors, transforms, motion, material, and camera.
+- **Open look** validates and loads a preset, restores its saved mode, replaces
+  the recipe, and clears undo history.
+- Preset filenames use stored version IDs, so UI V3 files contain `v2`.
 - Old saved sessions and preset files have pre-correction brand colors
   migrated to the current official palette values.
 - Palette packs deal every enabled color rather than silently dropping colors.
 - **Export image** downloads the current PNG.
 - Save, open, and export results appear as a fixed toast.
+
+**Variations** opens a deterministic 3 × 3 seed sheet. Its first page includes
+the current seed; Deal produces another deterministic page. Selecting a seed
+is undoable.
+
+The always-visible Saved/Saving status conflicts with the owner rule against
+passive status chrome.
+
+The 2D scale handle announces an 800% maximum while recipe normalization allows
+1200%.
+
+## Current color behavior
+
+- Visible packs are Primary, Neutrals, Bold, Harmonious, Atmospheric, and
+  Neutral Flex.
+- Selecting a pack enables every color in that pack.
+- Weights do not need to total 100; rendering normalizes them. Weight zero
+  disables a color.
+- Manual color or weight changes switch to an internal custom state without
+  adding a visible Custom badge.
+- V1 2D derives paper and ink from its weighted mix.
+- V2 / stored `v1b` uses a fixed paper ground.
+- Material Look processing uses the stored Background and Marks roles.
 
 ## Meta fidelity gaps to verify
 
@@ -212,7 +250,7 @@ switched off.
 Current Playwright setup still treats stored `v2` as the old ten-Look catalog.
 Stored `v2` now means UI V3 and defaults to Pattern, so tests that look for
 Frame, Pixels, Quilt, or Trails can fail before exercising their target
-behavior.
+behavior. A palette assertion also still expects the older 60-weight deal.
 
 The parity harness also labels classic IDs as `v2`, and its “2D” and “3D”
 functions call the same source-aware renderer. Byte equality there is not
@@ -259,6 +297,16 @@ npm run test:browser
 
 Visual artifact tests remain opt-in; inspect
 `tests/browser/look-contact-sheet.spec.ts` for the current environment flags.
+
+Export dimensions are:
+
+- 16:9: 3840 × 2160
+- 9:16: 2160 × 3840
+- 1:1: 3840 × 3840
+- 4:5: 3072 × 3840
+
+Export filenames omit the Look version. Material filenames also omit the
+enabled overlay Look.
 
 ## Recent application changes
 
