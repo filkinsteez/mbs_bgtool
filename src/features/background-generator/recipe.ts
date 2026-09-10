@@ -2,7 +2,9 @@ import type { LookId } from '@/core/lab/looks'
 import { lookById, looksForVersion, lookComplexityPatch, lookPatchFor } from '@/core/lab/looks'
 import { createDefaultLab } from '@/core/lab/recipe'
 import { createDefaultLabV1 } from '@/core/lab/v1/recipe'
-import type { LabState, LookVersion } from '@/core/lab/types'
+import type { GradientSettings, LabState, LookVersion } from '@/core/lab/types'
+import { normalizeGradientSettings } from '@/core/lab/gradients/settings'
+import { normalizeDeformation, type Deformation } from '@/core/lab/gradients/deformation'
 import { constrainArtworkCover } from '@/core/lab/artworkTransform'
 import { CANONICAL_META_SAFE_AREA } from '@/core/lab/metaInfluence'
 import { resolveCompositionPlan } from '@/core/lab/compositionPlan'
@@ -67,6 +69,8 @@ export type BackgroundRecipeV2 = {
     id: LookId
     detail: number
     version: LookVersion
+    gradient?: GradientSettings
+    deformation?: Deformation
   }
   materialLookOverlay: {
     enabled: boolean
@@ -290,9 +294,14 @@ export function deserializeBackgroundRecipe(json: string): BackgroundRecipeV2 | 
         || serializedLookVersion === 'v1b'
         || serializedLookVersion === 'v2'
         || serializedLookVersion === 'v4'
+        || serializedLookVersion === 'gradients'
         ? serializedLookVersion
         : 'v1'
     const migratedLook = LEGACY_MATERIAL_LOOKS[recipe.material.id as string]
+    recipe.look.deformation = normalizeDeformation(recipe.look.deformation)
+    if (recipe.look.version === 'gradients' || recipe.look.gradient) {
+      recipe.look.gradient = normalizeGradientSettings(recipe.look.gradient)
+    }
     if (recipe.renderRevision !== BACKGROUND_RENDER_REVISION) return null
     if (migratedLook) {
       recipe.material.id = 'clean'
@@ -506,6 +515,10 @@ export function backgroundRecipeToLab(
           id: recipe.look.id,
           strength: 1,
           complexity: recipe.look.detail,
+          gradient: recipe.look.version === 'gradients'
+            ? normalizeGradientSettings(recipe.look.gradient)
+            : undefined,
+          deformation: recipe.look.deformation,
           version: recipe.look.version,
         },
     ...(isV1

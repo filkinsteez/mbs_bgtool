@@ -11,6 +11,7 @@ import {
 } from 'react'
 import {
   Box,
+  Brush,
   Hand,
   Image as ImageIcon,
   Maximize2,
@@ -42,6 +43,8 @@ import {
 import { useBackgroundStore } from '@/features/background-generator/store'
 import { renderController } from '@/render/renderController'
 import { CANVAS_FIT_VIEW_EVENT } from './canvasEvents'
+import { useGradientBrush } from './gradientBrushStore'
+import { GradientBrushOverlay } from './GradientBrushOverlay'
 
 type CanvasTool = 'select' | 'hand'
 type Camera = { zoom: number; panX: number; panY: number }
@@ -150,6 +153,9 @@ function zoomCameraAt(
 export function LabCanvas() {
   const recipe = useBackgroundStore((state) => state.recipe)
   const mode = useBackgroundStore((state) => state.mode)
+  const brushEnabled = useGradientBrush((state) => state.enabled)
+  const brushAvailable = mode === 'background' && recipe.look.version === 'gradients'
+  const brushActive = brushAvailable && brushEnabled
   const transform = recipe.transforms[mode]
   const motionEnabled = recipe.motion.amount > 0
   const reducedMotion = useReducedMotion()
@@ -357,6 +363,7 @@ export function LabCanvas() {
       return
     }
     if (event.button !== 0 || mode !== 'background' || tool !== 'select') return
+    if (brushActive) return
 
     if (target.closest('.lab-canvas-toolbar, .lab-mode-switch')) return
     const rect = stackRef.current?.getBoundingClientRect()
@@ -562,10 +569,12 @@ export function LabCanvas() {
       const key = event.key.toLowerCase()
       if (!event.ctrlKey && !event.metaKey && !event.altKey) {
         if (key === 'v' && mode === 'background') {
+          useGradientBrush.getState().set({ enabled: false })
           setTool('select')
           setArtworkSelected(true)
         }
-        else if (key === 'h') setTool('hand')
+        else if (key === 'h') { useGradientBrush.getState().set({ enabled: false }); setTool('hand') }
+        else if (key === 'b' && brushAvailable) { setTool('select'); useGradientBrush.getState().set({ enabled: true }) }
         else if (key === '+' || key === '=') {
           setCamera((current) =>
             zoomCameraAt(
@@ -653,6 +662,7 @@ export function LabCanvas() {
     artworkSelected,
     fitView,
     tool,
+    brushAvailable,
     viewportCenterX,
     viewportCenterY,
   ])
@@ -724,8 +734,9 @@ export function LabCanvas() {
           {mode === 'material' ? (
             <MaterialModelViewer />
           ) : null}
+          {brushActive && !spaceHeld && <GradientBrushOverlay />}
 
-          {mode === 'background' && tool === 'select' && artworkSelected ? (
+          {mode === 'background' && tool === 'select' && artworkSelected && !brushActive ? (
             <div
               className="lab-subject-frame"
               role="group"
@@ -821,13 +832,14 @@ export function LabCanvas() {
         >
           <button
             type="button"
-            className={tool === 'select' ? 'active' : ''}
-            aria-pressed={tool === 'select'}
+            className={tool === 'select' && !brushActive ? 'active' : ''}
+            aria-pressed={tool === 'select' && !brushActive}
             aria-label="Select"
             aria-keyshortcuts="V"
             disabled={mode !== 'background'}
             title="Select (V)"
             onClick={() => {
+              useGradientBrush.getState().set({ enabled: false })
               setTool('select')
               setArtworkSelected(true)
             }}
@@ -837,16 +849,17 @@ export function LabCanvas() {
           </button>
           <button
             type="button"
-            className={tool === 'hand' ? 'active' : ''}
-            aria-pressed={tool === 'hand'}
+            className={tool === 'hand' && !brushActive ? 'active' : ''}
+            aria-pressed={tool === 'hand' && !brushActive}
             aria-label="Hand"
             aria-keyshortcuts="H"
             title="Pan canvas (H)"
-            onClick={() => setTool('hand')}
+            onClick={() => { useGradientBrush.getState().set({ enabled: false }); setTool('hand') }}
           >
             <Hand aria-hidden="true" />
             <span className="lab-toolbar-label">Pan</span>
           </button>
+          {brushAvailable && <button type="button" aria-label="Distortion brush tool" title="Distortion brush (B)" aria-keyshortcuts="B" aria-pressed={brushActive} className={brushActive ? 'active' : ''} onClick={() => { setTool('select'); useGradientBrush.getState().set({ enabled: !brushEnabled }) }}><Brush aria-hidden="true" /><span className="lab-toolbar-label">Distort</span></button>}
           <span className="lab-toolbar-divider" aria-hidden />
           <button
             type="button"

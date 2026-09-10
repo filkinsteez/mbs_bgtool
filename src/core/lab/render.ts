@@ -29,12 +29,13 @@ import { renderLabV1, renderSourceOverlayV1 } from './v1/render'
 import { renderLabV1b, renderSourceOverlayV1b } from './v1b/render'
 import { renderLabV2System } from './v2/render'
 import { renderLabV4System } from './v4/render'
+import { renderGradient } from './gradients/render'
 
-const paintPixelField = (..._args: any[]) => {}
-const renderQuilt = (..._args: any[]) => {}
-const renderWeaveField = (..._args: any[]) => {}
-const renderFrameLook = (..._args: any[]) => {}
-const renderTrails = (..._args: any[]) => {}
+const paintPixelField = (...args: unknown[]) => { void args }
+const renderQuilt = (...args: unknown[]) => { void args }
+const renderWeaveField = (...args: unknown[]) => { void args }
+const renderFrameLook = (...args: unknown[]) => { void args }
+const renderTrails = (...args: unknown[]) => { void args }
 
 // One painter for preview AND export. The ctx arrives pre-scaled and
 // everything draws in output units. Per-render work is lazy: the
@@ -98,6 +99,7 @@ export function renderLab(
   }
   if (renderLabV2System(ctx, lab, source, view)) return
   if (renderLabV4System(ctx, lab, source, view)) return
+  if (renderGradient(ctx, lab, source, view)) return
   renderLabV2(ctx, lab, source, protos, view, paintRaster)
 }
 

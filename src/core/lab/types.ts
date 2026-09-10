@@ -1,5 +1,6 @@
 import type { CompositionPlan } from './compositionPlan'
 import type { LookColorPlan } from './colorDirection'
+import type { Deformation } from './gradients/deformation'
 
 // Research-lab state. A LabState IS the recipe: everything needed to
 // regenerate a study except the source pixels themselves, which are
@@ -16,7 +17,9 @@ export type LabFit = 'contain' | 'cover'
 // renderers with V1 or V2, so neither is affected by changes to it.
 // V4 is the next catalog generation: three systems rendered through
 // src/core/lab/v4/ over the same V2Env the V3-tab systems consume.
-export type LookVersion = 'v1' | 'v1b' | 'v2' | 'v4'
+export type LookVersion = 'v1' | 'v1b' | 'v2' | 'v4' | 'gradients'
+
+export type GradientSettings = { softness: number; distortion: number; grain: number; scale?: number; folds?: number; bleed?: number; depth?: number }
 
 export type LabSourceMeta = {
   filename?: string
@@ -204,6 +207,8 @@ export type LabState = {
     strength: number
     complexity?: number
     version?: LookVersion
+    gradient?: GradientSettings
+    deformation?: Deformation
   }
   composition?: CompositionPlan
   motion: MotionState

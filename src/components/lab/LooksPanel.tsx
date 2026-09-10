@@ -16,6 +16,8 @@ import {
   sourceAwareLabForRecipe,
 } from '@/features/background-generator/lookProcessor'
 import type { LookVersion } from '@/core/lab/types'
+import { normalizeGradientSettings, GRADIENT_DEFAULTS } from '@/core/lab/gradients/settings'
+import { GradientBrushControls } from './GradientBrushControls'
 
 // 2D thumbnails use only the active generator recipe, with detail pinned to
 // its midpoint so dragging Complexity never redraws the strip. 3D thumbnails
@@ -23,7 +25,7 @@ import type { LookVersion } from '@/core/lab/types'
 // leak in.
 
 const GENERIC_3D_BASE_RECIPE = createDefaultBackgroundRecipe(1913)
-const LOOK_VERSIONS: readonly LookVersion[] = ['v1', 'v1b', 'v2', 'v4']
+const LOOK_VERSIONS: readonly LookVersion[] = ['v1', 'v1b', 'v2', 'v4', 'gradients']
 // Display names count 1-2-3-4; the stored version ids stay as-is so saved
 // recipes and share links keep deserializing.
 const LOOK_VERSION_LABELS: Record<LookVersion, string> = {
@@ -31,6 +33,7 @@ const LOOK_VERSION_LABELS: Record<LookVersion, string> = {
   v1b: 'V2',
   v2: 'V3',
   v4: 'V4',
+  gradients: 'Gradients',
 }
 const GENERIC_3D_RECIPE = {
   ...GENERIC_3D_BASE_RECIPE,
@@ -78,6 +81,8 @@ export function LooksPanel() {
   const lookId = useBackgroundStore((state) => state.recipe.look.id)
   const lookDetail = useBackgroundStore((state) => state.recipe.look.detail)
   const lookVersion = useBackgroundStore((state) => state.recipe.look.version)
+  const gradientSettings = useBackgroundStore((state) => state.recipe.look.gradient)
+  const gradient = normalizeGradientSettings(gradientSettings)
   const symbolEnabled = useBackgroundStore((state) => state.recipe.symbol.enabled)
   const materialOverlayEnabled = useBackgroundStore(
     (state) => state.recipe.materialLookOverlay.enabled,
@@ -87,6 +92,8 @@ export function LooksPanel() {
     return [
       recipe.seed,
       recipe.look.version,
+      JSON.stringify(recipe.look.gradient),
+      recipe.look.deformation?.data,
       recipe.symbol.enabled ? 1 : 0,
       recipe.palette.mix.map((item) =>
         `${item.color}:${item.enabled ? 1 : 0}:${item.ratio}`,
@@ -270,6 +277,20 @@ export function LooksPanel() {
           onChange={(detail) => setTransient({ look: { detail } })}
           onCommit={commitTransaction}
         />
+        {lookVersion === 'gradients' && (['softness', 'bleed', 'depth', 'distortion', 'scale', 'folds', 'grain'] as const).map((key) => (
+          <Slider
+            key={key}
+            label={key === 'scale' ? 'Distortion size' : key.charAt(0).toUpperCase() + key.slice(1)}
+            value={gradient[key]}
+            min={0}
+            max={1}
+            step={0.01}
+            format={(value) => `${Math.round(value * 100)}`}
+            defaultValue={GRADIENT_DEFAULTS[key]}
+            onChange={(value) => setTransient({ look: { gradient: { ...gradient, [key]: value } } })}
+            onCommit={commitTransaction}
+          />
+        ))}
         {mode === 'background' ? (
           <SegmentedControl
             label="Symbol"
@@ -281,6 +302,7 @@ export function LooksPanel() {
             onChange={(value) => updateRecipe({ symbol: { enabled: value === 'on' } })}
           />
         ) : null}
+        {mode === 'background' && lookVersion === 'gradients' && <GradientBrushControls />}
       </div>
     </div>
   )

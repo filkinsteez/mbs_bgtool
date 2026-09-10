@@ -2,25 +2,7 @@ import path from 'node:path'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { expect, test, type Page } from '@playwright/test'
 import type { ViteDevServer } from 'vite'
-
-type LookId =
-  | 'pattern'
-  | 'mandala'
-  | 'stitch'
-  | 'dither'
-  | 'composite'
-  | 'plates'
-  | 'loom'
-  | 'frame'
-  | 'pixels'
-  | 'scanlines'
-  | 'streams'
-  | 'brushwork'
-  | 'beads'
-  | 'quilt'
-  | 'weave'
-  | 'marks'
-  | 'trails'
+import type { LookId } from '../../src/core/lab/looks'
 
 type LookParityResult = {
   input: {

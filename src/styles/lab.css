@@ -996,10 +996,20 @@
 /* looks strip */
 .lab-look-version-tabs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(70px, 1.8fr);
   margin-bottom: 10px;
   border-bottom: 1px solid var(--line);
 }
+
+.gradient-brush-controls { display: grid; gap: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.gradient-brush-toggle { min-height: 36px; border: 1px solid var(--line); border-radius: 6px; }
+.gradient-brush-toggle.active { border-color: var(--canvas-accent); background: #26364c; }
+.gradient-brush-modes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.gradient-brush-modes button { padding: 8px 2px; border-radius: 4px; font-size: 11px; }
+.gradient-brush-modes button.active { background: #334967; color: #fff; }
+.gradient-brush-overlay { position: absolute; inset: 0; z-index: 4; cursor: none; touch-action: none; overflow: hidden; }
+.gradient-brush-overlay:focus { outline: none; }
+.gradient-brush-cursor { position: absolute; border: 1px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px #1118, inset 0 0 0 1px #1115; transform: translate(-50%, -50%); pointer-events: none; }
 
 .lab-look-version-tabs button {
   height: 30px;

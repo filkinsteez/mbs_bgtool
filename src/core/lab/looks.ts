@@ -19,6 +19,10 @@ export { V1_LOOK_PATCHES } from './v1/looks'
 // sheet before earning a slot.
 
 export type LookId =
+  | 'diffusion'
+  | 'halo'
+  | 'flow'
+  | 'smear'
   | 'pattern'
   | 'mandala'
   | 'stitch'
@@ -62,7 +66,16 @@ export const V4_LOOKS: Look[] = [
 
 export const V4_SYSTEM_IDS = new Set<LookId>(['composite', 'plates', 'loom'])
 
+export const GRADIENT_LOOKS: Look[] = [
+  { id: 'diffusion', label: 'Diffusion', patch: { sourceVisibility: 0 } },
+  { id: 'halo', label: 'Halo', patch: { sourceVisibility: 0 } },
+  { id: 'flow', label: 'Flow', patch: { sourceVisibility: 0 } },
+  { id: 'smear', label: 'Smear', patch: { sourceVisibility: 0 } },
+]
+export const GRADIENT_IDS = new Set<string>(GRADIENT_LOOKS.map((look) => look.id))
+
 export function looksForVersion(version: LookVersion): Look[] {
+  if (version === 'gradients') return GRADIENT_LOOKS
   if (version === 'v4') return V4_LOOKS
   return version === 'v2' ? V2_LOOKS : LOOKS
 }
@@ -71,6 +84,7 @@ export function lookById(id: LookId): Look | undefined {
   return LOOKS.find((look) => look.id === id)
     ?? V2_LOOKS.find((look) => look.id === id)
     ?? V4_LOOKS.find((look) => look.id === id)
+    ?? GRADIENT_LOOKS.find((look) => look.id === id)
 }
 
 export const LOOKS: Look[] = [
@@ -250,7 +264,7 @@ export function lookComplexityPatch(
   if (version === 'v1') return v1DetailPatch(value)
   if (version === 'v1b') return lookComplexityPatchV1b(lookId, value)
   // the V2 and V4 systems read look.complexity directly at render time
-  if (V2_SYSTEM_IDS.has(lookId) || V4_SYSTEM_IDS.has(lookId)) return {}
+  if (V2_SYSTEM_IDS.has(lookId) || V4_SYSTEM_IDS.has(lookId) || GRADIENT_IDS.has(lookId)) return {}
   const complexity = Math.max(0, Math.min(1, value))
   const profile = COMPLEXITY_PROFILES[lookId]
   if (!profile) return {}
@@ -297,7 +311,7 @@ export function lookPatchFor(
 ): LabPatch {
   if (version === 'v1') return v1LookPatchFor(look, hasSource)
   if (version === 'v1b') return lookPatchForV1b(look.id, hasSource)
-  if (V2_SYSTEM_IDS.has(look.id) || V4_SYSTEM_IDS.has(look.id)) return look.patch
+  if (V2_SYSTEM_IDS.has(look.id) || V4_SYSTEM_IDS.has(look.id) || GRADIENT_IDS.has(look.id)) return look.patch
   const patch = look.patch
   if (hasSource) return patch
   const bands = patch.territory?.bands
