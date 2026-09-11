@@ -22,11 +22,13 @@ export function GradientReview() {
   const [folds, setFolds] = useState(0.32)
   const [bleed, setBleed] = useState(0.6)
   const [depth, setDepth] = useState(0.45)
-  const palettes = ['bold', 'harmonious', 'atmospheric']
+  const [complexity, setComplexity] = useState(0.65)
+  const [distortion, setDistortion] = useState(0.65)
+  const palettes = ['bold', 'harmonious', 'atmospheric', 'primary-core', 'primary-neutrals', 'neutral-flex']
   const recipeFor = (index: number): BackgroundRecipeV2 => {
     const recipe = createDefaultBackgroundRecipe(seed)
     const pack = PALETTE_PACKS.find((p) => p.id === palettes[Math.floor(index / 4)])!
-    recipe.look = { version: 'gradients', id: GRADIENT_LOOKS[index % 4].id, detail: 0.65, gradient: { softness, distortion: 0.65, grain: 0.22, scale: 0.5, folds, bleed, depth } }
+    recipe.look = { version: 'gradients', id: GRADIENT_LOOKS[index % 4].id, detail: complexity, gradient: { softness, distortion, grain: 0.22, scale: 0.5, folds, bleed, depth } }
     if (study !== 'none') recipe.look.deformation = brushStudy(aspect === '9:16' ? 9 / 16 : 16 / 9, study as 'sweep' | 'fold')
     recipe.palette = { packId: pack.id, mix: colorMixForPack(pack), ground: pack.colors.at(-1)!, ink: pack.colors[0] }
     recipe.format = aspect === '9:16'
@@ -40,7 +42,7 @@ export function GradientReview() {
     })
   // This development matrix has a fixed palette/renderer order.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seed, aspect, study, softness, folds, bleed, depth])
+  }, [seed, aspect, study, softness, folds, bleed, depth, complexity, distortion])
 
   const save = async () => {
     const canvases = Array.from(root.current!.querySelectorAll('canvas'))
@@ -50,7 +52,7 @@ export function GradientReview() {
     const width = 640, height = aspect === '9:16' ? 1138 : 360
     const sheet = document.createElement('canvas')
     sheet.width = 4 * width
-    sheet.height = 3 * (height + 38)
+    sheet.height = palettes.length * (height + 38)
     const ctx = sheet.getContext('2d')!
     ctx.fillStyle = '#111315'
     ctx.fillRect(0, 0, sheet.width, sheet.height)
@@ -76,6 +78,16 @@ export function GradientReview() {
       renderBackground2DCanvas(canvas, recipe, { phase: 'preview', maxLongEdge: 480, timeMs })
       return canvas.toDataURL()
     }
+    const structureFrames: Uint8ClampedArray[] = []
+    const variance = (pixels: Uint8ClampedArray) => {
+      const sum = [0, 0, 0], squared = [0, 0, 0]
+      const count = pixels.length / 4
+      for (let p = 0; p < pixels.length; p += 4) for (let c = 0; c < 3; c++) {
+        sum[c] += pixels[p + c]
+        squared[c] += pixels[p + c] ** 2
+      }
+      return sum.reduce((v, s, c) => v + squared[c] / count - (s / count) ** 2, 0) / 3
+    }
     for (let i = 0; i < 4; i++) {
       const recipe = recipeFor(i)
       const first = draw(recipe)
@@ -85,6 +97,24 @@ export function GradientReview() {
           await fetch('/api/devshot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `gradient-${stage}-failed-${name}`, dataUrl }) })
         }
         throw new Error('Repeat render differs')
+      }
+      const depthRecipe = (value: number): BackgroundRecipeV2 => ({ ...recipe,
+        look: { ...recipe.look, gradient: { ...recipe.look.gradient!, depth: value, grain: 0 } },
+      })
+      draw(depthRecipe(0.45))
+      const structured = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data
+      draw(depthRecipe(0))
+      const washed = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data
+      const varianceRatio = variance(washed) / Math.max(1, variance(structured))
+      if (varianceRatio > 0.3) throw new Error(`Depth zero retains too much separation: ${varianceRatio.toFixed(2)}`)
+      if (i < 3) {
+        for (const earlier of structureFrames) {
+          let difference = 0
+          for (let p = 0; p < structured.length; p += 4) for (let c = 0; c < 3; c++) difference += Math.abs(structured[p + c] - earlier[p + c])
+          difference /= structured.length * 0.75
+          if (difference < 8) throw new Error(`Look structures are too similar: ${difference.toFixed(2)}`)
+        }
+        structureFrames.push(structured)
       }
       const colorRecipe = (colors: string[]): BackgroundRecipeV2 => ({ ...recipe,
         palette: { ...recipe.palette, packId: 'custom', mix: colors.map((color) => ({ color, enabled: true, ratio: 100 })) },
@@ -156,8 +186,102 @@ export function GradientReview() {
         renderBackground2DCanvas(canvas, recipe, { phase: 'preview', maxLongEdge: 1200, timeMs: frame * 100 })
         canvas.getContext('2d')!.getImageData(0, 0, 1, 1)
       }
-      results.push(`${GRADIENT_LOOKS[i].label}: color brightness, single swatches, neutrals, repeat, seed, symbol, palette weight, controls, loop, energy, 4K passed; preview/export error ${error.toFixed(2)}/255 (${exportTime} ms including two exports); 1200px frame + readback ${((performance.now()-frameStart)/4).toFixed(1)} ms`)
+      results.push(`${GRADIENT_LOOKS[i].label}: depth-zero variance ${(varianceRatio * 100).toFixed(1)}% of default; structure, color brightness, single swatches, neutrals, repeat, seed, symbol, palette weight, controls, loop, energy, 4K passed; preview/export error ${error.toFixed(2)}/255 (${exportTime} ms including two exports); 1200px frame + readback ${((performance.now()-frameStart)/4).toFixed(1)} ms`)
     }
+    setStatus(results.join('\n'))
+  }
+
+  const saveDepthStudy = async () => {
+    const depths = [0, 0.15, 0.45, 1]
+    const width = 480, height = aspect === '9:16' ? 854 : 270
+    const sheet = document.createElement('canvas'), sample = document.createElement('canvas')
+    const comparison = document.createElement('canvas')
+    comparison.width = width * 3
+    comparison.height = height + 34
+    const compareCtx = comparison.getContext('2d')!
+    compareCtx.fillStyle = '#111315'
+    compareCtx.fillRect(0, 0, comparison.width, comparison.height)
+    sheet.width = width * 3
+    sheet.height = (height + 34) * depths.length
+    const ctx = sheet.getContext('2d')!
+    ctx.fillStyle = '#111315'
+    ctx.fillRect(0, 0, sheet.width, sheet.height)
+    for (let row = 0; row < depths.length; row++) for (let column = 0; column < 3; column++) {
+      const recipe = recipeFor(column)
+      recipe.look.gradient = { ...recipe.look.gradient!, depth: depths[row] }
+      renderBackground2DCanvas(sample, recipe, { phase: 'preview', maxLongEdge: 960 })
+      const x = column * width, y = row * (height + 34)
+      ctx.drawImage(sample, x, y, width, height)
+      ctx.fillStyle = '#fff'
+      ctx.font = '14px sans-serif'
+      ctx.fillText(`${GRADIENT_LOOKS[column].label} / Depth ${Math.round(depths[row] * 100)}%`, x + 12, y + height + 23)
+      if (depths[row] === 0.45) {
+        compareCtx.drawImage(sample, x, 0, width, height)
+        compareCtx.fillStyle = '#fff'
+        compareCtx.font = '14px sans-serif'
+        compareCtx.fillText(GRADIENT_LOOKS[column].label, x + 12, height + 23)
+      }
+    }
+    const response = await fetch('/api/devshot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `gradient-${stage}-depth-study-${seed}-${aspect.replace(':', '-')}`, dataUrl: sheet.toDataURL() }) })
+    if (!response.ok) throw new Error('Depth study save failed')
+    const comparisonResponse = await fetch('/api/devshot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `gradient-${stage}-look-comparison-${seed}-${aspect.replace(':', '-')}`, dataUrl: comparison.toDataURL() }) })
+    if (!comparisonResponse.ok) throw new Error('Look comparison save failed')
+    setStatus(`Saved depth study ${stage}`)
+  }
+
+  const validatePalettes = async () => {
+    const canvas = document.createElement('canvas')
+    const results: string[] = []
+    for (const pack of PALETTE_PACKS.filter((p) => p.tier !== 'extended')) {
+      let minRange = Infinity, minDifference = Infinity, maxFlatRatio = 0, maxExportError = 0
+      for (const sampleSeed of [1913, 9027, 14023]) {
+        const frames: Uint8ClampedArray[] = []
+        for (let i = 0; i < 4; i++) {
+          const recipe = recipeFor(i)
+          recipe.seed = sampleSeed
+          recipe.palette = { packId: pack.id, mix: colorMixForPack(pack), ground: pack.colors.at(-1)!, ink: pack.colors[0] }
+          recipe.look.gradient = { ...recipe.look.gradient!, depth: 0.45, grain: 0 }
+          const capture = () => {
+            renderBackground2DCanvas(canvas, recipe, { phase: 'preview', maxLongEdge: 480 })
+            return canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data
+          }
+          const pixels = capture()
+          const values = (data: Uint8ClampedArray) => {
+            const sorted: number[] = []
+            for (let p = 0; p < data.length; p += 4) sorted.push(Math.max(data[p], data[p + 1], data[p + 2]))
+            sorted.sort((a, b) => a - b)
+            return sorted[Math.floor(sorted.length * 0.95)] - sorted[Math.floor(sorted.length * 0.05)]
+          }
+          const range = values(pixels)
+          minRange = Math.min(minRange, range)
+          for (const previous of frames) {
+            let difference = 0
+            for (let p = 0; p < pixels.length; p += 4) for (let c = 0; c < 3; c++) difference += Math.abs(pixels[p + c] - previous[p + c])
+            minDifference = Math.min(minDifference, difference / (pixels.length / 4 * 3))
+          }
+          frames.push(pixels)
+          if (sampleSeed === 1913) {
+            const bitmap = await createImageBitmap(await exportBackground2DPng(recipe))
+            if (Math.max(bitmap.width, bitmap.height) !== 3840) throw new Error(`${pack.label}: export is not 4K`)
+            canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+            bitmap.close()
+            const exported = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data
+            let difference = 0
+            for (let p = 0; p < pixels.length; p += 4) for (let c = 0; c < 3; c++) difference += Math.abs(pixels[p + c] - exported[p + c])
+            maxExportError = Math.max(maxExportError, difference / (pixels.length / 4 * 3))
+          }
+          recipe.look.gradient.depth = 0
+          maxFlatRatio = Math.max(maxFlatRatio, values(capture()) / Math.max(range, 1))
+        }
+      }
+      if (minRange < 5) throw new Error(`${pack.label}: insufficient tonal range (${minRange})`)
+      if (minDifference < 4) throw new Error(`${pack.label}: look difference only ${minDifference.toFixed(1)}/255`)
+      if (maxFlatRatio > 0.35) throw new Error(`${pack.label}: Depth zero retains too much contrast`)
+      if (maxExportError > 3) throw new Error(`${pack.label}: preview/export difference ${maxExportError.toFixed(2)}/255`)
+      results.push(`${pack.label}: 3 seeds × 4 looks passed; minimum brightness span ${minRange}/255; minimum look difference ${minDifference.toFixed(1)}/255; maximum Depth-zero span ${(maxFlatRatio * 100).toFixed(1)}%; 4K error ${maxExportError.toFixed(2)}/255`)
+    }
+    const response = await fetch('/api/devshot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `gradient-${stage}-palette-checks-${aspect.replace(':', '-')}`, dataUrl: canvas.toDataURL(), recipe: { results, aspect, softness, complexity, bleed, study } }) })
+    if (!response.ok) throw new Error('Palette check save failed')
     setStatus(results.join('\n'))
   }
 
@@ -170,9 +294,13 @@ export function GradientReview() {
       <label>Folds <input aria-label="Review folds" type="number" min="0" max="1" step="0.05" value={folds} onChange={(e) => setFolds(Number(e.target.value))} style={{ width: 55 }} /></label>
       <label>Bleed <input aria-label="Review bleed" type="number" min="0" max="1" step="0.05" value={bleed} onChange={(e) => setBleed(Number(e.target.value))} style={{ width: 55 }} /></label>
       <label>Depth <input aria-label="Review depth" type="number" min="0" max="1" step="0.05" value={depth} onChange={(e) => setDepth(Number(e.target.value))} style={{ width: 55 }} /></label>
+      <label>Complexity <input aria-label="Review complexity" type="number" min="0" max="1" step="0.05" value={complexity} onChange={(e) => setComplexity(Number(e.target.value))} style={{ width: 55 }} /></label>
+      <label>Distortion <input aria-label="Review distortion" type="number" min="0" max="1" step="0.05" value={distortion} onChange={(e) => setDistortion(Number(e.target.value))} style={{ width: 55 }} /></label>
       <label>Iteration <input aria-label="Iteration" value={stage} onChange={(e) => setStage(e.target.value)} style={{ width: 70 }} /></label>
       <button onClick={() => save().catch((e) => setStatus(String(e)))}>Save snapshots</button>
+      <button onClick={() => saveDepthStudy().catch((e) => setStatus(String(e)))}>Save depth study</button>
       <button onClick={() => validate().catch((e) => setStatus(String(e)))}>Check rendering</button>
+      <button onClick={() => validatePalettes().catch((e) => setStatus(String(e)))}>Check palettes</button>
       <Link href="/">Generator</Link>
     </div>
     <pre role="status" style={{ whiteSpace: 'pre-wrap' }}>{status}</pre>

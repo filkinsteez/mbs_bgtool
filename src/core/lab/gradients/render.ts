@@ -9,6 +9,30 @@ import { deformationTexture, DEFORMATION_SIZE } from './deformation'
 
 const STYLES = ['diffusion', 'halo', 'flow', 'smear']
 
+// Close hues must carry form through their tonal range. Measure selected colors
+// rather than palette names so custom mixes receive the same treatment.
+export function gradientToneProfile(env: Pick<V2Env, 'plan' | 'palette' | 'ink'>): [number, number, number, number] {
+  const swatches = env.plan?.swatches.length
+    ? env.plan.swatches.map((s) => ({ hex: s.hex, weight: s.weight }))
+    : (env.palette.length ? env.palette : [env.ink]).map((hex) => ({ hex, weight: 1 }))
+  let total = 0, mean = 0, low = 1, high = 0, hx = 0, hy = 0, chroma = 0
+  for (const { hex, weight } of swatches) {
+    if (weight <= 0) continue
+    const n = parseInt(hex.replace('#', ''), 16)
+    const [r, g, b] = [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]
+    const v = Math.max(r, g, b), d = v - Math.min(r, g, b)
+    const h = d === 0 ? 0 : (v === r ? (g - b) / d : v === g ? (b - r) / d + 2 : (r - g) / d + 4) * Math.PI / 3
+    const w = weight * d
+    hx += Math.cos(h) * w; hy += Math.sin(h) * w; chroma += w
+    low = Math.min(low, v); high = Math.max(high, v)
+    mean += v * weight; total += weight
+  }
+  if (!total) return [0, 1, 0.5, 0]
+  const coherence = chroma ? Math.hypot(hx, hy) / chroma : 1
+  const narrowHue = Math.max(0, Math.min(1, (coherence - 0.6) / 0.35))
+  return [low, high, mean / total, narrowHue]
+}
+
 // Each deposit receives a selected swatch, independent of spatial position.
 // Stratified samples preserve the mix's weighting without interpolating a ramp.
 export function gradientPigments(env: Pick<V2Env, 'plan' | 'palette' | 'ink'>, tints = false): Float32Array {
@@ -16,9 +40,9 @@ export function gradientPigments(env: Pick<V2Env, 'plan' | 'palette' | 'ink'>, t
     ? env.plan.swatches.map((s) => ({ hex: s.hex, weight: s.weight }))
     : (env.palette.length ? env.palette : [env.ink]).map((hex) => ({ hex, weight: 1 }))
   const total = colors.reduce((sum, c) => sum + c.weight, 0) || 1
-  // The lead swatch already occupies the ground. Repeating it in every layer
-  // would wash over the other swatches and make a 40% lead cover most pixels.
-  const deposits = colors.length > 1 ? colors.slice(1) : colors
+  // Every swatch receives continuous fields, including the lead. Fields are
+  // normalized together rather than painted over an opaque lead-color ground.
+  const deposits = colors
   const depositTotal = deposits.reduce((sum, c) => sum + c.weight, 0) || total
   const data = new Float32Array(12 * 4)
   for (let i = 0; i < 12; i++) {
@@ -36,7 +60,7 @@ export function gradientPigments(env: Pick<V2Env, 'plan' | 'palette' | 'ink'>, t
       selected = nearest?.hex ?? selected
     }
     const hex = parseInt(selected.replace('#', ''), 16)
-    data.set([((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255, 1], i * 4)
+    data.set([((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255, colors.indexOf(color)], i * 4)
   }
   return data
 }
@@ -183,11 +207,9 @@ class GradientRenderer {
       gl.uniform4fv(loc('pigmentTints[0]'), gradientPigments(env, true))
       const lead = gradientPalette(env)
       gl.uniform3f(loc('groundPigment'), lead[0] / 255, lead[1] / 255, lead[2] / 255)
-      const swatches = env.plan?.swatches
-      const groundShare = swatches?.length
-        ? swatches[0].weight / Math.max(0.0001, swatches.reduce((sum, c) => sum + c.weight, 0))
-        : 1 / Math.max(1, env.palette.length)
-      gl.uniform1f(loc('groundShare'), groundShare)
+      const colors = env.plan?.swatches.map((s) => s.hex) ?? env.palette
+      gl.uniform1f(loc('paletteSpread'), new Set(colors.map((c) => c.toLowerCase())).size > 1 ? 1 : 0)
+      gl.uniform4fv(loc('toneProfile'), gradientToneProfile(env))
       this.paletteKey = colorsKey
     }
     gl.activeTexture(gl.TEXTURE1)

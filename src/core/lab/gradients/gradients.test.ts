@@ -3,7 +3,7 @@ import { GRADIENT_LOOKS, looksForVersion } from '../looks'
 import { backgroundRecipeToLab, createDefaultBackgroundRecipe, deserializeBackgroundRecipe } from '@/features/background-generator/recipe'
 import { parseLookPreset, serializeLookPreset } from '@/features/background-generator/lookPreset'
 import { normalizeGradientSettings } from './settings'
-import { gradientPalette, gradientPigments } from './render'
+import { gradientPalette, gradientPigments, gradientToneProfile } from './render'
 
 describe('gradient recipes', () => {
   it.each(GRADIENT_LOOKS)('preserves $id and its controls through saved looks and the render input', (look) => {
@@ -28,13 +28,26 @@ describe('gradient recipes', () => {
 })
 
 describe('gradient color ramp', () => {
-  it('uses selected swatches for separate deposits while reserving the lead for the ground', () => {
+  it('uses the selected brightness range and detects close hues without affecting single colors', () => {
+    const mono = gradientToneProfile({ palette: ['#0064E0', '#0288F9', '#132682'], ink: '#0064E0', plan: undefined })
+    const vivid = gradientToneProfile({ palette: ['#0064E0', '#FFD61E', '#FF4F00'], ink: '#0064E0', plan: undefined })
+    expect(mono[0]).toBeCloseTo(130 / 255)
+    expect(mono[1]).toBeCloseTo(249 / 255)
+    expect(mono[3]).toBeGreaterThan(0.95)
+    expect(vivid[3]).toBeLessThan(0.1)
+    for (const hex of ['#000000', '#FFFFFF', '#0064E0']) {
+      const [low, high, mean] = gradientToneProfile({ palette: [hex], ink: hex, plan: undefined })
+      expect(low).toBe(high)
+      expect(mean).toBe(low)
+    }
+  })
+  it('distributes all selected swatches across the fields, including the lead', () => {
     const pigments = gradientPigments({ palette: ['#0064E0', '#FFD61E', '#FF4F00'], ink: '#0064E0', plan: undefined })
     const seen = new Set<string>()
     for (let i = 0; i < pigments.length; i += 4) {
       seen.add(Array.from(pigments.slice(i, i + 3), (v) => Math.round(v * 255)).join(','))
     }
-    expect(seen).toEqual(new Set(['255,214,30', '255,79,0']))
+    expect(seen).toEqual(new Set(['0,100,224', '255,214,30', '255,79,0']))
     const one = gradientPigments({ palette: ['#25C8EE'], ink: '#0064E0', plan: undefined })
     for (let i = 0; i < one.length; i += 4) expect(Array.from(one.slice(i, i + 3), (v) => Math.round(v * 255))).toEqual([37, 200, 238])
   })
