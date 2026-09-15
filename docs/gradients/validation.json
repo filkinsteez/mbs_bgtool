@@ -1,0 +1,58 @@
+{
+  "verifiedAt": "2026-09-15T00:54:21.516Z",
+  "sourceHashes": {
+    "color": "6cef33832323d8175ca7f4772485bd424b2f3f661b06aa5b0e7827ef4a356531",
+    "deformation": "8cb0611bccbb73856714c164df9726ed1e6f34ef9dafc7259df7c2c922075f27",
+    "diffusion": "263dee80415517382f9f4946cc134a42e3979f3b1654d86988827f4a038da489",
+    "families": "140681f8a2bd621f0145f886a78535fc968d059749c675b759a05c0ebf2072fe",
+    "flow": "781d501bc5b2e594bf18de56edac8be343fc9122eb5f4290bb45ede04644102d",
+    "flowSource": "4038409c128cc6f918a771759a2caf6a10977f8abf4684ed961f671d44989821",
+    "legacySource": "12e51510bd4aaa67505872ac334d0b89e72d800965cc0a821422ee8d55258fd7",
+    "opticalStudy": "dcd1e06fed8be0e9d872568ee4a0b26552e722a9e1b8c8e612ec0854392b05c5",
+    "palette": "fb545d74092f6fca8fb12ec8cf3592ee34c1f44336e0a0ac759a4a497053896a",
+    "render": "8801cbfca81f2cf2afd365bca16fcb975e61ba8a5c7dfb2a1c05dedae028c00f",
+    "settings": "1a4cab6e9abd28a8806df40dbc9ec3fe5c96703f27322835ba1841e1d57a7de9",
+    "shader": "e14d79da7da410c83d9d7d1e69262f39fc8ce32d2bfdcb4e5a8a2cab56e3a41f",
+    "smear": "1bd7413f7b166198d76dfc7a7c557ffc6798bf68803dc85d3da160b63ac6a9fc",
+    "source": "e8d5f2ff8be2d0d9a1eea397c26ce032ab6c89a6b40148a253094c6b1f9ab428",
+    "studies": "b03e921184ba1a97ced4c1bd0bcc3856fcb3714ee484c2e36f5cf782e93643cc"
+  },
+  "sourceDifferencesFromAuditedRenderer": [
+    {
+      "file": "legacySource.ts",
+      "change": "Removed one blank line after the GLSL string; shader contents unchanged."
+    }
+  ],
+  "controlAudits": [
+    {
+      "stage": "273-final-default",
+      "cases": 432,
+      "seed": 1913,
+      "portrait": false,
+      "profile": "default"
+    },
+    {
+      "stage": "273-final-folded",
+      "cases": 432,
+      "seed": 1913,
+      "portrait": false,
+      "profile": "folded"
+    },
+    {
+      "stage": "273-portrait",
+      "cases": 432,
+      "seed": 9027,
+      "portrait": true,
+      "profile": "default"
+    }
+  ],
+  "passingRangeCases": 1296,
+  "actualUiRanges": 72,
+  "freshReleaseChecks": {
+    "unitTests": "406 passed in 61 files",
+    "build": "next build passed, including TypeScript",
+    "lint": "Changed application files, gradient modules and scripts passed ESLint",
+    "whitespace": "Staged git diff --check passed"
+  },
+  "scope": "Saved rendering audits verified against current source, plus fresh unit tests/build/lint. Not a newly rerun full graphics audit or final artistic acceptance."
+}

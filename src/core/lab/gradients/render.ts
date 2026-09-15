@@ -4,10 +4,14 @@ import { GRADIENT_IDS } from '../looks'
 import { buildV2Env, type V2Env } from '../v2/system'
 import { normalizeGradientSettings } from './settings'
 import { GRADIENT_FRAGMENT, GRADIENT_VERTEX, GRADIENT_SCATTER } from './shader'
-import { boxBlur } from '@/core/math/blur'
+import { GRADIENT_FRAGMENT as OPTICAL_FRAGMENT, GRADIENT_SCATTER as OPTICAL_SCATTER } from './opticalStudy'
 import { deformationTexture, DEFORMATION_SIZE } from './deformation'
+import { fitRect } from '../field'
+import { boxBlur } from '@/core/math/blur'
+import { selectedSwatches, weightedPalette, weightedPigments, weightedPigment, paletteLightness, pigmentIntervals } from './palette'
 
 const STYLES = ['diffusion', 'halo', 'flow', 'smear']
+export const gradientPigments = weightedPigments
 
 // Close hues must carry form through their tonal range. Measure selected colors
 // rather than palette names so custom mixes receive the same treatment.
@@ -28,14 +32,25 @@ export function gradientToneProfile(env: Pick<V2Env, 'plan' | 'palette' | 'ink'>
     mean += v * weight; total += weight
   }
   if (!total) return [0, 1, 0.5, 0]
+  // Weighted end ranges prevent a trace dark/light swatch from changing the
+  // contrast of every other color when it is removed.
+  const values = selectedSwatches(env).map(s => ({ value: Math.max(...s.rgb), weight: s.weight })).sort((a, b) => a.value - b.value)
+  let edge = 0
+  low = 0; high = 0
+  for (const item of values) {
+    const start = edge
+    edge += item.weight
+    low += item.value * Math.max(0, Math.min(edge, .05) - start) / .05
+    high += item.value * Math.max(0, edge - Math.max(start, .95)) / .05
+  }
+  if (values.every(item => item.value === values[0].value)) low = high = values[0].value
   const coherence = chroma ? Math.hypot(hx, hy) / chroma : 1
   const narrowHue = Math.max(0, Math.min(1, (coherence - 0.6) / 0.35))
   return [low, high, mean / total, narrowHue]
 }
 
-// Each deposit receives a selected swatch, independent of spatial position.
-// Stratified samples preserve the mix's weighting without interpolating a ramp.
-export function gradientPigments(env: Pick<V2Env, 'plan' | 'palette' | 'ink'>, tints = false): Float32Array {
+// Retain the old deposit allocation only for the isolated optical experiment.
+function legacyGradientPigments(env: Pick<V2Env, 'plan' | 'palette' | 'ink'>, tints = false): Float32Array {
   const colors = env.plan?.swatches.length
     ? env.plan.swatches.map((s) => ({ hex: s.hex, weight: s.weight }))
     : (env.palette.length ? env.palette : [env.ink]).map((hex) => ({ hex, weight: 1 }))
@@ -78,54 +93,169 @@ function compile(gl: WebGL2RenderingContext, kind: number, source: string): WebG
   return shader
 }
 
-// Keep each selected swatch at the center of a weighted interval. Interpolate in
-// sRGB, like a diffused exposure; do not add colors outside the user's palette.
-export function gradientPalette(env: Pick<V2Env, 'plan' | 'palette' | 'ink'>): Uint8Array {
-  const swatches = env.plan?.swatches.length
-    ? env.plan.swatches.map((s) => ({ hex: s.hex, weight: s.weight }))
-    : (env.palette.length ? env.palette : [env.ink]).map((hex) => ({ hex, weight: 1 }))
-  const total = swatches.reduce((sum, s) => sum + s.weight, 0) || 1
-  let accumulated = 0
-  const stops = swatches.map((s) => {
-    const center = (accumulated + s.weight / 2) / total
-    accumulated += s.weight
-    const hex = parseInt(s.hex.replace('#', ''), 16)
-    return { center, rgb: [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255] }
-  })
-  const data = new Uint8Array(512 * 4)
-  for (let i = 0; i < 512; i++) {
-    const t = i / 511
-    let right = stops.findIndex((s) => s.center >= t)
-    if (right < 0) right = stops.length - 1
-    const a = stops[Math.max(0, right - 1)], b = stops[right]
-    let f = Math.max(0, Math.min(1, (t - a.center) / Math.max(1e-6, b.center - a.center)))
-    f = f * f * (3 - 2 * f)
-    for (let c = 0; c < 3; c++) data[i * 4 + c] = Math.round(a.rgb[c] * (1 - f) + b.rgb[c] * f)
-    data[i * 4 + 3] = 255
+export const gradientPalette = weightedPalette
+
+// The palette grades the processed frame; it must not generate its own shapes.
+// Background/marks roles choose the ends, while every enabled mix color keeps
+// its weight between them. Zero-weight swatches are excluded by the color plan.
+export function gradientSourcePalette(env: Pick<V2Env, 'plan' | 'palette' | 'ink'>): Uint8Array {
+  const plan = env.plan
+  if (!plan) return gradientPalette(env, true)
+  const { ground, ink } = plan.roles
+  const order = [ground, ...plan.swatches.map((_, i) => i).filter(i => i !== ground && i !== ink)]
+  if (ink !== ground) order.push(ink)
+  return gradientPalette({ ...env, plan: { ...plan, swatches: order.map(i => plan.swatches[i]) } }, true)
+}
+
+// Stable source-relative tonal range, shared by preview and export. Ignore a
+// few antialiasing/highlight outliers so close source tones can use the palette.
+function sourceToneRange(tones: Float32Array): [number, number] {
+  const bins = new Uint32Array(256)
+  for (const value of tones) bins[Math.max(0, Math.min(255, Math.round(value * 255)))]++
+  const count = tones.length
+  let cumulative = 0, low = -1, high = 255
+  for (let i = 0; i < bins.length; i++) {
+    cumulative += bins[i]
+    if (low < 0 && cumulative >= count * 0.02) low = i
+    if (cumulative >= count * 0.98) { high = i; break }
+  }
+  return [low / 255, Math.max((high - low) / 255, 0.08)]
+}
+
+function colorizeSource(source: LabSource | null, palette: Uint8Array, style: number): Uint8Array {
+  if (!source) return new Uint8Array([0, 0, 0, 255])
+  const { rgba, w, h } = source.maps
+  const tones = new Float32Array(w * h)
+  const warmth = new Float32Array(w * h)
+  for (let i = 0; i < tones.length; i++) {
+    const j = i * 4
+    tones[i] = (rgba[j] * 0.2126 + rgba[j + 1] * 0.7152 + rgba[j + 2] * 0.0722) / 255
+    warmth[i] = (rgba[j] - rgba[j + 2]) / 255
+  }
+  // Spread the captured shape before grading, so flat-lit meshes still expose
+  // intermediate palette colors; diffuse those colors again in the GPU pass.
+  const radius = [0.14, 0.035, 0.065, 0.08][style] ?? 0.12
+  boxBlur(tones, w, h, Math.max(1, Math.round(Math.min(w, h) * radius)), 3)
+  boxBlur(warmth, w, h, Math.max(1, Math.round(Math.min(w, h) * radius)), 3)
+  const [low, span] = sourceToneRange(tones)
+  const data = new Uint8Array(rgba.length)
+  for (let i = 0; i < rgba.length; i += 4) {
+    const luminance = tones[i / 4]
+    const tone = (luminance - low) / span + warmth[i / 4] * 0.3
+    const index = Math.max(0, Math.min(511, tone * 511))
+    const left = Math.floor(index), right = Math.min(511, left + 1), f = index - left
+    for (let c = 0; c < 3; c++) data[i + c] = Math.round(palette[left * 4 + c] * (1 - f) + palette[right * 4 + c] * f)
+    // Alpha stores the captured frame's normalized tone, never its silhouette.
+    // This lets optical contours and close-hue palettes retain source detail.
+    data[i + 3] = Math.round(Math.max(0, Math.min(1, tone)) * 255)
   }
   return data
+}
+
+// Preserve scalar image information through mipmaps and spatial filtering.
+// Applying the selected colors happens once, after transporting these tones.
+export function gradientSourceField(source: LabSource | null): Float32Array {
+  if (!source) return new Float32Array([0, 0, 0, 1])
+  const { rgba, w, h } = source.maps
+  const tones = new Float32Array(w * h)
+  const warmth = new Float32Array(w * h)
+  for (let i = 0; i < tones.length; i++) {
+    const j = i * 4
+    tones[i] = (rgba[j] * .2126 + rgba[j + 1] * .7152 + rgba[j + 2] * .0722) / 255
+    warmth[i] = (rgba[j] - rgba[j + 2]) / 255
+  }
+  boxBlur(tones, w, h, Math.max(1, Math.round(Math.min(w, h) * .012)), 3)
+  boxBlur(warmth, w, h, Math.max(1, Math.round(Math.min(w, h) * .012)), 3)
+  const [low, span] = sourceToneRange(tones)
+  let min = 1, max = 0
+  for (const tone of tones) { min = Math.min(min, tone); max = Math.max(max, tone) }
+  const strength = Math.min(1, (max - min) / .08) * .88
+  const data = new Float32Array(rgba.length)
+  let mean = 0, squared = 0
+  for (let i = 0; i < tones.length; i++) {
+    const normalized = (tones[i] - low) / span
+    const tone = tones[i] * (1 - strength) + normalized * strength + warmth[i] * .2 * strength
+    data.set([tone, warmth[i], tone * tone, tones[i]], i * 4)
+    mean += tone; squared += tone * tone
+  }
+  mean /= tones.length
+  const deviation = Math.max(.04, Math.sqrt(Math.max(0, squared / tones.length - mean * mean)))
+  for (let i = 0; i < tones.length; i++) {
+    // A continuous exposure response preserves dim source structure. This is
+    // computed before filtering, so bright pixels spread into their neighbors.
+    const z = Math.max(-16, Math.min(16, 1.2 * (data[i * 4] - mean) / deviation))
+    data[i * 4 + 3] = Math.log1p(Math.exp(z)) / 1.2
+  }
+  return data
+}
+
+// A bounded focus region follows the captured exposure. A slight directional
+// bias selects part of the exposure rather than sharpening the entire loop.
+export function gradientSourceFocus(data: Float32Array, width: number, height: number): number[] {
+  let total = 0, x = 0, y = 0, xx = 0, yy = 0
+  for (let row = 0; row < height; row++) for (let col = 0; col < width; col++) {
+    const u = (col + .5) / width, v = (row + .5) / height
+    const exposure = Math.max(0, data[(row * width + col) * 4 + 3])
+    const weight = exposure * exposure * exposure * (.4 + .6 * u) * (1 - .4 * v)
+    total += weight; x += u * weight; y += v * weight
+    xx += u * u * weight; yy += v * v * weight
+  }
+  if (total < 1e-12) return [.5, .5, .1, .1]
+  x /= total; y /= total
+  const rx = Math.max(.045, Math.min(.13, Math.sqrt(Math.max(0, xx / total - x * x)) * .5))
+  const ry = Math.max(.045, Math.min(.13, Math.sqrt(Math.max(0, yy / total - y * y)) * .5))
+  return [x, y, rx, ry]
+}
+
+// Average edge directions over the focal region. A single stable axis avoids
+// changing the blur direction abruptly at the center of a bright source line.
+export function gradientSourceAxis(data: Float32Array, width: number, height: number, focus: number[]): number[] {
+  let xx = 0, xy = 0, yy = 0
+  const step = Math.max(1, Math.round(Math.min(width, height) * .015))
+  for (let y = step; y < height - step; y++) for (let x = step; x < width - step; x++) {
+    const dx = (data[(y * width + x + step) * 4 + 3] - data[(y * width + x - step) * 4 + 3]) * width
+    const dy = (data[((y + step) * width + x) * 4 + 3] - data[((y - step) * width + x) * 4 + 3]) * height
+    const u = ((x + .5) / width - focus[0]) / focus[2]
+    const v = ((y + .5) / height - focus[1]) / focus[3]
+    const weight = Math.exp(-.5 * (u * u + v * v))
+    xx += dx * dx * weight; xy += dx * dy * weight; yy += dy * dy * weight
+  }
+  const angle = .5 * Math.atan2(2 * xy, xx - yy)
+  return [Math.cos(angle), Math.sin(angle)]
 }
 
 class GradientRenderer {
   readonly canvas = document.createElement('canvas')
   readonly gl: WebGL2RenderingContext
+  private floatSource: boolean
   private program: WebGLProgram | null = null
+  private programs = new Map<number, WebGLProgram>()
   private scatter: WebGLProgram | null = null
   private framebuffer: WebGLFramebuffer | null = null
   private exposureSize = ''
+  private statsAllocated = false
+  private flowEmissionAllocated = false
   private scatterUniforms = new Map<string, WebGLUniformLocation | null>()
   private textures: WebGLTexture[] = []
   private uniforms = new Map<string, WebGLUniformLocation | null>()
   private fieldKey = ''
   private paletteKey = ''
+  private sourcePalette: Uint8Array = new Uint8Array(512 * 4)
   private deformationKey: string | undefined = undefined
 
-  constructor() {
+  constructor(private readonly optical = false) {
     const gl = this.canvas.getContext('webgl2', { alpha: false, antialias: false, depth: false, preserveDrawingBuffer: true })
     if (!gl) throw new Error('Gradients require WebGL 2. Enable graphics acceleration in your browser.')
+    this.floatSource = Boolean(gl.getExtension('EXT_color_buffer_float'))
     this.gl = gl
-    this.canvas.addEventListener('webglcontextlost', (event) => { event.preventDefault(); this.program = null })
+    this.canvas.addEventListener('webglcontextlost', (event) => {
+      event.preventDefault()
+      this.program = null
+      this.programs.clear()
+      this.scatter = null
+    })
     this.canvas.addEventListener('webglcontextrestored', () => {
+      this.floatSource = Boolean(gl.getExtension('EXT_color_buffer_float'))
       this.textures = []
       this.uniforms.clear()
       this.fieldKey = ''
@@ -133,25 +263,39 @@ class GradientRenderer {
     })
   }
 
-  private setup() {
+  private setup(style: number) {
     const gl = this.gl
-    if (this.program) return
-    const vs = compile(gl, gl.VERTEX_SHADER, GRADIENT_VERTEX)
-    const fs = compile(gl, gl.FRAGMENT_SHADER, GRADIENT_FRAGMENT)
-    const program = gl.createProgram()!
-    gl.attachShader(program, vs)
-    gl.attachShader(program, fs)
-    gl.linkProgram(program)
-    gl.deleteShader(vs)
-    gl.deleteShader(fs)
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      const message = gl.getProgramInfoLog(program)
-      gl.deleteProgram(program)
-      throw new Error(`Gradient program: ${message}`)
+    const key = this.optical ? -1 : style
+    let program = this.programs.get(key)
+    if (!program) {
+      const vs = compile(gl, gl.VERTEX_SHADER, GRADIENT_VERTEX)
+      // Compile only the chosen construction. Otherwise the first Diffusion
+      // frame also pays for Flow's larger filter and every other family.
+      const fragment = this.optical ? OPTICAL_FRAGMENT
+        : GRADIENT_FRAGMENT.replace('uniform int style;', `const int style = ${style};`)
+      const fs = compile(gl, gl.FRAGMENT_SHADER, fragment)
+      program = gl.createProgram()!
+      gl.attachShader(program, vs)
+      gl.attachShader(program, fs)
+      gl.linkProgram(program)
+      gl.deleteShader(vs)
+      gl.deleteShader(fs)
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const message = gl.getProgramInfoLog(program)
+        gl.deleteProgram(program)
+        throw new Error(`Gradient program: ${message}`)
+      }
+      this.programs.set(key, program)
     }
-    this.program = program
+    if (this.program !== program) {
+      this.program = program
+      this.uniforms.clear()
+      this.fieldKey = ''
+      this.paletteKey = ''
+    }
+    if (this.scatter) return
     const scatterVertex = compile(gl, gl.VERTEX_SHADER, GRADIENT_VERTEX)
-    const scatterFragment = compile(gl, gl.FRAGMENT_SHADER, GRADIENT_SCATTER)
+    const scatterFragment = compile(gl, gl.FRAGMENT_SHADER, this.optical ? OPTICAL_SCATTER : GRADIENT_SCATTER)
     this.scatter = gl.createProgram()!
     gl.attachShader(this.scatter, scatterVertex)
     gl.attachShader(this.scatter, scatterFragment)
@@ -161,27 +305,30 @@ class GradientRenderer {
     if (!gl.getProgramParameter(this.scatter, gl.LINK_STATUS)) throw new Error(`Gradient scatter: ${gl.getProgramInfoLog(this.scatter)}`)
     this.framebuffer = gl.createFramebuffer()
     this.exposureSize = ''
+    this.statsAllocated = false
+    this.flowEmissionAllocated = false
     this.scatterUniforms.clear()
     this.uniforms.clear()
-    this.textures = [gl.createTexture()!, gl.createTexture()!]
-    this.textures.push(gl.createTexture()!)
+    this.textures = Array.from({ length: 7 }, () => gl.createTexture()!)
     this.deformationKey = undefined
     this.fieldKey = ''
     this.paletteKey = ''
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 7; i++) {
       gl.activeTexture(gl.TEXTURE0 + i)
       gl.bindTexture(gl.TEXTURE_2D, this.textures[i])
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+      if (i === 4 || i === 6) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4))
+      if (i === 5) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 512, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
     }
   }
 
   draw(lab: LabState, source: LabSource | null) {
     const gl = this.gl
     if (gl.isContextLost()) throw new Error('Graphics context was lost. Reload to render gradients.')
-    this.setup()
+    this.setup(STYLES.indexOf(lab.look.id!))
     const env = buildV2Env(lab, source)
     const settings = normalizeGradientSettings(lab.look.gradient)
     const loc = (name: string) => {
@@ -192,7 +339,7 @@ class GradientRenderer {
     if (this.canvas.height !== env.outH) this.canvas.height = env.outH
     gl.viewport(0, 0, env.outW, env.outH)
     gl.useProgram(this.program)
-    const colorsKey = JSON.stringify([env.plan?.swatches, env.palette, env.ink])
+    const colorsKey = JSON.stringify([env.plan?.swatches, env.plan?.roles, env.palette, env.ink, Boolean(source)])
     gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, this.textures[0])
     if (this.exposureSize !== `${env.outW}:${env.outH}`) {
@@ -203,42 +350,61 @@ class GradientRenderer {
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.textures[0], 0)
     if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error('Gradient exposure buffer unavailable')
     if (colorsKey !== this.paletteKey) {
-      gl.uniform4fv(loc('pigments[0]'), gradientPigments(env))
-      gl.uniform4fv(loc('pigmentTints[0]'), gradientPigments(env, true))
+      gl.uniform4fv(loc('pigments[0]'), this.optical ? legacyGradientPigments(env) : gradientPigments(env))
+      gl.uniform1i(loc('pigmentCount'), selectedSwatches(env).length)
+      if (!this.optical) gl.uniform2fv(loc('pigmentIntervals[0]'), pigmentIntervals(env))
+      gl.uniform1i(loc('sourceInk'), env.plan?.roles.ink ?? 0)
+      gl.uniform1i(loc('sourceGround'), env.plan?.roles.ground ?? Math.max(0, env.palette.length - 1))
+      gl.uniform3fv(loc('averagePigment'), weightedPigment(env))
+      gl.uniform3fv(loc('lumaProfile'), paletteLightness(env))
+      if (this.optical) gl.uniform4fv(loc('pigmentTints[0]'), legacyGradientPigments(env, true))
       const lead = gradientPalette(env)
       gl.uniform3f(loc('groundPigment'), lead[0] / 255, lead[1] / 255, lead[2] / 255)
       const colors = env.plan?.swatches.map((s) => s.hex) ?? env.palette
       gl.uniform1f(loc('paletteSpread'), new Set(colors.map((c) => c.toLowerCase())).size > 1 ? 1 : 0)
-      gl.uniform4fv(loc('toneProfile'), gradientToneProfile(env))
+      const toneProfile = gradientToneProfile(env)
+      gl.uniform4fv(loc('toneProfile'), toneProfile)
+      this.sourcePalette = gradientSourcePalette(env)
+      gl.activeTexture(gl.TEXTURE3)
+      gl.bindTexture(gl.TEXTURE_2D, this.textures[3])
+      const paletteRadius = !this.optical && lab.look.id === 'halo' ? .12 + .14 * toneProfile[3] : .26
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, source ? this.sourcePalette : gradientPalette(env, true, paletteRadius))
+      gl.uniform3fv(loc('darkPigment'), weightedPigment(env, -6))
+      gl.uniform3fv(loc('lightPigment'), weightedPigment(env, 6))
+      gl.uniform3fv(loc('darkTip'), weightedPigment(env, -6, .05))
+      gl.uniform3fv(loc('lightTip'), weightedPigment(env, 6, .05))
       this.paletteKey = colorsKey
     }
+    gl.uniform1i(loc('lookPalette'), 3)
     gl.activeTexture(gl.TEXTURE1)
     gl.bindTexture(gl.TEXTURE_2D, this.textures[1])
-    const key = JSON.stringify([lab.territory.sources, env.outW, env.outH, !!source])
-    if (key !== this.fieldKey || source) {
-      const size = 96
-      const data = new Uint8Array(size * size * 4)
-      const symbolData = new Float32Array(size * size)
-      const luminanceData = new Float32Array(size * size)
-      // A captured 3D frame supplies its own form. Do not insert a second,
-      // canonical symbol into arbitrary source imagery.
-      const symbol = source ? () => 0 : env.symbolField({ softness: 0.8 })
-      for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
-        const px = (x + 0.5) / size * env.outW, py = (y + 0.5) / size * env.outH
-        const i = (y * size + x) * 4
-        symbolData[y * size + x] = Math.max(0, Math.min(1, symbol(px, py)))
-        luminanceData[y * size + x] = env.luminance?.(px, py) ?? 0.5
-        data[i + 3] = 255
+    const style = STYLES.indexOf(lab.look.id!)
+    const key = source ? (this.optical ? `${source.hash}:${colorsKey}:${style}` : source.hash) : 'no-rendered-frame'
+    if (key !== this.fieldKey) {
+      if (this.optical) {
+        const data = colorizeSource(source, this.sourcePalette, style)
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.SRGB8_ALPHA8, source?.maps.w ?? 1, source?.maps.h ?? 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, data)
+      } else {
+        const field = gradientSourceField(source)
+        const focus = gradientSourceFocus(field, source?.maps.w ?? 1, source?.maps.h ?? 1)
+        gl.uniform4fv(loc('sourceFocus'), focus)
+        gl.uniform2fv(loc('sourceAxis'), gradientSourceAxis(field, source?.maps.w ?? 1, source?.maps.h ?? 1, focus))
+        for (let i = 1; i < field.length; i += 4) field[i] = field[i] * .5 + .5
+        if (this.floatSource) {
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, source?.maps.w ?? 1, source?.maps.h ?? 1, 0, gl.RGBA, gl.FLOAT, field)
+        } else {
+          const bytes = Uint8Array.from(field, value => Math.round(Math.max(0, Math.min(1, value)) * 255))
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, source?.maps.w ?? 1, source?.maps.h ?? 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, bytes)
+        }
       }
-      boxBlur(symbolData, size, size, 10)
-      if (source) boxBlur(luminanceData, size, size, 2 + settings.softness * 6)
-      for (let i = 0; i < symbolData.length; i++) {
-        data[i * 4] = Math.round(symbolData[i] * 255)
-        data[i * 4 + 1] = Math.round(luminanceData[i] * 255)
-      }
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, data)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
+      gl.generateMipmap(gl.TEXTURE_2D)
+      const sourceError = gl.getError()
+      if (sourceError !== gl.NO_ERROR) throw new Error(`Gradient source texture: ${sourceError}`)
       this.fieldKey = key
     }
+    const rect = source ? fitRect(source.fullW, source.fullH, env.outW, env.outH, lab.source?.fit ?? 'cover') : { x: 0, y: 0, w: env.outW, h: env.outH }
+    gl.uniform4f(loc('sourceRect'), rect.x / env.outW, rect.y / env.outH, rect.w / env.outW, rect.h / env.outH)
     gl.uniform1i(loc('influence'), 1)
     gl.activeTexture(gl.TEXTURE2)
     gl.bindTexture(gl.TEXTURE_2D, this.textures[2])
@@ -264,8 +430,81 @@ class GradientRenderer {
     gl.uniform1f(loc('folds'), settings.folds)
     gl.uniform1f(loc('bleed'), settings.bleed)
     gl.uniform1f(loc('depth'), settings.depth)
+    gl.uniform1f(loc('reflow'), settings.reflow)
+    gl.uniform1f(loc('sourceMode'), source ? 1 : 0)
     gl.uniform1f(loc('grain'), settings.grain)
     gl.uniform1i(loc('style'), STYLES.indexOf(lab.look.id!))
+    gl.uniform1i(loc('transportStats'), 4)
+    gl.uniform1f(loc('transportMeasure'), 0)
+    gl.uniform1f(loc('transportStatsReady'), 0)
+    gl.uniform1i(loc('transportRank'), 5)
+    gl.uniform1f(loc('transportRankMeasure'), 0)
+    gl.uniform1i(loc('flowEmission'), 6)
+    gl.uniform1f(loc('flowEmissionMeasure'), 0)
+    gl.uniform1f(loc('flowEmissionReady'), 0)
+    if (source && style === 2 && this.floatSource && !this.optical) {
+      // Grade the captured pixels before filtering. Prefiltering those colored
+      // emissions keeps narrow palette transitions out of the sparse gather.
+      gl.activeTexture(gl.TEXTURE6)
+      gl.bindTexture(gl.TEXTURE_2D, this.textures[6])
+      if (!this.flowEmissionAllocated) {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 512, 512, 0, gl.RGBA, gl.FLOAT, null)
+        this.flowEmissionAllocated = true
+      }
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.textures[6], 0)
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error('Flow emission buffer unavailable')
+      gl.bindTexture(gl.TEXTURE_2D, this.textures[1])
+      gl.viewport(0, 0, 512, 512)
+      gl.uniform1f(loc('flowEmissionMeasure'), 1)
+      gl.drawArrays(gl.TRIANGLES, 0, 3)
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.textures[0], 0)
+      gl.bindTexture(gl.TEXTURE_2D, this.textures[6])
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
+      gl.generateMipmap(gl.TEXTURE_2D)
+      gl.viewport(0, 0, env.outW, env.outH)
+      gl.uniform1f(loc('flowEmissionMeasure'), 0)
+      gl.uniform1f(loc('flowEmissionReady'), 1)
+    }
+    if (source && style !== 2 && this.floatSource && !this.optical) {
+      // Measure the transported exposure, whose range changes with blur and
+      // cropping. Reducing a fixed-size float image keeps preview/export equal
+      // and avoids a synchronous GPU readback while controls are moving.
+      gl.activeTexture(gl.TEXTURE4)
+      gl.bindTexture(gl.TEXTURE_2D, this.textures[4])
+      if (!this.statsAllocated) {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 128, 128, 0, gl.RGBA, gl.FLOAT, null)
+        this.statsAllocated = true
+      }
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.textures[4], 0)
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error('Gradient range buffer unavailable')
+      // A shader cannot sample its current render target, even when that
+      // sampler sits behind a disabled uniform branch.
+      gl.bindTexture(gl.TEXTURE_2D, this.textures[1])
+      gl.viewport(0, 0, 128, 128)
+      gl.uniform1f(loc('transportMeasure'), 1)
+      gl.drawArrays(gl.TRIANGLES, 0, 3)
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.textures[0], 0)
+      gl.bindTexture(gl.TEXTURE_2D, this.textures[4])
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
+      gl.generateMipmap(gl.TEXTURE_2D)
+      gl.viewport(0, 0, env.outW, env.outH)
+      gl.uniform1f(loc('transportMeasure'), 0)
+      gl.uniform1f(loc('transportStatsReady'), 1)
+      // Measure cumulative coverage of the filtered image. Palette intervals
+      // can then occupy their selected proportions even with a skewed source.
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.textures[5], 0)
+      gl.activeTexture(gl.TEXTURE5)
+      gl.bindTexture(gl.TEXTURE_2D, this.textures[1])
+      gl.viewport(0, 0, 512, 1)
+      gl.uniform1f(loc('transportRankMeasure'), 1)
+      gl.drawArrays(gl.TRIANGLES, 0, 3)
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.textures[0], 0)
+      gl.bindTexture(gl.TEXTURE_2D, this.textures[5])
+      gl.viewport(0, 0, env.outW, env.outH)
+      gl.uniform1f(loc('transportRankMeasure'), 0)
+      const rangeError = gl.getError()
+      if (rangeError !== gl.NO_ERROR) throw new Error(`Gradient range pass: ${rangeError}`)
+    }
     gl.drawArrays(gl.TRIANGLES, 0, 3)
     gl.bindFramebuffer(gl.FRAMEBUFFER, null)
     gl.useProgram(this.scatter)
@@ -276,6 +515,10 @@ class GradientRenderer {
     gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, this.textures[0])
     gl.uniform1i(post('exposure'), 0)
+    if (style !== 2) {
+      gl.generateMipmap(gl.TEXTURE_2D)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
+    } else gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
     gl.uniform2f(post('resolution'), env.outW, env.outH)
     gl.uniform1f(post('softness'), settings.softness)
     gl.uniform1f(post('bleed'), settings.bleed)
@@ -288,9 +531,22 @@ class GradientRenderer {
 }
 
 let renderer: GradientRenderer | null = null
+let studyRenderer: GradientRenderer | null = null
+let opticalStudy = false
+
+// A per-tab development comparison. Saved recipes and the main generator keep
+// the shipped renderer; this experiment cannot be enabled in production.
+export function setGradientOpticalStudy(enabled: boolean) {
+  opticalStudy = process.env.NODE_ENV === 'development' && enabled
+}
 
 export function renderGradient(ctx: CanvasRenderingContext2D, lab: LabState, source: LabSource | null, view: LabView): boolean {
   if (lab.look.version !== 'gradients' || !GRADIENT_IDS.has(lab.look.id ?? '') || view !== 'composite') return false
+  if (opticalStudy) {
+    studyRenderer ??= new GradientRenderer(true)
+    ctx.drawImage(studyRenderer.draw(lab, source), 0, 0, lab.output.width, lab.output.height)
+    return true
+  }
   renderer ??= new GradientRenderer()
   ctx.drawImage(renderer.draw(lab, source), 0, 0, lab.output.width, lab.output.height)
   return true

@@ -49,13 +49,8 @@ export type UiState = {
   motionPlaying: boolean
 }
 
-export type DeepPartial<T> = {
-  [K in keyof T]?: T[K] extends readonly unknown[]
-    ? T[K]
-    : T[K] extends object
-      ? DeepPartial<T[K]>
-      : T[K]
-}
+type PartialValue<T> = T extends readonly unknown[] ? T : T extends object ? DeepPartial<T> : T
+export type DeepPartial<T> = { [K in keyof T]?: PartialValue<T[K]> }
 
 export type ProjectPatch = DeepPartial<ProjectState>
 

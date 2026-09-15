@@ -352,6 +352,11 @@ function captureAuxPlanes(
 
 function captureLookSource(runtime: ViewerRuntime) {
   const canvas = runtime.renderer.domElement
+  if (runtime.recipe.look.version === 'gradients') {
+    // Capture exactly the rendered scene, including its background. Gradient
+    // Looks are full-frame raster layers, with no model mask or aux mapping.
+    return createLabSourceFromCanvas(canvas, { filename: 'three-render-layer-frame.rgba' })
+  }
   const colorFrame = runtime.lookColorFrame
   if (colorFrame.width !== canvas.width) colorFrame.width = canvas.width
   if (colorFrame.height !== canvas.height) colorFrame.height = canvas.height
@@ -514,7 +519,7 @@ async function captureRuntimeFrame(
     // The export runs through the same capture contract as the live
     // overlay: depth/normal planes for THIS pose at THIS aspect ride along
     // with the frame so the treated export sees the same env fields.
-    const aux = captureAuxPlanes(runtime, width, height)
+    const aux = runtime.recipe.look.version === 'gradients' ? null : captureAuxPlanes(runtime, width, height)
     if (aux) attachLabAuxPlanes(frame, aux)
     return frame
   } finally {

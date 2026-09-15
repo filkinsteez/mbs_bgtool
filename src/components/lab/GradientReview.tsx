@@ -8,9 +8,10 @@ import { colorMixForPack, PALETTE_PACKS } from '@/features/background-generator/
 import { renderBackground2DCanvas, exportBackground2DPng } from '@/features/background-generator/render2d'
 import { brushStudy } from '@/core/lab/gradients/studies'
 import { serializeLookPreset } from '@/features/background-generator/lookPreset'
+import { setGradientOpticalStudy } from '@/core/lab/gradients/render'
 
-// Development-only visual review. Uses the production renderer and saves every
-// iteration through /api/devshot; no reference images are bundled with the app.
+// Development-only visual review. Compares the current and experimental
+// renderers; no reference images are bundled with the app.
 export function GradientReview() {
   const root = useRef<HTMLDivElement>(null)
   const [seed, setSeed] = useState(1913)
@@ -22,13 +23,15 @@ export function GradientReview() {
   const [folds, setFolds] = useState(0.32)
   const [bleed, setBleed] = useState(0.6)
   const [depth, setDepth] = useState(0.45)
+  const [reflow, setReflow] = useState(0.5)
   const [complexity, setComplexity] = useState(0.65)
   const [distortion, setDistortion] = useState(0.65)
+  const [optical, setOptical] = useState(false)
   const palettes = ['bold', 'harmonious', 'atmospheric', 'primary-core', 'primary-neutrals', 'neutral-flex']
   const recipeFor = (index: number): BackgroundRecipeV2 => {
     const recipe = createDefaultBackgroundRecipe(seed)
     const pack = PALETTE_PACKS.find((p) => p.id === palettes[Math.floor(index / 4)])!
-    recipe.look = { version: 'gradients', id: GRADIENT_LOOKS[index % 4].id, detail: complexity, gradient: { softness, distortion, grain: 0.22, scale: 0.5, folds, bleed, depth } }
+    recipe.look = { version: 'gradients', id: GRADIENT_LOOKS[index % 4].id, detail: complexity, gradient: { softness, distortion, grain: 0.22, scale: 0.5, folds, bleed, depth, reflow } }
     if (study !== 'none') recipe.look.deformation = brushStudy(aspect === '9:16' ? 9 / 16 : 16 / 9, study as 'sweep' | 'fold')
     recipe.palette = { packId: pack.id, mix: colorMixForPack(pack), ground: pack.colors.at(-1)!, ink: pack.colors[0] }
     recipe.format = aspect === '9:16'
@@ -37,14 +40,17 @@ export function GradientReview() {
     return recipe
   }
   useEffect(() => {
+    setGradientOpticalStudy(optical)
     root.current?.querySelectorAll('canvas').forEach((canvas, index) => {
       renderBackground2DCanvas(canvas, recipeFor(index), { phase: 'preview', maxLongEdge: 960 })
     })
+    return () => setGradientOpticalStudy(false)
   // This development matrix has a fixed palette/renderer order.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seed, aspect, study, softness, folds, bleed, depth, complexity, distortion])
+  }, [seed, aspect, study, softness, folds, bleed, depth, reflow, complexity, distortion, optical])
 
   const save = async () => {
+    setGradientOpticalStudy(optical)
     const canvases = Array.from(root.current!.querySelectorAll('canvas'))
     // Re-render before capturing so hot-reloaded shader changes cannot leave
     // an old canvas paired with a new recipe in the review archive.
@@ -57,8 +63,10 @@ export function GradientReview() {
     ctx.fillStyle = '#111315'
     ctx.fillRect(0, 0, sheet.width, sheet.height)
     for (let i = 0; i < canvases.length; i++) {
-      const name = `gradient-${stage}-${study}-${seed}-${aspect.replace(':', '-')}-${palettes[Math.floor(i / 4)]}-${GRADIENT_LOOKS[i % 4].id}`
-      const response = await fetch('/api/devshot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, dataUrl: canvases[i].toDataURL(), recipe: JSON.parse(serializeLookPreset(recipeFor(i), 'background', name)) }) })
+      const name = `gradient-${stage}-${optical ? 'optical-' : ''}${study}-${seed}-${aspect.replace(':', '-')}-${palettes[Math.floor(i / 4)]}-${GRADIENT_LOOKS[i % 4].id}`
+      const preset = JSON.parse(serializeLookPreset(recipeFor(i), 'background', name))
+      if (optical) preset.reviewRenderer = { id: 'optical-study-v1', route: '/gradient-review', instruction: 'Enable Optical study. The main generator uses the current renderer and will produce a different image.' }
+      const response = await fetch('/api/devshot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, dataUrl: canvases[i].toDataURL(), recipe: preset }) })
       if (!response.ok) throw new Error('Snapshot save failed')
       const x = i % 4 * width, y = Math.floor(i / 4) * (height + 38)
       ctx.drawImage(canvases[i], x, y, width, height)
@@ -66,8 +74,38 @@ export function GradientReview() {
       ctx.font = '16px sans-serif'
       ctx.fillText(`${palettes[Math.floor(i / 4)]} / ${GRADIENT_LOOKS[i % 4].label} / ${seed}`, x + 12, y + height + 25)
     }
-    await fetch('/api/devshot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `gradient-${stage}-${study}-sheet-${seed}-${aspect.replace(':', '-')}`, dataUrl: sheet.toDataURL() }) })
+    const response = await fetch('/api/devshot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `gradient-${stage}-${optical ? 'optical-' : ''}${study}-sheet-${seed}-${aspect.replace(':', '-')}`, dataUrl: sheet.toDataURL() }) })
+    if (!response.ok) throw new Error('Contact sheet save failed')
     setStatus(`Saved ${stage}`)
+  }
+
+  const saveRendererComparison = async () => {
+    setStatus('Saving renderer comparisons')
+    const width = 640, height = aspect === '9:16' ? 1138 : 360
+    const sample = document.createElement('canvas'), sheet = document.createElement('canvas')
+    sheet.width = width * 2
+    sheet.height = (height + 38) * 4
+    const ctx = sheet.getContext('2d')!
+    try {
+      for (let palette = 0; palette < palettes.length; palette++) {
+        ctx.fillStyle = '#111315'
+        ctx.fillRect(0, 0, sheet.width, sheet.height)
+        for (let look = 0; look < 4; look++) for (let version = 0; version < 2; version++) {
+          setGradientOpticalStudy(version === 1)
+          renderBackground2DCanvas(sample, recipeFor(palette * 4 + look), { phase: 'preview', maxLongEdge: 960 })
+          const x = width * version, y = (height + 38) * look
+          ctx.drawImage(sample, x, y, width, height)
+          ctx.fillStyle = '#fff'
+          ctx.font = '16px sans-serif'
+          ctx.fillText(`${version ? 'Optical study' : 'Current'} / ${GRADIENT_LOOKS[look].label} / ${palettes[palette]}`, x + 12, y + height + 25)
+        }
+        const response = await fetch('/api/devshot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `gradient-${stage}-renderer-comparison-${palettes[palette]}-${seed}-${aspect.replace(':', '-')}`, dataUrl: sheet.toDataURL() }) })
+        if (!response.ok) throw new Error('Renderer comparison save failed')
+      }
+      setStatus(`Saved renderer comparisons ${stage}`)
+    } finally {
+      setGradientOpticalStudy(optical)
+    }
   }
 
   const validate = async () => {
@@ -133,9 +171,10 @@ export function GradientReview() {
       draw(colorRecipe(['#0064E0', '#FFD61E', '#FF4F00', '#25C8EE']))
       const vividPixels = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data
       for (let p = 0; p < vividPixels.length; p += 4) {
-        // The input minimum value is 224. Allow the texture sampler's local
-        // interpolation at smear edges, while rejecting added dark shading.
-        if (Math.max(vividPixels[p], vividPixels[p + 1], vividPixels[p + 2]) < 208) {
+        // Current rendering preserves the selected brightness endpoints. The
+        // optical experiment deliberately allows derived shades and highlights.
+        const brightnessFloor = optical ? 30 : 208
+        if (Math.max(vividPixels[p], vividPixels[p + 1], vividPixels[p + 2]) < brightnessFloor) {
           await fetch('/api/devshot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `gradient-${stage}-failed-brightness`, dataUrl: canvas.toDataURL() }) })
           throw new Error(`Bright swatches became dark at ${p / 4}: ${Array.from(vividPixels.slice(p, p + 4))}`)
         }
@@ -146,9 +185,9 @@ export function GradientReview() {
       const weighted = (ratio: number) => ({ ...recipe, palette: { ...recipe.palette, mix: recipe.palette.mix.map((c, j) => j === 0 ? { ...c, ratio } : c) } })
       if (draw(weighted(5)) === draw(weighted(95))) throw new Error('Lead color weight has no effect')
       if (first === draw({ ...recipe, seed: seed + 717 })) throw new Error('Seed has no effect')
-      if (first === draw({ ...recipe, symbol: { enabled: false } })) throw new Error('Symbol control has no effect')
+      if (first !== draw({ ...recipe, symbol: { enabled: true } })) throw new Error('Legacy symbol setting changes the background')
       if (draw({ ...recipe, look: { ...recipe.look, detail: 0 } }) === draw({ ...recipe, look: { ...recipe.look, detail: 1 } })) throw new Error('Complexity has no effect')
-      for (const key of ['softness', 'distortion', 'scale', 'folds', 'bleed', 'depth', 'grain'] as const) {
+      for (const key of ['softness', 'distortion', 'scale', 'folds', 'bleed', 'depth', 'grain', 'reflow'] as const) {
         const base = { softness: 0.5, distortion: 0.45, grain: 0.22 }
         if (draw({ ...recipe, look: { ...recipe.look, gradient: { ...base, [key]: 0 } } }) === draw({ ...recipe, look: { ...recipe.look, gradient: { ...base, [key]: 1 } } })) throw new Error(`${key} has no effect`)
       }
@@ -271,7 +310,12 @@ export function GradientReview() {
             maxExportError = Math.max(maxExportError, difference / (pixels.length / 4 * 3))
           }
           recipe.look.gradient.depth = 0
-          maxFlatRatio = Math.max(maxFlatRatio, values(capture()) / Math.max(range, 1))
+          const flatRatio = values(capture()) / Math.max(range, 1)
+          if (flatRatio > 0.35) {
+            await fetch('/api/devshot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `gradient-${stage}-failed-flat-${pack.id}-${recipe.look.id}-${sampleSeed}`, dataUrl: canvas.toDataURL(), recipe }) })
+            throw new Error(`${pack.label} / ${recipe.look.id} / ${sampleSeed}: Depth zero retains ${(flatRatio * 100).toFixed(1)}% of brightness span ${range}`)
+          }
+          maxFlatRatio = Math.max(maxFlatRatio, flatRatio)
         }
       }
       if (minRange < 5) throw new Error(`${pack.label}: insufficient tonal range (${minRange})`)
@@ -280,7 +324,7 @@ export function GradientReview() {
       if (maxExportError > 3) throw new Error(`${pack.label}: preview/export difference ${maxExportError.toFixed(2)}/255`)
       results.push(`${pack.label}: 3 seeds × 4 looks passed; minimum brightness span ${minRange}/255; minimum look difference ${minDifference.toFixed(1)}/255; maximum Depth-zero span ${(maxFlatRatio * 100).toFixed(1)}%; 4K error ${maxExportError.toFixed(2)}/255`)
     }
-    const response = await fetch('/api/devshot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `gradient-${stage}-palette-checks-${aspect.replace(':', '-')}`, dataUrl: canvas.toDataURL(), recipe: { results, aspect, softness, complexity, bleed, study } }) })
+    const response = await fetch('/api/devshot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `gradient-${stage}-palette-checks-${aspect.replace(':', '-')}`, dataUrl: canvas.toDataURL(), recipe: { results, renderer: optical ? 'optical-study-v1' : 'current', seed, aspect, softness, complexity, distortion, depth, folds, bleed, study } }) })
     if (!response.ok) throw new Error('Palette check save failed')
     setStatus(results.join('\n'))
   }
@@ -290,6 +334,7 @@ export function GradientReview() {
       <label>Seed <input aria-label="Review seed" type="number" value={seed} onChange={(e) => setSeed(Number(e.target.value))} /></label>
       <select aria-label="Review aspect" value={aspect} onChange={(e) => setAspect(e.target.value)}><option>16:9</option><option>9:16</option></select>
       <select aria-label="Brush study" value={study} onChange={(e) => setStudy(e.target.value)}><option value="none">No brush</option><option value="sweep">Swept</option><option value="fold">Folded</option></select>
+      <label>Reflow <input aria-label="Review reflow" type="number" min="0" max="1" step="0.01" value={reflow} onChange={(e) => setReflow(Number(e.target.value))} style={{ width: 55 }} /></label>
       <label>Softness <input aria-label="Review softness" type="number" min="0" max="1" step="0.05" value={softness} onChange={(e) => setSoftness(Number(e.target.value))} style={{ width: 55 }} /></label>
       <label>Folds <input aria-label="Review folds" type="number" min="0" max="1" step="0.05" value={folds} onChange={(e) => setFolds(Number(e.target.value))} style={{ width: 55 }} /></label>
       <label>Bleed <input aria-label="Review bleed" type="number" min="0" max="1" step="0.05" value={bleed} onChange={(e) => setBleed(Number(e.target.value))} style={{ width: 55 }} /></label>
@@ -298,9 +343,11 @@ export function GradientReview() {
       <label>Distortion <input aria-label="Review distortion" type="number" min="0" max="1" step="0.05" value={distortion} onChange={(e) => setDistortion(Number(e.target.value))} style={{ width: 55 }} /></label>
       <label>Iteration <input aria-label="Iteration" value={stage} onChange={(e) => setStage(e.target.value)} style={{ width: 70 }} /></label>
       <button onClick={() => save().catch((e) => setStatus(String(e)))}>Save snapshots</button>
+      <button onClick={() => saveRendererComparison().catch((e) => setStatus(String(e)))}>Save renderer comparisons</button>
       <button onClick={() => saveDepthStudy().catch((e) => setStatus(String(e)))}>Save depth study</button>
       <button onClick={() => validate().catch((e) => setStatus(String(e)))}>Check rendering</button>
       <button onClick={() => validatePalettes().catch((e) => setStatus(String(e)))}>Check palettes</button>
+      <label><input type="checkbox" checked={optical} onChange={(e) => setOptical(e.target.checked)} /> Optical study</label>
       <Link href="/">Generator</Link>
     </div>
     <pre role="status" style={{ whiteSpace: 'pre-wrap' }}>{status}</pre>

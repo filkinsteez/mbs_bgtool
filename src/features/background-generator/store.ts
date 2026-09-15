@@ -54,6 +54,7 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
     return {
       ...recipe,
       format,
+      symbol: { enabled: false },
       transforms: {
         background: constrainBackgroundTransform(
           recipe.transforms.background,
@@ -159,6 +160,9 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
     },
     setMode: (mode) => {
       if (transactionStart) get().commitTransaction()
+      if (mode === 'material' && get().mode !== mode && get().recipe.look.version === 'gradients') {
+        commitRecipe(mergeDeep(get().recipe, { materialLookOverlay: { enabled: true } }))
+      }
       set({ mode })
     },
     setFramingMode: (mode) => {

@@ -8,6 +8,7 @@ export const GRADIENT_DEFAULTS: Readonly<Required<GradientSettings>> = {
   folds: 0.32,
   bleed: 0.6,
   depth: 0.45,
+  reflow: 0.5,
 }
 
 export function normalizeGradientSettings(value?: Partial<GradientSettings> | null): Required<GradientSettings> {
@@ -17,5 +18,5 @@ export function normalizeGradientSettings(value?: Partial<GradientSettings> | nu
       ? Math.max(0, Math.min(1, n))
       : GRADIENT_DEFAULTS[key]
   }
-  return { softness: read('softness'), distortion: read('distortion'), grain: read('grain'), scale: read('scale'), folds: read('folds'), bleed: read('bleed'), depth: read('depth') }
+  return { softness: read('softness'), distortion: read('distortion'), grain: read('grain'), scale: read('scale'), folds: read('folds'), bleed: read('bleed'), depth: read('depth'), reflow: read('reflow') }
 }

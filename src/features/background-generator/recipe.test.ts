@@ -10,6 +10,11 @@ import {
 } from './recipe'
 
 describe('background recipe', () => {
+  it('keeps the symbol off when loading an older look with it enabled', () => {
+    const legacy = { ...createDefaultBackgroundRecipe(), symbol: { enabled: true } }
+    expect(deserializeBackgroundRecipe(JSON.stringify(legacy))?.symbol.enabled).toBe(false)
+    expect(backgroundRecipeToLab(legacy).territory.sources.filter(s => s.kind === 'curve').every(s => !s.enabled)).toBe(true)
+  })
   it('defines the required 4K dimensions by long edge', () => {
     expect(dimensionsFor('16:9')).toEqual({ width: 3840, height: 2160 })
     expect(dimensionsFor('9:16')).toEqual({ width: 2160, height: 3840 })

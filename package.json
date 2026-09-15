@@ -8,7 +8,12 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "thumbnails": "node scripts/generate-look-thumbnails.mjs",
+    "check:gradients": "node scripts/check-gradient-controls.mjs",
+    "check:gradient-controls": "node scripts/check-gradient-look-controls.mjs",
+    "audit:gradient-controls": "node scripts/audit-gradient-controls.mjs current --strict",
+    "review:gradients": "node scripts/gradient-distinction.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

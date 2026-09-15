@@ -247,7 +247,7 @@ export function createDefaultBackgroundRecipe(seed = 1913): BackgroundRecipeV2 {
       camera: null,
     },
     motion: { enabled: false, amount: 0, speed: 0.5, loopSeconds: 8 },
-    symbol: { enabled: true },
+    symbol: { enabled: false },
   }
 }
 
@@ -334,7 +334,7 @@ export function deserializeBackgroundRecipe(json: string): BackgroundRecipeV2 | 
       height: raw.format?.height,
     })
     recipe.materialLookOverlay.enabled = recipe.materialLookOverlay.enabled === true
-    recipe.symbol.enabled = recipe.symbol.enabled !== false
+    recipe.symbol.enabled = false
     // Saved sessions and preset files may still carry the pre-correction
     // brand hexes; heal them everywhere a color is stored.
     recipe.palette.mix = recipe.palette.mix.map((item) => ({
@@ -593,11 +593,10 @@ export function backgroundRecipeToLab(
                   },
             }
           : source,
-      // The symbol toggle: the curve source stays present but disabled, so
-      // every renderer's mark-free fallback engages instead of the canonical
-      // placement the material path synthesizes when no source exists.
+      // Generated backgrounds keep the symbol off, including older recipes.
+      // Retain the disabled source so mark-free renderer fallbacks engage.
       ).map((source) =>
-        source.kind === 'curve' && recipe.symbol.enabled === false
+        source.kind === 'curve'
           ? { ...source, enabled: false }
           : source,
       ),

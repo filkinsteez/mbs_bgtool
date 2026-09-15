@@ -3,12 +3,36 @@ import { GRADIENT_LOOKS, looksForVersion } from '../looks'
 import { backgroundRecipeToLab, createDefaultBackgroundRecipe, deserializeBackgroundRecipe } from '@/features/background-generator/recipe'
 import { parseLookPreset, serializeLookPreset } from '@/features/background-generator/lookPreset'
 import { normalizeGradientSettings } from './settings'
-import { gradientPalette, gradientPigments, gradientToneProfile } from './render'
+import { gradientPalette, gradientPigments, gradientToneProfile, gradientSourceAxis } from './render'
+
+describe('source focus direction', () => {
+  function field(angle: number, polarity = 1) {
+    const data = new Float32Array(64 * 64 * 4)
+    for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) {
+      data[(y * 64 + x) * 4 + 3] = 2 + polarity * (Math.cos(angle) * x + Math.sin(angle) * y) / 64
+    }
+    return data
+  }
+  it('follows the source edge direction and rotates with it', () => {
+    for (const angle of [0, .43, 1.9]) {
+      const axis = gradientSourceAxis(field(angle), 64, 64, [.5, .5, .1, .1])
+      expect(Math.abs(axis[0] * Math.cos(angle) + axis[1] * Math.sin(angle))).toBeCloseTo(1, 5)
+    }
+  })
+  it('keeps the filter axis when the source contrast reverses', () => {
+    const a = gradientSourceAxis(field(.8), 64, 64, [.5, .5, .1, .1])
+    const b = gradientSourceAxis(field(.8, -1), 64, 64, [.5, .5, .1, .1])
+    expect(Math.abs(a[0] * b[0] + a[1] * b[1])).toBeCloseTo(1, 5)
+  })
+  it('has a finite fallback for uniform source frames', () => {
+    expect(gradientSourceAxis(new Float32Array(64 * 64 * 4).fill(1), 64, 64, [.5, .5, .1, .1])).toEqual([1, 0])
+  })
+})
 
 describe('gradient recipes', () => {
   it.each(GRADIENT_LOOKS)('preserves $id and its controls through saved looks and the render input', (look) => {
     const recipe = createDefaultBackgroundRecipe(7429)
-    recipe.look = { id: look.id, version: 'gradients', detail: 0.7, gradient: { softness: 0.81, distortion: 0.23, grain: 0.16, scale: 0.45, folds: 0.32, bleed: 0.72, depth: 0.3 } }
+    recipe.look = { id: look.id, version: 'gradients', detail: 0.7, gradient: { softness: 0.81, distortion: 0.23, grain: 0.16, scale: 0.45, folds: 0.32, bleed: 0.72, depth: 0.3, reflow: 0.72 } }
     const parsed = parseLookPreset(serializeLookPreset(recipe, 'background', 'Gradient'))!
     expect(parsed.recipe.look).toEqual(recipe.look)
     const lab = backgroundRecipeToLab(parsed.recipe)
@@ -19,7 +43,7 @@ describe('gradient recipes', () => {
 
   it('bounds hand-edited controls without changing the existing catalogs', () => {
     expect(normalizeGradientSettings({ softness: 18, distortion: -2, grain: NaN }))
-      .toEqual({ softness: 1, distortion: 0, grain: 0.22, scale: 0.45, folds: 0.32, bleed: 0.6, depth: 0.45 })
+      .toEqual({ softness: 1, distortion: 0, grain: 0.22, scale: 0.45, folds: 0.32, bleed: 0.6, depth: 0.45, reflow: 0.5 })
     const old = createDefaultBackgroundRecipe(81)
     expect(deserializeBackgroundRecipe(JSON.stringify(old))!.look).toEqual(old.look)
     expect(looksForVersion('v4').map((l) => l.id)).toEqual(['composite', 'plates', 'loom'])

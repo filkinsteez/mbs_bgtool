@@ -19,7 +19,7 @@ export type LabFit = 'contain' | 'cover'
 // src/core/lab/v4/ over the same V2Env the V3-tab systems consume.
 export type LookVersion = 'v1' | 'v1b' | 'v2' | 'v4' | 'gradients'
 
-export type GradientSettings = { softness: number; distortion: number; grain: number; scale?: number; folds?: number; bleed?: number; depth?: number }
+export type GradientSettings = { softness: number; distortion: number; grain: number; scale?: number; folds?: number; bleed?: number; depth?: number; reflow?: number }
 
 export type LabSourceMeta = {
   filename?: string

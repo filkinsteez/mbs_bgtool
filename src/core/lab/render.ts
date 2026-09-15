@@ -1019,11 +1019,16 @@ export function renderLabArtwork(
   paintRaster?: PaintRaster | null,
 ): void {
   const { width: outW, height: outH } = lab.output
+  // Full-frame gradients already cover every pixel. Adding subpixel bleed to
+  // an identity transform resampled sharp colored streaks and darkened them.
+  const nativeGradient = lab.look?.version === 'gradients'
+    && transform.x === 0 && transform.y === 0
+    && transform.rotation === 0 && transform.scale === 1
   const renderTransform = constrainArtworkCover(
     transform,
     outW,
     outH,
-    Math.max(outW, outH) / 3840,
+    nativeGradient ? 0 : Math.max(outW, outH) / 3840,
   )
   const artwork = artworkCanvas(outW, outH)
   artwork.setTransform(1, 0, 0, 1, 0, 0)

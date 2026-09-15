@@ -119,6 +119,23 @@ describe('background recipe history', () => {
     expect(useBackgroundStore.getState().recipe.materialLookOverlay.enabled).toBe(false)
   })
 
+  it('carries a selected gradient into 3D and keeps Reflow as one undoable edit', () => {
+    const store = useBackgroundStore.getState()
+    store.updateRecipe({ look: { version: 'gradients', id: 'flow', gradient: { softness: 0.65, distortion: 0.45, grain: 0.22, reflow: 0.5 } } })
+    store.setMode('material')
+    expect(useBackgroundStore.getState().recipe.materialLookOverlay.enabled).toBe(true)
+    const count = backgroundHistory.depth.past
+    store.beginTransaction()
+    store.setTransient({ look: { gradient: { reflow: 0.6 } } })
+    store.setTransient({ look: { gradient: { reflow: 0.8 } } })
+    store.commitTransaction()
+    expect(backgroundHistory.depth.past).toBe(count + 1)
+    store.undo()
+    expect(useBackgroundStore.getState().recipe.look.gradient?.reflow).toBe(0.5)
+    store.redo()
+    expect(useBackgroundStore.getState().recipe.look.gradient?.reflow).toBe(0.8)
+  })
+
   it('coalesces a direct manipulation transaction into one history entry', () => {
     const store = useBackgroundStore.getState()
     store.beginTransaction()
