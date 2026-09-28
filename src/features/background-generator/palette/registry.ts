@@ -17,6 +17,10 @@ export type PalettePack = {
 export { META_BLUE }
 export const CUSTOM_PALETTE_ID = 'custom'
 
+// Removed packs. Saves that used one load as a custom palette with the
+// same colors instead of being rejected.
+export const RETIRED_PALETTE_IDS: ReadonlySet<string> = new Set(['harmonious'])
+
 // Eleven swatches shipped one digit off the official brand cards before
 // 2026-08-29. Saved recipes and preset files carry those bytes forever, so
 // loading heals them to the corrected values.
@@ -50,21 +54,21 @@ export const APPROVED_COLOR_GROUPS = [
     id: 'cyan',
     label: 'Cyans & teals',
     colors: sortColorsLightToDark([
-      '#B9E9F3', '#25C8EE', '#1AC5ED', '#25C8F1', '#20C3B8', '#058382', '#043F4D',
+      '#B9E9F3', '#25C8EE', '#25C8F1', '#20C3B8', '#058382', '#043F4D',
     ]),
   },
   {
     id: 'green',
     label: 'Greens',
     colors: sortColorsLightToDark([
-      '#C0ECC9', '#86E59F', '#24D366', '#153B21',
+      '#D5F57A', '#C0ECC9', '#86E59F', '#24D366', '#174A3A', '#153B21',
     ]),
   },
   {
     id: 'warm',
     label: 'Yellows & oranges',
     colors: sortColorsLightToDark([
-      '#FCEBA6', '#FFE7CF', '#FFD61E', '#FF4F00', '#8C4F00',
+      '#FCEBA6', '#FFE7CF', '#FFD61E', '#B69D74', '#FF4F00', '#8C4F00',
     ]),
   },
   {
@@ -78,7 +82,7 @@ export const APPROVED_COLOR_GROUPS = [
     id: 'purple',
     label: 'Purples',
     colors: sortColorsLightToDark([
-      '#E7DCFE', '#AF4EC5', '#814DFF', '#5043FF', '#7852FF', '#3D2A83',
+      '#E7DCFE', '#7852FF', '#3D2A83', '#410840',
     ]),
   },
   {
@@ -98,7 +102,7 @@ export const CURATED_APPROVED_COLORS = APPROVED_COLOR_GROUPS.flatMap(
 export const PALETTE_PACKS: readonly PalettePack[] = [
   {
     id: 'primary-core',
-    label: 'Primary',
+    label: 'Blues',
     tier: 'primary',
     source: 'primary-palette-reference.png',
     hue: 'blue',
@@ -108,7 +112,7 @@ export const PALETTE_PACKS: readonly PalettePack[] = [
   },
   {
     id: 'primary-neutrals',
-    label: 'Neutrals',
+    label: 'Primary',
     tier: 'primary',
     source: 'primary-palette-reference.png',
     hue: 'neutral',
@@ -127,16 +131,6 @@ export const PALETTE_PACKS: readonly PalettePack[] = [
     defaultMix: [0, 1, 2],
   },
   {
-    id: 'harmonious',
-    label: 'Harmonious',
-    tier: 'secondary',
-    source: 'harmonious-palette-reference.png',
-    hue: 'violet and cyan',
-    tone: 'vivid',
-    colors: [META_BLUE, '#1AC5ED', '#AF4EC5', '#814DFF', '#5043FF'],
-    defaultMix: [0, 1, 3],
-  },
-  {
     id: 'atmospheric',
     label: 'Atmospheric',
     tier: 'secondary',
@@ -144,6 +138,16 @@ export const PALETTE_PACKS: readonly PalettePack[] = [
     hue: 'blue grey',
     tone: 'soft',
     colors: [META_BLUE, '#D7E7EE', '#7CA0B7', '#53606A', '#1C2B33'],
+    defaultMix: [0, 1, 4],
+  },
+  {
+    id: 'elemental',
+    label: 'Elemental',
+    tier: 'secondary',
+    source: 'Color Presentations | MBS Transform (Figma)',
+    hue: 'lime, forest, sand, plum',
+    tone: 'earth',
+    colors: [META_BLUE, '#D5F57A', '#174A3A', '#B69D74', '#410840'],
     defaultMix: [0, 1, 4],
   },
   {

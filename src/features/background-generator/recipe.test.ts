@@ -429,3 +429,22 @@ describe('legacy brand hex migration', () => {
     expect(healed!.material.highlightColor).toBe('#D7E7EE')
   })
 })
+
+describe('retired palette packs', () => {
+  it('loads a Harmonious save as a custom palette with the same colors', () => {
+    const saved = createDefaultBackgroundRecipe(11)
+    const mix = [
+      { color: '#0064E0', enabled: true, ratio: 40 },
+      { color: '#1AC5ED', enabled: true, ratio: 15 },
+      { color: '#AF4EC5', enabled: true, ratio: 15 },
+      { color: '#814DFF', enabled: true, ratio: 15 },
+      { color: '#5043FF', enabled: true, ratio: 15 },
+    ]
+    saved.palette.packId = 'harmonious'
+    saved.palette.mix = mix
+    const loaded = deserializeBackgroundRecipe(JSON.stringify(saved))
+    expect(loaded).not.toBeNull()
+    expect(loaded!.palette.packId).toBe('custom')
+    expect(loaded!.palette.mix).toEqual(mix)
+  })
+})

@@ -27,7 +27,7 @@ export function GradientReview() {
   const [complexity, setComplexity] = useState(0.65)
   const [distortion, setDistortion] = useState(0.65)
   const [optical, setOptical] = useState(false)
-  const palettes = ['bold', 'harmonious', 'atmospheric', 'primary-core', 'primary-neutrals', 'neutral-flex']
+  const palettes = ['bold', 'elemental', 'atmospheric', 'primary-core', 'primary-neutrals', 'neutral-flex']
   const recipeFor = (index: number): BackgroundRecipeV2 => {
     const recipe = createDefaultBackgroundRecipe(seed)
     const pack = PALETTE_PACKS.find((p) => p.id === palettes[Math.floor(index / 4)])!

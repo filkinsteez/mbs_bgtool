@@ -21,6 +21,7 @@ import {
   META_BLUE,
   migrateLegacyHex,
   PALETTE_PACKS,
+  RETIRED_PALETTE_IDS,
   type ColorMix,
 } from './palette/registry'
 
@@ -313,6 +314,9 @@ export function deserializeBackgroundRecipe(json: string): BackgroundRecipeV2 | 
       recipe.look.id = catalog[0].id
     }
     const allowedLook = true
+    if (RETIRED_PALETTE_IDS.has(recipe.palette.packId)) {
+      recipe.palette.packId = CUSTOM_PALETTE_ID
+    }
     const pack = PALETTE_PACKS.find((item) => item.id === recipe.palette.packId)
     const customPalette = recipe.palette.packId === CUSTOM_PALETTE_ID
       && Array.isArray(recipe.palette.mix)
