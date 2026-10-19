@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   artworkContainsPoint,
+  moveGradientCenter,
   moveSubject,
   rotateSubject,
   scaleSubjectFromCorner,
@@ -37,6 +38,23 @@ describe('canvas geometry', () => {
     const snapped = moveSubject({ ...COVERED, x: 0.01 }, 0, 0, 1000, 500, false, true)
     expect(snapped.transform.x).toBeCloseTo(0)
     expect(snapped.guideX).toBe(500)
+  })
+
+  it('moves the gradient center under the pointer through artwork rotation', () => {
+    expect(moveGradientCenter({ x: 0.5, y: 0.5 }, 100, 50, 1000, 500, 0))
+      .toEqual({ x: 0.6, y: 0.6 })
+    const rotated = moveGradientCenter(
+      { x: 0.5, y: 0.5 },
+      100,
+      0,
+      1000,
+      500,
+      90,
+    )
+    expect(rotated.x).toBeCloseTo(0.5)
+    expect(rotated.y).toBeCloseTo(0.3)
+    expect(moveGradientCenter({ x: 0.9, y: 0.1 }, 1000, -1000, 100, 100, 0))
+      .toEqual({ x: 1, y: 0 })
   })
 
   it('keeps the generated background edge-to-edge while moving and scaling', () => {

@@ -51,22 +51,28 @@ describe('distortion brush', () => {
   })
   it('commits a stroke as one undo entry, restores it with redo, and preserves it through serialization', () => {
     const recipe = createDefaultBackgroundRecipe(47)
-    recipe.look.version = 'gradients'; recipe.look.id = 'halo'
     const store = useBackgroundStore.getState()
     store.replaceRecipe(recipe)
     store.beginTransaction()
     let field = emptyDeformation()
     for (let i = 0; i < 4; i++) {
       field = applyBrushSegment(field, dab)
-      store.setTransient({ look: { deformation: encodeDeformation(field) } })
+      store.setTransient({
+        gradientState: {
+          ...useBackgroundStore.getState().recipe.gradientState,
+          deformation: encodeDeformation(field),
+        },
+      })
     }
     store.commitTransaction()
     expect(backgroundHistory.depth.past).toBe(1)
     const painted = useBackgroundStore.getState().recipe
-    expect(deserializeBackgroundRecipe(JSON.stringify(painted))!.look.deformation).toEqual(painted.look.deformation)
+    expect(deserializeBackgroundRecipe(JSON.stringify(painted))!.gradientState.deformation)
+      .toEqual(painted.gradientState.deformation)
     store.undo()
-    expect(useBackgroundStore.getState().recipe.look.deformation).toBeUndefined()
+    expect(useBackgroundStore.getState().recipe.gradientState.deformation).toBeUndefined()
     store.redo()
-    expect(useBackgroundStore.getState().recipe.look.deformation).toEqual(painted.look.deformation)
+    expect(useBackgroundStore.getState().recipe.gradientState.deformation)
+      .toEqual(painted.gradientState.deformation)
   })
 })

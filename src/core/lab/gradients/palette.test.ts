@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { resolveLookColorPlan } from '../colorDirection'
 import {
   colorMixForPack,
-  CURATED_APPROVED_COLORS,
   PALETTE_PACKS,
 } from '@/features/background-generator/palette/registry'
 import { selectedSwatches, weightedPalette, weightedPigment, weightedPigments } from './palette'
@@ -93,7 +92,7 @@ describe('gradient palette weights', () => {
     for (const bias of [-1, 0, 1]) expect(weightedPigment(withInactive, bias)).toEqual(weightedPigment(expected, bias))
   })
 
-  it.each(PALETTE_PACKS.filter(pack => pack.tier !== 'extended'))('preserves the exact weight ratios of $label', (pack) => {
+  it.each(PALETTE_PACKS)('preserves the exact weight ratios of $label', (pack) => {
     const rows = colorMixForPack(pack)
     const env = input(rows)
     const swatches = selectedSwatches(env)
@@ -109,23 +108,6 @@ describe('gradient palette weights', () => {
         if (rows[i].ratio === rows[j].ratio) expect(pigments[i * 4 + 3]).toBe(pigments[j * 4 + 3])
       }
     }
-  })
-
-  it('retains all 49 approved swatches without allocating a fixed number of deposits', () => {
-    expect(CURATED_APPROVED_COLORS).toHaveLength(49)
-    const env = input(mix(CURATED_APPROVED_COLORS, CURATED_APPROVED_COLORS.map(() => 1)))
-    const swatches = selectedSwatches(env)
-    const pigments = weightedPigments(env)
-    expect(swatches).toHaveLength(49)
-    expect(pigments).toHaveLength(49 * 4)
-    for (let i = 0; i < 49; i++) {
-      expect(swatches[i].hex).toBe(CURATED_APPROVED_COLORS[i])
-      expect(swatches[i].weight).toBeCloseTo(1 / 49, 12)
-      expect(pigments[i * 4 + 3]).toBeCloseTo(1 / 49, 7)
-      expect(Array.from(pigments.slice(i * 4, i * 4 + 3), v => Math.round(v * 255))).toEqual(rgb(CURATED_APPROVED_COLORS[i]))
-    }
-    expect(weightedPalette(env)).toHaveLength(512 * 4)
-    for (const bias of [-1, 0, 1]) expect(weightedPigment(env, bias).every(Number.isFinite)).toBe(true)
   })
 
   it.each([.0001, .1, 10, 10000])('keeps the same colors when every weight is scaled by %s', (scale) => {
@@ -172,9 +154,9 @@ describe('gradient palette weights', () => {
   })
 
   it('retains selected blue endpoints for the concentrated exposure', () => {
-    const pack = PALETTE_PACKS.find(pack => pack.id === 'primary-core')!
+    const pack = PALETTE_PACKS.find(pack => pack.id === 'blues')!
     const env = input(colorMixForPack(pack))
     expect(maxDifference(weightedPigment(env, -1, .05), rgb('#132682').map(v => v / 255))).toBeLessThan(1e-12)
-    expect(maxDifference(weightedPigment(env, 1, .05), rgb('#0288F9').map(v => v / 255))).toBeLessThan(1e-12)
+    expect(maxDifference(weightedPigment(env, 1, .05), rgb('#0064E0').map(v => v / 255))).toBeLessThan(1e-12)
   })
 })

@@ -1,8 +1,12 @@
-import type { V2Env } from '../v2/system'
+import type { LookColorPlan } from '../colorDirection'
 
-type PaletteInput = Pick<V2Env, 'plan' | 'palette' | 'ink'>
+export type GradientPaletteInput = {
+  plan?: LookColorPlan
+  palette: string[]
+  ink: string
+}
 
-export function selectedSwatches(env: PaletteInput) {
+export function selectedSwatches(env: GradientPaletteInput) {
   const candidates = env.plan?.swatches.length
     ? env.plan.swatches
     : (env.palette.length ? env.palette : [env.ink]).map(hex => ({ hex, weight: 1 }))
@@ -17,13 +21,13 @@ export function selectedSwatches(env: PaletteInput) {
 
 // One entry per selected color. Alpha carries its continuous weight; the RGB
 // value supplies a stable field identity when another row is removed.
-export function weightedPigments(env: PaletteInput): Float32Array {
+export function weightedPigments(env: GradientPaletteInput): Float32Array {
   return new Float32Array(selectedSwatches(env).flatMap(s => [...s.rgb, s.weight]))
 }
 
 // Tonal intervals keep small dark/light selections visible without treating
 // every color as a broad contribution at every pixel.
-export function pigmentIntervals(env: PaletteInput): Float32Array {
+export function pigmentIntervals(env: GradientPaletteInput): Float32Array {
   const swatches = selectedSwatches(env)
   const sorted = swatches.map((s, index) => ({ ...s, index }))
     .sort((a, b) => a.rgb[0] * .2126 + a.rgb[1] * .7152 + a.rgb[2] * .0722
@@ -38,7 +42,7 @@ export function pigmentIntervals(env: PaletteInput): Float32Array {
   return intervals
 }
 
-export function paletteLightness(env: PaletteInput): number[] {
+export function paletteLightness(env: GradientPaletteInput): number[] {
   const colors = selectedSwatches(env).map(s => ({
     value: s.rgb[0] * .2126 + s.rgb[1] * .7152 + s.rgb[2] * .0722,
     weight: s.weight,
@@ -54,7 +58,11 @@ export function paletteLightness(env: PaletteInput): number[] {
   return [low, high, mean]
 }
 
-export function weightedPigment(env: PaletteInput, luminanceBias = 0, tailWidth = .2): number[] {
+export function weightedPigment(
+  env: GradientPaletteInput,
+  luminanceBias = 0,
+  tailWidth = .2,
+): number[] {
   const colors = selectedSwatches(env).sort((a, b) =>
     a.rgb[0] * .2126 + a.rgb[1] * .7152 + a.rgb[2] * .0722 -
     b.rgb[0] * .2126 - b.rgb[1] * .7152 - b.rgb[2] * .0722)
@@ -84,7 +92,11 @@ function coverage(x: number) {
   return .5 + .9375 * (u - 2 / 3 * u ** 3 + .2 * u ** 5)
 }
 
-export function weightedPalette(env: PaletteInput, mixLight = false, radius = .26): Uint8Array {
+export function weightedPalette(
+  env: GradientPaletteInput,
+  mixLight = false,
+  radius = .26,
+): Uint8Array {
   let edge = 0
   const intervals = selectedSwatches(env).map(s => {
     const start = edge

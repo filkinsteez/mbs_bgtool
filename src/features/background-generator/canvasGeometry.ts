@@ -27,6 +27,25 @@ export type SnapResult = {
   guideY?: number
 }
 
+export function moveGradientCenter(
+  start: { x: number; y: number },
+  deltaX: number,
+  deltaY: number,
+  subjectWidth: number,
+  subjectHeight: number,
+  rotation: number,
+): { x: number; y: number } {
+  const local = unrotate(
+    deltaX,
+    deltaY,
+    (rotation * Math.PI) / 180,
+  )
+  return {
+    x: clampUnit(start.x + local.x / Math.max(1, subjectWidth)),
+    y: clampUnit(start.y + local.y / Math.max(1, subjectHeight)),
+  }
+}
+
 export function subjectBox(
   transform: SubjectTransform,
   artboardWidth: number,
@@ -356,4 +375,8 @@ function rotate(x: number, y: number, angle: number): { x: number; y: number } {
 
 function unrotate(x: number, y: number, angle: number): { x: number; y: number } {
   return rotate(x, y, -angle)
+}
+
+function clampUnit(value: number): number {
+  return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0.5))
 }

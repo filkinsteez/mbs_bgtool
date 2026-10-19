@@ -11,9 +11,5 @@ export function scaleLabForPreview(lab: LabState, maxLongEdge: number): LabState
       width: Math.max(1, Math.round(lab.output.width * scale)),
       height: Math.max(1, Math.round(lab.output.height * scale)),
     },
-    structure: {
-      ...lab.structure,
-      baseCell: Math.max(2, lab.structure.baseCell * scale),
-    },
   }
 }

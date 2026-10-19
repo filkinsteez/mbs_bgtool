@@ -7,22 +7,16 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
-  type WheelEvent as ReactWheelEvent,
 } from 'react'
 import {
   Box,
-  Brush,
-  Hand,
   Image as ImageIcon,
-  Maximize2,
-  MousePointer2,
-  ZoomIn,
-  ZoomOut,
 } from 'lucide-react'
 import { MaterialModelViewer } from '@/components/background/MaterialModelViewer'
 import { MATERIAL_MODEL_SETTLE_VIEW_EVENT } from '@/components/background/materialModelEvents'
 import {
   artworkContainsPoint,
+  moveGradientCenter,
   moveSubject,
   rotateSubject,
   scaleSubjectFromCorner,
@@ -35,30 +29,17 @@ import {
   type GeneratorMode,
   type SubjectTransform,
 } from '@/features/background-generator/recipe'
-import { useReducedMotion } from '@/features/background-generator/motion/useReducedMotion'
+import { resolvePaletteMix } from '@/features/background-generator/gradientControls'
 import {
   renderBackground2DCanvas,
   resolveBackground2DInputs,
 } from '@/features/background-generator/render2d'
 import { useBackgroundStore } from '@/features/background-generator/store'
-import { renderController } from '@/render/renderController'
-import { CANVAS_FIT_VIEW_EVENT } from './canvasEvents'
-import { useGradientBrush } from './gradientBrushStore'
-import { GradientBrushOverlay } from './GradientBrushOverlay'
 
-type CanvasTool = 'select' | 'hand'
-type Camera = { zoom: number; panX: number; panY: number }
 type SnapGuides = { x?: number; y?: number }
 type Hud = { x: number; y: number; text: string }
 
 type Gesture =
-  | {
-      kind: 'pan'
-      pointerId: number
-      startX: number
-      startY: number
-      camera: Camera
-    }
   | {
       kind: 'move'
       pointerId: number
@@ -85,26 +66,64 @@ type Gesture =
       startX: number
       startY: number
     }
+  | {
+      kind: 'source'
+      pointerId: number
+      startX: number
+      startY: number
+      sourceId: 'primary' | 'secondary' | 'tertiary'
+      source: { x: number; y: number }
+      baseReflow: number
+      width: number
+      height: number
+      rotation: number
+    }
 
-const CAMERA_MIN = 0.1
-const CAMERA_MAX = 32
 const FIT_PADDING_X = 80
 const FIT_PADDING_TOP = 32
 const FIT_PADDING_BOTTOM = 76
 const MODE_OPTIONS = [
   {
     mode: 'background',
-    label: '2D',
-    tooltip: 'Edit the flat 2D artwork',
+    label: '2D Texture',
+    tooltip: 'Edit the 2D texture layer',
     Icon: ImageIcon,
   },
   {
     mode: 'material',
-    label: '3D',
-    tooltip: 'Edit the 3D material',
+    label: '3D Logo',
+    tooltip: 'Edit the 3D logo source',
     Icon: Box,
   },
 ] as const
+export const LAB_CANVAS_MODE_REQUEST_EVENT = 'mbs:canvas-mode-request'
+
+const RESIZE_CURSORS = ['nwse-resize', 'ns-resize', 'nesw-resize', 'ew-resize'] as const
+const CORNER_NAMES: Record<Corner, string> = {
+  nw: 'top left',
+  ne: 'top right',
+  sw: 'bottom left',
+  se: 'bottom right',
+}
+
+function resizeCursor(corner: Corner, rotation: number): string {
+  const offset = corner === 'ne' || corner === 'sw' ? 2 : 0
+  const step = Math.round(rotation / 45)
+  return RESIZE_CURSORS[((step + offset) % 4 + 4) % 4]
+}
+
+function rotateCursor(corner: Corner, rotation: number): string {
+  const cornerRotation = { nw: 270, ne: 0, se: 90, sw: 180 }[corner]
+  const angle = cornerRotation + rotation
+  const svg = [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">',
+    `<g transform="rotate(${angle} 12 12)">`,
+    '<path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7" fill="none" stroke="#000" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>',
+    '<path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+    '</g></svg>',
+  ].join('')
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 12 12, crosshair`
+}
 
 function editableTarget(target: EventTarget | null): boolean {
   const element = target as HTMLElement | null
@@ -129,36 +148,13 @@ function transformPatch(
   }
 }
 
-function zoomCameraAt(
-  current: Camera,
-  nextZoom: number,
-  fitScale: number,
-  centerX: number,
-  centerY: number,
-  pointerX: number,
-  pointerY: number,
-): Camera {
-  const zoom = Math.max(CAMERA_MIN, Math.min(CAMERA_MAX, nextZoom))
-  const currentScale = fitScale * current.zoom
-  const nextScale = fitScale * zoom
-  const worldX = (pointerX - centerX - current.panX) / Math.max(0.0001, currentScale)
-  const worldY = (pointerY - centerY - current.panY) / Math.max(0.0001, currentScale)
-  return {
-    zoom,
-    panX: pointerX - centerX - worldX * nextScale,
-    panY: pointerY - centerY - worldY * nextScale,
-  }
-}
-
 export function LabCanvas() {
   const recipe = useBackgroundStore((state) => state.recipe)
   const mode = useBackgroundStore((state) => state.mode)
-  const brushEnabled = useGradientBrush((state) => state.enabled)
-  const brushAvailable = mode === 'background' && recipe.look.version === 'gradients'
-  const brushActive = brushAvailable && brushEnabled
   const transform = recipe.transforms[mode]
-  const motionEnabled = recipe.motion.amount > 0
-  const reducedMotion = useReducedMotion()
+  const paletteMix = resolvePaletteMix(recipe.paletteState).mix
+  const sourceCount = Math.max(1, Math.min(3, paletteMix.length))
+  const activeSources = recipe.gradientState.field.sources.slice(0, sourceCount)
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -167,21 +163,12 @@ export function LabCanvas() {
   const gestureRef = useRef<Gesture | null>(null)
   const captureTargetRef = useRef<Element | null>(null)
   const keyboardTransactionRef = useRef(false)
+  const gradientHandleFadeRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [wrapSize, setWrapSize] = useState({ w: 0, h: 0 })
-  const [camera, setCamera] = useState<Camera>({ zoom: 1, panX: 0, panY: 0 })
-  const [tool, setTool] = useState<CanvasTool>('select')
-  const [spaceHeld, setSpaceHeld] = useState(false)
   const [guides, setGuides] = useState<SnapGuides>({})
   const [hud, setHud] = useState<Hud | null>(null)
   const [artworkSelected, setArtworkSelected] = useState(true)
-  const fitView = useCallback(() => {
-    setCamera({ zoom: 1, panX: 0, panY: 0 })
-  }, [setCamera])
-
-  useEffect(() => {
-    window.addEventListener(CANVAS_FIT_VIEW_EVENT, fitView)
-    return () => window.removeEventListener(CANVAS_FIT_VIEW_EVENT, fitView)
-  }, [fitView])
+  const [gradientHandleVisible, setGradientHandleVisible] = useState(false)
 
   useEffect(() => {
     const element = wrapRef.current
@@ -194,8 +181,14 @@ export function LabCanvas() {
     return () => observer.disconnect()
   }, [])
 
+  useEffect(() => () => {
+    if (gradientHandleFadeRef.current) {
+      clearTimeout(gradientHandleFadeRef.current)
+    }
+  }, [])
+
   const draw = useCallback(
-    (timeMs?: number) => {
+    () => {
       const canvas = canvasRef.current
       if (!canvas) return
       const background = useBackgroundStore.getState()
@@ -217,7 +210,6 @@ export function LabCanvas() {
       renderBackground2DCanvas(canvas, liveRecipe, {
         phase: 'preview',
         maxLongEdge: 1200,
-        timeMs,
       })
     },
     [],
@@ -225,21 +217,9 @@ export function LabCanvas() {
 
   useEffect(() => {
     cancelAnimationFrame(rafRef.current)
-    rafRef.current = requestAnimationFrame((time) => {
-      draw(motionEnabled && !reducedMotion ? time : undefined)
-    })
+    rafRef.current = requestAnimationFrame(() => draw())
     return () => cancelAnimationFrame(rafRef.current)
-  }, [draw, recipe, mode, motionEnabled, reducedMotion])
-
-  useEffect(() => {
-    if (mode !== 'background' || !motionEnabled || reducedMotion) return
-    renderController.start()
-    const unsubscribe = renderController.subscribe((_, time) => draw(time))
-    return () => {
-      unsubscribe()
-      renderController.stop()
-    }
-  }, [draw, mode, motionEnabled, reducedMotion])
+  }, [draw, recipe, mode])
 
   const fitHeight = Math.max(1, wrapSize.h - FIT_PADDING_TOP - FIT_PADDING_BOTTOM)
   const viewportCenterX = wrapSize.w * 0.5
@@ -252,16 +232,110 @@ export function LabCanvas() {
       fitHeight / Math.max(1, recipe.format.height),
     ),
   )
-  const displayScale = fitScale * camera.zoom
+  const displayScale = fitScale
   const stackWidth = recipe.format.width * displayScale
   const stackHeight = recipe.format.height * displayScale
-  const stackLeft = viewportCenterX - stackWidth * 0.5 + camera.panX
-  const stackTop = viewportCenterY - stackHeight * 0.5 + camera.panY
+  const stackLeft = viewportCenterX - stackWidth * 0.5
+  const stackTop = viewportCenterY - stackHeight * 0.5
   const box = subjectBox(transform, stackWidth, stackHeight)
+  const sourceGesture = {
+    width: box.width,
+    height: box.height,
+    rotation: box.rotation,
+  }
+  const gradientAngle = (box.rotation * Math.PI) / 180
+  const sourceHandles = activeSources.map((source, index) => {
+    const localX = (source.x - 0.5) * box.width
+    const localY = (source.y - 0.5) * box.height
+    return {
+      id: source.id,
+      source,
+      color: paletteMix[Math.min(index, paletteMix.length - 1)]?.color ?? '#ffffff',
+      x: box.centerX + localX * Math.cos(gradientAngle) - localY * Math.sin(gradientAngle),
+      y: box.centerY + localX * Math.sin(gradientAngle) + localY * Math.cos(gradientAngle),
+      index,
+    }
+  })
 
   const setTransformTransient = (next: SubjectTransform) => {
     useBackgroundStore.getState().setTransient(transformPatch(mode, next))
   }
+
+  const setSpatialSourceTransient = (
+    sourceId: 'primary' | 'secondary' | 'tertiary',
+    source: { x: number; y: number },
+    energy = 0,
+    reflow = recipe.gradientState.controls.position,
+  ) => {
+    const clamp01 = (value: number) => Math.max(0, Math.min(1, value))
+    const liveField = useBackgroundStore.getState().recipe.gradientState.field
+    const movedFrom = liveField.sources.find((entry) => entry.id === sourceId)
+    const dx = source.x - (movedFrom?.x ?? source.x)
+    const dy = source.y - (movedFrom?.y ?? source.y)
+    const pulse = Math.max(0, Math.min(1, energy))
+    const movedSpread = clamp01((movedFrom?.spread ?? 0.5) + pulse * 0.16)
+    const nextSources = liveField.sources.map((entry) => {
+      if (entry.id === sourceId) {
+        return { ...entry, x: source.x, y: source.y, spread: movedSpread }
+      }
+      const distance = Math.hypot(entry.x - source.x, entry.y - source.y)
+      const follow = Math.exp(-distance * 5.5) * (0.1 + pulse * 0.22)
+      const spreadLift = Math.exp(-distance * 4.2) * pulse * 0.08
+      return {
+        ...entry,
+        x: clamp01(entry.x + dx * follow),
+        y: clamp01(entry.y + dy * follow),
+        spread: clamp01(entry.spread + spreadLift),
+      }
+    })
+    const activeCount = Math.max(1, Math.min(3, sourceCount))
+    const active = nextSources.slice(0, activeCount)
+    const fallbackCenter = active.reduce(
+      (acc, item) => ({ x: acc.x + item.x / activeCount, y: acc.y + item.y / activeCount }),
+      { x: 0, y: 0 },
+    )
+    useBackgroundStore.getState().setTransient({
+      gradientState: {
+        // Keep the legacy center in sync so drag feedback remains visible while
+        // the procedural renderer is still the production default.
+        center: fallbackCenter,
+        controls: {
+          ...recipe.gradientState.controls,
+          position: Math.max(0, Math.min(1, reflow)),
+        },
+        field: {
+          ...recipe.gradientState.field,
+          sources: nextSources as typeof recipe.gradientState.field.sources,
+        },
+      },
+    })
+  }
+
+  const holdGradientHandle = useCallback(() => {
+    if (gradientHandleFadeRef.current) {
+      clearTimeout(gradientHandleFadeRef.current)
+      gradientHandleFadeRef.current = null
+    }
+    setGradientHandleVisible(true)
+  }, [])
+
+  const fadeGradientHandle = useCallback((delay = 700) => {
+    // Handles should stay visible while the 2D artwork is selected.
+    if (mode === 'background' && artworkSelected) return
+    if (gradientHandleFadeRef.current) {
+      clearTimeout(gradientHandleFadeRef.current)
+    }
+    gradientHandleFadeRef.current = setTimeout(() => {
+      gradientHandleFadeRef.current = null
+      setGradientHandleVisible(false)
+    }, delay)
+  }, [artworkSelected, mode])
+
+  const revealGradientHandle = useCallback(() => {
+    if (mode !== 'background' || !artworkSelected) return
+    holdGradientHandle()
+    fadeGradientHandle(900)
+  }, [artworkSelected, fadeGradientHandle, holdGradientHandle, mode])
 
   const showHud = (event: ReactPointerEvent, text: string) => {
     const rect = wrapRef.current?.getBoundingClientRect()
@@ -292,10 +366,6 @@ export function LabCanvas() {
 
   const startMove = (event: ReactPointerEvent) => {
     if (event.button !== 0) return
-    if (tool === 'hand' || spaceHeld) {
-      startPan(event)
-      return
-    }
     beginGesture(event, {
       kind: 'move',
       pointerId: event.pointerId,
@@ -309,10 +379,6 @@ export function LabCanvas() {
 
   const startScale = (event: ReactPointerEvent, corner: Corner) => {
     if (event.button !== 0) return
-    if (tool === 'hand' || spaceHeld) {
-      startPan(event)
-      return
-    }
     const rect = stackRef.current?.getBoundingClientRect()
     if (!rect) return
     beginGesture(event, {
@@ -326,10 +392,6 @@ export function LabCanvas() {
 
   const startRotate = (event: ReactPointerEvent) => {
     if (event.button !== 0) return
-    if (tool === 'hand' || spaceHeld) {
-      startPan(event)
-      return
-    }
     const rect = stackRef.current?.getBoundingClientRect()
     if (!rect) return
     beginGesture(event, {
@@ -344,28 +406,32 @@ export function LabCanvas() {
     })
   }
 
-  const startPan = (event: ReactPointerEvent) => {
+  const startSourceMove = (
+    event: ReactPointerEvent,
+    sourceId: 'primary' | 'secondary' | 'tertiary',
+    source: { x: number; y: number },
+  ) => {
+    if (event.button !== 0) return
+    holdGradientHandle()
     beginGesture(event, {
-      kind: 'pan',
+      kind: 'source',
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
-      camera,
-    }, false)
+      sourceId,
+      source,
+      baseReflow: recipe.gradientState.controls.position,
+      ...sourceGesture,
+    })
   }
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     const target = event.target as Element
     if (target.closest('[data-mbs-material-model="true"]')) return
     wrapRef.current?.focus({ preventScroll: true })
-    if (event.button === 1 || tool === 'hand' || spaceHeld) {
-      startPan(event)
-      return
-    }
-    if (event.button !== 0 || mode !== 'background' || tool !== 'select') return
-    if (brushActive) return
+    if (event.button !== 0 || mode !== 'background') return
 
-    if (target.closest('.lab-canvas-toolbar, .lab-mode-switch')) return
+    if (target.closest('.lab-mode-switch')) return
     const rect = stackRef.current?.getBoundingClientRect()
     const hitArtwork = !!rect && artworkContainsPoint(
       transform,
@@ -376,6 +442,8 @@ export function LabCanvas() {
     )
     if (hitArtwork) {
       setArtworkSelected(true)
+      holdGradientHandle()
+      fadeGradientHandle(1800)
       startMove(event)
       return
     }
@@ -383,17 +451,37 @@ export function LabCanvas() {
     event.preventDefault()
     event.stopPropagation()
     setArtworkSelected(false)
+    if (gradientHandleFadeRef.current) {
+      clearTimeout(gradientHandleFadeRef.current)
+      gradientHandleFadeRef.current = null
+    }
+    setGradientHandleVisible(false)
   }
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const gesture = gestureRef.current
+    if (gesture?.kind === 'source') holdGradientHandle()
     if (!gesture || gesture.pointerId !== event.pointerId) return
-    if (gesture.kind === 'pan') {
-      setCamera({
-        ...gesture.camera,
-        panX: gesture.camera.panX + event.clientX - gesture.startX,
-        panY: gesture.camera.panY + event.clientY - gesture.startY,
-      })
+    if (gesture.kind === 'source') {
+      const source = moveGradientCenter(
+        gesture.source,
+        event.clientX - gesture.startX,
+        event.clientY - gesture.startY,
+        gesture.width,
+        gesture.height,
+        gesture.rotation,
+      )
+      const dragPixels = Math.hypot(
+        event.clientX - gesture.startX,
+        event.clientY - gesture.startY,
+      )
+      const dragEnergy = Math.max(0, Math.min(1, dragPixels / 180))
+      const dragReflow = Math.max(0, Math.min(1, gesture.baseReflow + dragEnergy * 0.25))
+      setSpatialSourceTransient(gesture.sourceId, source, dragEnergy, dragReflow)
+      showHud(
+        event,
+        `Source X ${Math.round(source.x * 100)}% · Y ${Math.round(source.y * 100)}% · Flow ${Math.round(dragReflow * 100)}%`,
+      )
       return
     }
     if (gesture.kind === 'move') {
@@ -453,12 +541,16 @@ export function LabCanvas() {
     setGuides({})
     setHud(null)
 
-    if (gesture.kind === 'move' || gesture.kind === 'scale' || gesture.kind === 'rotate') {
+    if (
+      gesture.kind === 'move'
+      || gesture.kind === 'scale'
+      || gesture.kind === 'rotate'
+      || gesture.kind === 'source'
+    ) {
       if (cancelled) useBackgroundStore.getState().cancelTransaction()
       else useBackgroundStore.getState().commitTransaction()
-    } else if (gesture.kind === 'pan' && cancelled) {
-      setCamera(gesture.camera)
     }
+    if (gesture.kind === 'source') fadeGradientHandle()
 
     try {
       captureTargetRef.current?.releasePointerCapture(event.pointerId)
@@ -469,44 +561,7 @@ export function LabCanvas() {
     }
   }
 
-  const zoomAt = (nextZoom: number, clientX?: number, clientY?: number) => {
-    const element = wrapRef.current
-    if (!element) return
-    const rect = element.getBoundingClientRect()
-    const pointerX = (clientX ?? rect.left + viewportCenterX) - rect.left
-    const pointerY = (clientY ?? rect.top + viewportCenterY) - rect.top
-    setCamera((current) =>
-      zoomCameraAt(
-        current,
-        nextZoom,
-        fitScale,
-        viewportCenterX,
-        viewportCenterY,
-        pointerX,
-        pointerY,
-      ),
-    )
-  }
-
-  const onWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
-    const target = event.target as Element
-    if (target.closest('[data-mbs-material-model="true"]')) return
-    event.preventDefault()
-    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? wrapSize.h : 1
-    const deltaX = event.deltaX * unit
-    const deltaY = event.deltaY * unit
-    if (event.ctrlKey || event.metaKey) {
-      zoomAt(camera.zoom * Math.exp(-deltaY * 0.0022), event.clientX, event.clientY)
-      return
-    }
-    setCamera((current) => ({
-      ...current,
-      panX: current.panX - (event.shiftKey && deltaX === 0 ? deltaY : deltaX),
-      panY: current.panY - (event.shiftKey && deltaX === 0 ? 0 : deltaY),
-    }))
-  }
-
-  const cancelActiveGesture = () => {
+  const cancelActiveGesture = useCallback(() => {
     const gesture = gestureRef.current
     if (!gesture) return false
     gestureRef.current = null
@@ -519,13 +574,17 @@ export function LabCanvas() {
     }
     setGuides({})
     setHud(null)
-    if (gesture.kind === 'move' || gesture.kind === 'scale' || gesture.kind === 'rotate') {
+    if (
+      gesture.kind === 'move'
+      || gesture.kind === 'scale'
+      || gesture.kind === 'rotate'
+      || gesture.kind === 'source'
+    ) {
       useBackgroundStore.getState().cancelTransaction()
-    } else if (gesture.kind === 'pan') {
-      setCamera(gesture.camera)
     }
+    if (gesture.kind === 'source') fadeGradientHandle()
     return true
-  }
+  }, [fadeGradientHandle])
 
   const changeMode = (nextMode: GeneratorMode) => {
     if (nextMode === mode) return
@@ -537,7 +596,6 @@ export function LabCanvas() {
       keyboardTransactionRef.current = false
       useBackgroundStore.getState().commitTransaction()
     }
-    setTool(nextMode === 'material' ? 'hand' : 'select')
     useBackgroundStore.getState().setMode(nextMode)
   }
 
@@ -556,55 +614,26 @@ export function LabCanvas() {
         if (cancelActiveGesture()) return
         if (mode === 'background' && artworkSelected) {
           setArtworkSelected(false)
+          if (gradientHandleFadeRef.current) {
+            clearTimeout(gradientHandleFadeRef.current)
+            gradientHandleFadeRef.current = null
+          }
+          setGradientHandleVisible(false)
           requestAnimationFrame(() => wrapRef.current?.focus())
         }
         return
       }
       if (editableTarget(event.target)) return
-      if (event.key === ' ') {
-        event.preventDefault()
-        setSpaceHeld(true)
-        return
-      }
       const key = event.key.toLowerCase()
       if (!event.ctrlKey && !event.metaKey && !event.altKey) {
         if (key === 'v' && mode === 'background') {
-          useGradientBrush.getState().set({ enabled: false })
-          setTool('select')
           setArtworkSelected(true)
-        }
-        else if (key === 'h') { useGradientBrush.getState().set({ enabled: false }); setTool('hand') }
-        else if (key === 'b' && brushAvailable) { setTool('select'); useGradientBrush.getState().set({ enabled: true }) }
-        else if (key === '+' || key === '=') {
-          setCamera((current) =>
-            zoomCameraAt(
-              current,
-              current.zoom * 1.2,
-              fitScale,
-              viewportCenterX,
-              viewportCenterY,
-              viewportCenterX,
-              viewportCenterY,
-            ),
-          )
-        } else if (key === '-') {
-          setCamera((current) =>
-            zoomCameraAt(
-              current,
-              current.zoom / 1.2,
-              fitScale,
-              viewportCenterX,
-              viewportCenterY,
-              viewportCenterX,
-              viewportCenterY,
-            ),
-          )
-        } else if (key === '0') {
-          fitView()
+          holdGradientHandle()
+          fadeGradientHandle(1800)
         }
       }
       if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
-      if (mode !== 'background' || tool !== 'select' || !artworkSelected) return
+      if (mode !== 'background' || !artworkSelected) return
       event.preventDefault()
       if (!keyboardTransactionRef.current) {
         keyboardTransactionRef.current = true
@@ -627,7 +656,6 @@ export function LabCanvas() {
       live.setTransient(transformPatch(live.mode, result.transform))
     }
     const onKeyUp = (event: KeyboardEvent) => {
-      if (event.key === ' ') setSpaceHeld(false)
       if (
         keyboardTransactionRef.current &&
         ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)
@@ -638,7 +666,6 @@ export function LabCanvas() {
     const onWindowBlur = () => {
       cancelActiveGesture()
       finishKeyboardTransaction()
-      setSpaceHeld(false)
     }
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') onWindowBlur()
@@ -655,16 +682,13 @@ export function LabCanvas() {
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [
-    fitScale,
+    cancelActiveGesture,
     mode,
     stackHeight,
     stackWidth,
     artworkSelected,
-    fitView,
-    tool,
-    brushAvailable,
-    viewportCenterX,
-    viewportCenterY,
+    holdGradientHandle,
+    fadeGradientHandle,
   ])
 
   const selectModeWithKeyboard = (
@@ -690,27 +714,39 @@ export function LabCanvas() {
     requestAnimationFrame(() => document.getElementById(`lab-mode-${next.mode}`)?.focus())
   }
 
+  useEffect(() => {
+    const onModeRequest = (event: Event) => {
+      const requested = (event as CustomEvent<{ mode?: GeneratorMode }>).detail?.mode
+      if (requested !== 'background' && requested !== 'material') return
+      changeMode(requested)
+    }
+    window.addEventListener(LAB_CANVAS_MODE_REQUEST_EVENT, onModeRequest)
+    return () => window.removeEventListener(LAB_CANVAS_MODE_REQUEST_EVENT, onModeRequest)
+  }, [changeMode])
+
   return (
     <div className="lab-stage-inner">
       <div
         ref={wrapRef}
-        className={`lab-canvas-wrap tool-${spaceHeld ? 'hand' : tool}`}
+        className="lab-canvas-wrap"
         role="region"
         aria-label={`${mode === 'background' ? '2D' : '3D'} design canvas`}
         aria-describedby="lab-canvas-instructions"
-        aria-keyshortcuts={mode === 'background' ? 'V H 0' : 'H R 0'}
+        aria-keyshortcuts={mode === 'background' ? 'V' : 'R'}
         tabIndex={0}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={(event) => finishPointer(event, false)}
         onPointerCancel={(event) => finishPointer(event, true)}
         onLostPointerCapture={(event) => finishPointer(event, false)}
-        onWheel={onWheel}
+        onPointerLeave={() => {
+          if (gestureRef.current?.kind !== 'source') fadeGradientHandle(200)
+        }}
       >
         <p id="lab-canvas-instructions" className="lab-visually-hidden">
           {mode === 'background'
-            ? 'V selects the artwork, H pans, and 0 fits the artboard. Click empty canvas or press Escape to deselect. Drag to move. Use the corner controls to scale or rotate. Arrow keys nudge while Select is active; Shift uses larger steps.'
-            : 'Drag to orbit, middle-drag to pan, and scroll to zoom the 3D view. Press R to reset the 3D view or 0 to fit the artboard.'}
+            ? 'Click the artwork or press V to select it. Click empty canvas or press Escape to deselect. Drag the artwork to move it, drag color source handles to shape the gradient, and use the corner controls to scale or rotate. Arrow keys nudge the focused control; Shift uses larger steps.'
+            : 'Drag to orbit the 3D logo. Scroll over the logo to zoom the 3D view. Press R to reset the 3D view.'}
         </p>
         <div
           ref={stackRef}
@@ -734,9 +770,8 @@ export function LabCanvas() {
           {mode === 'material' ? (
             <MaterialModelViewer />
           ) : null}
-          {brushActive && !spaceHeld && <GradientBrushOverlay />}
 
-          {mode === 'background' && tool === 'select' && artworkSelected && !brushActive ? (
+          {mode === 'background' && artworkSelected ? (
             <div
               className="lab-subject-frame"
               role="group"
@@ -754,14 +789,15 @@ export function LabCanvas() {
                   key={corner}
                   type="button"
                   className={`lab-transform-handle corner-${corner}`}
-                  role={corner === 'se' ? 'slider' : undefined}
-                  aria-label={corner === 'se' ? 'Artwork scale' : undefined}
-                  aria-hidden={corner === 'se' ? undefined : true}
-                  aria-valuemin={corner === 'se' ? 10 : undefined}
-                  aria-valuemax={corner === 'se' ? 800 : undefined}
-                  aria-valuenow={corner === 'se' ? Math.round(transform.scale * 100) : undefined}
-                  aria-valuetext={corner === 'se' ? `${Math.round(transform.scale * 100)} percent` : undefined}
-                  tabIndex={corner === 'se' ? 0 : -1}
+                  role="slider"
+                  aria-label={`Scale artwork from ${CORNER_NAMES[corner]}`}
+                  aria-valuemin={10}
+                  aria-valuemax={1200}
+                  aria-valuenow={Math.round(transform.scale * 100)}
+                  aria-valuetext={`${Math.round(transform.scale * 100)} percent`}
+                  tabIndex={0}
+                  title="Drag to resize. Hold Alt to resize from the center."
+                  style={{ cursor: resizeCursor(corner, transform.rotation) }}
                   onPointerDown={(event) => startScale(event, corner)}
                   onKeyDown={(event) => {
                     if (!['ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowLeft'].includes(event.key)) return
@@ -787,13 +823,15 @@ export function LabCanvas() {
                   type="button"
                   className={`lab-rotation-zone corner-${corner}`}
                   role={corner === 'nw' ? 'slider' : undefined}
-                  aria-label={corner === 'nw' ? 'Artwork rotation' : undefined}
+                  aria-label={corner === 'nw' ? 'Rotate artwork' : undefined}
                   aria-hidden={corner === 'nw' ? undefined : true}
                   aria-valuemin={corner === 'nw' ? -180 : undefined}
                   aria-valuemax={corner === 'nw' ? 180 : undefined}
                   aria-valuenow={corner === 'nw' ? Math.round(transform.rotation) : undefined}
                   aria-valuetext={corner === 'nw' ? `${Math.round(transform.rotation)} degrees` : undefined}
                   tabIndex={corner === 'nw' ? 0 : -1}
+                  title="Drag outside the corner to rotate. Hold Shift to snap to 15 degrees."
+                  style={{ cursor: rotateCursor(corner, transform.rotation) }}
                   onPointerDown={startRotate}
                   onKeyDown={(event) => {
                     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
@@ -816,119 +854,89 @@ export function LabCanvas() {
             </div>
           ) : null}
 
+          {mode === 'background' && artworkSelected ? sourceHandles.map((handle) => (
+            <button
+              key={handle.id}
+              type="button"
+              className={`lab-gradient-position-handle${gradientHandleVisible ? ' visible' : ''}`}
+              data-gradient-position="true"
+              data-gradient-x={Math.round(handle.source.x * 100)}
+              data-gradient-y={Math.round(handle.source.y * 100)}
+              aria-label={`Move color source ${handle.index + 1}`}
+              aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown"
+              title="Drag to reposition this color source."
+              style={{
+                left: handle.x,
+                top: handle.y,
+                backgroundColor: handle.color,
+              }}
+              onPointerDown={(event) => startSourceMove(event, handle.id, handle.source)}
+              onPointerEnter={revealGradientHandle}
+              onPointerMove={() => {
+                if (gestureRef.current?.kind !== 'source') revealGradientHandle()
+              }}
+              onPointerLeave={() => {
+                if (gestureRef.current?.kind !== 'source') fadeGradientHandle(150)
+              }}
+              onFocus={holdGradientHandle}
+              onKeyDown={(event) => {
+                if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
+                event.preventDefault()
+                event.stopPropagation()
+                const store = useBackgroundStore.getState()
+                if (!keyboardTransactionRef.current) {
+                  keyboardTransactionRef.current = true
+                  store.beginTransaction()
+                }
+                const step = (event.shiftKey ? 0.1 : 0.01)
+                  * Math.min(sourceGesture.width, sourceGesture.height)
+                const liveSource = store.recipe.gradientState.field.sources.find((source) => source.id === handle.id)
+                if (!liveSource) return
+                const next = moveGradientCenter(
+                  liveSource,
+                  event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0,
+                  event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0,
+                  sourceGesture.width,
+                  sourceGesture.height,
+                  sourceGesture.rotation,
+                )
+                const nextSources = store.recipe.gradientState.field.sources.map((source) =>
+                  source.id === handle.id ? { ...source, x: next.x, y: next.y } : source)
+                const activeCount = Math.max(1, Math.min(3, sourceCount))
+                const active = nextSources.slice(0, activeCount)
+                const fallbackCenter = active.reduce(
+                  (acc, item) => ({
+                    x: acc.x + item.x / activeCount,
+                    y: acc.y + item.y / activeCount,
+                  }),
+                  { x: 0, y: 0 },
+                )
+                store.setTransient({
+                  gradientState: {
+                    center: fallbackCenter,
+                    field: {
+                      ...store.recipe.gradientState.field,
+                      sources: nextSources as typeof store.recipe.gradientState.field.sources,
+                    },
+                  },
+                })
+              }}
+              onBlur={() => {
+                if (keyboardTransactionRef.current) {
+                  keyboardTransactionRef.current = false
+                  useBackgroundStore.getState().commitTransaction()
+                }
+                fadeGradientHandle()
+              }}
+            />
+          )) : null}
+
           {guides.x !== undefined ? (
             <span className="lab-snap-guide vertical" style={{ left: guides.x }} />
           ) : null}
           {guides.y !== undefined ? (
             <span className="lab-snap-guide horizontal" style={{ top: guides.y }} />
           ) : null}
-        </div>
-
-        <div
-          className={`lab-canvas-toolbar${process.env.NODE_ENV === 'development' ? ' dev-offset' : ''}`}
-          role="group"
-          aria-label="Canvas tools"
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          <button
-            type="button"
-            className={tool === 'select' && !brushActive ? 'active' : ''}
-            aria-pressed={tool === 'select' && !brushActive}
-            aria-label="Select"
-            aria-keyshortcuts="V"
-            disabled={mode !== 'background'}
-            title="Select (V)"
-            onClick={() => {
-              useGradientBrush.getState().set({ enabled: false })
-              setTool('select')
-              setArtworkSelected(true)
-            }}
-          >
-            <MousePointer2 aria-hidden="true" />
-            <span className="lab-toolbar-label">Select</span>
-          </button>
-          <button
-            type="button"
-            className={tool === 'hand' && !brushActive ? 'active' : ''}
-            aria-pressed={tool === 'hand' && !brushActive}
-            aria-label="Hand"
-            aria-keyshortcuts="H"
-            title="Pan canvas (H)"
-            onClick={() => { useGradientBrush.getState().set({ enabled: false }); setTool('hand') }}
-          >
-            <Hand aria-hidden="true" />
-            <span className="lab-toolbar-label">Pan</span>
-          </button>
-          {brushAvailable && <button type="button" aria-label="Distortion brush tool" title="Distortion brush (B)" aria-keyshortcuts="B" aria-pressed={brushActive} className={brushActive ? 'active' : ''} onClick={() => { setTool('select'); useGradientBrush.getState().set({ enabled: !brushEnabled }) }}><Brush aria-hidden="true" /><span className="lab-toolbar-label">Distort</span></button>}
-          <span className="lab-toolbar-divider" aria-hidden />
-          <button
-            type="button"
-            aria-label="Zoom out"
-            title="Zoom out"
-            onClick={() => zoomAt(camera.zoom / 1.2)}
-          >
-            <ZoomOut aria-hidden="true" />
-          </button>
-          <output className="lab-zoom-readout" aria-label="Canvas zoom">
-            {Math.round(displayScale * 100)}%
-          </output>
-          <button
-            type="button"
-            aria-label="Zoom in"
-            title="Zoom in"
-            onClick={() => zoomAt(camera.zoom * 1.2)}
-          >
-            <ZoomIn aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            aria-label="Fit view"
-            aria-keyshortcuts="0"
-            title="Fit view (0)"
-            onClick={fitView}
-          >
-            <Maximize2 aria-hidden="true" />
-            <span className="lab-toolbar-label">Fit</span>
-          </button>
-        </div>
-
-        <div
-          className="lab-mode-switch"
-          role="radiogroup"
-          aria-label="Canvas mode"
-          aria-orientation="horizontal"
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          {MODE_OPTIONS.map(({ mode: optionMode, label, tooltip, Icon }, index) => {
-            const selected = mode === optionMode
-            return (
-              <button
-                key={optionMode}
-                id={`lab-mode-${optionMode}`}
-                type="button"
-                role="radio"
-                className={selected ? 'lab-mode-tab active' : 'lab-mode-tab'}
-                aria-label={label}
-                aria-controls="lab-generator-artboard"
-                aria-describedby={`lab-mode-${optionMode}-tooltip`}
-                aria-checked={selected}
-                tabIndex={selected ? 0 : -1}
-                data-mode={optionMode}
-                onClick={() => changeMode(optionMode)}
-                onKeyDown={(event) => selectModeWithKeyboard(event, index)}
-              >
-                <Icon aria-hidden size={16} strokeWidth={1.8} />
-                <span className="lab-mode-label">{label}</span>
-                <span
-                  id={`lab-mode-${optionMode}-tooltip`}
-                  className="lab-mode-tooltip"
-                  role="tooltip"
-                >
-                  {tooltip}
-                </span>
-              </button>
-            )
-          })}
         </div>
 
         {hud ? (

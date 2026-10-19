@@ -12,7 +12,7 @@ const width = audit.portrait ? 540 : 960
 const height = audit.portrait ? 370 : 230
 
 // Extract the actual audited 0/50/100 frames without rerendering the artwork.
-for (const mode of ['2d', '3d']) for (const palette of ['primary-core', 'bold']) {
+for (const mode of ['2d', '3d']) for (const palette of ['blues', 'bold']) {
   const layers = []
   for (const [row, look] of ['diffusion', 'halo', 'flow', 'smear'].entries()) {
     const input = await sharp(path.join(directory, `${mode}-${look}-${palette}.png`))

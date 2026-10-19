@@ -1,30 +1,29 @@
-import type { ShapeProto } from '@/core/canvas/shapeProtos'
-import { applyMotionAt } from '@/core/lab/motion'
-import { resolveBank } from '@/core/lab/markBank'
 import { scaleLabForPreview } from '@/core/lab/preview'
 import {
-  exportLabPng,
   renderLabArtwork,
   type ArtworkTransform,
 } from '@/core/lab/render'
+import type { LabSource } from '@/core/lab/sourceCache'
 import type { LabState, LabView } from '@/core/lab/types'
 import type { LookId } from '@/core/lab/looks'
+import { sourceSoftnessHeadroom } from './gradientControls'
 import {
   backgroundRecipeToLab,
   canonicalizeFormat,
   constrainBackgroundTransform,
   type BackgroundRecipeV2,
 } from './recipe'
+import {
+  createMetaSymbolSource,
+} from './metaSymbolSource'
 
 export type Background2DPhase = 'preview' | 'thumbnail' | 'export'
 
 export type Background2DInputs = {
   lab: LabState
-  source: null
-  protos: ShapeProto[]
+  source: LabSource | null
   view: LabView
   transform: ArtworkTransform
-  paintRaster: null
 }
 
 export function resolveBackground2DInputs(
@@ -32,10 +31,10 @@ export function resolveBackground2DInputs(
   options: {
     phase: Background2DPhase
     maxLongEdge?: number
-    timeMs?: number
     lookId?: LookId
     grain?: number
   },
+  source: LabSource | null = null,
 ): Background2DInputs {
   const format = canonicalizeFormat(recipe.format)
   const renderRecipe = {
@@ -45,27 +44,74 @@ export function resolveBackground2DInputs(
       ? { ...recipe.look, id: options.lookId }
       : recipe.look,
   }
-  let lab = backgroundRecipeToLab(renderRecipe)
-  if (options.phase === 'preview' && options.timeMs !== undefined) {
-    lab = applyMotionAt(lab, options.timeMs)
+  let lab = backgroundRecipeToLab(
+    renderRecipe,
+    source
+      ? {
+          hasSource: true,
+          source: {
+            filename: source.filename,
+            width: source.fullW,
+            height: source.fullH,
+            contentHash: source.hash,
+            fit: 'cover',
+          },
+        }
+      : {},
+  )
+  if (source) {
+    const gradient = lab.look.gradient
+    const headroom = sourceSoftnessHeadroom(
+      renderRecipe.gradientState.controls.blend,
+    ) * (renderRecipe.mode === 'background' ? 0.52 : 0.45)
+    const expand = (limited: number, full: number) =>
+      limited + (full - limited) * headroom
+    lab = {
+      ...lab,
+      look: {
+        ...lab.look,
+        gradient: {
+          ...gradient,
+          softness: expand(
+            Math.min(gradient.softness, 0.68),
+            gradient.softness,
+          ),
+          bleed: expand(
+            Math.min(gradient.bleed ?? 0.5, 0.7),
+            gradient.bleed ?? 0.5,
+          ),
+          depth: expand(
+            Math.max(gradient.depth ?? 0.5, 0.45),
+            gradient.depth ?? 0.5,
+          ),
+        },
+      },
+    }
   }
   if (options.grain !== undefined) {
-    lab = { ...lab, finish: { ...lab.finish, grain: options.grain } }
+    lab = {
+      ...lab,
+      look: {
+        ...lab.look,
+        gradient: {
+          ...lab.look.gradient!,
+          grain: options.grain,
+        },
+      },
+    }
   }
   if (options.maxLongEdge) {
     lab = scaleLabForPreview(lab, options.maxLongEdge)
   }
   return {
     lab,
-    source: null,
-    protos: resolveBank(lab.mark.bank, lab.look.version),
+    source,
     view: 'composite',
     transform: constrainBackgroundTransform(
       recipe.transforms.background,
       format.width,
       format.height,
     ),
-    paintRaster: null,
   }
 }
 
@@ -75,12 +121,22 @@ export function renderBackground2DCanvas(
   options: {
     phase: 'preview' | 'thumbnail'
     maxLongEdge: number
-    timeMs?: number
     lookId?: LookId
     grain?: number
   },
 ): Background2DInputs {
-  const inputs = resolveBackground2DInputs(recipe, options)
+  const source = recipe.backgroundSymbol.enabled
+    ? createMetaSymbolSource(recipe.format.width, recipe.format.height)
+    : null
+  const inputs = resolveBackground2DInputs(recipe, options, source)
+  renderBackground2DInputs(canvas, inputs)
+  return inputs
+}
+
+function renderBackground2DInputs(
+  canvas: HTMLCanvasElement,
+  inputs: Background2DInputs,
+): void {
   if (canvas.width !== inputs.lab.output.width) canvas.width = inputs.lab.output.width
   if (canvas.height !== inputs.lab.output.height) canvas.height = inputs.lab.output.height
   const context = canvas.getContext('2d')
@@ -90,24 +146,30 @@ export function renderBackground2DCanvas(
     context,
     inputs.lab,
     inputs.source,
-    inputs.protos,
     inputs.view,
     inputs.transform,
-    null,
-    inputs.paintRaster,
   )
-  return inputs
 }
 
 export function exportBackground2DPng(
   recipe: BackgroundRecipeV2,
 ): Promise<Blob> {
-  const inputs = resolveBackground2DInputs(recipe, { phase: 'export' })
-  return exportLabPng(
-    inputs.lab,
-    inputs.source,
-    inputs.protos,
-    inputs.transform,
-    inputs.paintRaster,
+  const source = recipe.backgroundSymbol.enabled
+    ? createMetaSymbolSource(recipe.format.width, recipe.format.height)
+    : null
+  const inputs = resolveBackground2DInputs(
+    recipe,
+    { phase: 'export' },
+    source,
   )
+  const canvas = document.createElement('canvas')
+  renderBackground2DInputs(canvas, inputs)
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => blob
+        ? resolve(blob)
+        : reject(new Error('PNG encoding failed')),
+      'image/png',
+    )
+  })
 }

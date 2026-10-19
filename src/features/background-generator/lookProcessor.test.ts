@@ -3,8 +3,19 @@ import type { LabSource } from '@/core/lab/sourceCache'
 import { createDefaultBackgroundRecipe } from './recipe'
 import { sourceAwareLabForRecipe } from './lookProcessor'
 
-describe('3D Look processing', () => {
-  it('uses a source mask with the selected Look palette', () => {
+function source(): LabSource {
+  return {
+    image: {} as CanvasImageSource,
+    fullW: 320,
+    fullH: 180,
+    maps: {} as LabSource['maps'],
+    hash: 'frame-hash',
+    filename: 'frame.rgba',
+  }
+}
+
+describe('3D gradient processing', () => {
+  it('uses the complete rendered frame and selected palette plan', () => {
     const recipe = createDefaultBackgroundRecipe(42)
     recipe.palette.mix = [
       { color: '#111111', enabled: true, ratio: 28 },
@@ -12,31 +23,25 @@ describe('3D Look processing', () => {
     ]
     recipe.palette.ground = '#111111'
     recipe.palette.ink = '#EEEEEE'
-    const source = {
-      image: {} as CanvasImageSource,
-      fullW: 320,
-      fullH: 180,
-      maps: {},
-      hash: 'frame',
+
+    const lab = sourceAwareLabForRecipe(recipe, source())
+
+    expect(lab.source).toEqual({
       filename: 'frame.rgba',
-    } as LabSource
-
-    const lab = sourceAwareLabForRecipe(recipe, source)
-
-    expect(lab.territory.sources).toHaveLength(1)
-    expect(lab.territory.sources[0].kind).toBe('tone')
-    expect(lab.territory.sources[0].invert).toBe(false)
-    expect(lab.territory.sources.some((item) => item.kind === 'curve')).toBe(false)
-    expect(lab.sourceMask).toBe('border-distance')
-    expect(lab.sourceVisibility).toBe(0)
-    expect(lab.motion).toMatchObject({ enabled: false, amount: 0 })
-    expect(lab.paint).toBeNull()
+      width: 320,
+      height: 180,
+      contentHash: 'frame-hash',
+      fit: 'contain',
+    })
+    expect(lab.look).toMatchObject({
+      id: 'diffusion',
+      version: 'gradients',
+    })
     expect(lab.colors).toMatchObject({
       paper: '#111111',
       ink: '#EEEEEE',
       palette: ['#111111', '#EEEEEE'],
     })
-    expect(lab.colors.distinct).toEqual(['#111111', '#EEEEEE'])
     expect(lab.colors.plan?.swatches.map((swatch) => swatch.hex)).toEqual([
       '#111111',
       '#EEEEEE',
@@ -46,37 +51,21 @@ describe('3D Look processing', () => {
       ground: 0,
       ink: 1,
     })
+    expect('motion' in lab).toBe(false)
+    expect('territory' in lab).toBe(false)
   })
 
-  it('keeps V1 material state free of V2 composition and color plans', () => {
+  it('shares source fitting and output dimensions with export', () => {
     const recipe = createDefaultBackgroundRecipe(42)
-    recipe.look.version = 'v1'
-    recipe.palette.mix = [
-      { color: '#111111', enabled: true, ratio: 28 },
-      { color: '#EEEEEE', enabled: true, ratio: 72 },
-    ]
-    recipe.palette.ground = '#111111'
-    recipe.palette.ink = '#EEEEEE'
-    const source = {
-      image: {} as CanvasImageSource,
-      fullW: 320,
-      fullH: 180,
-      maps: {},
-      hash: 'frame',
-      filename: 'frame.rgba',
-    } as LabSource
+    recipe.format = { aspect: '9:16', width: 2160, height: 3840 }
 
-    const lab = sourceAwareLabForRecipe(recipe, source)
+    const lab = sourceAwareLabForRecipe(recipe, source(), 'cover')
 
-    expect(lab.composition).toBeUndefined()
-    expect(lab.colors.plan).toBeUndefined()
-    expect(lab.colors.palette).toHaveLength(100)
-    expect(lab.colors.palette.filter((color) => color === '#111111')).toHaveLength(28)
-    expect(lab.colors.palette.filter((color) => color === '#EEEEEE')).toHaveLength(72)
-    // the run-length palette deduplicated in mix order, for slot
-    // arithmetic that degenerates on 100 same-color runs
-    expect(lab.colors.distinct).toEqual(['#111111', '#EEEEEE'])
-    expect(lab.sourceMask).toBe('border-distance')
-    expect(lab.territory.sources.map((item) => item.kind)).toEqual(['tone'])
+    expect(lab.output).toEqual({
+      width: 2160,
+      height: 3840,
+      transparent: false,
+    })
+    expect(lab.source?.fit).toBe('cover')
   })
 })

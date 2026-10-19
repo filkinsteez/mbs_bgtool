@@ -15,7 +15,7 @@ const optimistic = localFont({
 export const metadata: Metadata = {
   title: 'MBS Background Generator',
   description:
-    'Generate Meta background Looks with approved color packs, framing, material, motion preview, and export controls.',
+    'Generate static Meta backgrounds with approved Color Packs, presets, 2D and 3D framing, and 4K export.',
 }
 
 export default function RootLayout({

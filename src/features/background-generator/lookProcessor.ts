@@ -1,10 +1,7 @@
-import type { ShapeProto } from '@/core/canvas/shapeProtos'
 import { scaleLabForPreview } from '@/core/lab/preview'
 import { renderLab } from '@/core/lab/render'
 import type { LabSource } from '@/core/lab/sourceCache'
 import type { LabFit, LabState } from '@/core/lab/types'
-import { resolveLookColorPlan } from '@/core/lab/colorDirection'
-import { buildWeightedPalette } from './palette/registry'
 import {
   backgroundRecipeToLab,
   type BackgroundRecipeV2,
@@ -20,7 +17,7 @@ export function sourceAwareLabForRecipe(
   source: LabSource,
   fit: LabFit = 'contain',
 ): LabState {
-  const lab = backgroundRecipeToLab(recipe, {
+  return backgroundRecipeToLab(recipe, {
     hasSource: true,
     source: {
       filename: source.filename,
@@ -30,63 +27,13 @@ export function sourceAwareLabForRecipe(
       fit,
     },
   })
-  const isV1 = recipe.look.version === 'v1'
-  const colorPlan = isV1
-    ? null
-    : resolveLookColorPlan({
-        mix: recipe.palette.mix,
-        ground: recipe.palette.ground,
-        ink: recipe.palette.ink,
-        lookId: recipe.look.id,
-        complexity: recipe.look.detail,
-      })
-  const palette = isV1
-    ? buildWeightedPalette(recipe.palette.mix, 100)
-    : colorPlan!.swatches.map((swatch) => swatch.hex)
-  // The DISTINCT colors in first-appearance (mix) order. V1's 100-slot
-  // run-length palette makes any slot shift congruent to a no-op (interior
-  // recolors rotate within same-color runs) — material treatments that
-  // recolor by slot shift or neighbor pairing deal over this instead.
-  const distinct = [...new Set(palette)]
-  const tone = lab.territory.sources.find((item) => item.kind === 'tone')
-  return {
-    ...lab,
-    sourceMask: 'border-distance',
-    // A material Look replaces the captured frame with its canonical
-    // treatment. Keeping the raw frame underneath makes sparse treatments
-    // look like background overlays while the model remains untouched.
-    sourceVisibility: 0,
-    paint: null,
-    motion: {
-      ...lab.motion,
-      enabled: false,
-      amount: 0,
-      frame: undefined,
-    },
-    colors: {
-      paper: recipe.palette.ground,
-      ink: recipe.palette.ink,
-      palette,
-      distinct,
-      ...(colorPlan ? { plan: colorPlan } : {}),
-    },
-    territory: {
-      ...lab.territory,
-      gain: 1,
-      sources: tone
-        ? [{ ...tone, enabled: true, invert: false, weight: 1, combine: 'add' }]
-        : [],
-    },
-  }
 }
 
-// Canonical Look processor shared by material preview, material export, and
-// parity tests. There is intentionally no second material-specific renderer.
+// Shared screen-space processor for material preview and export.
 export function renderRecipeLookToCanvas(
   canvas: HTMLCanvasElement,
   recipe: BackgroundRecipeV2,
   source: LabSource,
-  protos: ShapeProto[],
   options: RecipeLookRenderOptions = {},
 ): LabState {
   const fullLab = sourceAwareLabForRecipe(recipe, source, options.fit)
@@ -98,18 +45,17 @@ export function renderRecipeLookToCanvas(
   const context = canvas.getContext('2d', { willReadFrequently: true })
   if (!context) throw new Error('2D Look context unavailable')
   context.setTransform(1, 0, 0, 1, 0, 0)
-  renderLab(context, lab, source, protos, 'composite', null)
+  renderLab(context, lab, source, 'composite')
   return lab
 }
 
 export function exportRecipeLookPng(
   recipe: BackgroundRecipeV2,
   source: LabSource,
-  protos: ShapeProto[],
   fit: LabFit = 'contain',
 ): Promise<Blob> {
   const canvas = document.createElement('canvas')
-  renderRecipeLookToCanvas(canvas, recipe, source, protos, { fit })
+  renderRecipeLookToCanvas(canvas, recipe, source, { fit })
   return new Promise<Blob>((resolve, reject) => {
     canvas.toBlob(
       (blob) => blob ? resolve(blob) : reject(new Error('toBlob failed')),

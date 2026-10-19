@@ -3,6 +3,14 @@
 import { create } from 'zustand'
 import { History } from '@/core/state/history'
 import { mergeDeep } from '@/core/state/store'
+import { findPreset } from './curatedPresets'
+import {
+  gradientLookId,
+  normalizeGradientState,
+  normalizePaletteState,
+  resolveGradientSettings,
+  resolvePaletteMix,
+} from './gradientControls'
 import {
   applyFramingPreset,
   canonicalizeFormat,
@@ -51,10 +59,45 @@ function changed(a: BackgroundRecipeV2, b: BackgroundRecipeV2): boolean {
 export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
   const normalizeRecipe = (recipe: BackgroundRecipeV2): BackgroundRecipeV2 => {
     const format = canonicalizeFormat(recipe.format)
+    const gradientState = normalizeGradientState(recipe.gradientState)
+    const paletteState = normalizePaletteState(recipe.paletteState)
+    const preset = findPreset(gradientState.presetId)
+    const palette = resolvePaletteMix(paletteState)
+    const settings = resolveGradientSettings(
+      preset.family,
+      gradientState.controls,
+      preset.grain,
+      gradientState.orientation,
+      gradientState.center,
+      gradientState.field,
+      palette.mix.length,
+    )
     return {
       ...recipe,
+      mode: recipe.mode === 'background' || recipe.mode === 'material' ? recipe.mode : 'material',
+      presetId: preset.id,
+      gradientState,
+      paletteState,
       format,
-      symbol: { enabled: false },
+      look: {
+        ...recipe.look,
+        id: gradientLookId(preset.family),
+        version: 'gradients',
+        detail: gradientState.controls.detail,
+        gradient: settings,
+        deformation: gradientState.deformation,
+      },
+      materialLookOverlay: { enabled: true },
+      backgroundSymbol: {
+        enabled: recipe.backgroundSymbol.enabled !== false,
+      },
+      palette: {
+        ...recipe.palette,
+        packId: paletteState.packId,
+        mix: palette.mix,
+        ink: palette.ink,
+        ground: palette.ground,
+      },
       transforms: {
         background: constrainBackgroundTransform(
           recipe.transforms.background,
@@ -78,6 +121,7 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
     backgroundHistory.push(before)
     set((state) => ({
       recipe,
+      mode: recipe.mode,
       historyVersion: state.historyVersion + 1,
       ...historyFlags(),
     }))
@@ -85,7 +129,7 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
 
   return {
     recipe: createDefaultBackgroundRecipe(),
-    mode: 'background',
+    mode: createDefaultBackgroundRecipe().mode,
     historyVersion: 0,
     canUndo: false,
     canRedo: false,
@@ -95,6 +139,7 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
       backgroundHistory.clear()
       set((state) => ({
         recipe,
+        mode: recipe.mode,
         historyVersion: state.historyVersion + 1,
         ...historyFlags(),
       }))
@@ -139,8 +184,9 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
       }
       const previous = backgroundHistory.undo(get().recipe)
       if (!previous) return
+      const recipe = normalizeRecipe({ ...previous, mode: get().mode })
       set((state) => ({
-        recipe: previous,
+        recipe,
         historyVersion: state.historyVersion + 1,
         ...historyFlags(),
       }))
@@ -152,18 +198,21 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
       }
       const next = backgroundHistory.redo(get().recipe)
       if (!next) return
+      const recipe = normalizeRecipe({ ...next, mode: get().mode })
       set((state) => ({
-        recipe: next,
+        recipe,
         historyVersion: state.historyVersion + 1,
         ...historyFlags(),
       }))
     },
     setMode: (mode) => {
       if (transactionStart) get().commitTransaction()
-      if (mode === 'material' && get().mode !== mode && get().recipe.look.version === 'gradients') {
-        commitRecipe(mergeDeep(get().recipe, { materialLookOverlay: { enabled: true } }))
-      }
-      set({ mode })
+      const recipe = normalizeRecipe(mergeDeep(get().recipe, {
+        mode,
+        ...(mode === 'material' ? { materialLookOverlay: { enabled: true } } : {}),
+      }))
+      if (recipe.mode === get().mode) return
+      set({ recipe, mode: recipe.mode })
     },
     setFramingMode: (mode) => {
       commitRecipe(applyFramingPreset(get().recipe, mode, get().mode))
@@ -175,7 +224,9 @@ export const useBackgroundStore = create<BackgroundStore>()((set, get) => {
       commitRecipe(mergeDeep(get().recipe, { seed }))
     },
     reset: () => {
-      commitRecipe(createDefaultBackgroundRecipe())
+      const recipe = createDefaultBackgroundRecipe()
+      commitRecipe(recipe)
+      set({ mode: recipe.mode })
     },
   }
 })

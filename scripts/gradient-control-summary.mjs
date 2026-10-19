@@ -6,7 +6,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../.
 const stage = process.argv[2] || '199-landscape-ranges'
 const directory = path.join(root, 'outputs/gradient-controls', stage)
 const looks = ['diffusion', 'halo', 'flow', 'smear']
-for (const palette of ['primary-core', 'bold']) {
+for (const palette of ['blues', 'bold']) {
   const layers = []
   let labels = '<rect width="1280" height="954" fill="#111418"/><g font-family="Arial,sans-serif" fill="white">'
   labels += `<text x="16" y="28" font-size="20">Complexity — ${palette === 'bold' ? 'Bold' : 'Primary'} palette</text>`

@@ -157,7 +157,7 @@ SourceSample transportSource(vec2 p,vec2 s,vec2 aspect,vec2 colorOffset) {
     spillField=coronaField;
     field=mix(coreField,coronaField,.30);
   } else {
-    vec2 scan=(uv-.5)*aspect;
+    vec2 scan=(uv-gradientCenter)*aspect;
     vec2 sourceOffset=(sourceFocus.xy-.5)*aspect;
     SmearSample dragged=smearCoordinates(scan-sourceOffset,s,aspect);
     vec2 moved=(dragged.point+sourceOffset)/aspect;

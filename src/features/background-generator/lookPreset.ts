@@ -6,9 +6,8 @@ import {
 
 // A look preset is the whole recipe in a named envelope, so a file saved
 // from one person's session replays exactly in another's — framing
-// transforms, palette mix, look, complexity, seed, motion, 3D camera and
-// material included. Parsing leans on deserializeBackgroundRecipe: the
-// same healing that guards autosave guards hand-edited or older files.
+// transforms, palette mix, look, seed, and 3D camera included.
+// Parsing uses the same validation and legacy reset as autosave.
 
 export const LOOK_PRESET_KIND = 'mbs-look-preset'
 export const LOOK_PRESET_VERSION = 1
@@ -30,7 +29,7 @@ export function defaultPresetName(
   mode: GeneratorMode,
 ): string {
   const treatment = mode === 'material'
-    ? `${recipe.material.id}-${recipe.look.id}`
+    ? `3d-${recipe.look.id}`
     : recipe.look.id
   return `${recipe.look.version}-${treatment}-${recipe.seed}`
 }

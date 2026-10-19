@@ -20,8 +20,8 @@ precision highp float;
 in vec2 uv;
 out vec4 fragColor;
 uniform vec2 resolution;
-uniform vec2 motion;
-uniform float seed, complexity, softness, distortion, warpScale, folds, grain, bleed, depth, reflow, sourceMode;
+uniform vec2 gradientCenter;
+uniform float seed, complexity, softness, distortion, warpScale, folds, grain, bleed, depth, reflow, sourceMode, orientation;
 uniform int style;
 uniform vec4 pigments[49];
 uniform vec2 pigmentIntervals[49];
@@ -47,6 +47,8 @@ uniform sampler2D flowEmission;
 uniform float flowEmissionMeasure,flowEmissionReady;
 uniform sampler2D deformation;
 uniform float painted;
+uniform float useSpatialField;
+uniform vec4 spatialSources[3];
 ${COLOR_GLSL}
 
 float hash(vec2 p) {
@@ -107,12 +109,47 @@ vec4 exposureColor(vec3 color) {
   color=clamp(color,0.0,1.0);
   return vec4(color,max(color.r,max(color.g,color.b)));
 }
+
+vec3 spatialFieldColor(vec2 sampleUv, vec2 aspect) {
+  if (pigmentCount <= 0) return vec3(0.0);
+  if (pigmentCount == 1) return pigments[0].rgb;
+  vec3 accum = vec3(0.0);
+  float total = 0.0;
+  for (int i = 0; i < 3; i++) {
+    if (i >= pigmentCount) break;
+    vec4 source = spatialSources[i];
+    if (source.w < 0.5) continue;
+    vec2 delta = (sampleUv - source.xy) * aspect;
+    float spread = max(0.05, source.z);
+    float field = exp(-dot(delta, delta) / max(0.0016, spread * spread));
+    float share = max(0.001, pigments[i].a);
+    float weight = field * share + share * 0.035;
+    accum += pigments[i].rgb * weight;
+    total += weight;
+  }
+  if (total <= 1e-5) return pigments[0].rgb;
+  return accum / total;
+}
 void main() {
   vec2 aspect=resolution/min(resolution.x,resolution.y);
+  float ang = orientation * 0.017453292519943295;
+  mat2 orient = mat2(cos(ang), -sin(ang), sin(ang), cos(ang));
+  vec2 s=vec2(seed,seed*0.718);
   vec4 packed=texture(deformation,uv)*255.0;
   vec2 displacement=(vec2(dot(packed.rg,vec2(256.0,1.0)),dot(packed.ba,vec2(256.0,1.0)))-32768.0)/16383.75;
-  vec2 p=(uv+displacement*painted-0.5)*aspect;
-  vec2 s=vec2(seed,seed*0.718)+motion;
+  vec2 p=orient*((uv+displacement*painted-gradientCenter)*aspect);
+  vec2 sampleUv = clamp(uv + displacement * painted, 0.0, 1.0);
+  if (useSpatialField > 0.5) {
+    vec3 fieldColor = spatialFieldColor(sampleUv, aspect);
+    if (sourceMode > 0.5) {
+      vec3 sourceColor = sourceGradient(p, s, aspect);
+      float luma = dot(sourceColor, vec3(0.2126, 0.7152, 0.0722));
+      fragColor = exposureColor(mix(fieldColor, colorMix(fieldColor, sourceColor, 0.7), clamp(luma, 0.0, 1.0)));
+    } else {
+      fragColor = exposureColor(fieldColor);
+    }
+    return;
+  }
   if(style==2 && flowEmissionMeasure>.5) { fragColor=sourceFlowEmission(vec2(uv.x,1.0-uv.y)); return; }
   if(style!=2 && transportMeasure>.5) {
     vec4 field=transportSource(p,s,aspect,vec2(0.0)).field;
@@ -141,7 +178,7 @@ void main() {
   vec2 q=warp(p,s);
   if(style==1) { fragColor=exposureColor(aperture(p,s,aspect)); return; }
   if(style==2) { fragColor=exposureColor(ribbons(flowCoordinates(p,s),s,aspect)); return; }
-  if(style==3) { fragColor=exposureColor(heldBands((uv-.5)*aspect,s,aspect)); return; }
+  if(style==3) { fragColor=exposureColor(heldBands(p,s,aspect)); return; }
   vec3 c=diffuseDye(q,s,aspect);
   fragColor=exposureColor(c);
 }`
@@ -154,7 +191,8 @@ in vec2 uv;
 out vec4 fragColor;
 uniform sampler2D exposure;
 uniform vec2 resolution;
-uniform float softness,bleed,grain,seed;
+uniform vec2 gradientCenter;
+uniform float softness,bleed,grain,seed,orientation;
 uniform int style;
 ${COLOR_GLSL}
 float hash(vec2 p) {
@@ -171,7 +209,10 @@ vec3 sampleExposure(vec2 p,float lod) {
 }
 void main() {
   vec2 aspect=resolution/min(resolution.x,resolution.y);
-  vec2 p=(uv-0.5)*aspect;
+  float ang = orientation * 0.017453292519943295;
+  mat2 orient = mat2(cos(ang), -sin(ang), sin(ang), cos(ang));
+  mat2 sampleOrient = mat2(cos(ang), sin(ang), -sin(ang), cos(ang));
+  vec2 p=orient*((uv-gradientCenter)*aspect);
   float focus=0.5+0.25*sin(p.x*3.1+seed)+0.25*sin(p.y*4.3-seed*0.71+p.x*1.1);
   vec2 radius=(0.001+softness*softness*0.038*focus*focus)/aspect;
   if(style==0) radius*=mix(2.0,20.0,pow(softness,4.0));
@@ -195,8 +236,9 @@ void main() {
     if(i>=samples) break;
     float angle=float(i)*2.399963;
     vec2 disk=vec2(cos(angle),sin(angle))*sqrt((float(i)+0.5)/float(samples));
-    vec3 nearColor=sampleExposure(uv+disk*radius,lod);
-    vec3 farColor=sampleExposure(uv+disk*radius*(2.0+bleed*2.0),lod);
+    vec2 sampleOffset=sampleOrient*(disk*radius);
+    vec3 nearColor=sampleExposure(uv+sampleOffset,lod);
+    vec3 farColor=sampleExposure(uv+sampleOffset*(2.0+bleed*2.0),lod);
     vec3 scattered=colorMix(nearColor,farColor,bleed*0.16);
     blurred+=scattered*((1.0-originalShare)/float(samples));
     saturationValue+=rgbToHsv(scattered).yz*((1.0-originalShare)/float(samples));

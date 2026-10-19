@@ -49,8 +49,8 @@ export function GradientBrushOverlay() {
       cursor.style.left = `${event.clientX - rect.left}px`
       cursor.style.top = `${event.clientY - rect.top}px`
     }
-    // Invert the displayed artwork transform. Painting still lands under the
-    // cursor after the user pans, zooms, scales, moves, or rotates the artwork.
+    // Invert the displayed artwork transform so painting stays under the
+    // cursor after the artwork is scaled, moved, or rotated.
     const recipe = useBackgroundStore.getState().recipe
     const t = recipe.transforms.background
     const aspect = recipe.format.width / recipe.format.height
@@ -68,7 +68,12 @@ export function GradientBrushOverlay() {
       mode: event.altKey ? 'restore' : brush.mode, aspect: recipe.format.width / recipe.format.height, reverse: event.shiftKey,
     })
     active.last = point
-    store.setTransient({ look: { deformation: encodeDeformation(active.field) } })
+    store.setTransient({
+      gradientState: {
+        ...recipe.gradientState,
+        deformation: encodeDeformation(active.field),
+      },
+    })
   }
   return <div ref={elementRef} className="gradient-brush-overlay" role="img" aria-label="Paint gradient distortion. Drag to distort. Brackets change size. Alt restores, Shift reverses, Escape cancels a stroke." tabIndex={0}
     onPointerDown={(event) => {
@@ -76,7 +81,13 @@ export function GradientBrushOverlay() {
       event.preventDefault(); event.stopPropagation(); event.currentTarget.focus({ preventScroll: true })
       const point = position(event)
       useBackgroundStore.getState().beginTransaction()
-      stroke.current = { pointer: event.pointerId, last: point, field: decodeDeformation(useBackgroundStore.getState().recipe.look.deformation) }
+      stroke.current = {
+        pointer: event.pointerId,
+        last: point,
+        field: decodeDeformation(
+          useBackgroundStore.getState().recipe.gradientState.deformation,
+        ),
+      }
       event.currentTarget.setPointerCapture(event.pointerId)
       if (brush.mode !== 'push') paint(event, point, true)
     }}

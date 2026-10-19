@@ -52,12 +52,12 @@ try {
   })
 
   const cases = []
-  for (const mode of ['2d', '3d']) for (const palette of ['bold', 'primary-neutrals']) {
+  for (const mode of ['2d', '3d']) for (const palette of ['bold', 'primary']) {
     for (const style of ['diffusion', 'halo', 'flow', 'smear']) {
       for (const position of ['first', 'middle', 'last']) cases.push({ kind: 'removal', mode, palette, style, position, seed: 1913 })
     }
   }
-  for (const palette of ['primary-core', 'primary-neutrals', 'atmospheric']) {
+  for (const palette of ['blues', 'primary', 'atmospheric']) {
     for (const style of ['diffusion', 'halo', 'flow', 'smear']) {
       for (const seed of [1913, 9027]) cases.push({ kind: 'roles', mode: '3d', palette, style, seed })
     }

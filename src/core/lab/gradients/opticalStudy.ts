@@ -15,7 +15,6 @@ precision highp float;
 in vec2 uv;
 out vec4 fragColor;
 uniform vec2 resolution;
-uniform vec2 motion;
 uniform float seed, complexity, softness, distortion, warpScale, folds, grain, bleed, depth, reflow, sourceMode;
 uniform int style;
 uniform vec4 pigments[12];
@@ -179,7 +178,7 @@ void main() {
   vec4 packed=texture(deformation,uv)*255.0;
   vec2 displacement=(vec2(dot(packed.rg,vec2(256.0,1.0)),dot(packed.ba,vec2(256.0,1.0)))-32768.0)/16383.75;
   vec2 p=(uv+displacement*painted-0.5)*aspect;
-  vec2 s=vec2(seed,seed*0.718)+motion;
+  vec2 s=vec2(seed,seed*0.718);
   if(sourceMode>0.5) {
     fragColor=vec4(clamp(sourceGradient(p,s,aspect),0.0,1.0),1.0);
     return;

@@ -27,7 +27,7 @@ export function GradientReview() {
   const [complexity, setComplexity] = useState(0.65)
   const [distortion, setDistortion] = useState(0.65)
   const [optical, setOptical] = useState(false)
-  const palettes = ['bold', 'elemental', 'atmospheric', 'primary-core', 'primary-neutrals', 'neutral-flex']
+  const palettes = PALETTE_PACKS.map((pack) => pack.id)
   const recipeFor = (index: number): BackgroundRecipeV2 => {
     const recipe = createDefaultBackgroundRecipe(seed)
     const pack = PALETTE_PACKS.find((p) => p.id === palettes[Math.floor(index / 4)])!
@@ -112,8 +112,11 @@ export function GradientReview() {
     setStatus('Checking renders')
     const results: string[] = []
     const canvas = document.createElement('canvas')
-    const draw = (recipe: BackgroundRecipeV2, timeMs = 0) => {
-      renderBackground2DCanvas(canvas, recipe, { phase: 'preview', maxLongEdge: 480, timeMs })
+    const draw = (recipe: BackgroundRecipeV2) => {
+      renderBackground2DCanvas(canvas, recipe, {
+        phase: 'preview',
+        maxLongEdge: 480,
+      })
       return canvas.toDataURL()
     }
     const structureFrames: Uint8ClampedArray[] = []
@@ -155,7 +158,7 @@ export function GradientReview() {
         structureFrames.push(structured)
       }
       const colorRecipe = (colors: string[]): BackgroundRecipeV2 => ({ ...recipe,
-        palette: { ...recipe.palette, packId: 'custom', mix: colors.map((color) => ({ color, enabled: true, ratio: 100 })) },
+        palette: { ...recipe.palette, mix: colors.map((color) => ({ color, enabled: true, ratio: 100 })) },
         look: { ...recipe.look, gradient: { ...recipe.look.gradient!, grain: 0 } },
       })
       // Test the real GPU output: lighting and overlap must not add brown/gray
@@ -179,23 +182,18 @@ export function GradientReview() {
           throw new Error(`Bright swatches became dark at ${p / 4}: ${Array.from(vividPixels.slice(p, p + 4))}`)
         }
       }
-      const primary = PALETTE_PACKS.find((pack) => pack.id === 'primary-core')!
+      const primary = PALETTE_PACKS.find((pack) => pack.id === 'primary')!
       draw(colorRecipe([...primary.colors]))
       await fetch('/api/devshot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `gradient-${stage}-${study}-primary-${recipe.look.id}`, dataUrl: canvas.toDataURL() }) })
       const weighted = (ratio: number) => ({ ...recipe, palette: { ...recipe.palette, mix: recipe.palette.mix.map((c, j) => j === 0 ? { ...c, ratio } : c) } })
       if (draw(weighted(5)) === draw(weighted(95))) throw new Error('Lead color weight has no effect')
       if (first === draw({ ...recipe, seed: seed + 717 })) throw new Error('Seed has no effect')
-      if (first !== draw({ ...recipe, symbol: { enabled: true } })) throw new Error('Legacy symbol setting changes the background')
       if (draw({ ...recipe, look: { ...recipe.look, detail: 0 } }) === draw({ ...recipe, look: { ...recipe.look, detail: 1 } })) throw new Error('Complexity has no effect')
       for (const key of ['softness', 'distortion', 'scale', 'folds', 'bleed', 'depth', 'grain', 'reflow'] as const) {
         const base = { softness: 0.5, distortion: 0.45, grain: 0.22 }
         if (draw({ ...recipe, look: { ...recipe.look, gradient: { ...base, [key]: 0 } } }) === draw({ ...recipe, look: { ...recipe.look, gradient: { ...base, [key]: 1 } } })) throw new Error(`${key} has no effect`)
       }
       if (recipe.look.deformation && first === draw({ ...recipe, look: { ...recipe.look, deformation: undefined } })) throw new Error('Brush has no effect')
-      recipe.motion = { ...recipe.motion, enabled: true, amount: 0.7 }
-      if (draw(recipe, 0) !== draw(recipe, recipe.motion.loopSeconds * 1000)) throw new Error('Loop does not close')
-      if (draw(recipe, 0) === draw(recipe, recipe.motion.loopSeconds * 250)) throw new Error('Motion is static')
-      if (draw(recipe, 1100) === draw({ ...recipe, motion: { ...recipe.motion, speed: 2 } }, 1100)) throw new Error('Energy has no effect')
       const start = performance.now()
       const png = await exportBackground2DPng(recipe)
       const bitmap = await createImageBitmap(png)
@@ -208,7 +206,13 @@ export function GradientReview() {
       bitmap.close()
       // Compare color/composition at preview and export sizes without the grain,
       // whose samples deliberately follow the final output pixel grid.
-      const clean = { ...recipe, motion: { ...recipe.motion, enabled: false }, look: { ...recipe.look, gradient: { softness: 0.5, distortion: 0.45, grain: 0 } } }
+      const clean = {
+        ...recipe,
+        look: {
+          ...recipe.look,
+          gradient: { softness: 0.5, distortion: 0.45, grain: 0 },
+        },
+      }
       draw(clean)
       const expected = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data
       const exported = await createImageBitmap(await exportBackground2DPng(clean))
@@ -222,10 +226,13 @@ export function GradientReview() {
       const exportTime = Math.round(performance.now()-start)
       const frameStart = performance.now()
       for (let frame = 0; frame < 4; frame++) {
-        renderBackground2DCanvas(canvas, recipe, { phase: 'preview', maxLongEdge: 1200, timeMs: frame * 100 })
+        renderBackground2DCanvas(canvas, recipe, {
+          phase: 'preview',
+          maxLongEdge: 1200,
+        })
         canvas.getContext('2d')!.getImageData(0, 0, 1, 1)
       }
-      results.push(`${GRADIENT_LOOKS[i].label}: depth-zero variance ${(varianceRatio * 100).toFixed(1)}% of default; structure, color brightness, single swatches, neutrals, repeat, seed, symbol, palette weight, controls, loop, energy, 4K passed; preview/export error ${error.toFixed(2)}/255 (${exportTime} ms including two exports); 1200px frame + readback ${((performance.now()-frameStart)/4).toFixed(1)} ms`)
+      results.push(`${GRADIENT_LOOKS[i].label}: depth-zero variance ${(varianceRatio * 100).toFixed(1)}% of default; structure, color brightness, single swatches, neutrals, repeat, seed, palette weight, controls, and 4K passed; preview/export error ${error.toFixed(2)}/255 (${exportTime} ms including two exports); 1200px frame + readback ${((performance.now()-frameStart)/4).toFixed(1)} ms`)
     }
     setStatus(results.join('\n'))
   }
@@ -271,7 +278,7 @@ export function GradientReview() {
   const validatePalettes = async () => {
     const canvas = document.createElement('canvas')
     const results: string[] = []
-    for (const pack of PALETTE_PACKS.filter((p) => p.tier !== 'extended')) {
+    for (const pack of PALETTE_PACKS) {
       let minRange = Infinity, minDifference = Infinity, maxFlatRatio = 0, maxExportError = 0
       for (const sampleSeed of [1913, 9027, 14023]) {
         const frames: Uint8ClampedArray[] = []

@@ -13,15 +13,9 @@ import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import {
-  attachLabAuxPlanes,
-  createLabSourceFromCanvas,
-  createLabSourceFromOpaqueWithSilhouette,
-  type LabAuxPlanes,
-} from '@/core/lab/sourceCache'
+import { createLabSourceFromCanvas } from '@/core/lab/sourceCache'
 import type { LookId } from '@/core/lab/looks'
-import { sourceAwareLabForRecipe, renderRecipeLookToCanvas } from '@/features/background-generator/lookProcessor'
-import type { MaterialId } from '@/features/background-generator/material/catalog'
+import { renderRecipeLookToCanvas } from '@/features/background-generator/lookProcessor'
 import { registerMaterialFrameCapture } from '@/features/background-generator/material/materialFrameCapture'
 import type {
   BackgroundRecipeV2,
@@ -29,7 +23,6 @@ import type {
   SubjectTransform,
 } from '@/features/background-generator/recipe'
 import { useBackgroundStore } from '@/features/background-generator/store'
-import { resolveBankCached } from '@/components/lab/bankCache'
 import {
   createMaterialSurface,
   prepareMaterialGeometry,
@@ -37,11 +30,12 @@ import {
 import {
   MATERIAL_MODEL_RESET_VIEW_EVENT,
   MATERIAL_MODEL_SETTLE_VIEW_EVENT,
+  reportMaterialLookStatus,
   reportMaterialModelStatus,
+  type MaterialLookStatus,
 } from './materialModelEvents'
 
 type ViewerConfig = {
-  id: MaterialId
   backgroundColor: string
   highlightColor: string
   intensity: number
@@ -53,21 +47,11 @@ type ViewerConfig = {
   lookOverlayEnabled: boolean
 }
 
-type AuxCaptureKit = {
-  depthTarget: THREE.WebGLRenderTarget
-  normalTarget: THREE.WebGLRenderTarget
-  depthMaterial: THREE.MeshDepthMaterial
-  normalMaterial: THREE.MeshNormalMaterial
-  dispose: () => void
-}
-
 type ViewerRuntime = {
   scene: THREE.Scene
   camera: THREE.OrthographicCamera
   renderer: THREE.WebGLRenderer
   processedCanvas: HTMLCanvasElement
-  lookColorFrame: HTMLCanvasElement
-  lookMaskFrame: HTMLCanvasElement
   controls: OrbitControls
   modelRoot: THREE.Group
   model: THREE.Group | null
@@ -77,7 +61,6 @@ type ViewerRuntime = {
   rimLight: THREE.DirectionalLight
   environment: THREE.Texture
   pmrem: THREE.PMREMGenerator
-  aux: AuxCaptureKit | null
   baseScale: number
   modelWidth: number
   modelHeight: number
@@ -86,35 +69,19 @@ type ViewerRuntime = {
   cameraKey: string
   recipe: BackgroundRecipeV2
   invalidateSource: () => void
+  invalidateLook: () => void
 }
 
 type ViewerStatus = 'loading' | 'ready' | 'error'
-type LookStatus = 'idle' | 'processing' | 'ready' | 'error'
 
 const MODEL_URL = '/api/material-model'
 const HQ_LOOK_EDGE = 1200
 const LOOK_SETTLE_MS = 160
-// Aux (depth/normal) planes read back at half the ~1MP analysis budget —
-// they are smooth control surfaces, not imagery.
-const AUX_MAX = 512
 
 type MaterialDebugApi = {
   loseAndRestoreContext: () => boolean
-  captureAuxPlanes: () => {
-    w: number
-    h: number
-    depth: number[]
-    normalX: number[]
-    normalY: number[]
-  } | null
-  // Exercises the REAL export capture chain (captureRuntimeFrame →
-  // createLabSourceFromCanvas) and reports whether the aux planes rode
-  // along — what exportMaterialAtTarget's LabSource will carry.
   captureExportSourceInfo: (width: number, height: number) => Promise<{
     hash: string
-    hasAux: boolean
-    auxW: number
-    auxH: number
   }>
 }
 
@@ -125,9 +92,9 @@ function applyFinish(surface: THREE.MeshPhysicalMaterial, config: ViewerConfig):
   surface.color.set(config.highlightColor)
   surface.emissive.set('#000000')
   surface.emissiveIntensity = 0
-  surface.metalness = 0.08
-  surface.roughness = 0.5
-  surface.clearcoat = 0
+  surface.metalness = 0.03 + intensity * 0.08
+  surface.roughness = 0.72 - intensity * 0.3
+  surface.clearcoat = depth * 0.18
   surface.clearcoatRoughness = 0.2
   surface.transmission = 0
   surface.thickness = 0
@@ -146,34 +113,6 @@ function applyFinish(surface: THREE.MeshPhysicalMaterial, config: ViewerConfig):
   surface.depthWrite = true
   surface.flatShading = false
   surface.wireframe = false
-
-  if (config.id === 'clean') {
-    surface.metalness = 0.03 + intensity * 0.08
-    surface.roughness = 0.72 - intensity * 0.3
-    surface.clearcoat = depth * 0.18
-  } else if (config.id === 'liquid') {
-    surface.metalness = 0.64 + intensity * 0.32
-    surface.roughness = 0.24 - intensity * 0.14
-    surface.clearcoat = 0.65 + depth * 0.35
-    surface.clearcoatRoughness = 0.08
-    surface.iridescence = 0.12 + intensity * 0.45
-    surface.anisotropy = 0.35 + depth * 0.5
-  } else if (config.id === 'glass') {
-    surface.metalness = 0
-    surface.roughness = 0.2 - intensity * 0.14
-    surface.clearcoat = 0.25 + intensity * 0.3
-    surface.clearcoatRoughness = 0.08
-    surface.transmission = 0.62 + intensity * 0.34
-    surface.thickness = 0.2 + depth * 1.4
-    surface.ior = 1.32 + intensity * 0.28
-    surface.attenuationDistance = 0.8 + (1 - depth) * 4
-  } else if (config.id === 'metal') {
-    surface.metalness = 0.9 + intensity * 0.1
-    surface.roughness = 0.4 - intensity * 0.3
-    surface.clearcoat = 0.1 + depth * 0.18
-    surface.clearcoatRoughness = 0.12
-    surface.anisotropy = 0.25 + depth * 0.65
-  }
 
   surface.needsUpdate = true
 }
@@ -205,203 +144,20 @@ function syncRuntime(runtime: ViewerRuntime, config: ViewerConfig): void {
       runtime.cameraKey = cameraKey
     }
   }
-  runtime.invalidateSource()
-}
-
-function ensureAuxKit(runtime: ViewerRuntime): AuxCaptureKit {
-  if (runtime.aux) return runtime.aux
-  const targetOptions: THREE.RenderTargetOptions = {
-    minFilter: THREE.NearestFilter,
-    magFilter: THREE.NearestFilter,
-    generateMipmaps: false,
-    depthBuffer: true,
-    stencilBuffer: false,
-  }
-  const depthTarget = new THREE.WebGLRenderTarget(8, 8, targetOptions)
-  const normalTarget = new THREE.WebGLRenderTarget(8, 8, targetOptions)
-  // RGBA-packed depth carries ~24 bits through an 8-bit target — the model
-  // occupies a thin slice of the camera's near/far range, so BasicDepthPacking
-  // would band hard after per-model renormalization. NoBlending on both:
-  // packed depth bits in alpha must never blend with the clear color.
-  const depthMaterial = new THREE.MeshDepthMaterial({
-    depthPacking: THREE.RGBADepthPacking,
-    blending: THREE.NoBlending,
-  })
-  const normalMaterial = new THREE.MeshNormalMaterial({
-    blending: THREE.NoBlending,
-  })
-  const kit: AuxCaptureKit = {
-    depthTarget,
-    normalTarget,
-    depthMaterial,
-    normalMaterial,
-    dispose: () => {
-      depthTarget.dispose()
-      normalTarget.dispose()
-      depthMaterial.dispose()
-      normalMaterial.dispose()
-    },
-  }
-  runtime.aux = kit
-  return kit
-}
-
-// Render the scene twice more with scene.overrideMaterial into small render
-// targets and read the planes back: view-space normals (packed 0..1, alpha =
-// model coverage) and RGBA-packed depth, renormalized in JS over the model's
-// own depth span so 0..1 covers the model and empty space reads exactly 1.
-// Same cadence as the callers — settled hq captures and exports only, never
-// per-frame during gestures. Returns null instead of throwing so a failed or
-// context-lost aux pass degrades to a source without planes.
-function captureAuxPlanes(
-  runtime: ViewerRuntime,
-  frameW: number,
-  frameH: number,
-): LabAuxPlanes | null {
-  if (!runtime.model) return null
-  const gl = runtime.renderer.getContext()
-  if (gl.isContextLost()) return null
-  const k = Math.min(1, AUX_MAX / Math.max(frameW, frameH))
-  const w = Math.max(8, Math.round(frameW * k))
-  const h = Math.max(8, Math.round(frameH * k))
-  const normalPixels = new Uint8Array(w * h * 4)
-  const depthPixels = new Uint8Array(w * h * 4)
-
-  const { renderer, scene, camera } = runtime
-  const previousBackground = scene.background
-  const previousOverride = scene.overrideMaterial
-  const previousTarget = renderer.getRenderTarget()
-  const previousClearColor = renderer.getClearColor(new THREE.Color())
-  const previousClearAlpha = renderer.getClearAlpha()
-  try {
-    const kit = ensureAuxKit(runtime)
-    if (kit.normalTarget.width !== w || kit.normalTarget.height !== h) {
-      kit.normalTarget.setSize(w, h)
-      kit.depthTarget.setSize(w, h)
-    }
-    scene.background = null
-    scene.overrideMaterial = kit.normalMaterial
-    renderer.setClearColor(0x000000, 0)
-    renderer.setRenderTarget(kit.normalTarget)
-    renderer.render(scene, camera)
-    renderer.readRenderTargetPixels(kit.normalTarget, 0, 0, w, h, normalPixels)
-    scene.overrideMaterial = kit.depthMaterial
-    renderer.setClearColor(0xffffff, 1)
-    renderer.setRenderTarget(kit.depthTarget)
-    renderer.render(scene, camera)
-    renderer.readRenderTargetPixels(kit.depthTarget, 0, 0, w, h, depthPixels)
-  } catch {
-    return null
-  } finally {
-    scene.background = previousBackground
-    scene.overrideMaterial = previousOverride
-    renderer.setRenderTarget(previousTarget)
-    renderer.setClearColor(previousClearColor, previousClearAlpha)
-  }
-  if (gl.isContextLost()) return null
-
-  const count = w * h
-  const depth = new Float32Array(count)
-  const normalX = new Float32Array(count)
-  const normalY = new Float32Array(count)
-  const covered = new Uint8Array(count)
-  let minDepth = Infinity
-  let maxDepth = -Infinity
-  for (let y = 0; y < h; y += 1) {
-    // readRenderTargetPixels rows run bottom-up (WebGL origin); the planes
-    // use the analysis maps' top-down order
-    const sourceRow = (h - 1 - y) * w
-    for (let x = 0; x < w; x += 1) {
-      const index = y * w + x
-      const offset = (sourceRow + x) * 4
-      if (normalPixels[offset + 3] >= 128) {
-        covered[index] = 1
-        normalX[index] = normalPixels[offset] / 255
-        normalY[index] = normalPixels[offset + 1] / 255
-        // unpackRGBAToDepth for PackFactors (1, 256, 256^2, 256^3)
-        const value =
-          depthPixels[offset] / 256
-          + depthPixels[offset + 1] / 65536
-          + depthPixels[offset + 2] / 16777216
-          + depthPixels[offset + 3] / (255 * 16777216)
-        depth[index] = value
-        if (value < minDepth) minDepth = value
-        if (value > maxDepth) maxDepth = value
-      } else {
-        normalX[index] = 0.5
-        normalY[index] = 0.5
-        depth[index] = 1
-      }
-    }
-  }
-  if (minDepth < maxDepth) {
-    const scale = 1 / (maxDepth - minDepth)
-    for (let index = 0; index < count; index += 1) {
-      if (covered[index]) {
-        depth[index] = Math.min(1, Math.max(0, (depth[index] - minDepth) * scale))
-      }
-    }
-  } else if (Number.isFinite(minDepth)) {
-    // a single covered depth (flat facing slab): nearest by convention
-    for (let index = 0; index < count; index += 1) {
-      if (covered[index]) depth[index] = 0
-    }
-  }
-  return { w, h, depth, normalX, normalY }
 }
 
 function captureLookSource(runtime: ViewerRuntime) {
-  const canvas = runtime.renderer.domElement
-  if (runtime.recipe.look.version === 'gradients') {
-    // Capture exactly the rendered scene, including its background. Gradient
-    // Looks are full-frame raster layers, with no model mask or aux mapping.
-    return createLabSourceFromCanvas(canvas, { filename: 'three-render-layer-frame.rgba' })
-  }
-  const colorFrame = runtime.lookColorFrame
-  if (colorFrame.width !== canvas.width) colorFrame.width = canvas.width
-  if (colorFrame.height !== canvas.height) colorFrame.height = canvas.height
-  const colorContext = colorFrame.getContext('2d')
-  if (!colorContext) throw new Error('2D color capture context unavailable')
-  const maskFrame = runtime.lookMaskFrame
-  if (maskFrame.width !== canvas.width) maskFrame.width = canvas.width
-  if (maskFrame.height !== canvas.height) maskFrame.height = canvas.height
-  const maskContext = maskFrame.getContext('2d')
-  if (!maskContext) throw new Error('2D mask capture context unavailable')
-
-  const previousBackground = runtime.scene.background
-  const previousClearAlpha = runtime.renderer.getClearAlpha()
-  try {
-    // One transparent render feeds both captures: the silhouette (alpha
-    // cutout) and, composited over the recipe's ground while everything
-    // is OPAQUE, the color frame the Look treatments sample. Baking the
-    // silhouette into the color canvas's alpha instead premultiplies
-    // every background RGB to black — the audited "black ground" bug.
-    runtime.scene.background = null
-    runtime.renderer.setClearAlpha(0)
-    runtime.renderer.render(runtime.scene, runtime.camera)
-    maskContext.clearRect(0, 0, maskFrame.width, maskFrame.height)
-    maskContext.drawImage(canvas, 0, 0)
-    colorContext.fillStyle = runtime.recipe.palette.ground
-    colorContext.fillRect(0, 0, colorFrame.width, colorFrame.height)
-    colorContext.drawImage(canvas, 0, 0)
-  } finally {
-    runtime.scene.background = previousBackground
-    runtime.renderer.setClearAlpha(previousClearAlpha)
-    runtime.renderer.render(runtime.scene, runtime.camera)
-  }
-
-  // Depth/normal planes render to their own small targets AFTER the canvas
-  // readbacks above, so the raw render, silhouette, and color captures stay
-  // byte-identical whether or not the aux passes succeed.
-  const aux = captureAuxPlanes(runtime, canvas.width, canvas.height)
-
-  return createLabSourceFromOpaqueWithSilhouette(
-    colorFrame,
-    maskFrame,
-    colorFrame.width,
-    colorFrame.height,
-    { filename: 'three-material-frame.rgba', aux },
+  const { width, height } = runtime.recipe.format
+  const scale = HQ_LOOK_EDGE / Math.max(width, height)
+  const frame = captureRuntimeFrameNow(
+    runtime,
+    Math.max(1, Math.round(width * scale)),
+    Math.max(1, Math.round(height * scale)),
+    false,
   )
+  return createLabSourceFromCanvas(frame, {
+    filename: 'three-render-layer-frame.rgba',
+  })
 }
 
 function orientModel(model: THREE.Group): {
@@ -470,11 +226,12 @@ function disposeModel(model: THREE.Object3D): void {
   })
 }
 
-async function captureRuntimeFrame(
+function captureRuntimeFrameNow(
   runtime: ViewerRuntime,
   width: number,
   height: number,
-): Promise<HTMLCanvasElement> {
+  invalidateAfterRestore = true,
+): HTMLCanvasElement {
   if (!runtime.model) throw new Error('3D model is not ready')
   if (
     width > runtime.renderer.capabilities.maxTextureSize
@@ -504,9 +261,8 @@ async function captureRuntimeFrame(
     runtime.camera.right = centerX + halfWidth
     runtime.camera.updateProjectionMatrix()
     runtime.controls.update()
-    // Every version exports the same way: the raw lit frame is captured
-    // here, and the canonical Canvas2D Look processor treats it downstream
-    // (exportMaterial.ts), exactly as the live overlay does.
+    // Export captures the raw lit frame; the shared gradient painter treats
+    // it downstream exactly as the live screen-space layer does.
     runtime.renderer.render(runtime.scene, runtime.camera)
 
     const frame = document.createElement('canvas')
@@ -516,11 +272,6 @@ async function captureRuntimeFrame(
     if (!context) throw new Error('3D export canvas unavailable')
     context.drawImage(runtime.renderer.domElement, 0, 0, width, height)
     frame.dataset.renderPipeline = 'three-raw'
-    // The export runs through the same capture contract as the live
-    // overlay: depth/normal planes for THIS pose at THIS aspect ride along
-    // with the frame so the treated export sees the same env fields.
-    const aux = runtime.recipe.look.version === 'gradients' ? null : captureAuxPlanes(runtime, width, height)
-    if (aux) attachLabAuxPlanes(frame, aux)
     return frame
   } finally {
     runtime.renderer.setPixelRatio(originalPixelRatio)
@@ -532,8 +283,16 @@ async function captureRuntimeFrame(
     runtime.camera.bottom = originalFrustum.bottom
     runtime.camera.updateProjectionMatrix()
     runtime.renderer.render(runtime.scene, runtime.camera)
-    runtime.invalidateSource()
+    if (invalidateAfterRestore) runtime.invalidateSource()
   }
+}
+
+async function captureRuntimeFrame(
+  runtime: ViewerRuntime,
+  width: number,
+  height: number,
+): Promise<HTMLCanvasElement> {
+  return captureRuntimeFrameNow(runtime, width, height)
 }
 
 export function MaterialModelViewer() {
@@ -552,7 +311,7 @@ export function MaterialModelViewer() {
   const lookFailedRef = useRef(false)
   const lookConfigKeyRef = useRef(`${lookOverlayEnabled}:${lookId}:${lookVersion}`)
   const [status, setStatus] = useState<ViewerStatus>('loading')
-  const [lookStatus, setLookStatus] = useState<LookStatus>('idle')
+  const [lookStatus, setLookStatus] = useState<MaterialLookStatus>('idle')
   const [progress, setProgress] = useState<number | null>(null)
   const [attempt, setAttempt] = useState(0)
 
@@ -568,7 +327,20 @@ export function MaterialModelViewer() {
     reportMaterialModelStatus(status)
   }, [status])
 
-  useEffect(() => () => reportMaterialModelStatus('loading'), [])
+  useEffect(() => {
+    reportMaterialLookStatus(
+      status !== 'ready'
+        ? 'idle'
+        : lookOverlayEnabled
+          ? lookStatus
+          : 'ready',
+    )
+  }, [lookOverlayEnabled, lookStatus, status])
+
+  useEffect(() => () => {
+    reportMaterialModelStatus('loading')
+    reportMaterialLookStatus('idle')
+  }, [])
 
   useEffect(
     () => registerMaterialFrameCapture(async (width, height) => {
@@ -624,12 +396,30 @@ export function MaterialModelViewer() {
     let onContextLost: ((event: Event) => void) | null = null
     let onContextRestored: (() => void) | null = null
     let sourceVersion = 0
-    let processedVersion = -1
+    let lookVersionCounter = 0
+    let processedSourceVersion = -1
+    let processedLookVersion = -1
     let processedRevision = 0
+    let cachedSourceVersion = -1
+    let cachedSource: ReturnType<typeof captureLookSource> | null = null
     let lastSourceChange = performance.now()
+    const invalidateLook = () => {
+      lookVersionCounter += 1
+      if (!cancelled && runtime?.recipe.materialLookOverlay.enabled) {
+        queueMicrotask(() => {
+          if (!cancelled) {
+            setLookStatus((current) =>
+              current === 'processing' ? current : 'processing')
+          }
+        })
+      }
+    }
     const invalidateSource = () => {
       sourceVersion += 1
+      cachedSourceVersion = -1
+      cachedSource = null
       lastSourceChange = performance.now()
+      invalidateLook()
     }
     const settleControls = () => {
       clearTimeout(controlsSettleTimer)
@@ -745,8 +535,6 @@ export function MaterialModelViewer() {
         camera,
         renderer,
         processedCanvas,
-        lookColorFrame: document.createElement('canvas'),
-        lookMaskFrame: document.createElement('canvas'),
         controls,
         modelRoot,
         model: null,
@@ -756,7 +544,6 @@ export function MaterialModelViewer() {
         rimLight,
         environment,
         pmrem,
-        aux: null,
         baseScale: 1,
         modelWidth: 2.3,
         modelHeight: 1,
@@ -765,6 +552,7 @@ export function MaterialModelViewer() {
         cameraKey: '',
         recipe: recipeRef.current,
         invalidateSource,
+        invalidateLook,
       }
       runtimeRef.current = runtime
       onContextLost = (event) => {
@@ -800,19 +588,6 @@ export function MaterialModelViewer() {
             window.setTimeout(() => extension.restoreContext(), 80)
             return true
           },
-          captureAuxPlanes: () => {
-            if (!runtime) return null
-            const element = runtime.renderer.domElement
-            const aux = captureAuxPlanes(runtime, element.width, element.height)
-            if (!aux) return null
-            return {
-              w: aux.w,
-              h: aux.h,
-              depth: Array.from(aux.depth),
-              normalX: Array.from(aux.normalX),
-              normalY: Array.from(aux.normalY),
-            }
-          },
           captureExportSourceInfo: async (width, height) => {
             if (!runtime) throw new Error('3D view is not ready')
             const frame = await captureRuntimeFrame(runtime, width, height)
@@ -821,9 +596,6 @@ export function MaterialModelViewer() {
             })
             return {
               hash: source.hash,
-              hasAux: !!source.aux,
-              auxW: source.aux?.w ?? 0,
-              auxH: source.aux?.h ?? 0,
             }
           },
         }
@@ -885,6 +657,7 @@ export function MaterialModelViewer() {
       window.addEventListener(MATERIAL_MODEL_SETTLE_VIEW_EVENT, flushControls)
       document.addEventListener('visibilitychange', onVisibilityChange)
       syncRuntime(runtime, configRef.current)
+      invalidateSource()
 
       const resize = () => {
         if (!runtime) return
@@ -937,6 +710,7 @@ export function MaterialModelViewer() {
           runtime.model = model
           runtime.modelRoot.add(model)
           syncRuntime(runtime, configRef.current)
+          invalidateSource()
           setStatus('ready')
           window.dispatchEvent(new CustomEvent('mbs:model-ready'))
         },
@@ -953,19 +727,21 @@ export function MaterialModelViewer() {
         if (!runtime?.model) return
         try {
           runtime.processedCanvas.dataset.renderStatus = 'processing'
-          if (processedVersion === -1) {
+          if (processedSourceVersion === -1) {
             queueMicrotask(() => {
               if (!cancelled) setLookStatus('processing')
             })
           }
-          const source = captureLookSource(runtime)
+          const source = cachedSourceVersion === sourceVersion && cachedSource
+            ? cachedSource
+            : captureLookSource(runtime)
+          cachedSource = source
+          cachedSourceVersion = sourceVersion
           const liveRecipe = recipeRef.current
-          const sourceLab = sourceAwareLabForRecipe(liveRecipe, source)
           renderRecipeLookToCanvas(
             runtime.processedCanvas,
             liveRecipe,
             source,
-            resolveBankCached(sourceLab.mark.bank, sourceLab.look.version),
             {
               fit: 'contain',
               maxLongEdge: HQ_LOOK_EDGE,
@@ -978,7 +754,8 @@ export function MaterialModelViewer() {
           processedRevision += 1
           runtime.processedCanvas.dataset.renderRevision = String(processedRevision)
           runtime.processedCanvas.dataset.renderStatus = 'ready'
-          processedVersion = sourceVersion
+          processedSourceVersion = sourceVersion
+          processedLookVersion = lookVersionCounter
           lookFailedRef.current = false
           queueMicrotask(() => {
             if (!cancelled) setLookStatus('ready')
@@ -1018,14 +795,15 @@ export function MaterialModelViewer() {
         if (useLegacyLook) {
           const settled =
             !controlsGestureActive && now - lastSourceChange >= LOOK_SETTLE_MS
-          const stale = processedVersion !== sourceVersion
-          if (stale && !settled) {
+          const sourceStale = processedSourceVersion !== sourceVersion
+          const lookStale = processedLookVersion !== lookVersionCounter
+          if (sourceStale && !settled) {
             // The camera is moving: chasing frames with the full treatment
             // is what made orbiting lag, so drop straight to the raw
             // viewport and re-treat once with the settled pose below.
             container.dataset.lookHold = 'moving'
           } else {
-            if (stale) processLegacyLook()
+            if (sourceStale || lookStale) processLegacyLook()
             delete container.dataset.lookHold
           }
         } else {
@@ -1072,7 +850,6 @@ export function MaterialModelViewer() {
       runtime.controls.dispose()
       if (!contextRecoveryQueued) {
         if (runtime.model) disposeModel(runtime.model)
-        runtime.aux?.dispose()
         runtime.surface.dispose()
         runtime.environment.dispose()
         runtime.pmrem.dispose()
@@ -1101,8 +878,25 @@ export function MaterialModelViewer() {
     }
     const runtime = runtimeRef.current
     if (runtime) {
+      const previous = runtime.recipe
       runtime.recipe = recipe
       syncRuntime(runtime, config)
+      const sourceRelevantChanged = (
+        previous.format.width !== recipe.format.width
+        || previous.format.height !== recipe.format.height
+        || previous.material.backgroundColor !== recipe.material.backgroundColor
+        || previous.material.highlightColor !== recipe.material.highlightColor
+        || previous.material.intensity !== recipe.material.intensity
+        || previous.material.light !== recipe.material.light
+        || previous.material.depth !== recipe.material.depth
+        || previous.transforms.material.x !== recipe.transforms.material.x
+        || previous.transforms.material.y !== recipe.transforms.material.y
+        || previous.transforms.material.scale !== recipe.transforms.material.scale
+        || previous.transforms.material.rotation !== recipe.transforms.material.rotation
+        || JSON.stringify(previous.material.camera) !== JSON.stringify(recipe.material.camera)
+      )
+      if (sourceRelevantChanged) runtime.invalidateSource()
+      else runtime.invalidateLook()
     }
   }, [lookId, lookOverlayEnabled, lookVersion, material, recipe, transform])
 
@@ -1137,7 +931,7 @@ export function MaterialModelViewer() {
     containerRef.current?.focus()
     lookFailedRef.current = false
     setLookStatus('processing')
-    runtimeRef.current?.invalidateSource()
+    runtimeRef.current?.invalidateLook()
   }
 
   const bypassLook = () => {
@@ -1152,7 +946,6 @@ export function MaterialModelViewer() {
       className="lab-material-model-viewer"
       data-mbs-material-model="true"
       data-model-status={status}
-      data-material={material.id}
       data-look={lookOverlayEnabled ? lookId : 'off'}
       data-look-version={lookVersion}
       data-postprocess={

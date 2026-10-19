@@ -1,44 +1,36 @@
 import type { LookId } from '@/core/lab/looks'
-import { lookById, looksForVersion, lookComplexityPatch, lookPatchFor } from '@/core/lab/looks'
-import { createDefaultLab } from '@/core/lab/recipe'
-import { createDefaultLabV1 } from '@/core/lab/v1/recipe'
-import type { GradientSettings, LabState, LookVersion } from '@/core/lab/types'
-import { normalizeGradientSettings } from '@/core/lab/gradients/settings'
-import { normalizeDeformation, type Deformation } from '@/core/lab/gradients/deformation'
+import type { GradientSettings, LabState } from '@/core/lab/types'
+import type { Deformation } from '@/core/lab/gradients/deformation'
 import { constrainArtworkCover } from '@/core/lab/artworkTransform'
-import { CANONICAL_META_SAFE_AREA } from '@/core/lab/metaInfluence'
-import { resolveCompositionPlan } from '@/core/lab/compositionPlan'
 import { resolveLookColorPlan } from '@/core/lab/colorDirection'
-import { resolveLookColorPlan as resolveLookColorPlanV1b } from '@/core/lab/v1b/colorDirection'
-import { PAPER } from '@/core/state/defaults'
-import { chan } from '@/core/organic/random'
 import { mergeDeep, type DeepPartial } from '@/core/state/store'
-import { MATERIAL_BY_ID, type MaterialId } from './material/catalog'
 import {
-  buildWeightedPalette,
-  colorMixForPack,
-  CUSTOM_PALETTE_ID,
+  createDefaultGradientState,
+  createDefaultPaletteState,
+  gradientLookId,
+  normalizeGradientState,
+  normalizePaletteState,
+  resolveGradientSettings,
+  resolvePaletteMix,
+  type ProductionGradientState,
+  type ProductionPaletteState,
+} from './gradientControls'
+import { findPreset } from './curatedPresets'
+import {
   META_BLUE,
   migrateLegacyHex,
-  PALETTE_PACKS,
-  RETIRED_PALETTE_IDS,
   type ColorMix,
 } from './palette/registry'
 
-export const BACKGROUND_RECIPE_VERSION = 2
-export const BACKGROUND_RENDER_REVISION = 1
-export const BACKGROUND_AUTOSAVE_KEY = 'mbs-bg-generator-autosave-v2'
+export const BACKGROUND_RECIPE_VERSION = 3
+export const BACKGROUND_RENDER_REVISION = 2
+export const BACKGROUND_AUTOSAVE_KEY = 'mbs-bg-generator-autosave-v3'
 export const LEGACY_BACKGROUND_AUTOSAVE_KEY = 'mbs-bg-generator-autosave-v1'
 
 export type AspectId = '16:9' | '9:16' | '1:1' | '4:5' | 'custom'
 export type FixedAspectId = Exclude<AspectId, 'custom'>
 export type FramingMode = 'full' | 'oversized' | 'left' | 'right' | 'crossover' | 'free'
 export type GeneratorMode = 'background' | 'material'
-const LEGACY_MATERIAL_LOOKS: Record<string, LookId> = {
-  film: 'brushwork',
-  pixel: 'pixels',
-  crt: 'scanlines',
-}
 
 export type SubjectTransform = {
   preset: FramingMode
@@ -61,22 +53,25 @@ export type BackgroundFormat = {
 }
 
 export type BackgroundRecipeV2 = {
-  version: 2
-  renderRevision: 1
+  version: 3
+  renderRevision: 2
   mode: GeneratorMode
   seed: number
   format: BackgroundFormat
+  presetId: string
+  gradientState: ProductionGradientState
+  paletteState: ProductionPaletteState
   look: {
     id: LookId
     detail: number
-    version: LookVersion
+    version: 'gradients'
     gradient?: GradientSettings
     deformation?: Deformation
   }
   materialLookOverlay: {
     enabled: boolean
   }
-  symbol: {
+  backgroundSymbol: {
     enabled: boolean
   }
   palette: {
@@ -90,7 +85,6 @@ export type BackgroundRecipeV2 = {
     material: SubjectTransform
   }
   material: {
-    id: MaterialId
     backgroundColor: string
     highlightColor: string
     intensity: number
@@ -98,35 +92,12 @@ export type BackgroundRecipeV2 = {
     depth: number
     camera: MaterialCameraPose | null
   }
-  motion: {
-    enabled: boolean
-    amount: number
-    speed: number
-    loopSeconds: number
-  }
 }
 
 export type BackgroundRecipePatch = DeepPartial<BackgroundRecipeV2>
 
 type SerializedFormat = Partial<BackgroundFormat> & {
   resolution?: unknown
-}
-
-type SerializedBackgroundRecipeV2 = Omit<
-  DeepPartial<BackgroundRecipeV2>,
-  'version' | 'format'
-> & {
-  version: 2
-  format?: SerializedFormat
-}
-
-type LegacyBackgroundRecipeV1 = Partial<
-  Omit<BackgroundRecipeV2, 'version' | 'transforms' | 'format'>
-> & {
-  version: 1
-  format?: SerializedFormat
-  framing?: { mode?: FramingMode; x?: number; y?: number; zoom?: number }
-  crop?: { x?: number; y?: number; zoom?: number }
 }
 
 const ASPECTS: Record<FixedAspectId, readonly [number, number]> = {
@@ -218,188 +189,142 @@ function presetTransform(
 }
 
 export function createDefaultBackgroundRecipe(seed = 1913): BackgroundRecipeV2 {
-  const pack = PALETTE_PACKS[0]
-  const mix = colorMixForPack(pack)
+  const gradientState = createDefaultGradientState()
+  const paletteState = createDefaultPaletteState()
+  const mixResolved = resolvePaletteMix(paletteState)
+  const preset = findPreset(gradientState.presetId)
+  const gradientSettings = resolveGradientSettings(
+    preset.family,
+    gradientState.controls,
+    preset.grain,
+    gradientState.orientation,
+    gradientState.center,
+    gradientState.field,
+    mixResolved.mix.length,
+  )
   return {
     version: BACKGROUND_RECIPE_VERSION,
     renderRevision: BACKGROUND_RENDER_REVISION,
-    mode: 'background',
+    mode: 'material',
     seed,
     format: { aspect: '16:9', ...dimensionsFor('16:9') },
-    look: { id: 'pattern', detail: 0.5, version: 'v2' },
-    materialLookOverlay: { enabled: false },
+    presetId: gradientState.presetId,
+    gradientState,
+    paletteState,
+    look: {
+      id: gradientLookId(preset.family),
+      detail: gradientState.controls.detail,
+      version: 'gradients',
+      gradient: gradientSettings,
+      deformation: gradientState.deformation,
+    },
+    materialLookOverlay: { enabled: true },
+    backgroundSymbol: { enabled: true },
     palette: {
-      packId: pack.id,
-      mix,
-      ground: mix.filter((item) => item.enabled).at(-1)?.color ?? META_BLUE,
-      ink: mix.find((item) => item.enabled)?.color ?? META_BLUE,
+      packId: paletteState.packId,
+      mix: mixResolved.mix,
+      ground: mixResolved.ground,
+      ink: mixResolved.ink,
     },
     transforms: {
       background: presetTransform('background'),
       material: presetTransform('material'),
     },
     material: {
-      id: 'clean',
       backgroundColor: META_BLUE,
       highlightColor: '#FFFFFF',
-      intensity: 0.65,
+      intensity: 0.45,
       light: 0.5,
-      depth: 0.35,
+      depth: 0.2,
       camera: null,
     },
-    motion: { enabled: false, amount: 0, speed: 0.5, loopSeconds: 8 },
-    symbol: { enabled: false },
   }
 }
 
 export function deserializeBackgroundRecipe(json: string): BackgroundRecipeV2 | null {
   try {
-    const raw = JSON.parse(json) as SerializedBackgroundRecipeV2 | LegacyBackgroundRecipeV1
-    if (!raw || (raw.version !== 1 && raw.version !== BACKGROUND_RECIPE_VERSION)) return null
-    const serializedLookVersion = raw.look?.version
-    let recipe: BackgroundRecipeV2
-    const rawPalette = raw.palette
-    const rawMotion = raw.motion
-    if (raw.version === 1) {
-      const legacy = raw as LegacyBackgroundRecipeV1
-      const framing = legacy.framing ?? {}
-      const crop = legacy.crop ?? {}
-      const migrated = normalizeSubjectTransform({
-        preset: framing.mode ?? 'free',
-        x: (framing.x ?? 0) + (crop.x ?? 0),
-        y: (framing.y ?? 0) + (crop.y ?? 0),
-        scale: (framing.zoom ?? 1) * (crop.zoom ?? 1),
-        rotation: 0,
-      })
-      const { version: _version, framing: _framing, crop: _crop, ...rest } = legacy
-      void _version
-      void _framing
-      void _crop
-      recipe = mergeDeep(createDefaultBackgroundRecipe(legacy.seed), {
-        ...rest,
-        version: BACKGROUND_RECIPE_VERSION,
-        transforms: {
-          background: migrated,
-          material: migrated,
-        },
-      })
-    } else {
-      recipe = mergeDeep(
-        createDefaultBackgroundRecipe(raw.seed),
-        raw as unknown as DeepPartial<BackgroundRecipeV2>,
-      )
+    const raw = JSON.parse(json) as Record<string, unknown> & {
+      version?: number
+      renderRevision?: number
+      seed?: number
+      format?: SerializedFormat
     }
-    recipe.look.version = raw.version === 1
-      ? 'v1'
-      : serializedLookVersion === 'v1'
-        || serializedLookVersion === 'v1b'
-        || serializedLookVersion === 'v2'
-        || serializedLookVersion === 'v4'
-        || serializedLookVersion === 'gradients'
-        ? serializedLookVersion
-        : 'v1'
-    const migratedLook = LEGACY_MATERIAL_LOOKS[recipe.material.id as string]
-    recipe.look.deformation = normalizeDeformation(recipe.look.deformation)
-    if (recipe.look.version === 'gradients' || recipe.look.gradient) {
-      recipe.look.gradient = normalizeGradientSettings(recipe.look.gradient)
-    }
-    if (recipe.renderRevision !== BACKGROUND_RENDER_REVISION) return null
-    if (migratedLook) {
-      recipe.material.id = 'clean'
-      recipe.look.id = migratedLook
-      recipe.materialLookOverlay.enabled = true
-    }
-    const catalog = looksForVersion(recipe.look.version)
-    if (!catalog.some((look) => look.id === recipe.look.id)) {
-      recipe.look.id = catalog[0].id
-    }
-    const allowedLook = true
-    if (RETIRED_PALETTE_IDS.has(recipe.palette.packId)) {
-      recipe.palette.packId = CUSTOM_PALETTE_ID
-    }
-    const pack = PALETTE_PACKS.find((item) => item.id === recipe.palette.packId)
-    const customPalette = recipe.palette.packId === CUSTOM_PALETTE_ID
-      && Array.isArray(recipe.palette.mix)
-      && recipe.palette.mix.length > 0
-    const allowedMode = recipe.mode === 'background' || recipe.mode === 'material'
-    if (
-      !allowedMode
-      || !allowedLook
-      || (!pack && !customPalette)
-      || !MATERIAL_BY_ID[recipe.material.id]
-    ) return null
-    recipe.seed = clampInt(recipe.seed, 0, 0x7fffffff)
-    if (!['16:9', '9:16', '1:1', '4:5', 'custom'].includes(recipe.format.aspect)) {
+    if (raw.version !== 1 && raw.version !== 2 && raw.version !== BACKGROUND_RECIPE_VERSION) {
       return null
     }
-    recipe.format = canonicalizeFormat({
-      aspect: recipe.format.aspect,
+    const seed = clampInt(raw.seed, 0, 0x7fffffff)
+    const base = createDefaultBackgroundRecipe(Number.isFinite(seed) ? seed : 1913)
+    const format = canonicalizeFormat({
+      aspect: raw.format?.aspect,
       width: raw.format?.width,
       height: raw.format?.height,
     })
-    recipe.materialLookOverlay.enabled = recipe.materialLookOverlay.enabled === true
-    recipe.symbol.enabled = false
-    // Saved sessions and preset files may still carry the pre-correction
-    // brand hexes; heal them everywhere a color is stored.
-    recipe.palette.mix = recipe.palette.mix.map((item) => ({
-      ...item,
-      color: migrateLegacyHex(item.color),
-    }))
-    const weightedPalette = buildWeightedPalette(recipe.palette.mix, 100)
-    recipe.palette.ground = normalizeHexColor(
-      rawPalette?.ground,
-      weightedPalette.at(-1) ?? META_BLUE,
-    )
-    recipe.palette.ink = normalizeHexColor(
-      rawPalette?.ink,
-      weightedPalette[0] ?? META_BLUE,
-    )
-    recipe.palette.ground = migrateLegacyHex(recipe.palette.ground)
-    recipe.palette.ink = migrateLegacyHex(recipe.palette.ink)
-    // A non-custom packId guarantees the whole palette is a pack deal (any
-    // manual edit flips the recipe to the custom palette), so when the
-    // pack's definition has changed since the save — colors added, order
-    // fixed — the deal refreshes from the current pack, exactly as
-    // re-selecting it in the Colors panel would.
-    const savedPack = PALETTE_PACKS.find((item) => item.id === recipe.palette.packId)
-    if (savedPack) {
-      const dealt = colorMixForPack(savedPack)
-      const matchesPack = recipe.palette.mix.length === dealt.length
-        && dealt.every((item, index) => {
-          const mixItem = recipe.palette.mix[index]
-          return mixItem
-            && mixItem.color.toUpperCase() === item.color.toUpperCase()
-            && mixItem.enabled === item.enabled
-        })
-      if (!matchesPack) {
-        const enabled = dealt.filter((item) => item.enabled)
-        recipe.palette.mix = dealt
-        recipe.palette.ink = enabled[0]?.color ?? recipe.palette.ink
-        recipe.palette.ground = enabled.at(-1)?.color ?? recipe.palette.ground
+    // V1/V2 and incompatible recipes reset to the curated baseline while
+    // preserving output format.
+    if (raw.version !== BACKGROUND_RECIPE_VERSION || raw.renderRevision !== BACKGROUND_RENDER_REVISION) {
+      return {
+        ...createDefaultBackgroundRecipe(),
+        format,
       }
     }
-    recipe.transforms.background = constrainBackgroundTransform(
-      recipe.transforms.background,
-      recipe.format.width,
-      recipe.format.height,
+    const merged = mergeDeep(base, raw as unknown as DeepPartial<BackgroundRecipeV2>)
+    const normalizedGradientState = normalizeGradientState(merged.gradientState)
+    const normalizedPaletteState = normalizePaletteState(merged.paletteState)
+    const preset = findPreset(normalizedGradientState.presetId)
+    const resolvedPalette = resolvePaletteMix(normalizedPaletteState)
+    const resolvedSettings = resolveGradientSettings(
+      preset.family,
+      normalizedGradientState.controls,
+      preset.grain,
+      normalizedGradientState.orientation,
+      normalizedGradientState.center,
+      normalizedGradientState.field,
+      resolvedPalette.mix.length,
     )
-    recipe.transforms.material = normalizeSubjectTransform(recipe.transforms.material)
-    recipe.material.backgroundColor = migrateLegacyHex(
-      normalizeHexColor(recipe.material.backgroundColor, META_BLUE),
-    )
-    recipe.material.highlightColor = migrateLegacyHex(
-      normalizeHexColor(recipe.material.highlightColor, '#FFFFFF'),
-    )
-    recipe.material.intensity = clamp01(recipe.material.intensity)
-    recipe.material.light = clamp01(recipe.material.light)
-    recipe.material.depth = clamp01(recipe.material.depth)
-    recipe.material.camera = normalizeMaterialCamera(recipe.material.camera)
-    recipe.motion.amount = clamp01(recipe.motion.amount)
-    if (rawMotion?.enabled === false) recipe.motion.amount = 0
-    recipe.motion.enabled = recipe.motion.amount > 0
-    recipe.motion.speed = Math.max(0.1, Math.min(2, recipe.motion.speed))
-    recipe.motion.loopSeconds = Math.max(2, Math.min(30, recipe.motion.loopSeconds))
-    return recipe
+    const safeRecipe: BackgroundRecipeV2 = {
+      version: BACKGROUND_RECIPE_VERSION,
+      renderRevision: BACKGROUND_RENDER_REVISION,
+      mode: merged.mode === 'background' || merged.mode === 'material' ? merged.mode : 'material',
+      seed: clampInt(merged.seed, 0, 0x7fffffff),
+      format,
+      presetId: preset.id,
+      gradientState: normalizedGradientState,
+      paletteState: normalizedPaletteState,
+      look: {
+        id: gradientLookId(preset.family),
+        version: 'gradients',
+        detail: normalizedGradientState.controls.detail,
+        gradient: resolvedSettings,
+        deformation: normalizedGradientState.deformation,
+      },
+      materialLookOverlay: { enabled: true },
+      backgroundSymbol: {
+        enabled: merged.backgroundSymbol.enabled !== false,
+      },
+      palette: {
+        packId: normalizedPaletteState.packId,
+        mix: resolvedPalette.mix.map((item) => ({ ...item, color: migrateLegacyHex(item.color) })),
+        ink: migrateLegacyHex(resolvedPalette.ink),
+        ground: migrateLegacyHex(resolvedPalette.ground),
+      },
+      transforms: {
+        background: constrainBackgroundTransform(
+          merged.transforms.background,
+          format.width,
+          format.height,
+        ),
+        material: normalizeSubjectTransform(merged.transforms.material),
+      },
+      material: {
+        backgroundColor: migrateLegacyHex(normalizeHexColor(merged.material.backgroundColor, META_BLUE)),
+        highlightColor: migrateLegacyHex(normalizeHexColor(merged.material.highlightColor, '#FFFFFF')),
+        intensity: clamp01(merged.material.intensity),
+        light: clamp01(merged.material.light),
+        depth: clamp01(merged.material.depth),
+        camera: normalizeMaterialCamera(merged.material.camera),
+      },
+    }
+    return safeRecipe
   } catch {
     return null
   }
@@ -465,37 +390,17 @@ export function backgroundRecipeToLab(
   recipe: BackgroundRecipeV2,
   options: BackgroundRecipeToLabOptions = {},
 ): LabState {
-  const isV1 = recipe.look.version === 'v1'
-  // V1b is the texture-on-paper comparison variant: it shares the V2 Lab
-  // defaults but resolves its color plan on a paper ground, which is the
-  // whole point of the variant.
-  const isV1b = recipe.look.version === 'v1b'
-  const v1bGround = PAPER.toUpperCase()
-  const base = isV1 ? createDefaultLabV1(recipe.seed) : createDefaultLab(recipe.seed)
-  const look = lookById(recipe.look.id) ?? looksForVersion(recipe.look.version)[0]
   const hasSource = options.hasSource === true
-  let lab = mergeDeep(base, lookPatchFor(look, hasSource, recipe.look.version))
-  lab = mergeDeep(
-    lab,
-    lookComplexityPatch(recipe.look.id, recipe.look.detail, recipe.look.version),
-  )
-  const curve = lab.territory.sources.find((source) => source.kind === 'curve' && source.curve)
-  const planInput = {
+  const colorPlan = resolveLookColorPlan({
     mix: recipe.palette.mix,
-    ground: isV1b ? v1bGround : recipe.palette.ground,
+    ground: recipe.palette.ground,
     ink: recipe.palette.ink,
     lookId: recipe.look.id,
     complexity: recipe.look.detail,
-  }
-  const colorPlan = isV1
-    ? null
-    : isV1b
-      ? resolveLookColorPlanV1b(planInput)
-      : resolveLookColorPlan(planInput)
-  const palette = isV1
-    ? buildWeightedPalette(recipe.palette.mix, 100)
-    : colorPlan!.swatches.map((swatch) => swatch.hex)
-  lab = mergeDeep(lab, {
+  })
+  return {
+    version: 1,
+    studyId: 'territory',
     seed: recipe.seed,
     output: {
       width: recipe.format.width,
@@ -509,105 +414,21 @@ export function backgroundRecipeToLab(
           fit: 'contain',
         })
       : null,
-    look: isV1
-      ? {
-          id: recipe.look.id,
-          strength: 1,
-          version: recipe.look.version,
-        }
-      : {
-          id: recipe.look.id,
-          strength: 1,
-          complexity: recipe.look.detail,
-          gradient: recipe.look.version === 'gradients'
-            ? normalizeGradientSettings(recipe.look.gradient)
-            : undefined,
-          deformation: recipe.look.deformation,
-          version: recipe.look.version,
-        },
-    ...(isV1
-      ? {}
-      : {
-          composition: resolveCompositionPlan({
-            seed: recipe.seed,
-            lookId: recipe.look.id,
-            complexity: recipe.look.detail,
-            aspect: recipe.format.width / Math.max(1, recipe.format.height),
-            lookVersion: recipe.look.version,
-          }),
-        }),
-    colors: isV1
-      ? {
-          ink: palette[0] ?? META_BLUE,
-          paper: palette.at(-1) ?? '#FFFFFF',
-          palette,
-        }
-      : {
-          ink: recipe.palette.ink,
-          paper: isV1b ? v1bGround : recipe.palette.ground,
-          palette,
-          plan: colorPlan!,
-        },
-    territory: {
-      sources: lab.territory.sources.map((source) =>
-        source.id === curve?.id && source.curve
-          ? {
-              ...source,
-              // V1b never shows the whole mark. The geometry runs oversized,
-              // off-center, and tilted — seeded per recipe — so one arc or
-              // lobe sweeps the frame as an organizing field, not a logo.
-              // Full weight commits the swept interior to the top band; the
-              // wide falloff grades the texture instead of stamping a shape.
-              ...(isV1b
-                ? {
-                    weight: 1,
-                    softness: recipe.look.id === 'pixels'
-                      ? 0.9
-                      : recipe.look.id === 'marks'
-                        ? 0.7
-                        : 0.5,
-                  }
-                : {}),
-              curve: isV1b
-                ? (() => {
-                    const scale = 1.45
-                      + chan(recipe.seed, 0, 'v1b.symbol.scale') * 0.85
-                    const direction = chan(recipe.seed, 0, 'v1b.symbol.dir')
-                      * Math.PI * 2
-                    const distance = 0.42
-                      + chan(recipe.seed, 0, 'v1b.symbol.dist') * 0.34
-                    return {
-                      ...source.curve,
-                      amplitudeX: scale,
-                      amplitudeY: scale,
-                      offsetX: Math.cos(direction) * distance,
-                      offsetY: Math.sin(direction) * distance,
-                      rotation: (chan(recipe.seed, 0, 'v1b.symbol.rot') - 0.5) * 1.1,
-                      silhouette: 'meta-symbol' as const,
-                    }
-                  })()
-                : {
-                    ...source.curve,
-                    amplitudeX: CANONICAL_META_SAFE_AREA.width,
-                    amplitudeY: CANONICAL_META_SAFE_AREA.height,
-                    offsetX: 0,
-                    offsetY: 0,
-                    rotation: 0,
-                    silhouette: 'meta-symbol' as const,
-                  },
-            }
-          : source,
-      // Generated backgrounds keep the symbol off, including older recipes.
-      // Retain the disabled source so mark-free renderer fallbacks engage.
-      ).map((source) =>
-        source.kind === 'curve'
-          ? { ...source, enabled: false }
-          : source,
-      ),
+    look: {
+      id: recipe.look.id,
+      strength: 1,
+      complexity: recipe.look.detail,
+      gradient: recipe.look.gradient!,
+      deformation: recipe.look.deformation,
+      version: 'gradients',
     },
-    motion: recipe.motion,
-  })
-  return lab
+    colors: {
+      ink: recipe.palette.ink,
+      paper: recipe.palette.ground,
+      palette: colorPlan.swatches.map((swatch) => swatch.hex),
+      plan: colorPlan,
+    },
+  }
 }
 
 export function materialBaseColor(recipe: BackgroundRecipeV2): string {

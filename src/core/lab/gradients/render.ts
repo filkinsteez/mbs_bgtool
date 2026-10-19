@@ -1,21 +1,49 @@
 import type { LabState, LabView } from '../types'
 import type { LabSource } from '../sourceCache'
 import { GRADIENT_IDS } from '../looks'
-import { buildV2Env, type V2Env } from '../v2/system'
 import { normalizeGradientSettings } from './settings'
 import { GRADIENT_FRAGMENT, GRADIENT_VERTEX, GRADIENT_SCATTER } from './shader'
 import { GRADIENT_FRAGMENT as OPTICAL_FRAGMENT, GRADIENT_SCATTER as OPTICAL_SCATTER } from './opticalStudy'
 import { deformationTexture, DEFORMATION_SIZE } from './deformation'
 import { fitRect } from '../field'
 import { boxBlur } from '@/core/math/blur'
-import { selectedSwatches, weightedPalette, weightedPigments, weightedPigment, paletteLightness, pigmentIntervals } from './palette'
+import {
+  selectedSwatches,
+  weightedPalette,
+  weightedPigments,
+  weightedPigment,
+  paletteLightness,
+  pigmentIntervals,
+  type GradientPaletteInput,
+} from './palette'
 
 const STYLES = ['diffusion', 'halo', 'flow', 'smear']
 export const gradientPigments = weightedPigments
 
+type GradientRenderEnv = GradientPaletteInput & {
+  outW: number
+  outH: number
+  seed: number
+  complexity: number
+}
+
+function buildGradientRenderEnv(lab: LabState): GradientRenderEnv {
+  return {
+    outW: lab.output.width,
+    outH: lab.output.height,
+    seed: lab.seed,
+    complexity: Math.max(0, Math.min(1, lab.look.complexity ?? 0.5)),
+    ink: lab.colors.ink,
+    palette: lab.colors.palette,
+    plan: lab.colors.plan,
+  }
+}
+
 // Close hues must carry form through their tonal range. Measure selected colors
 // rather than palette names so custom mixes receive the same treatment.
-export function gradientToneProfile(env: Pick<V2Env, 'plan' | 'palette' | 'ink'>): [number, number, number, number] {
+export function gradientToneProfile(
+  env: GradientPaletteInput,
+): [number, number, number, number] {
   const swatches = env.plan?.swatches.length
     ? env.plan.swatches.map((s) => ({ hex: s.hex, weight: s.weight }))
     : (env.palette.length ? env.palette : [env.ink]).map((hex) => ({ hex, weight: 1 }))
@@ -50,7 +78,10 @@ export function gradientToneProfile(env: Pick<V2Env, 'plan' | 'palette' | 'ink'>
 }
 
 // Retain the old deposit allocation only for the isolated optical experiment.
-function legacyGradientPigments(env: Pick<V2Env, 'plan' | 'palette' | 'ink'>, tints = false): Float32Array {
+function legacyGradientPigments(
+  env: GradientPaletteInput,
+  tints = false,
+): Float32Array {
   const colors = env.plan?.swatches.length
     ? env.plan.swatches.map((s) => ({ hex: s.hex, weight: s.weight }))
     : (env.palette.length ? env.palette : [env.ink]).map((hex) => ({ hex, weight: 1 }))
@@ -98,7 +129,7 @@ export const gradientPalette = weightedPalette
 // The palette grades the processed frame; it must not generate its own shapes.
 // Background/marks roles choose the ends, while every enabled mix color keeps
 // its weight between them. Zero-weight swatches are excluded by the color plan.
-export function gradientSourcePalette(env: Pick<V2Env, 'plan' | 'palette' | 'ink'>): Uint8Array {
+export function gradientSourcePalette(env: GradientPaletteInput): Uint8Array {
   const plan = env.plan
   if (!plan) return gradientPalette(env, true)
   const { ground, ink } = plan.roles
@@ -329,7 +360,7 @@ class GradientRenderer {
     const gl = this.gl
     if (gl.isContextLost()) throw new Error('Graphics context was lost. Reload to render gradients.')
     this.setup(STYLES.indexOf(lab.look.id!))
-    const env = buildV2Env(lab, source)
+    const env = buildGradientRenderEnv(lab)
     const settings = normalizeGradientSettings(lab.look.gradient)
     const loc = (name: string) => {
       if (!this.uniforms.has(name)) this.uniforms.set(name, gl.getUniformLocation(this.program!, name))
@@ -416,12 +447,6 @@ class GradientRenderer {
     gl.uniform1i(loc('deformation'), 2)
     gl.uniform1f(loc('painted'), deformationKey ? 1 : 0)
     gl.uniform2f(loc('resolution'), env.outW, env.outH)
-    const phase = ((env.motionPhase % 1) + 1) % 1 * Math.PI * 2
-    const amount = env.motionAmount * 0.45
-    const harmonic = 2 + Math.round(env.motionEnergy * 2)
-    gl.uniform2f(loc('motion'),
-      (Math.sin(phase) + Math.sin(phase * harmonic) * env.motionEnergy * 0.3) * amount,
-      (Math.cos(phase) - 1 + (Math.cos(phase * harmonic) - 1) * env.motionEnergy * 0.2) * amount)
     gl.uniform1f(loc('seed'), (env.seed % 65521) * 0.0137)
     gl.uniform1f(loc('complexity'), env.complexity)
     gl.uniform1f(loc('softness'), settings.softness)
@@ -433,6 +458,23 @@ class GradientRenderer {
     gl.uniform1f(loc('reflow'), settings.reflow)
     gl.uniform1f(loc('sourceMode'), source ? 1 : 0)
     gl.uniform1f(loc('grain'), settings.grain)
+    gl.uniform1f(loc('orientation'), settings.orientation ?? 0)
+    gl.uniform2f(loc('gradientCenter'), settings.centerX, settings.centerY)
+    gl.uniform1f(loc('useSpatialField'), spatialStudy ? 1 : 0)
+    gl.uniform4fv(loc('spatialSources[0]'), new Float32Array([
+      settings.source1X,
+      settings.source1Y,
+      settings.source1Spread,
+      (settings.sourceCount ?? 1) >= 1 ? 1 : 0,
+      settings.source2X,
+      settings.source2Y,
+      settings.source2Spread,
+      (settings.sourceCount ?? 1) >= 2 ? 1 : 0,
+      settings.source3X,
+      settings.source3Y,
+      settings.source3Spread,
+      (settings.sourceCount ?? 1) >= 3 ? 1 : 0,
+    ]))
     gl.uniform1i(loc('style'), STYLES.indexOf(lab.look.id!))
     gl.uniform1i(loc('transportStats'), 4)
     gl.uniform1f(loc('transportMeasure'), 0)
@@ -523,6 +565,8 @@ class GradientRenderer {
     gl.uniform1f(post('softness'), settings.softness)
     gl.uniform1f(post('bleed'), settings.bleed)
     gl.uniform1f(post('grain'), settings.grain)
+    gl.uniform1f(post('orientation'), settings.orientation ?? 0)
+    gl.uniform2f(post('gradientCenter'), settings.centerX, settings.centerY)
     gl.uniform1f(post('seed'), (env.seed % 65521) * 0.0137)
     gl.uniform1i(post('style'), STYLES.indexOf(lab.look.id!))
     gl.drawArrays(gl.TRIANGLES, 0, 3)
@@ -533,11 +577,16 @@ class GradientRenderer {
 let renderer: GradientRenderer | null = null
 let studyRenderer: GradientRenderer | null = null
 let opticalStudy = false
+let spatialStudy = false
 
 // A per-tab development comparison. Saved recipes and the main generator keep
 // the shipped renderer; this experiment cannot be enabled in production.
 export function setGradientOpticalStudy(enabled: boolean) {
   opticalStudy = process.env.NODE_ENV === 'development' && enabled
+}
+
+export function setGradientSpatialStudy(enabled: boolean) {
+  spatialStudy = process.env.NODE_ENV === 'development' && enabled
 }
 
 export function renderGradient(ctx: CanvasRenderingContext2D, lab: LabState, source: LabSource | null, view: LabView): boolean {

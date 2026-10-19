@@ -6,7 +6,9 @@ import type { BrushMode } from '@/core/lab/gradients/deformation'
 
 export function GradientBrushControls() {
   const brush = useGradientBrush()
-  const hasDeformation = useBackgroundStore((s) => !!s.recipe.look.deformation)
+  const hasDeformation = useBackgroundStore(
+    (state) => !!state.recipe.gradientState.deformation,
+  )
   return <div className="gradient-brush-controls">
     <button type="button" className={brush.enabled ? 'gradient-brush-toggle active' : 'gradient-brush-toggle'} aria-pressed={brush.enabled} onClick={() => brush.set({ enabled: !brush.enabled })}>Distortion brush</button>
     {brush.enabled && <>
@@ -15,7 +17,21 @@ export function GradientBrushControls() {
       </div>
       <Slider label="Brush size" value={brush.radius} min={0.04} max={0.7} step={0.01} format={(v) => `${Math.round(v * 100)}`} onChange={(radius) => brush.set({ radius })} defaultValue={0.24} />
       <Slider label="Brush strength" value={brush.strength} min={0.05} max={1} step={0.01} format={(v) => `${Math.round(v * 100)}`} onChange={(strength) => brush.set({ strength })} defaultValue={0.65} />
-      <button type="button" disabled={!hasDeformation} onClick={() => useBackgroundStore.getState().updateRecipe({ look: { deformation: undefined } })}>Clear brush strokes</button>
+      <button
+        type="button"
+        disabled={!hasDeformation}
+        onClick={() => {
+          const store = useBackgroundStore.getState()
+          store.updateRecipe({
+            gradientState: {
+              ...store.recipe.gradientState,
+              deformation: undefined,
+            },
+          })
+        }}
+      >
+        Clear brush strokes
+      </button>
     </>}
   </div>
 }

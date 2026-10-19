@@ -1,4 +1,3 @@
-import type { ShapeProto } from '@/core/canvas/shapeProtos'
 import { createLabSourceFromCanvas } from '@/core/lab/sourceCache'
 import { exportRecipeLookPng } from '../lookProcessor'
 import type { BackgroundRecipeV2 } from '../recipe'
@@ -10,7 +9,6 @@ import { captureMaterialFrame } from './materialFrameCapture'
 // the overlay off, the raw frame is the export.
 export async function exportMaterialAtTarget(
   recipe: BackgroundRecipeV2,
-  protos: ShapeProto[],
 ): Promise<Blob> {
   const { width, height } = recipe.format
   const canvas = await captureMaterialFrame(width, height)
@@ -18,7 +16,7 @@ export async function exportMaterialAtTarget(
   const source = createLabSourceFromCanvas(canvas, {
     filename: 'material-export-frame.rgba',
   })
-  return exportRecipeLookPng(recipe, source, protos, 'contain')
+  return exportRecipeLookPng(recipe, source, 'contain')
 }
 
 function canvasToPng(canvas: HTMLCanvasElement): Promise<Blob> {

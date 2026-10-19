@@ -14,12 +14,19 @@ import { mergeDeep } from '@/core/state/store'
 
 function tweakedRecipe() {
   return mergeDeep(createDefaultBackgroundRecipe(4242), {
-    look: { id: 'plates' as const, version: 'v4' as const, detail: 0.72 },
+    gradientState: {
+      presetId: 'fine-smear',
+      controls: { detail: 0.72, blend: 0.32, distortion: 0.4, position: 0.64 },
+      orientation: 90,
+    },
     transforms: {
       background: { preset: 'free' as const, x: 0.12, y: -0.3, scale: 1.4, rotation: 17 },
     },
-    palette: { packId: 'custom' },
-    motion: { enabled: true, amount: 0.8, speed: 1.2, loopSeconds: 12 },
+    paletteState: {
+      packId: 'elemental',
+      elementalAccent: '#410840',
+      boundaries: [82, 91],
+    },
   })
 }
 
@@ -31,7 +38,12 @@ describe('look presets', () => {
     expect(parsed).not.toBeNull()
     expect(parsed!.name).toBe('Studio teal')
     expect(parsed!.recipe.seed).toBe(4242)
-    expect(parsed!.recipe.look).toMatchObject({ id: 'plates', version: 'v4', detail: 0.72 })
+    expect(parsed!.recipe.look).toMatchObject({
+      id: 'smear',
+      version: 'gradients',
+      detail: 0.72,
+      gradient: { orientation: 90 },
+    })
     // The deserializer applies the same cover constraint live dragging
     // does, so the round-trip preserves exactly what the app allows.
     const format = canonicalizeFormat(recipe.format)
@@ -43,10 +55,11 @@ describe('look presets', () => {
       ),
     )
     expect(parsed!.recipe.transforms.background.rotation).toBe(17)
-    expect(parsed!.recipe.motion).toMatchObject({
-      enabled: true, amount: 0.8, speed: 1.2, loopSeconds: 12,
+    expect(parsed!.recipe.palette).toMatchObject({
+      packId: 'elemental',
+      ink: '#0064E0',
+      ground: '#410840',
     })
-    expect(parsed!.recipe.palette.mix.length).toBeGreaterThan(0)
     expect(parsed!.recipe.mode).toBe('background')
   })
 
@@ -69,7 +82,7 @@ describe('look presets', () => {
     expect(parsed!.recipe.seed).toBe(99)
   })
 
-  it('heals unknown look ids into the preset version catalog', () => {
+  it('derives the Look from semantic state instead of stale render fields', () => {
     const recipe = createDefaultBackgroundRecipe(5)
     const raw = JSON.parse(serializeLookPreset(recipe, 'background', 'stale')) as {
       recipe: { look: { id: string; version: string } }
@@ -77,8 +90,8 @@ describe('look presets', () => {
     raw.recipe.look = { id: 'discontinued-look', version: 'v4' }
     const parsed = parseLookPreset(JSON.stringify(raw))
     expect(parsed).not.toBeNull()
-    expect(parsed!.recipe.look.version).toBe('v4')
-    expect(parsed!.recipe.look.id).toBe('composite')
+    expect(parsed!.recipe.look.version).toBe('gradients')
+    expect(parsed!.recipe.look.id).toBe('diffusion')
   })
 
   it('derives names and safe filenames', () => {

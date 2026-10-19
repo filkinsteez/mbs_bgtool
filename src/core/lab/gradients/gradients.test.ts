@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { GRADIENT_LOOKS, looksForVersion } from '../looks'
 import { backgroundRecipeToLab, createDefaultBackgroundRecipe, deserializeBackgroundRecipe } from '@/features/background-generator/recipe'
-import { parseLookPreset, serializeLookPreset } from '@/features/background-generator/lookPreset'
+import { CURATED_PRESETS } from '@/features/background-generator/curatedPresets'
+import { resolveGradientSettings } from '@/features/background-generator/gradientControls'
 import { normalizeGradientSettings } from './settings'
 import { gradientPalette, gradientPigments, gradientToneProfile, gradientSourceAxis } from './render'
 
@@ -30,24 +30,58 @@ describe('source focus direction', () => {
 })
 
 describe('gradient recipes', () => {
-  it.each(GRADIENT_LOOKS)('preserves $id and its controls through saved looks and the render input', (look) => {
-    const recipe = createDefaultBackgroundRecipe(7429)
-    recipe.look = { id: look.id, version: 'gradients', detail: 0.7, gradient: { softness: 0.81, distortion: 0.23, grain: 0.16, scale: 0.45, folds: 0.32, bleed: 0.72, depth: 0.3, reflow: 0.72 } }
-    const parsed = parseLookPreset(serializeLookPreset(recipe, 'background', 'Gradient'))!
-    expect(parsed.recipe.look).toEqual(recipe.look)
-    const lab = backgroundRecipeToLab(parsed.recipe)
-    expect(lab.look.gradient).toEqual(recipe.look.gradient)
+  it.each(CURATED_PRESETS)('preserves $id through serialization and render input', (preset) => {
+    const recipe = createDefaultBackgroundRecipe(preset.seed)
+    recipe.presetId = preset.id
+    recipe.gradientState = {
+      presetId: preset.id,
+      controls: preset.controls,
+      orientation: preset.orientation,
+      center: { x: 0.5, y: 0.5 },
+      field: preset.field,
+    }
+    const parsed = deserializeBackgroundRecipe(JSON.stringify(recipe))!
+    const lab = backgroundRecipeToLab(parsed)
+    expect(lab.look.gradient).toEqual(resolveGradientSettings(
+      preset.family,
+      preset.controls,
+      preset.grain,
+      preset.orientation,
+      { x: 0.5, y: 0.5 },
+      preset.field,
+    ))
     expect(lab.look.version).toBe('gradients')
-    expect(lab.look.id).toBe(look.id)
+    expect(lab.look.id).toBe(preset.family)
   })
 
-  it('bounds hand-edited controls without changing the existing catalogs', () => {
+  it('bounds hand-edited render settings and preserves orientation', () => {
     expect(normalizeGradientSettings({ softness: 18, distortion: -2, grain: NaN }))
-      .toEqual({ softness: 1, distortion: 0, grain: 0.22, scale: 0.45, folds: 0.32, bleed: 0.6, depth: 0.45, reflow: 0.5 })
+      .toEqual({
+        softness: 1,
+        distortion: 0,
+        grain: 0.22,
+        scale: 0.45,
+        folds: 0.32,
+        bleed: 0.6,
+        depth: 0.45,
+        reflow: 0.5,
+        orientation: 0,
+        centerX: 0.5,
+        centerY: 0.5,
+        source1X: 0.35,
+        source1Y: 0.6,
+        source1Spread: 0.55,
+        source2X: 0.72,
+        source2Y: 0.38,
+        source2Spread: 0.48,
+        source3X: 0.65,
+        source3Y: 0.76,
+        source3Spread: 0.42,
+        sourceCount: 3,
+      })
+    expect(normalizeGradientSettings({ orientation: 270 }).orientation).toBe(270)
     const old = createDefaultBackgroundRecipe(81)
     expect(deserializeBackgroundRecipe(JSON.stringify(old))!.look).toEqual(old.look)
-    expect(looksForVersion('v4').map((l) => l.id)).toEqual(['composite', 'plates', 'loom'])
-    expect(looksForVersion('gradients')).toEqual(GRADIENT_LOOKS)
   })
 })
 
