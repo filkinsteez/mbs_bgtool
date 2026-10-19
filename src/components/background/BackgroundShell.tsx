@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { ConfirmDialog } from '@/components/controls/ConfirmDialog'
-import { LAB_CANVAS_MODE_REQUEST_EVENT, LabCanvas } from '@/components/lab/LabCanvas'
+import { LabCanvas } from '@/components/lab/LabCanvas'
 import { LabExportPanel } from '@/components/lab/LabExportPanel'
 import { setGradientSpatialStudy } from '@/core/lab/gradients/render'
 import {
@@ -30,7 +30,6 @@ export function BackgroundShell() {
   const redo = useBackgroundStore((state) => state.redo)
   const canUndo = useBackgroundStore((state) => state.canUndo)
   const canRedo = useBackgroundStore((state) => state.canRedo)
-  const mode = useBackgroundStore((state) => state.mode)
   const [confirmReset, setConfirmReset] = useState(false)
   const resetAll = () => {
     reset()
@@ -129,26 +128,6 @@ export function BackgroundShell() {
         onCancel={() => setConfirmReset(false)}
       />
       <header className="lab-topbar">
-        <div className="lab-mode-switch lab-mode-switch-topbar" role="radiogroup" aria-label="Canvas mode">
-          <button
-            type="button"
-            role="radio"
-            className={mode === 'background' ? 'lab-mode-tab active' : 'lab-mode-tab'}
-            aria-checked={mode === 'background'}
-            onClick={() => window.dispatchEvent(new CustomEvent(LAB_CANVAS_MODE_REQUEST_EVENT, { detail: { mode: 'background' } }))}
-          >
-            2D Texture
-          </button>
-          <button
-            type="button"
-            role="radio"
-            className={mode === 'material' ? 'lab-mode-tab active' : 'lab-mode-tab'}
-            aria-checked={mode === 'material'}
-            onClick={() => window.dispatchEvent(new CustomEvent(LAB_CANVAS_MODE_REQUEST_EVENT, { detail: { mode: 'material' } }))}
-          >
-            3D Logo
-          </button>
-        </div>
         <div className="lab-topbar-actions">
           {process.env.NODE_ENV !== 'production' ? (
             <button

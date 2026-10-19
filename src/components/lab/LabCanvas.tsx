@@ -586,7 +586,7 @@ export function LabCanvas() {
     return true
   }, [fadeGradientHandle])
 
-  const changeMode = (nextMode: GeneratorMode) => {
+  const changeMode = useCallback((nextMode: GeneratorMode) => {
     if (nextMode === mode) return
     cancelActiveGesture()
     if (mode === 'material') {
@@ -597,7 +597,7 @@ export function LabCanvas() {
       useBackgroundStore.getState().commitTransaction()
     }
     useBackgroundStore.getState().setMode(nextMode)
-  }
+  }, [cancelActiveGesture, mode])
 
   useEffect(() => {
     const finishKeyboardTransaction = () => {
@@ -726,6 +726,43 @@ export function LabCanvas() {
 
   return (
     <div className="lab-stage-inner">
+      <div
+        className="lab-mode-switch lab-mode-switch-inline"
+        role="radiogroup"
+        aria-label="Canvas mode"
+        aria-orientation="horizontal"
+      >
+        {MODE_OPTIONS.map(({ mode: optionMode, label, tooltip, Icon }, index) => {
+          const selected = mode === optionMode
+          return (
+            <button
+              key={optionMode}
+              id={`lab-mode-${optionMode}`}
+              type="button"
+              role="radio"
+              className={selected ? 'lab-mode-tab active' : 'lab-mode-tab'}
+              aria-label={label}
+              aria-controls="lab-generator-artboard"
+              aria-describedby={`lab-mode-${optionMode}-tooltip`}
+              aria-checked={selected}
+              tabIndex={selected ? 0 : -1}
+              data-mode={optionMode}
+              onClick={() => changeMode(optionMode)}
+              onKeyDown={(event) => selectModeWithKeyboard(event, index)}
+            >
+              <Icon aria-hidden size={16} strokeWidth={1.8} />
+              <span className="lab-mode-label">{label}</span>
+              <span
+                id={`lab-mode-${optionMode}-tooltip`}
+                className="lab-mode-tooltip"
+                role="tooltip"
+              >
+                {tooltip}
+              </span>
+            </button>
+          )
+        })}
+      </div>
       <div
         ref={wrapRef}
         className="lab-canvas-wrap"

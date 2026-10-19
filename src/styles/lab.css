@@ -219,13 +219,15 @@
     inset 0 1px 0 rgb(255 255 255 / 0.06);
 }
 
-.lab-mode-switch-topbar {
+.lab-mode-switch-inline {
   position: static;
-  transform: none;
+  z-index: auto;
   left: auto;
   bottom: auto;
-  margin-right: auto;
-  box-shadow: none;
+  transform: none;
+  width: fit-content;
+  max-width: 100%;
+  margin: 10px auto 8px;
 }
 
 .lab-mode-tab {
@@ -1863,8 +1865,8 @@
     scrollbar-gutter: auto;
   }
 
-  .lab-mode-switch {
-    bottom: 12px;
+  .lab-mode-switch-inline {
+    margin: 8px auto 6px;
     grid-template-columns: repeat(2, minmax(104px, 1fr));
   }
 
