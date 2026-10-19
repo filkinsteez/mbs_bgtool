@@ -244,7 +244,9 @@ export function resolvePresetGradientState(
       preset.controls,
       preset.grain,
       preset.orientation,
+      { x: 0.5, y: 0.5 },
       preset.field,
+      3,
     ),
   }
 }

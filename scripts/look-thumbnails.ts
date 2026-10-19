@@ -48,6 +48,7 @@ async function thumbnailSet() {
       controls: resolved.controls,
       orientation: resolved.orientation,
       center: { x: 0.5, y: 0.5 },
+      field: resolved.field,
       deformation: undefined,
     }
     recipe.look = {
