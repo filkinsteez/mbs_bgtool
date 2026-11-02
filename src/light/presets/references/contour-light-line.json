@@ -6,32 +6,133 @@
     "seed": 1,
     "colors": [
       "#000000",
-      "#000000",
-      "#F7D46A",
-      "#E8A53A"
+      "#1F648F",
+      "#94BCC8",
+      "#CCDCC9",
+      "#EBE09C",
+      "#F8D755",
+      "#F8B47C",
+      "#000000"
     ],
     "params": {
-      "line": true,
-      "a": [
-        0.497,
-        -0.05
+      "shape": 1,
+      "at": [
+        0.4995,
+        0.5
       ],
-      "b": [
-        0.497,
-        1.05
+      "size": 2.2,
+      "angle": 90,
+      "rotate": 90,
+      "flip": false,
+      "stops": 6,
+      "stopAt": [
+        0.1364,
+        0.3142,
+        0.395
       ],
-      "coreWidth": 0.0015,
-      "tailWidth": 0.06,
-      "tailWeight": 0.5,
-      "intensity": 2.5,
-      "fade": 0.15,
-      "taper": 0.9
+      "stopAt2": [
+        0.4596,
+        0.6374,
+        0.904
+      ],
+      "stopColor": [
+        2,
+        3,
+        4
+      ],
+      "stopColor2": [
+        5,
+        6,
+        7
+      ],
+      "stopGain": [
+        1.93708,
+        1,
+        1
+      ],
+      "stopGain2": [
+        1,
+        1,
+        0.4753
+      ],
+      "n1Weight": 1.14936,
+      "n1Width": 0.00291719,
+      "n1Shape": 8,
+      "n1Side": 0,
+      "n1Light": 2,
+      "n2Weight": 0.512483,
+      "n2Width": 0.028183,
+      "n2Shape": 8,
+      "n2Side": 0,
+      "n2Tint": [
+        3.08399,
+        1.36997,
+        0.195029
+      ],
+      "n2ChWidth": [
+        1,
+        0.805556,
+        1.6066
+      ],
+      "n2ChOffset": [
+        0,
+        0.0188124,
+        0.00922975
+      ],
+      "n2Light": 1,
+      "n2Grow": 1,
+      "n2GrowBy": [
+        0.514068,
+        2
+      ],
+      "n3Weight": 0.327418,
+      "n3Width": 0.0613939,
+      "n3Shape": 8,
+      "n3Side": 0,
+      "n3Tint": [
+        0.0605834,
+        0.2,
+        1.88143
+      ],
+      "n3Offset": -0.0152126,
+      "n3Light": 1,
+      "f1Weight": 0.0136256,
+      "f1Width": 0.035,
+      "f1Side": 0,
+      "f1Tint": [
+        0.6,
+        0.6,
+        0.3
+      ],
+      "f1Light": 1,
+      "f2Weight": 0,
+      "f3Weight": 0,
+      "farWidth": 0.012,
+      "farStep": 3,
+      "light1Kind": 1,
+      "light1At": [
+        0,
+        0.710807
+      ],
+      "light1Radius": 0.258451,
+      "light1Stretch": 6.75342,
+      "light1Angle": 0,
+      "light2Kind": 1,
+      "base": 0,
+      "baseGain": 0,
+      "gain": 1,
+      "soften": 1,
+      "n1LightGamma": 1,
+      "light2At": [
+        0,
+        0.304512
+      ],
+      "light2Radius": 0.744568,
+      "light2Stretch": 4,
+      "light2Angle": 0
     },
     "lens": {
-      "bloom": 0.04,
-      "halation": 0.3,
-      "halationThreshold": 0.8,
-      "halationRadius": 0.05
+      "bloom": 0
     },
     "output": {
       "grain": 0,

@@ -61,6 +61,7 @@ const params: ParamSpec[] = [
   ...farParams('f2', 'Halo', { Weight: 0.03, Width: 0.02, Light: 1 }),
   ...farParams('f3', 'Face', { Weight: 0.025, Width: 0.22, Side: 1, Light: 1, LightGamma: 0.5 }),
   { kind: 'number', key: 'farWidth', label: 'Narrowest scatter blur', min: 0.002, max: 0.2, step: 0.0005, default: 0.008 },
+  { kind: 'number', key: 'farStep', label: 'Scatter blur step', min: 1.5, max: 5, step: 0.01, default: 2.5 },
   ...lightParams({
     light1Kind: 2,
     light1At: [-0.05, 0.05],
@@ -310,9 +311,13 @@ vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 b0, vec3 b1, vec3 b2, vec3 b3) { 
       readLights(ctx),
       base,
       ctx.num('farWidth') * soften,
+      ctx.num('farStep'),
     )
   },
-  scatter: farScatter((ctx) => ctx.num('farWidth') * ctx.num('soften')),
+  scatter: farScatter(
+    (ctx) => ctx.num('farWidth') * ctx.num('soften'),
+    (ctx) => ctx.num('farStep'),
+  ),
   lens: { bloom: 0 },
   fromPack: (pack: ColorPack) => {
     const hexes = pack.colors.map((c) => c.hex)

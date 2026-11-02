@@ -450,16 +450,19 @@ vec3 clFar(int e, float light1, float light2, float sd, vec3 b0, vec3 b1, vec3 b
     if (lit <= 1e-6) continue;
     int gi = int(c.w + 0.5);
     float grow = gi == 0 ? 1.0 : 1.0 + d.x * pow(gi == 1 ? light1 : light2, d.y);
-    vec3 x = clamp(log(max(a.y * c.rgb * grow, vec3(1e-6)) / uClRungs.x) / log(${literal(FAR_STEP)}), 0.0, 3.0);
+    // Position on the rung ladder per channel; one step past the widest rung the light is uniform
+    // (the limit of a very wide kernel, which peaks at 1 across a straight emitter).
+    vec3 x = clamp(log(max(a.y * c.rgb * grow, vec3(1e-6)) / uClRungs.x) / log(uClRungs.y / uClRungs.x), 0.0, 4.0);
     vec3 w0 = max(vec3(0.0), 1.0 - abs(x));
     vec3 w1 = max(vec3(0.0), 1.0 - abs(x - 1.0));
     vec3 w2 = max(vec3(0.0), 1.0 - abs(x - 2.0));
     vec3 w3 = max(vec3(0.0), 1.0 - abs(x - 3.0));
+    vec3 w4 = max(vec3(0.0), x - 3.0);
     vec3 s0 = perEmitter ? own * b0[e] : b0;
     vec3 s1 = perEmitter ? own * b1[e] : b1;
     vec3 s2 = perEmitter ? own * b2[e] : b2;
     vec3 s3 = perEmitter ? own * b3[e] : b3;
-    vec3 light = w0 * rung.x * s0 + w1 * rung.y * s1 + w2 * rung.z * s2 + w3 * rung.w * s3;
+    vec3 light = w0 * rung.x * s0 + w1 * rung.y * s1 + w2 * rung.z * s2 + w3 * rung.w * s3 + w4 * own;
     total += mask * lit * a.x * b.rgb * light;
   }
   return total;
@@ -718,13 +721,13 @@ function chunkBounds(packed: readonly PackedPrimitive[]): number[] {
 }
 
 /** Blur widths of the four scatter rungs. */
-export function farRungs(base: number): number[] {
-  return Array.from({ length: FAR_RUNGS }, (_, i) => base * FAR_STEP ** i)
+export function farRungs(base: number, step = FAR_STEP): number[] {
+  return Array.from({ length: FAR_RUNGS }, (_, i) => base * step ** i)
 }
 
 /** The recipe's scatter list: four blurs of its aux light at the rung widths. */
-export function farScatter(base: (ctx: RecipeContext) => number): ScatterBlur[] {
-  return Array.from({ length: FAR_RUNGS }, (_, i) => ({ source: 'aux' as const, radius: (ctx: RecipeContext) => farRungs(base(ctx))[i] }))
+export function farScatter(base: (ctx: RecipeContext) => number, step: (ctx: RecipeContext) => number): ScatterBlur[] {
+  return Array.from({ length: FAR_RUNGS }, (_, i) => ({ source: 'aux' as const, radius: (ctx: RecipeContext) => farRungs(base(ctx), step(ctx))[i] }))
 }
 
 /** Packs emitters, light fields, base and rungs into the curve light uniforms. */
@@ -734,6 +737,7 @@ export function curveLightUniforms(
   lights: readonly LightSettings[],
   base: readonly number[],
   rungBase: number,
+  rungStep: number,
 ): Record<string, Float32Array | number[]> {
   const chunks = Math.ceil(layout.primitives / CHUNK)
   const prim = new Float32Array(layout.emitters * layout.primitives * PRIM_VEC4 * 4)
@@ -790,7 +794,7 @@ export function curveLightUniforms(
     uClEmit: emit,
     uClLight: light,
     uClBase: [base[0], base[1], base[2]],
-    uClRungs: farRungs(rungBase),
+    uClRungs: farRungs(rungBase, rungStep),
   }
 }
 

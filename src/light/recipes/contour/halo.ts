@@ -33,7 +33,7 @@ import { ring, type Vec2 } from './shapes'
 const COLORS = 8
 const RINGS = 3
 const NEAR = 3
-const FAR = 2
+const FAR = 3
 const LAYOUT: CurveLightLayout = { emitters: RINGS, primitives: 40, near: NEAR, far: FAR }
 
 function ringParams(i: number): ParamSpec[] {
@@ -43,7 +43,7 @@ function ringParams(i: number): ParamSpec[] {
     first ? { Weight: 0.6, Width: 0.008, Shape: 3, Side: 1, Light: 1, Grow: 1, GrowBy: [1.5, 2] } : {},
     {},
   ]
-  const far = [first ? { Weight: 0.1, Width: 0.04, Side: 1, Light: 1 } : {}, first ? { Weight: 0.02, Width: 0.02, Light: 1 } : {}]
+  const far = [first ? { Weight: 0.1, Width: 0.04, Side: 1, Light: 1 } : {}, first ? { Weight: 0.02, Width: 0.02, Light: 1 } : {}, {}]
   return [
     { kind: 'boolean', key: `ring${i}On`, label: `Ring ${i}`, default: first },
     { kind: 'vector', key: `ring${i}At`, label: `Ring ${i} center`, min: -8, max: 9, step: 0.0005, default: [1.05, 1.1] },
@@ -63,6 +63,7 @@ function ringParams(i: number): ParamSpec[] {
 const params: ParamSpec[] = [
   ...Array.from({ length: RINGS }, (_, i) => ringParams(i + 1)).flat(),
   { kind: 'number', key: 'farWidth', label: 'Narrowest scatter blur', min: 0.002, max: 0.2, step: 0.0005, default: 0.008 },
+  { kind: 'number', key: 'farStep', label: 'Scatter blur step', min: 1.5, max: 5, step: 0.01, default: 2.5 },
   ...lightParams({ light1Kind: 1, light1At: [-0.75, -0.75], light1Radius: 0.45 }),
   { kind: 'number', key: 'base', label: 'Base color slot (0 black)', min: 0, max: COLORS, step: 1, default: 0 },
   { kind: 'number', key: 'baseGain', label: 'Base gain', min: 0, max: 2, step: 0.0005, default: 0 },
@@ -184,9 +185,12 @@ vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 b0, vec3 b1, vec3 b2, vec3 b3) { 
       }
     })
     const base = slotColor(ctx, ctx.num('base')).map((v) => v * ctx.num('baseGain'))
-    return curveLightUniforms(LAYOUT, emitters, readLights(ctx), base, ctx.num('farWidth') * soften)
+    return curveLightUniforms(LAYOUT, emitters, readLights(ctx), base, ctx.num('farWidth') * soften, ctx.num('farStep'))
   },
-  scatter: farScatter((ctx) => ctx.num('farWidth') * ctx.num('soften')),
+  scatter: farScatter(
+    (ctx) => ctx.num('farWidth') * ctx.num('soften'),
+    (ctx) => ctx.num('farStep'),
+  ),
   lens: { bloom: 0 },
   fromPack: (pack: ColorPack) => {
     const hexes = pack.colors.map((c) => c.hex)

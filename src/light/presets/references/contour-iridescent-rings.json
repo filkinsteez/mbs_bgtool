@@ -5,46 +5,228 @@
     "recipe": "contour.halo",
     "seed": 1,
     "colors": [
-      "#070A12",
-      "#070A12",
-      "#6FD0E0",
-      "#A095E0",
-      "#D88A80"
+      "#000000",
+      "#FFFFFF",
+      "#06090E",
+      "#000000",
+      "#000000",
+      "#000000",
+      "#000000",
+      "#000000"
     ],
     "params": {
-      "rings": 3,
+      "ring1On": true,
       "ring1At": [
-        0.55,
-        0.15
+        0.63708,
+        0.19384
       ],
-      "ring1Radius": 0.8,
-      "ring1Gain": 0.8,
+      "ring1Radius": 0.7639,
+      "ring1Aspect": 1,
+      "ring1Sweep": 360,
+      "ring1Color": 2,
+      "ring1Gain": 1,
+      "ring1n1Weight": 0.0732973,
+      "ring1n1Width": 0.00136269,
+      "ring1n1Shape": 8,
+      "ring1n1Side": 1,
+      "ring1n1Tint": [
+        2.13523,
+        0.226223,
+        0.261636
+      ],
+      "ring1n1Offset": 0.0022,
+      "ring1n1MaskSoft": 0.0008,
+      "ring1n1Light": 0,
+      "ring1n2Weight": 0.705966,
+      "ring1n2Width": 0.0271012,
+      "ring1n2Shape": 8,
+      "ring1n2Side": 1,
+      "ring1n2Tint": [
+        0.362486,
+        0.611789,
+        0.740009
+      ],
+      "ring1n2Offset": 0.002,
+      "ring1n2ChWidth": [
+        1.06884,
+        1.2972,
+        1.44721
+      ],
+      "ring1n2MaskSoft": 0.0008,
+      "ring1n2Light": 0,
+      "ring1n3Weight": 0.003015,
+      "ring1n3Width": 0.0269569,
+      "ring1n3Shape": 4,
+      "ring1n3Side": 1,
+      "ring1n3Tint": [
+        0.20353,
+        0.220538,
+        0.576703
+      ],
+      "ring1n3MaskSoft": 0.0008,
+      "ring1n3Light": 0,
+      "ring1f1Weight": 0.0397596,
+      "ring1f1Width": 0.014,
+      "ring1f1Side": 2,
+      "ring1f1Tint": [
+        0.2086,
+        0.5583,
+        1
+      ],
+      "ring1f1MaskSoft": 0.001,
+      "ring1f1Light": 0,
+      "ring2On": true,
       "ring2At": [
-        0.54,
-        0.22
+        0.54595,
+        0.26148
       ],
-      "ring2Radius": 0.2,
-      "ring2Gain": 0.8,
+      "ring2Radius": 0.2511,
+      "ring2Aspect": 0.9379,
+      "ring2Sweep": 360,
+      "ring2Color": 2,
+      "ring2Gain": 1,
+      "ring2n1Weight": 0.457487,
+      "ring2n1Width": 0.00475616,
+      "ring2n1Shape": 8,
+      "ring2n1Side": 1,
+      "ring2n1Tint": [
+        0.397239,
+        0.554518,
+        0.547184
+      ],
+      "ring2n1Offset": 0.0016,
+      "ring2n1MaskSoft": 0.0008,
+      "ring2n1Light": 0,
+      "ring2n2Weight": 0.259362,
+      "ring2n2Width": 0.0172056,
+      "ring2n2Shape": 8,
+      "ring2n2Side": 1,
+      "ring2n2Tint": [
+        0.623141,
+        0.520007,
+        1.12068
+      ],
+      "ring2n2Offset": 0.0016,
+      "ring2n2ChWidth": [
+        1.31829,
+        1.20161,
+        1.35064
+      ],
+      "ring2n2MaskSoft": 0.0008,
+      "ring2n2Light": 0,
+      "ring2n3Weight": 0.0924343,
+      "ring2n3Width": 0.0398693,
+      "ring2n3Shape": 4,
+      "ring2n3Side": 1,
+      "ring2n3Tint": [
+        0.114556,
+        0.151235,
+        0.456492
+      ],
+      "ring2n3MaskSoft": 0.0008,
+      "ring2n3Light": 0,
+      "ring2f1Weight": 0.015,
+      "ring2f1Width": 0.014,
+      "ring2f1Side": 2,
+      "ring2f1Tint": [
+        0.3864,
+        0.3864,
+        1
+      ],
+      "ring2f1MaskSoft": 0.001,
+      "ring2f1Light": 0,
+      "ring3On": true,
       "ring3At": [
-        0.42,
-        0.95
+        0.42746,
+        0.89246
       ],
-      "ring3Radius": 0.32,
-      "ring3Gain": 0.8,
-      "coreWidth": 0.006,
-      "tailIn": 0.05,
-      "tailOut": 0.01,
-      "tailWeight": 0.6,
-      "insideMix": 0,
-      "edgeSoftness": 0.05,
-      "warp": 0,
-      "intensity": 1
+      "ring3Radius": 0.3855,
+      "ring3Aspect": 1.0983,
+      "ring3Sweep": 360,
+      "ring3Color": 2,
+      "ring3Gain": 1,
+      "ring3n1Weight": 0.940954,
+      "ring3n1Width": 0.00196856,
+      "ring3n1Shape": 8,
+      "ring3n1Side": 1,
+      "ring3n1Tint": [
+        0.662772,
+        0.4382,
+        0.228923
+      ],
+      "ring3n1Offset": 0.0005,
+      "ring3n1MaskSoft": 0.0008,
+      "ring3n1Light": 0,
+      "ring3n2Weight": 0.363712,
+      "ring3n2Width": 0.0177665,
+      "ring3n2Shape": 8,
+      "ring3n2Side": 1,
+      "ring3n2Tint": [
+        0.59187,
+        0.239254,
+        0.278687
+      ],
+      "ring3n2Offset": 0.0005,
+      "ring3n2ChWidth": [
+        1.54333,
+        1.14806,
+        1.15469
+      ],
+      "ring3n2MaskSoft": 0.0008,
+      "ring3n2Light": 0,
+      "ring3n3Weight": 0.0179729,
+      "ring3n3Width": 0.0228529,
+      "ring3n3Shape": 4,
+      "ring3n3Side": 1,
+      "ring3n3Tint": [
+        0.264628,
+        0.0214285,
+        0.0913819
+      ],
+      "ring3n3MaskSoft": 0.0008,
+      "ring3n3Light": 0,
+      "ring3f1Weight": 0.012,
+      "ring3f1Width": 0.012,
+      "ring3f1Side": 2,
+      "ring3f1Tint": [
+        1,
+        0.6654,
+        0.8308
+      ],
+      "ring3f1MaskSoft": 0.001,
+      "ring3f1Light": 0,
+      "farWidth": 0.008,
+      "farStep": 3,
+      "light1Kind": 1,
+      "light2Kind": 0,
+      "base": 3,
+      "baseGain": 1,
+      "gain": 1,
+      "soften": 1,
+      "light1At": [
+        -0.772809,
+        -0.4178
+      ],
+      "light1Radius": 0.301651,
+      "light1Stretch": 1,
+      "light1Angle": 0,
+      "ring1n2Grow": 1,
+      "ring1n2GrowBy": [
+        3.04009,
+        1
+      ],
+      "ring1f2Light": 0,
+      "ring1f3Light": 0,
+      "ring2f2Light": 0,
+      "ring2f3Light": 0,
+      "ring3f2Light": 0,
+      "ring3f3Light": 0
     },
     "lens": {
-      "bloom": 0.05
+      "bloom": 0
     },
     "output": {
-      "grain": 0.01,
+      "grain": 0.3,
       "exposure": 0
     }
   }
