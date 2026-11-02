@@ -77,8 +77,7 @@
       "bridge": 1,
       "glow1Bend": -0.595,
       "glow3Bend": 0.237,
-      "glow4Bend": 0.115,
-      "aspect": 1.4992
+      "glow4Bend": 0.115
     },
     "lens": {
       "bloom": 0.12

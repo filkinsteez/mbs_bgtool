@@ -14,7 +14,7 @@ import type {
 } from '../../scene'
 import { BLOOM_BOUNDARY, BLOOM_MINOR_REF, BLOOM_ROW, bloomBoundaryUniforms } from './blooms-boundary'
 import { composeLayout, GLOW_COUNT, isWarm, random, SLOT, SLOT_COUNT, type BloomsLayout, type GlowSpec } from './blooms-compose'
-import { bridgeAmount, deepen, paleTint } from './blooms-light'
+import { bridgeAmount, bridgeGate, bridgeTint, deepen, deepFade, skyPaleTint } from './blooms-light'
 import { BOUNDARY_GLSL } from './boundary'
 
 const DEFAULT_GLOWS: readonly GlowSpec[] = [
@@ -62,8 +62,6 @@ const PARAMS: readonly ParamSpec[] = [
   num('warp', 'Warp', 0, 0.3, 0.002, 0.07),
   num('warpScale', 'Warp scale', 0.2, 4, 0.05, 1.1),
   num('bridge', 'Bridge', 0, 3, 0.01, 1),
-  // Width over height of the frame, for the glow edge calibration; compose sets it.
-  num('aspect', 'Frame aspect', 0.25, 4, 0.001, 16 / 9),
 ]
 
 function readLayout(ctx: RecipeContext): BloomsLayout {
@@ -189,20 +187,19 @@ function inFront(haze: number): number {
 const BRIDGE_RISE = 0.3
 
 /**
- * Bridge light for one glow, per unit of its pale tint. Up to the default
- * Intensity it follows the glow's gain. Above it, it is solved again at the
- * brighter sky and glow, and the blend midpoint gets only a share of the
- * extra lightness, so the bridge stays pale and colored and only the glow
- * core goes white.
+ * Bridge light for one glow, per unit of its tint, solved at this Intensity's
+ * sky and glow, so the blend stays pale on a dusk sky too. Above the default
+ * Intensity the blend midpoint gets only a share of the extra lightness, so
+ * the bridge stays pale and colored and only the glow core goes white.
  */
-function bridgeLight(sky: Rgb, light: Rgb, tint: Rgb, haze: number, intensity: number, skyGain: number, glowGain: number, lightGain: number): number {
-  if (intensity <= 0.5) return bridgeAmount(sky, light, tint, haze) * lightGain
+function bridgeLight(sky: Rgb, light: Rgb, tint: Rgb, haze: number, intensity: number, skyGain: number, glowGain: number): number {
   const lighter = (s: Rgb, g: Rgb) => Math.max(linearToOklab(s)[0], linearToOklab(g)[0])
-  const brightSky = scale(sky, skyGain)
-  const brightGlow = scale(light, glowGain)
+  const litSky = scale(sky, skyGain)
+  const litGlow = scale(light, glowGain)
+  if (intensity <= 0.5) return bridgeAmount(litSky, litGlow, tint, haze)
   const atDefault = lighter(sky, light)
-  const maxL = atDefault + BRIDGE_RISE * Math.max(0, lighter(brightSky, brightGlow) - atDefault)
-  return bridgeAmount(brightSky, brightGlow, tint, haze, maxL)
+  const maxL = atDefault + BRIDGE_RISE * Math.max(0, lighter(litSky, litGlow) - atDefault)
+  return bridgeAmount(litSky, litGlow, tint, haze, maxL)
 }
 
 /**
@@ -221,10 +218,13 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
   const depth = 1 + 0.8 * Math.max(0, 0.5 - intensity)
   const slot = (index: number) => colors[clamp(Math.round(index), 0, SLOT_COUNT - 1)]
   const sky = colors[SLOT.sky]
+  const skyPale = skyPaleTint(sky)
   const glowColor: number[] = []
+  const glowTail: number[] = []
   const glowShape: number[] = []
   const glowAxis: number[] = []
   const glowEdge: number[] = []
+  const glowDeepFade: number[] = []
   const glowBridge: number[] = []
   const glowLobes: number[] = []
   const glowLobeFalloff: number[] = []
@@ -237,9 +237,11 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     glowBend.push(glow?.bend ?? 0)
     if (!glow) {
       glowColor.push(0, 0, 0)
+      glowTail.push(0, 0, 0)
       glowShape.push(0, 0, 2, 0)
       glowAxis.push(1, 0, 1, 1)
       glowEdge.push(0, 1, 0, 0)
+      glowDeepFade.push(0)
       glowBridge.push(0, 0, 0)
       continue
     }
@@ -250,11 +252,17 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     const front = inFront(glow.haze)
     const gain = skyGain + (lightGain - skyGain) * front
     glowColor.push(...scale(light, gain))
+    // The faint outer light of a glow whose hue is far from the sky's pales the sky without turning
+    // its hue, at the same luminance, so a warm glow meets blue through pale blue, not a lavender ring.
+    const y = luminance(light) * gain
+    const tailShare = bridgeGate(sky, light)
+    glowTail.push(...light.map((c, ch) => c * gain * (1 - tailShare) + skyPale[ch] * y * tailShare))
     glowShape.push(glow.at[0], glow.at[1], glow.beta, haze)
     glowAxis.push(...axis(glow.radius * reach, glow.aniso, glow.angle))
     glowEdge.push(glow.vary, 1.15, 1.7 * i + 0.3, front)
-    const tint = paleTint(light)
-    const amount = front * layout.bridge * bridgeLight(sky, light, tint, haze, intensity, skyGain, gain, lightGain)
+    glowDeepFade.push(deepFade(sky, slot(layout.zenith.color), light))
+    const tint = bridgeTint(light)
+    const amount = front * layout.bridge * bridgeLight(sky, light, tint, haze, intensity, skyGain, gain)
     glowBridge.push(...scale(tint, amount))
   }
   const z = layout.zenith
@@ -262,12 +270,15 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
   return {
     uSky: scale(sky, skyGain),
     uDeep: scale(slot(z.color), skyGain),
+    uDeepLight: clamp(luminance(slot(z.color)) / Math.max(luminance(sky), 1e-4), 0, 1),
     uZenithShape: [z.at[0], z.at[1], clamp(z.amount, 0, 1), z.falloff],
     uZenithAxis: axis(z.radius, z.aniso, z.angle),
     uZenithLobe: zenithLobes.shape,
     uZenithLobeFalloff: zenithLobes.falloff,
     uGlowCount: layout.glows.length,
     uGlowColor: glowColor,
+    uGlowTail: glowTail,
+    uGlowDeepFade: glowDeepFade,
     uGlowShape: glowShape,
     uGlowAxis: glowAxis,
     uGlowEdge: glowEdge,
@@ -323,12 +334,15 @@ export const sunsetBlooms: RecipeDefinition = {
 #define BLOOM_ROW ${BLOOM_ROW.toFixed(6)}
 uniform vec3 uSky;
 uniform vec3 uDeep;
+uniform float uDeepLight;             // luminance of the deep color over the sky's, 0..1
 uniform vec4 uZenithShape;           // center (frame fractions), amount, falloff exponent
 uniform vec4 uZenithAxis;            // cos, sin, 1 / long radius, 1 / short radius
 uniform vec4 uZenithLobe[LOBES];     // offset along and across (in radii), 1 / size, weight
 uniform float uZenithLobeFalloff[LOBES];
 uniform int uGlowCount;
 uniform vec3 uGlowColor[GLOW_COUNT];
+uniform vec3 uGlowTail[GLOW_COUNT];   // color of the faint outer light
+uniform float uGlowDeepFade[GLOW_COUNT]; // how much the glow fades over the deepened sky
 uniform vec4 uGlowShape[GLOW_COUNT];  // center (frame fractions), falloff exponent, haze
 uniform vec4 uGlowAxis[GLOW_COUNT];   // cos, sin, 1 / long radius, 1 / short radius
 uniform vec4 uGlowEdge[GLOW_COUNT];   // edge variation, its frequency, its phase, in front 0..1
@@ -433,8 +447,9 @@ vec3 radiance(vec2 uv, vec2 p) {
     lobe[j] = uZenithLobe[j];
     falloff[j] = uZenithLobeFalloff[j];
   }
-  float z = uZenithShape.z * bloom(P, warp, (uZenithShape.xy - 0.5) * frame, uZenithAxis, vec2(shortUnit), uZenithShape.w, vec3(0.5, 1.1, 2.3), 0.0, 9, 0.0, lobe, falloff);
-  vec3 sky = mix(uSky, uDeep, min(z, 1.0));
+  float z = min(1.0, uZenithShape.z * bloom(P, warp, (uZenithShape.xy - 0.5) * frame, uZenithAxis, vec2(shortUnit), uZenithShape.w, vec3(0.5, 1.1, 2.3), 0.0, 9, 0.0, lobe, falloff));
+  vec3 sky = mix(uSky, uDeep, z);
+  float deepArea = z * z;
 
   float k[GLOW_COUNT];
   float ext = 0.0;
@@ -456,16 +471,21 @@ vec3 radiance(vec2 uv, vec2 p) {
   vec3 bridge = vec3(0.0);
   for (int i = 0; i < GLOW_COUNT; i++) {
     if (i >= uGlowCount) break;
-    vec3 light = uGlowColor[i] * k[i];
+    // Where the sky is deep, light that would grey it dims as the sky does, so dim warm light never
+    // lingers over a dark area as grey-brown; light of the deep area's own hue stays and deepens it.
+    float ill = mix(1.0, uDeepLight, deepArea * uGlowDeepFade[i]);
+    vec3 light = mix(uGlowTail[i], uGlowColor[i], smoothstep(0.05, 0.4, k[i])) * (k[i] * ill);
     float f = uGlowEdge[i].w;
     behind += (1.0 - f) * light;
     front += f * light;
     lit += f * k[i];
-    bridge += uGlowBridge[i] * k[i];
+    bridge += uGlowBridge[i] * (k[i] * ill);
   }
-  // Pale light where the glows and the sky weigh about the same; zero at both ends,
-  // and overlapping glows share one bridge instead of stacking theirs.
+  // Pale light where the glows and the sky weigh about the same, reaching further out on the sky
+  // side, where faint warm light over blue would read as a lavender ring; zero at both ends, and
+  // overlapping glows share one bridge instead of stacking theirs.
   float t = lit / (lit + T);
+  t = t < 0.5 ? 0.5 * pow(2.0 * t, 0.7) : t;
   float bell = 4.0 * t * (1.0 - t);
   front += bridge / max(lit, 1e-4) * bell * sqrt(bell);
   return behind * T + front;
@@ -473,12 +493,12 @@ vec3 radiance(vec2 uv, vec2 p) {
 `,
   uniforms: (ctx) => ({
     ...layoutUniforms(readLayout(ctx), ctx.colors, ctx.num('intensity'), ctx.seed),
-    ...bloomBoundaryUniforms(BLOOM_BOUNDARY, ctx.num('aspect'), ctx.seed),
+    ...bloomBoundaryUniforms(BLOOM_BOUNDARY, ctx.aspect, ctx.seed),
   }),
   radianceScale: 0.5,
   lens: { bloom: 0.12, bloomRadius: 0.75, bloomWidth: 1.5 },
   fromPack: rolesFromPack,
-  compose: ({ pack, controls, seed, aspect }): Composition => {
+  compose: ({ pack, controls, seed }): Composition => {
     const colors = rolesFromPack(pack)
     const layout = composeLayout(colors.map(hexToLinear), seed, {
       intensity: controls.intensity,
@@ -488,7 +508,7 @@ vec3 radiance(vec2 uv, vec2 p) {
     const soft = clamp(controls.softness, 0, 1)
     return {
       colors,
-      params: { intensity: clamp(controls.intensity, 0, 1), ...layoutParams(layout), aspect: clamp(aspect, 0.25, 4) },
+      params: { intensity: clamp(controls.intensity, 0, 1), ...layoutParams(layout) },
       lens: { bloom: 0.07 + 0.12 * soft, bloomRadius: 0.66 + 0.2 * soft },
       output: {},
     }
