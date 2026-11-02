@@ -55,13 +55,6 @@ function alongPath(points: readonly (readonly [number, number])[], t: number): [
   return [points[0][0], points[0][1]]
 }
 
-// Band widths below the first (Meta Blue) band, by band count. Unequal on purpose.
-const BAND_SHARES: Readonly<Record<number, readonly number[]>> = {
-  3: [0.45, 0.55],
-  4: [0.3, 0.32, 0.38],
-  5: [0.22, 0.27, 0.23, 0.28],
-}
-
 const RIM_LIGHT_PATH = [
   [0.12, 0.1],
   [0.74, 0.1],
@@ -70,29 +63,31 @@ const RIM_LIGHT_PATH = [
 
 /** Fallback mappings for recipes without `compose`. A recipe owner deletes the entry once the recipe defines compose. */
 export const CONTROL_MAPPINGS: Readonly<Partial<Record<RecipeId, RecipeMapping>>> = {
-  'sunset.bands': {
-    params: ({ intensity, softness, mood }, pack) => {
-      const bands = Math.min(5, Math.max(3, pack.colors.length))
-      const first = lin(mood, 0.3, 0.46, 0.64)
-      const edges: Record<string, number> = {}
-      let at = first
-      edges.edge1 = at
-      BAND_SHARES[bands].slice(0, -1).forEach((share, i) => {
-        at += share * (1 - first)
-        edges[`edge${i + 2}`] = at
-      })
+  'sunset.blooms': {
+    params: ({ intensity, softness, mood }) => {
+      const gain = geo(intensity, 0.22, 0.5, 1.5)
+      const size = geo(softness, 0.7, 1, 1.45)
+      const shift = lin(mood, -0.25, 0, 0.25)
       return {
-        bands,
-        ...edges,
-        softness: lin(softness, 0.02, 0.08, 0.2),
-        softVary: 0.5,
-        warp: 0.03,
-        warpScale: 1.4,
-        bandLight: lin(intensity, 0.04, 0.1, 0.2),
-        intensity: lin(intensity, 0.75, 1, 1.5),
+        glows: 3,
+        glow1At: [0.25, 0.3 + shift],
+        glow1Radius: 0.42 * size,
+        glow1Gain: 0.45 * gain,
+        glow1Stretch: 1.6,
+        glow2At: [0.75, 0.55 + shift],
+        glow2Radius: 0.32 * size,
+        glow2Gain: 0.3 * gain,
+        glow2Stretch: 1.3,
+        glow3At: [0.45, 0.95 + shift],
+        glow3Radius: 0.46 * size,
+        glow3Gain: 0.35 * gain,
+        glow3Stretch: 2,
+        haze: lin(softness, 0.1, 0.25, 0.5),
+        warp: 0.05,
+        intensity: 1,
       }
     },
-    lens: ({ softness }) => ({ bloom: lin(softness, 0.01, 0.05, 0.14), bloomRadius: lin(softness, 0.55, 0.7, 0.85) }),
+    lens: ({ softness }) => ({ bloom: lin(softness, 0.03, 0.08, 0.16), bloomRadius: lin(softness, 0.7, 0.8, 0.9) }),
   },
   'contour.rim': {
     params: ({ intensity, softness, mood }) => ({
