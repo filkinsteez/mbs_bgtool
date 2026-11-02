@@ -276,7 +276,7 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
   const spread = lerp(0, 0.3 / Math.max(heightInFrame, 1), random())
 
   const power = geo(intensity, 0.35, 0.8, 1.9) * hazeGain * lerp(0.85, 1.15, random())
-  const pool = geo(intensity, 5, 10, 22) * (luminanceOf(light.haze) / Math.max(luminanceOf(light.light), 0.01))
+  const pool = geo(intensity, 3.5, 7, 16) * (luminanceOf(light.haze) / Math.max(luminanceOf(light.light), 0.01))
   const soft = (lo: number, hi: number) => lerp(lo, hi, softness)
 
   return {
@@ -297,7 +297,7 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
       extinction: round4(lerp(0, 0.6, random())),
       haze: round4(lerp(0.02, 0.05, random())),
       ceiling: [round4(lerp(0.2, 1.5, random())), round4(lerp(0.1, 0.25, random()) * 2 * halfH), round4(-halfH - lerp(0, 0.2, random()))],
-      floorHaze: [round4(lerp(1.5, 3.5, random())), round4(soft(0.08, 0.2) * 2 * halfH * 0.5)],
+      floorHaze: [round4(lerp(1, 2.5, random())), round4(width * soft(0.35, 0.7))],
       forward: round4(lerp(0, 0.6, random())),
       hazeNoise: [round4(lerp(0.08, 0.18, random())), round4(lerp(2, 3, random())), round4(lerp(0.6, 1.4, random()))],
       bounce: [round4(lerp(0.4, 0.8, random())), round4(soft(0.15, 0.45) * 2 * halfH * 0.5), 2, 0.08],
