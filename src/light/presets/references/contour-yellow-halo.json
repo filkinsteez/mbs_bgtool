@@ -25,23 +25,23 @@
       "ring1Color": 2,
       "ring1Gain": 1,
       "ring1MaskShift": [
-        0.0681,
-        -0.0919
+        0.099489,
+        -0.146954
       ],
       "ring1MaskGrow": -0.216702,
       "ring1n1Weight": 0.240308,
-      "ring1n1Width": 0.0353445,
+      "ring1n1Width": 0.0398834,
       "ring1n1Shape": 3,
       "ring1n1Side": 0,
       "ring1n1Tint": [
-        1,
+        1.05918,
         0.457336,
         0
       ],
       "ring1n1Light": 1,
       "ring1n1Grow": 1,
       "ring1n1GrowBy": [
-        0.6,
+        0.582842,
         1
       ],
       "ring1n2Weight": 0.487453,
@@ -66,7 +66,7 @@
       ],
       "ring1n3MaskSoft": 0.081,
       "ring1n3Light": 0,
-      "ring1f1Weight": 0.913458,
+      "ring1f1Weight": 0.952367,
       "ring1f1Width": 4,
       "ring1f1Side": 2,
       "ring1f1Tint": [
@@ -75,7 +75,7 @@
         0.7913
       ],
       "ring1f1Light": 0,
-      "ring1f1MaskSoft": 0.310836,
+      "ring1f1MaskSoft": 0.349253,
       "ring1f2Weight": 1.10389,
       "ring1f2Width": 4,
       "ring1f2Side": 1,
@@ -93,16 +93,18 @@
       "farStep": 3,
       "light1Kind": 1,
       "light1At": [
-        -1.0778,
-        -0.4458
+        -0.852965,
+        -0.371713
       ],
-      "light1Radius": 2.90988,
+      "light1Radius": 2.71366,
       "light2Kind": 0,
       "base": 0,
       "baseGain": 0,
       "gain": 1,
       "soften": 1,
-      "ring1f1MaskInset": 0.0125664
+      "ring1f1MaskInset": 0.0377575,
+      "ring1n1LightGamma": 0.103109,
+      "ring1n2LightGamma": 0.101102
     },
     "lens": {
       "bloom": 0
