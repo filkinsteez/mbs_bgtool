@@ -186,7 +186,7 @@ function inFront(haze: number): number {
  */
 function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity: number, seed: number): UniformMap {
   const skyGain = 2 ** ((intensity - 0.5) * 1.6)
-  const lightGain = 2 ** ((intensity - 0.5) * 1.0)
+  const lightGain = 2 ** ((intensity - 0.5) * 0.8)
   const depth = 1 + 1.2 * Math.max(0, 0.5 - intensity)
   const slot = (index: number) => colors[clamp(Math.round(index), 0, SLOT_COUNT - 1)]
   const sky = colors[SLOT.sky]
@@ -221,7 +221,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     glowAxis.push(...axis(glow.radius, glow.aniso, glow.angle))
     glowEdge.push(glow.vary, 1.15, 1.7 * i + 0.3, front)
     const tint = paleTint(light)
-    const amount = front * layout.bridge * bridgeAmount(sky, light, tint, haze) * Math.sqrt(skyGain * lightGain)
+    const amount = front * layout.bridge * bridgeAmount(sky, light, tint, haze) * lightGain
     glowBridge.push(...scale(tint, amount))
   }
   const z = layout.zenith
