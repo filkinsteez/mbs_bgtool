@@ -12,8 +12,10 @@ import type {
   UniformMap,
   VectorParam,
 } from '../../scene'
+import { BLOOM_BOUNDARY, BLOOM_MINOR_REF, BLOOM_ROW, bloomBoundaryUniforms } from './blooms-boundary'
 import { composeLayout, GLOW_COUNT, isWarm, random, SLOT, SLOT_COUNT, type BloomsLayout, type GlowSpec } from './blooms-compose'
 import { bridgeAmount, deepen, paleTint } from './blooms-light'
+import { BOUNDARY_GLSL } from './boundary'
 
 const DEFAULT_GLOWS: readonly GlowSpec[] = [
   { color: SLOT.light1, at: [-0.09, 0.88], radius: 0.62, aniso: 4.4, angle: 21, gain: 0.9, beta: 2.2, haze: 1.45, vary: 0.65, bend: 0.12 },
@@ -60,6 +62,8 @@ const PARAMS: readonly ParamSpec[] = [
   num('warp', 'Warp', 0, 0.3, 0.002, 0.07),
   num('warpScale', 'Warp scale', 0.2, 4, 0.05, 1.1),
   num('bridge', 'Bridge', 0, 3, 0.01, 1),
+  // Width over height of the frame, for the glow edge calibration; compose sets it.
+  num('aspect', 'Frame aspect', 0.25, 4, 0.001, 16 / 9),
 ]
 
 function readLayout(ctx: RecipeContext): BloomsLayout {
@@ -295,7 +299,8 @@ function rolesFromPack(pack: ColorPack): string[] {
  * off-frame and the sky deepening away from the light. Light adds in linear
  * light; where a glow meets the sky a pale bridge light is added so the blend
  * is lighter and near neutral, never grey. A shared low-frequency warp bends
- * every edge, and each glow's reach and falloff drift along its edge.
+ * every edge; each glow's edge also wanders across its long axis by the shared
+ * boundary field (boundary.ts) and softens unevenly along its arc.
  */
 export const sunsetBlooms: RecipeDefinition = {
   id: 'sunset.blooms',
@@ -310,10 +315,12 @@ export const sunsetBlooms: RecipeDefinition = {
   ],
   defaultColors: ['#0064E0', '#000000', '#000000', '#FFD61E', '#1FCDF0'],
   params: PARAMS,
-  fragment: /* glsl */ `
+  fragment: `${BOUNDARY_GLSL}
 #define GLOW_COUNT ${GLOW_COUNT}
 #define LOBES ${LOBES}
 #define TAIL_END 4.5
+#define BLOOM_MINOR_REF ${BLOOM_MINOR_REF.toFixed(6)}
+#define BLOOM_ROW ${BLOOM_ROW.toFixed(6)}
 uniform vec3 uSky;
 uniform vec3 uDeep;
 uniform vec4 uZenithShape;           // center (frame fractions), amount, falloff exponent
@@ -360,27 +367,20 @@ vec2 noise2x2(vec2 p, int seed) {
   return 1.7 * mix(mix(n00, n10, u.x), mix(n01, n11, u.x), u.y);
 }
 
-// One smooth 2D noise in about -1..1, the same construction with half the hashes.
-float noise2x1(vec2 p, int seed) {
-  vec2 i = floor(p);
-  vec2 f = p - i;
-  vec2 u = quintic(f);
-  ivec2 c = ivec2(i);
-  float n00 = dot(hash3(c, seed).xy * 2.0 - 1.0, f);
-  float n10 = dot(hash3(c + ivec2(1, 0), seed).xy * 2.0 - 1.0, f - vec2(1.0, 0.0));
-  float n01 = dot(hash3(c + ivec2(0, 1), seed).xy * 2.0 - 1.0, f - vec2(0.0, 1.0));
-  float n11 = dot(hash3(c + ivec2(1, 1), seed).xy * 2.0 - 1.0, f - vec2(1.0, 1.0));
-  return 1.7 * mix(mix(n00, n10, u.x), mix(n01, n11, u.x), u.y);
-}
+// Where (1 + x^2)^-b falls to half.
+float halfReach(float b) { return sqrt(exp2(1.0 / b) - 1.0); }
 
 // Light from an extended source: a few lobes spread along a rotated, stretched
 // axis, added up, each a power-law falloff whose tail fades out by about two
-// and a half radii (so the sky beyond keeps its exact color). The reach across
-// the long axis and the falloff exponent drift along the edge, the length
-// along it drifts across it, the long axis bows, edges at different distances
-// drift on their own, and the warp grows with distance from the source, so
-// inner and outer edges bend differently and none is an ellipse.
-float bloom(vec2 P, vec2 warp, vec2 center, vec4 axis, vec2 stretch, float beta, vec3 edge, float bend, int index, vec4 lobe[LOBES], float falloff[LOBES]) {
+// and a half radii (so the sky beyond keeps its exact color). The long axis
+// bows, the length along it drifts across it, the falloff exponent drifts
+// along the edge, and the warp grows with distance from the source. A glow
+// (shortUnit > 0) also moves across its long axis by the shared boundary
+// field, scaled to its own minor radius and read on its own rows, and its
+// falloff softens and hardens along the arc around a fixed half-brightness
+// edge, so its edges wander and soften unevenly and its inner and outer
+// edges move apart.
+float bloom(vec2 P, vec2 warp, vec2 center, vec4 axis, vec2 stretch, float beta, vec3 edge, float bend, int index, float shortUnit, vec4 lobe[LOBES], float falloff[LOBES]) {
   vec2 scaleAxes = vec2(axis.z * stretch.x, axis.w * stretch.y);
   vec2 d0 = P - center;
   float reach0 = length(vec2(dot(d0, axis.xy), dot(d0, vec2(-axis.y, axis.x))) * scaleAxes);
@@ -388,20 +388,31 @@ float bloom(vec2 P, vec2 warp, vec2 center, vec4 axis, vec2 stretch, float beta,
   float along = dot(d, axis.xy) * scaleAxes.x;
   float across = dot(d, vec2(-axis.y, axis.x)) * scaleAxes.y;
   across -= bend * along * along;
-  across += 0.15 * edge.x * noise2x1(vec2(along * 1.1, across * 0.9) + edge.z, uSeed + 401 + 7 * index);
-  vec3 alongNoise = noise1x3(along * edge.y + edge.z, uSeed + 101 + 7 * index);
+  float soft = 1.0;
+  if (shortUnit > 0.0) {
+    // Along the glow in short-side units from the frame center; across it in units the field was calibrated for.
+    // A glow larger than the calibrated size moves no further than one of that size, and the movement fades
+    // into the faint outer light, which scatters from the whole source and so is smoother than its edge.
+    float a = dot(P, axis.xy) * shortUnit;
+    float minorShort = shortUnit / scaleAxes.y;
+    float fade = 1.0 / (1.0 + across * across * 0.25);
+    across += boundaryWarp(a, across * BLOOM_MINOR_REF + float(index) * BLOOM_ROW) * fade * inversesqrt(BLOOM_MINOR_REF * max(BLOOM_MINOR_REF, minorShort));
+    soft = boundarySoftAt(a, float(index), 0.0);
+  }
+  float alongNoise = noise1x3(along * edge.y + edge.z, uSeed + 101 + 7 * index).y;
   float acrossNoise = noise1x3(across * 1.3 + edge.z, uSeed + 307 + 7 * index).x;
-  float reach = exp(0.4 * edge.x * alongNoise.x);
   float length = exp(0.3 * edge.x * acrossNoise);
-  float b = beta * (1.0 + 0.22 * edge.x * alongNoise.y);
-  across /= reach;
+  float b0 = beta * (1.0 + 0.22 * edge.x * alongNoise);
+  float b = clamp(b0 / soft, 1.1, 5.0);
+  float keepHalf = halfReach(b) / halfReach(b0);
+  keepHalf *= keepHalf;
   along /= length;
   float sum = 0.0;
   for (int j = 0; j < LOBES; j++) {
     vec2 q = (vec2(along, across) - lobe[j].xy) * lobe[j].z;
     float d2 = dot(q, q);
     // (1 + d2)^(-b) times the tail fade exp(-(d2 / TAIL_END)^2), as one exp2.
-    sum += lobe[j].w * exp2(-b * falloff[j] * log2(1.0 + d2) - d2 * d2 * (1.4426950 / (TAIL_END * TAIL_END)));
+    sum += lobe[j].w * exp2(-b * falloff[j] * log2(1.0 + d2 * keepHalf) - d2 * d2 * (1.4426950 / (TAIL_END * TAIL_END)));
   }
   return sum;
 }
@@ -415,14 +426,14 @@ vec3 radiance(vec2 uv, vec2 p) {
   vec2 warp = uWarp.x * noise2x2(P * uWarp.y + vec2(3.7, 1.9), uSeed + 11);
 
   // The darkening is sized by the short side, so it stays in its corner in every format.
-  vec2 shortSide = vec2(1.0 / min(frame.x, frame.y));
+  float shortUnit = 1.0 / min(frame.x, frame.y);
   vec4 lobe[LOBES];
   float falloff[LOBES];
   for (int j = 0; j < LOBES; j++) {
     lobe[j] = uZenithLobe[j];
     falloff[j] = uZenithLobeFalloff[j];
   }
-  float z = uZenithShape.z * bloom(P, warp, (uZenithShape.xy - 0.5) * frame, uZenithAxis, shortSide, uZenithShape.w, vec3(0.5, 1.1, 2.3), 0.0, 9, lobe, falloff);
+  float z = uZenithShape.z * bloom(P, warp, (uZenithShape.xy - 0.5) * frame, uZenithAxis, vec2(shortUnit), uZenithShape.w, vec3(0.5, 1.1, 2.3), 0.0, 9, 0.0, lobe, falloff);
   vec3 sky = mix(uSky, uDeep, min(z, 1.0));
 
   float k[GLOW_COUNT];
@@ -434,7 +445,7 @@ vec3 radiance(vec2 uv, vec2 p) {
         lobe[j] = uGlowLobe[i * LOBES + j];
         falloff[j] = uGlowLobeFalloff[i * LOBES + j];
       }
-      k[i] = bloom(P, warp, (uGlowShape[i].xy - 0.5) * frame, uGlowAxis[i], stretch, uGlowShape[i].z, uGlowEdge[i].xyz, uGlowBend[i], i, lobe, falloff);
+      k[i] = bloom(P, warp, (uGlowShape[i].xy - 0.5) * frame, uGlowAxis[i], stretch, uGlowShape[i].z, uGlowEdge[i].xyz, uGlowBend[i], i, shortUnit, lobe, falloff);
       ext += uGlowShape[i].w * k[i] * k[i];
     }
   }
@@ -460,11 +471,14 @@ vec3 radiance(vec2 uv, vec2 p) {
   return behind * T + front;
 }
 `,
-  uniforms: (ctx) => layoutUniforms(readLayout(ctx), ctx.colors, ctx.num('intensity'), ctx.seed),
+  uniforms: (ctx) => ({
+    ...layoutUniforms(readLayout(ctx), ctx.colors, ctx.num('intensity'), ctx.seed),
+    ...bloomBoundaryUniforms(BLOOM_BOUNDARY, ctx.num('aspect'), ctx.seed),
+  }),
   radianceScale: 0.5,
   lens: { bloom: 0.12, bloomRadius: 0.75, bloomWidth: 1.5 },
   fromPack: rolesFromPack,
-  compose: ({ pack, controls, seed }): Composition => {
+  compose: ({ pack, controls, seed, aspect }): Composition => {
     const colors = rolesFromPack(pack)
     const layout = composeLayout(colors.map(hexToLinear), seed, {
       intensity: controls.intensity,
@@ -474,7 +488,7 @@ vec3 radiance(vec2 uv, vec2 p) {
     const soft = clamp(controls.softness, 0, 1)
     return {
       colors,
-      params: { intensity: clamp(controls.intensity, 0, 1), ...layoutParams(layout) },
+      params: { intensity: clamp(controls.intensity, 0, 1), ...layoutParams(layout), aspect: clamp(aspect, 0.25, 4) },
       lens: { bloom: 0.07 + 0.12 * soft, bloomRadius: 0.66 + 0.2 * soft },
       output: {},
     }

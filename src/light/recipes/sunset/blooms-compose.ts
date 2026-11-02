@@ -21,7 +21,7 @@ export interface GlowSpec {
   beta: number
   /** How much this glow's haze hides the sky near its center. A glow with none sits behind the others' haze. */
   haze: number
-  /** How much the glow's reach and falloff change along its edge, 0..1. */
+  /** How far the glow's lobes spread and how much its falloff and length change along its edge, 0..1. */
   vary: number
   /** How much the long axis bows: positive lowers both ends, so the light is highest above its source. */
   bend: number
