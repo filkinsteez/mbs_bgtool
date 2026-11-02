@@ -166,6 +166,18 @@ vec3 grainNoise(ivec2 px) {
   return sum / (sqrt(energy) * spread);
 }
 
+// TPDF noise of +-1 LSB; within half a code value of 0 and 255 it blends to uniform +-0.5 LSB noise, so clamping
+// cannot shift the mean there and exact black and white stay exact (Gjøl, "Banding in Games").
+vec3 dither(vec3 encoded, ivec2 px) {
+  uvec3 a = hashKey(ivec3(px, uSeed + 9001));
+  uvec3 b = pcg3d(a ^ uvec3(0x9E3779B9u, 0x85EBCA6Bu, 0xC2B2AE35u));
+  vec3 u = unitFromUint(a);
+  vec3 triangular = u + unitFromUint(b) - 1.0;
+  vec3 v = encoded * 255.0;
+  vec3 edge = min(saturate(v / 0.5), 1.0 - saturate((v - 254.5) / 0.5));
+  return encoded + mix(u - 0.5, triangular, edge) / 255.0;
+}
+
 void main() {
   ivec2 px = ivec2(gl_FragCoord.xy);
   vec3 display = saturate(resolveColumn(px - uTileOrigin));
@@ -175,7 +187,7 @@ void main() {
     float weight = mix(0.3, 1.0, saturate(4.0 * luma * (1.0 - luma)));
     encoded += uGrain * weight * grainNoise(px);
   }
-  if (uDither) encoded += tpdfNoise3(px, uSeed + 9001) / 255.0;
+  if (uDither) encoded = dither(saturate(encoded), px);
   fragColor = vec4(floor(saturate(encoded) * 255.0 + 0.5) / 255.0, 1.0);
 }
 `
