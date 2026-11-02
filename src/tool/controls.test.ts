@@ -1,14 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
+  composeScene,
+  compositionProblems,
   DEFAULT_LENS,
   DEFAULT_OUTPUT,
   getRecipe,
   LENS_NUMBERS,
   OUTPUT_NUMBERS,
   PACKS,
+  paramProblem,
   RECIPE_IDS,
-  type ParamSpec,
-  type ParamValue,
 } from '@/light'
 import { buildScene, CONTROL_MAPPINGS, DEFAULT_CONTROLS, type ControlValues } from './controls'
 
@@ -17,34 +18,28 @@ const GRID: ControlValues[] = STEPS.flatMap((intensity) =>
   STEPS.flatMap((softness) => STEPS.map((mood) => ({ intensity, softness, mood }))),
 )
 
-function paramProblem(spec: ParamSpec, value: ParamValue): string | null {
-  switch (spec.kind) {
-    case 'number':
-      if (typeof value !== 'number' || !Number.isFinite(value)) return 'is not a finite number'
-      if (value < spec.min || value > spec.max) return `${value} is outside ${spec.min}..${spec.max}`
-      return null
-    case 'boolean':
-      return typeof value === 'boolean' ? null : 'is not a boolean'
-    case 'vector': {
-      if (!Array.isArray(value) || value.length !== spec.default.length) return `is not a vector of ${spec.default.length}`
-      const bad = value.find((v) => !Number.isFinite(v) || v < spec.min || v > spec.max)
-      return bad === undefined ? null : `component ${bad} is outside ${spec.min}..${spec.max}`
-    }
-    default: {
-      const unknown: never = spec
-      return `has an unknown kind: ${JSON.stringify(unknown)}`
-    }
-  }
-}
-
 describe('control mapping', () => {
-  it('maps every recipe', () => {
-    for (const id of RECIPE_IDS) expect(CONTROL_MAPPINGS[id], id).toBeDefined()
+  it('has compose or a fallback mapping for every recipe', () => {
+    for (const id of RECIPE_IDS) expect(Boolean(getRecipe(id).compose || CONTROL_MAPPINGS[id]), id).toBe(true)
   })
 
   for (const id of RECIPE_IDS) {
     describe(id, () => {
       const recipe = getRecipe(id)
+
+      if (recipe.compose) {
+        it('uses the recipe compose, with the frame aspect', () => {
+          for (const pack of PACKS) {
+            for (const aspect of [16 / 9, 9 / 16]) {
+              const scene = buildScene(id, pack, 3, DEFAULT_CONTROLS, aspect)
+              expect(scene).toEqual(composeScene(recipe, { pack, controls: DEFAULT_CONTROLS, seed: 3, aspect }))
+              expect(compositionProblems(recipe, pack, scene)).toEqual([])
+            }
+          }
+        })
+        return
+      }
+
       const specs = new Map(recipe.params.map((spec) => [spec.key, spec]))
 
       it('writes only declared params, in range, for every pack and control value', () => {

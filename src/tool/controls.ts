@@ -1,6 +1,8 @@
 import {
+  composeScene,
   getRecipe,
   type ColorPack,
+  type ControlValues,
   type LensSettings,
   type MoodId,
   type OutputSettings,
@@ -9,14 +11,7 @@ import {
   type Scene,
 } from '@/light'
 
-/** The three tool controls, each 0..1. `mood` is Horizon for Sunset and Light for Contour. */
-export interface ControlValues {
-  intensity: number
-  softness: number
-  mood: number
-}
-
-export const DEFAULT_CONTROLS: ControlValues = { intensity: 0.5, softness: 0.5, mood: 0.5 }
+export { DEFAULT_CONTROLS, type ControlValues } from '@/light'
 
 export type MoodControlKey = 'horizon' | 'light'
 
@@ -73,7 +68,8 @@ const RIM_LIGHT_PATH = [
   [0.2, 0.86],
 ] as const
 
-export const CONTROL_MAPPINGS: Readonly<Record<RecipeId, RecipeMapping>> = {
+/** Fallback mappings for recipes without `compose`. A recipe owner deletes the entry once the recipe defines compose. */
+export const CONTROL_MAPPINGS: Readonly<Partial<Record<RecipeId, RecipeMapping>>> = {
   'sunset.ramp': {
     params: ({ intensity, softness, mood }) => {
       const horizon = lin(mood, 0.4, 0.64, 0.86)
@@ -205,10 +201,17 @@ export const CONTROL_MAPPINGS: Readonly<Record<RecipeId, RecipeMapping>> = {
   },
 }
 
-/** Recipe defaults, the pack's colors (by the recipe's own role picks) and the controls' overrides. */
-export function buildScene(recipeId: RecipeId, pack: ColorPack, seed: number, controls: ControlValues): Scene {
+/**
+ * The recipe's own `compose` for the pack, controls, seed and frame aspect
+ * (width / height). Recipes without it get their defaults, the pack's colors
+ * by the recipe's role picks, and the fallback mapping's overrides.
+ */
+export function buildScene(recipeId: RecipeId, pack: ColorPack, seed: number, controls: ControlValues, aspect = 16 / 9): Scene {
   const recipe = getRecipe(recipeId)
+  const composed = composeScene(recipe, { pack, controls, seed, aspect })
+  if (composed) return composed
   const mapping = CONTROL_MAPPINGS[recipeId]
+  if (!mapping) throw new Error(`${recipeId} has neither compose nor a fallback control mapping`)
   return {
     recipe: recipeId,
     seed,

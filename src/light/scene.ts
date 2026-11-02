@@ -243,10 +243,49 @@ export interface RecipeProgram {
   output?: Partial<OutputSettings>
 }
 
+// ---------------------------------------------------------------------------
+// Tool controls
+
+/**
+ * The three tool controls, each 0..1. `mood` is the mood's own control:
+ * Horizon for Sunset (the height of the light), Light for Contour (where the
+ * light is strongest).
+ */
+export interface ControlValues {
+  intensity: number
+  softness: number
+  mood: number
+}
+
+export const DEFAULT_CONTROLS: ControlValues = { intensity: 0.5, softness: 0.5, mood: 0.5 }
+
+export interface ComposeInput {
+  pack: ColorPack
+  controls: ControlValues
+  seed: number
+  /** Frame width / height: 16:9 is 1.78, 9:16 is 0.56. */
+  aspect: number
+}
+
+/** Everything in a scene except the recipe id and the seed. */
+export interface Composition {
+  /** One hex per color slot, each an exact color of the input pack or #000000. */
+  colors: string[]
+  params: Record<string, ParamValue>
+  lens: Partial<LensSettings>
+  output: Partial<OutputSettings>
+}
+
 export interface RecipeDefinition extends RecipeProgram {
   id: RecipeId
   mood: MoodId
   label: string
   /** Picks this recipe's slot colors from a pack, by role. */
   fromPack: (pack: ColorPack) => string[]
+  /**
+   * What the tool shows for a pack, the three controls, a seed and a frame
+   * aspect. Recipes without it use the tool's fallback mapping in
+   * src/tool/controls.ts.
+   */
+  compose?: (input: ComposeInput) => Composition
 }
