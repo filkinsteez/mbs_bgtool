@@ -1,0 +1,42 @@
+{
+  "id": "ref-sunset-blue-diagonal",
+  "referenceId": "sunset-blue-diagonal",
+  "scene": {
+    "recipe": "sunset.ramp",
+    "seed": 1,
+    "colors": [
+      "#01206E",
+      "#2E5EB4",
+      "#819ED8",
+      "#C0B5AE",
+      "#FFBF6F",
+      "#F68D19",
+      "#FFD6A3"
+    ],
+    "params": {
+      "stops": 6,
+      "pos1": 0,
+      "pos2": 0.3633,
+      "pos3": 0.5926,
+      "pos4": 0.6918,
+      "pos5": 0.8452,
+      "pos6": 1,
+      "softness": 0.053,
+      "angle": -34.2754,
+      "curve": 0.0104,
+      "warp": 0.0321,
+      "warpScale": 1,
+      "horizon": 0.9,
+      "glow": 0.05,
+      "glowWidth": 0.1,
+      "intensity": 1
+    },
+    "lens": {
+      "bloom": 0.03
+    },
+    "output": {
+      "grain": 0.004,
+      "exposure": 0
+    }
+  }
+}

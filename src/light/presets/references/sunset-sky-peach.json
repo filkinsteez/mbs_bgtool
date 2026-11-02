@@ -1,0 +1,42 @@
+{
+  "id": "ref-sunset-sky-peach",
+  "referenceId": "sunset-sky-peach",
+  "scene": {
+    "recipe": "sunset.ramp",
+    "seed": 1,
+    "colors": [
+      "#6792CB",
+      "#8FA5BF",
+      "#BCB6AB",
+      "#CAB189",
+      "#D37D4E",
+      "#7A0012",
+      "#FFC291"
+    ],
+    "params": {
+      "stops": 6,
+      "pos1": 0,
+      "pos2": 0.2457,
+      "pos3": 0.4692,
+      "pos4": 0.6279,
+      "pos5": 0.8137,
+      "pos6": 1,
+      "softness": 0.0246,
+      "angle": 0,
+      "curve": 0,
+      "warp": 0.0547,
+      "warpScale": 1.2,
+      "horizon": 0.6206,
+      "glow": 0.089,
+      "glowWidth": 0.1,
+      "intensity": 1
+    },
+    "lens": {
+      "bloom": 0.03
+    },
+    "output": {
+      "grain": 0,
+      "exposure": 0
+    }
+  }
+}

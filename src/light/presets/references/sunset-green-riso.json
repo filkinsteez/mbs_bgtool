@@ -1,0 +1,26 @@
+{
+  "id": "ref-sunset-green-riso",
+  "referenceId": "sunset-green-riso",
+  "scene": {
+    "recipe": "sunset.bands",
+    "seed": 1,
+    "colors": ["#E0E1D6", "#64A328", "#93B03A", "#CBB927", "#CBB927", "#CBB927"],
+    "params": {
+      "bands": 4,
+      "edge1": 0.18,
+      "edge2": 0.66,
+      "edge3": 0.86,
+      "edge4": 1,
+      "edge5": 1,
+      "softness": 0.07,
+      "softVary": 0.3,
+      "angle": 0,
+      "warp": 0.012,
+      "warpScale": 1.5,
+      "bandLight": 0.03,
+      "intensity": 1
+    },
+    "lens": { "bloom": 0 },
+    "output": { "grain": 0.03, "grainSize": 1.5, "exposure": 0 }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "id": "ref-contour-light-line",
+  "referenceId": "contour-light-line",
+  "scene": {
+    "recipe": "contour.rim",
+    "seed": 1,
+    "colors": [
+      "#000000",
+      "#000000",
+      "#F7D46A",
+      "#E8A53A"
+    ],
+    "params": {
+      "line": true,
+      "a": [
+        0.497,
+        -0.05
+      ],
+      "b": [
+        0.497,
+        1.05
+      ],
+      "coreWidth": 0.0015,
+      "tailWidth": 0.06,
+      "tailWeight": 0.5,
+      "intensity": 2.5,
+      "fade": 0.15,
+      "taper": 0.9
+    },
+    "lens": {
+      "bloom": 0.04,
+      "halation": 0.3,
+      "halationThreshold": 0.8,
+      "halationRadius": 0.05
+    },
+    "output": {
+      "grain": 0,
+      "exposure": 0
+    }
+  }
+}

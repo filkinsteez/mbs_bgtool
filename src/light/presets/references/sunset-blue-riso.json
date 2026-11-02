@@ -1,0 +1,39 @@
+{
+  "id": "ref-sunset-blue-riso",
+  "referenceId": "sunset-blue-riso",
+  "scene": {
+    "recipe": "sunset.bands",
+    "seed": 1,
+    "colors": [
+      "#F1EEF0",
+      "#4FA0D6",
+      "#475872",
+      "#7890B0",
+      "#5A9CD0",
+      "#5A9CD0"
+    ],
+    "params": {
+      "bands": 5,
+      "edge1": 0.17,
+      "edge2": 0.43,
+      "edge3": 0.65,
+      "edge4": 0.86,
+      "edge5": 1,
+      "softness": 0.035,
+      "softVary": 0.3,
+      "angle": 0,
+      "warp": 0.01,
+      "warpScale": 1.5,
+      "bandLight": 0.04,
+      "intensity": 1
+    },
+    "lens": {
+      "bloom": 0
+    },
+    "output": {
+      "grain": 0.03,
+      "grainSize": 1.5,
+      "exposure": 0
+    }
+  }
+}

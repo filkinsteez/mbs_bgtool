@@ -1,0 +1,39 @@
+{
+  "id": "ref-contour-yellow-halo",
+  "referenceId": "contour-yellow-halo",
+  "scene": {
+    "recipe": "contour.halo",
+    "seed": 1,
+    "colors": [
+      "#CFE3D2",
+      "#1A7AF2",
+      "#FFF0A0",
+      "#FFF0A0",
+      "#FFF0A0"
+    ],
+    "params": {
+      "rings": 1,
+      "ring1At": [
+        2,
+        2.2
+      ],
+      "ring1Radius": 3,
+      "ring1Gain": 0.35,
+      "coreWidth": 0.05,
+      "tailIn": 0.08,
+      "tailOut": 0.25,
+      "tailWeight": 0.2,
+      "insideMix": 1,
+      "edgeSoftness": 0.3,
+      "warp": 0.005,
+      "intensity": 1
+    },
+    "lens": {
+      "bloom": 0.05
+    },
+    "output": {
+      "grain": 0,
+      "exposure": 0
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "id": "ref-sunset-violet-wave",
+  "referenceId": "sunset-violet-wave",
+  "scene": {
+    "recipe": "sunset.ramp",
+    "seed": 1,
+    "colors": [
+      "#8DC6EA",
+      "#D3DEE9",
+      "#BE9ED3",
+      "#6A55AE",
+      "#262D78",
+      "#0E1640",
+      "#FFD8EE"
+    ],
+    "params": {
+      "stops": 6,
+      "pos1": 0,
+      "pos2": 0.3,
+      "pos3": 0.48,
+      "pos4": 0.62,
+      "pos5": 0.8,
+      "pos6": 1,
+      "softness": 0.05,
+      "angle": 0,
+      "curve": 0,
+      "warp": 0.08,
+      "warpScale": 1.2,
+      "horizon": 0.42,
+      "glow": 0.3,
+      "glowWidth": 0.08,
+      "intensity": 1
+    },
+    "lens": {
+      "bloom": 0.04
+    },
+    "output": {
+      "grain": 0,
+      "exposure": 0
+    }
+  }
+}

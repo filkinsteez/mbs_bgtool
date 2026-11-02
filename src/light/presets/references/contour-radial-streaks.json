@@ -1,0 +1,41 @@
+{
+  "id": "ref-contour-radial-streaks",
+  "referenceId": "contour-radial-streaks",
+  "scene": {
+    "recipe": "contour.beam",
+    "seed": 1,
+    "colors": [
+      "#04080F",
+      "#4F82BA",
+      "#E6F0FB",
+      "#7FAEDF"
+    ],
+    "params": {
+      "source": [
+        0.3,
+        -0.5
+      ],
+      "floorY": 0.73,
+      "spread": 30,
+      "beamWidth": 0.3,
+      "beamGain": 0,
+      "haze": 1,
+      "poolGain": 1.2,
+      "poolWidth": 0.3,
+      "poolHeight": 0.04,
+      "floorGain": 0.5,
+      "floorReach": 0.35,
+      "streaks": 0.8,
+      "streakCount": 10,
+      "skyStreaks": 1,
+      "intensity": 1
+    },
+    "lens": {
+      "bloom": 0.08
+    },
+    "output": {
+      "grain": 0,
+      "exposure": 0
+    }
+  }
+}

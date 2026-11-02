@@ -1,0 +1,39 @@
+{
+  "id": "ref-sunset-pink-riso",
+  "referenceId": "sunset-pink-riso",
+  "scene": {
+    "recipe": "sunset.bands",
+    "seed": 1,
+    "colors": [
+      "#F3EAE5",
+      "#EBA9CC",
+      "#D96CA0",
+      "#EC6E55",
+      "#C55D93",
+      "#5D5A80"
+    ],
+    "params": {
+      "bands": 6,
+      "edge1": 0.12,
+      "edge2": 0.34,
+      "edge3": 0.545,
+      "edge4": 0.618,
+      "edge5": 0.8,
+      "softness": 0.03,
+      "softVary": 0.3,
+      "angle": 0,
+      "warp": 0.006,
+      "warpScale": 1.5,
+      "bandLight": 0.03,
+      "intensity": 1
+    },
+    "lens": {
+      "bloom": 0
+    },
+    "output": {
+      "grain": 0.03,
+      "grainSize": 1.5,
+      "exposure": 0
+    }
+  }
+}

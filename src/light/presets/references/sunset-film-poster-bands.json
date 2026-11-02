@@ -1,0 +1,39 @@
+{
+  "id": "ref-sunset-film-poster-bands",
+  "referenceId": "sunset-film-poster-bands",
+  "scene": {
+    "recipe": "sunset.bands",
+    "seed": 1,
+    "colors": [
+      "#7A1E14",
+      "#17110F",
+      "#4F7299",
+      "#514C46",
+      "#E4453A",
+      "#E4453A"
+    ],
+    "params": {
+      "bands": 5,
+      "edge1": 0.05,
+      "edge2": 0.25,
+      "edge3": 0.47,
+      "edge4": 0.64,
+      "edge5": 1,
+      "softness": 0.04,
+      "softVary": 0.4,
+      "angle": 0,
+      "warp": 0.02,
+      "warpScale": 1.4,
+      "bandLight": 0.06,
+      "intensity": 1
+    },
+    "lens": {
+      "bloom": 0.03
+    },
+    "output": {
+      "grain": 0.012,
+      "grainSize": 1.5,
+      "exposure": 0
+    }
+  }
+}

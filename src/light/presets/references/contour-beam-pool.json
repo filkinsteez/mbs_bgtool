@@ -1,0 +1,42 @@
+{
+  "id": "ref-contour-beam-pool",
+  "referenceId": "contour-beam-pool",
+  "scene": {
+    "recipe": "contour.beam",
+    "seed": 1,
+    "colors": [
+      "#01050B",
+      "#2A5468",
+      "#E8FBFF",
+      "#3E7090"
+    ],
+    "params": {
+      "source": [
+        0.55,
+        -0.1
+      ],
+      "floorY": 0.715,
+      "spread": 6,
+      "beamWidth": 0.16,
+      "beamGain": 0.5,
+      "haze": 1.6,
+      "poolGain": 2.5,
+      "poolWidth": 0.25,
+      "poolHeight": 0.012,
+      "floorGain": 0.9,
+      "floorReach": 0.25,
+      "streaks": 0.7,
+      "streakCount": 10,
+      "skyStreaks": 0,
+      "intensity": 1
+    },
+    "lens": {
+      "bloom": 0.08,
+      "halation": 0
+    },
+    "output": {
+      "grain": 0.006,
+      "exposure": 0
+    }
+  }
+}

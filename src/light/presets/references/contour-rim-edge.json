@@ -1,0 +1,50 @@
+{
+  "id": "ref-contour-rim-edge",
+  "referenceId": "contour-rim-edge",
+  "scene": {
+    "recipe": "contour.rim",
+    "seed": 1,
+    "colors": [
+      "#000000",
+      "#0A1A36",
+      "#E4F7FF",
+      "#2F6FD6"
+    ],
+    "params": {
+      "line": false,
+      "a": [
+        -0.6,
+        0.153
+      ],
+      "b": [
+        0.715,
+        0.153
+      ],
+      "c": [
+        0,
+        1.18
+      ],
+      "corner": 0.05,
+      "coreWidth": 0.003,
+      "tailWidth": 0.02,
+      "tailWeight": 0.25,
+      "intensity": 3,
+      "lightAt": [
+        0.75,
+        0.2
+      ],
+      "lightReach": 0.9,
+      "ambient": 0.1,
+      "fill": 0.9,
+      "fillDepth": 0.6
+    },
+    "lens": {
+      "bloom": 0.05,
+      "halation": 0
+    },
+    "output": {
+      "grain": 0,
+      "exposure": 0
+    }
+  }
+}

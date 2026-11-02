@@ -1,0 +1,43 @@
+{
+  "id": "ref-sunset-red-yellow-arcs",
+  "referenceId": "sunset-red-yellow-arcs",
+  "scene": {
+    "recipe": "sunset.ramp",
+    "seed": 1,
+    "colors": [
+      "#7A2016",
+      "#D42218",
+      "#E85A15",
+      "#F9C21A",
+      "#E3E0A0",
+      "#A0D6E6",
+      "#FFF0B0"
+    ],
+    "params": {
+      "stops": 6,
+      "pos1": 0,
+      "pos2": 0.3,
+      "pos3": 0.52,
+      "pos4": 0.72,
+      "pos5": 0.88,
+      "pos6": 1,
+      "softness": 0.04,
+      "angle": 0,
+      "curve": -0.25,
+      "curveCenter": 0,
+      "warp": 0.01,
+      "warpScale": 1,
+      "horizon": 0.75,
+      "glow": 0.12,
+      "glowWidth": 0.1,
+      "intensity": 1
+    },
+    "lens": {
+      "bloom": 0.03
+    },
+    "output": {
+      "grain": 0,
+      "exposure": 0
+    }
+  }
+}

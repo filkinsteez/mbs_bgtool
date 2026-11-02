@@ -1,0 +1,51 @@
+{
+  "id": "ref-contour-iridescent-rings",
+  "referenceId": "contour-iridescent-rings",
+  "scene": {
+    "recipe": "contour.halo",
+    "seed": 1,
+    "colors": [
+      "#070A12",
+      "#070A12",
+      "#6FD0E0",
+      "#A095E0",
+      "#D88A80"
+    ],
+    "params": {
+      "rings": 3,
+      "ring1At": [
+        0.55,
+        0.15
+      ],
+      "ring1Radius": 0.8,
+      "ring1Gain": 0.8,
+      "ring2At": [
+        0.54,
+        0.22
+      ],
+      "ring2Radius": 0.2,
+      "ring2Gain": 0.8,
+      "ring3At": [
+        0.42,
+        0.95
+      ],
+      "ring3Radius": 0.32,
+      "ring3Gain": 0.8,
+      "coreWidth": 0.006,
+      "tailIn": 0.05,
+      "tailOut": 0.01,
+      "tailWeight": 0.6,
+      "insideMix": 0,
+      "edgeSoftness": 0.05,
+      "warp": 0,
+      "intensity": 1
+    },
+    "lens": {
+      "bloom": 0.05
+    },
+    "output": {
+      "grain": 0.01,
+      "exposure": 0
+    }
+  }
+}
