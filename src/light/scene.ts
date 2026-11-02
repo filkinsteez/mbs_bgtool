@@ -73,18 +73,26 @@ export interface LensSettings {
   bloomLevels?: number[]
   /** Optional explicit tint per pyramid level (up to 8 hexes, finest first); replaces bloomTint. */
   bloomLevelTints?: string[]
-  /** Strength of the warm glow added around light above nominal, on dark surroundings. 0 turns it off. */
+  /**
+   * Strength of the film halation glow: each channel's own light above
+   * nominal, blurred and added back, times halationTint. 0 turns it off.
+   */
   halation: number
   /**
-   * Max channel (in multiples of nominal) where light starts to feed the
-   * halation; it ramps in fully by twice this. Values below 1 act as 1, so
-   * light at or below nominal never makes halation.
+   * Channel value (in multiples of nominal, after exposure) where light starts
+   * to feed the halation; it ramps in fully by twice this. Values below 1 act
+   * as 1, so light at or below nominal never makes halation.
    */
   halationThreshold: number
-  /** Halation blur radius as a fraction of the frame's short side. */
+  /** Blur radius of the red halo as a fraction of the frame's short side. */
   halationRadius: number
+  /**
+   * Per-channel strength, as a hex read in linear light. The default
+   * #FF9500 is red 1, green 0.3, blue 0, like film: red and white-hot lights
+   * get a red-orange halo, blue lights none.
+   */
   halationTint: string
-  /** Red spreads wider than blue by this much, 0..1. */
+  /** Green sits narrower than red by this x 1.5 pyramid levels (0.67 is one level), blue by twice that. 0..1. */
   halationSpread: number
 }
 
@@ -108,8 +116,8 @@ export const DEFAULT_LENS: LensSettings = {
   halation: 0,
   halationThreshold: 1,
   halationRadius: 0.06,
-  halationTint: '#FF5A1F',
-  halationSpread: 0.3,
+  halationTint: '#FF9500',
+  halationSpread: 0.67,
 }
 
 export const DEFAULT_OUTPUT: OutputSettings = {

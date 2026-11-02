@@ -3,6 +3,7 @@ import type { LensSettings } from '../scene'
 import type { Gpu, Target } from './gl'
 import { CHUNK_LIBRARY, GLSL_HEADER } from './glsl'
 import { TONE_CURVE_GLSL } from './output'
+import { gaussianBlur } from './passes'
 
 /**
  * The lens works on a copy of the scene whose short side is always 512 px, so
@@ -60,11 +61,16 @@ export function bloomLevelFactors(lens: LensSettings): Rgb[] {
   })
 }
 
-/** Per-level, per-channel halation weights; each channel sums to 1. Red sits wider than blue by the spread. */
+/**
+ * Per-level, per-channel halation weights; each channel sums to 1. Red sits at
+ * halationRadius; green is narrower by halationSpread x 1.5 levels (0.67 makes
+ * it one level narrower) and blue by twice that, so a white-hot light gets an
+ * orange halo near it and a red one farther out.
+ */
 export function halationLevelFactors(lens: LensSettings): Rgb[] {
-  const center = levelForRadius(lens.halationRadius)
-  const spread = lens.halationSpread * 1.5
-  const centers = [center + spread, center, center - spread]
+  const red = levelForRadius(lens.halationRadius)
+  const step = lens.halationSpread * 1.5
+  const centers = [red, red - step, red - 2 * step]
   const columns = centers.map((c) => {
     const clamped = Math.min(LENS_LEVELS - 1, Math.max(0, c))
     const weights = Array.from({ length: LENS_LEVELS }, (_, i) => Math.exp(-0.5 * ((i - clamped) / 0.8) ** 2))
@@ -133,30 +139,61 @@ const HOT_SHADER =
   /* glsl */ `
 uniform sampler2D uSrc;
 uniform float uStart;
-uniform bool uHotInAlpha;
+uniform float uExposureScale;
 out vec4 fragColor;
-const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
-// Light above nominal, stored as grey: the base's alpha when the radiance pass measured it per sample, else
-// luminance times a ramp from max channel uStart to 2 uStart of the averaged color.
+// Each channel's own exposed light above nominal, ramping in from uStart to 2 uStart, from an averaged image.
 void main() {
-  vec4 t = texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0);
-  vec3 c = max(t.rgb, vec3(0.0));
-  float hot = uHotInAlpha ? t.a : dot(c, LUMA) * smoothstep(uStart, 2.0 * uStart, max(c.r, max(c.g, c.b)));
-  fragColor = vec4(vec3(hot), 1.0);
+  vec3 c = max(texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0).rgb, vec3(0.0)) * uExposureScale;
+  fragColor = vec4(c * smoothstep(vec3(uStart), vec3(2.0 * uStart), c), 1.0);
 }
 `
 
-/** Halation only ever starts above nominal (max channel 1), whatever the setting says. */
+/** Halation only ever starts above nominal (channel value 1 after exposure), whatever the setting says. */
 export function halationStart(lens: LensSettings): number {
   return Math.max(1, lens.halationThreshold)
 }
 
-/** Lens composite: energy-conserving bloom mix, halation against dark areas, exposure, tone curve. Needs CHUNK_LIBRARY. */
+/** Short side of the surroundings map that holds halation back on bright backgrounds, and its blur in px. */
+const SURROUND_SHORT_SIDE = 64
+const SURROUND_BLUR_PX = 4
+
+const SURROUND_SHADER =
+  GLSL_HEADER +
+  /* glsl */ `
+uniform sampler2D uSrc;
+uniform vec2 uDstSize;
+uniform int uTaps;
+uniform float uExposureScale;
+out vec4 fragColor;
+const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+// Area-averaged luminance of the exposed scene clamped to nominal, so a hot source itself barely counts as surroundings.
+void main() {
+  vec2 corner = gl_FragCoord.xy - 0.5;
+  float inv = 1.0 / float(uTaps);
+  float sum = 0.0;
+  for (int j = 0; j < 8; j++) {
+    if (j >= uTaps) break;
+    for (int i = 0; i < 8; i++) {
+      if (i >= uTaps) break;
+      vec3 c = texture(uSrc, (corner + (vec2(float(i), float(j)) + 0.5) * inv) / uDstSize).rgb * uExposureScale;
+      sum += dot(clamp(c, 0.0, 1.0), LUMA);
+    }
+  }
+  fragColor = vec4(vec3(sum * inv * inv), 1.0);
+}
+`
+
+/**
+ * Lens composite, all in exposed light: exposure, energy-conserving bloom mix,
+ * halation (each channel's own blurred light above nominal times
+ * halationTint as per-channel strength), tone curve. Needs CHUNK_LIBRARY.
+ */
 export const LENS_COMPOSITE_GLSL =
   TONE_CURVE_GLSL +
   /* glsl */ `
 uniform sampler2D uBloomTex;
 uniform sampler2D uHalationTex;
+uniform sampler2D uHalationSurround;
 uniform float uBloomMix;
 uniform float uHalation;
 uniform vec3 uHalationTint;
@@ -165,13 +202,18 @@ uniform float uExposure;
 vec3 lensAndTone(vec3 radiance, vec2 uv) {
   vec3 c = radiance;
   if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0);
-  c = max(c, vec3(0.0));
-  if (uBloomMix > 0.0) c = mix(c, sampleSmooth(uBloomTex, uv), uBloomMix);
+  float exposure = exp2(uExposure);
+  c = max(c, vec3(0.0)) * exposure;
+  if (uBloomMix > 0.0) c = mix(c, sampleSmooth(uBloomTex, uv) * exposure, uBloomMix);
   if (uHalation > 0.0) {
-    float dark = exp(-4.0 * luminance(c));
-    c += uHalation * uHalationTint * sampleSmooth(uHalationTex, uv) * dark;
+    // Not over the hot core itself (only light above nominal fades it), and held back only where the wide
+    // surroundings are brighter than 0.15, so a light on a bright background does not tint it while halos in
+    // dark scenes, including inside a recipe's own glow, keep their full strength.
+    float fade = 1.0 / (1.0 + max(luminance(c) - 1.0, 0.0));
+    float hold = 1.0 / (1.0 + 4.0 * max(sampleSmooth(uHalationSurround, uv).r - 0.15, 0.0));
+    c += uHalation * uHalationTint * sampleSmooth(uHalationTex, uv) * fade * hold;
   }
-  return toneCurve(c * exp2(uExposure));
+  return toneCurve(c);
 }
 `
 
@@ -194,26 +236,43 @@ void main() {
 export interface LensOutput {
   bloom: Target | null
   halation: Target | null
+  /** Luminance of the wide surroundings (scene clamped to nominal, about 0.03 of the short side blur). */
+  surround: Target | null
 }
 
 /**
- * Builds the bloom and halation images from the 512 px base image. With
- * `hotInAlpha` the base's alpha already holds the light above nominal, taken
- * per sample. Caller releases the returned targets.
+ * Builds the bloom and halation images from the 512 px base image. `hot` is
+ * the base's per-sample light above nominal when the radiance pass wrote it
+ * (base.second); otherwise it is taken from the averaged base. Caller
+ * releases the returned targets.
  */
-export function runLens(gpu: Gpu, base: Target, lens: LensSettings, hotInAlpha: boolean): LensOutput {
+export function runLens(gpu: Gpu, base: Target, lens: LensSettings, exposure: number): LensOutput {
   const bloom = lens.bloom > 0 ? pyramid(gpu, base, bloomLevelFactors(lens)) : null
   let halation: Target | null = null
+  let surround: Target | null = null
   if (lens.halation > 0) {
-    const highlights = gpu.acquire(base.width, base.height)
-    gpu.draw(gpu.program(HOT_SHADER), highlights, {
+    let hot = base.second ?? null
+    let owned: Target | null = null
+    if (!hot) {
+      owned = gpu.acquire(base.width, base.height)
+      gpu.draw(gpu.program(HOT_SHADER), owned, {
+        textures: { uSrc: base },
+        uniforms: { uStart: halationStart(lens), uExposureScale: 2 ** exposure },
+      })
+      hot = owned
+    }
+    halation = pyramid(gpu, hot, halationLevelFactors(lens))
+    gpu.release(owned)
+    const scale = SURROUND_SHORT_SIDE / Math.min(base.width, base.height)
+    const small = gpu.acquire(Math.max(1, Math.round(base.width * scale)), Math.max(1, Math.round(base.height * scale)))
+    gpu.draw(gpu.program(SURROUND_SHADER), small, {
       textures: { uSrc: base },
-      uniforms: { uStart: halationStart(lens), uHotInAlpha: hotInAlpha },
+      uniforms: { uDstSize: [small.width, small.height], uTaps: Math.min(8, Math.ceil(base.width / small.width)), uExposureScale: 2 ** exposure },
     })
-    halation = pyramid(gpu, highlights, halationLevelFactors(lens))
-    gpu.release(highlights)
+    surround = gaussianBlur(gpu, small, SURROUND_BLUR_PX)
+    gpu.release(small)
   }
-  return { bloom, halation }
+  return { bloom, halation, surround }
 }
 
 function pyramid(gpu: Gpu, base: Target, factors: Rgb[]): Target {

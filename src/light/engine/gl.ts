@@ -18,6 +18,8 @@ export interface Target {
   readonly format: TextureFormat
   readonly texture: WebGLTexture
   readonly framebuffer: WebGLFramebuffer
+  /** A second image the same size, written by fragment output location 1 when this target is drawn to. */
+  readonly second?: Target
 }
 
 interface UniformInfo {
@@ -137,16 +139,19 @@ export class Gpu {
     return entry
   }
 
-  acquire(width: number, height: number, format: TextureFormat = 'rgba16f'): Target {
+  /** A render target from the pool; with `images` 2 it also has a `second` image for output location 1. */
+  acquire(width: number, height: number, format: TextureFormat = 'rgba16f', images: 1 | 2 = 1): Target {
     const w = Math.max(1, Math.round(width))
     const h = Math.max(1, Math.round(height))
-    const index = this.freeTargets.findIndex((t) => t.width === w && t.height === h && t.format === format)
+    const index = this.freeTargets.findIndex(
+      (t) => t.width === w && t.height === h && t.format === format && (t.second ? 2 : 1) === images,
+    )
     if (index >= 0) {
       const [target] = this.freeTargets.splice(index, 1)
       this.liveTargets.add(target)
       return target
     }
-    const target = this.createTarget(w, h, format)
+    const target = images === 2 ? this.createPair(w, h, format) : this.createTarget(w, h, format)
     this.liveTargets.add(target)
     return target
   }
@@ -275,9 +280,27 @@ export class Gpu {
     return { width, height, format, texture, framebuffer }
   }
 
+  /** Two images drawn together: `texture` takes output location 0, `second.texture` location 1. */
+  private createPair(width: number, height: number, format: TextureFormat): Target {
+    const gl = this.gl
+    const first = this.createTarget(width, height, format)
+    const second = this.createTarget(width, height, format)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, first.framebuffer)
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, second.texture, 0)
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1])
+    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER)
+    if (status !== gl.FRAMEBUFFER_COMPLETE) {
+      this.destroyTarget(first)
+      this.destroyTarget(second)
+      throw new LightEngineError(`Render target pair ${width}x${height} ${format} is incomplete (status ${status}).`)
+    }
+    return { ...first, second }
+  }
+
   private destroyTarget(target: Target): void {
     this.gl.deleteTexture(target.texture)
     this.gl.deleteFramebuffer(target.framebuffer)
+    if (target.second) this.destroyTarget(target.second)
   }
 }
 

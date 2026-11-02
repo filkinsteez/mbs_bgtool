@@ -6,7 +6,7 @@ import { getRecipe, RECIPE_LIST } from '../recipes'
 import { DEFAULT_LENS, RECIPE_IDS, type RecipeProgram } from '../scene'
 import { exportFileName, exportSize } from './export'
 import { grainAmplitude, grainParams, grainUniforms } from './grain'
-import { bloomLevelFactors, halationLevelFactors, lensBaseSize } from './lens'
+import { bloomLevelFactors, halationLevelFactors, lensBaseSize, levelForRadius } from './lens'
 import { toneCurve } from './output'
 import { coerceParam, resolveScene } from './resolve'
 
@@ -153,6 +153,14 @@ describe('lens weights', () => {
     expect(luminance(factors[7])).toBeCloseTo(0.75, 6)
     expect(factors[1]).toEqual([0, 0, 0])
     expect(resolveScene(recipe, { lens: { bloomLevels: [-1] } }).lens.bloomLevels).toBeUndefined()
+  })
+
+  it('puts the red halo at the halation radius and green one level narrower by default', () => {
+    const factors = halationLevelFactors({ ...DEFAULT_LENS, halation: 1, halationRadius: 0.05 })
+    const center = (channel: number) => factors.reduce((sum, f, level) => sum + f[channel] * level, 0)
+    expect(center(0)).toBeCloseTo(levelForRadius(0.05), 1)
+    expect(center(0) - center(1)).toBeCloseTo(1, 1)
+    expect(hexToLinear(DEFAULT_LENS.halationTint).map((v) => Number(v.toFixed(2)))).toEqual([1, 0.3, 0])
   })
 
   it('works on a 512 px short side at any output size', () => {
