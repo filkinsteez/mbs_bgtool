@@ -181,6 +181,26 @@ function inFront(haze: number): number {
   return t * t * (3 - 2 * t)
 }
 
+/** Share of the glow's extra lightness above the default Intensity that its bridge light may follow. */
+const BRIDGE_RISE = 0.3
+
+/**
+ * Bridge light for one glow, per unit of its pale tint. Up to the default
+ * Intensity it follows the glow's gain. Above it, it is solved again at the
+ * brighter sky and glow, and the blend midpoint gets only a share of the
+ * extra lightness, so the bridge stays pale and colored and only the glow
+ * core goes white.
+ */
+function bridgeLight(sky: Rgb, light: Rgb, tint: Rgb, haze: number, intensity: number, skyGain: number, glowGain: number, lightGain: number): number {
+  if (intensity <= 0.5) return bridgeAmount(sky, light, tint, haze) * lightGain
+  const lighter = (s: Rgb, g: Rgb) => Math.max(linearToOklab(s)[0], linearToOklab(g)[0])
+  const brightSky = scale(sky, skyGain)
+  const brightGlow = scale(light, glowGain)
+  const atDefault = lighter(sky, light)
+  const maxL = atDefault + BRIDGE_RISE * Math.max(0, lighter(brightSky, brightGlow) - atDefault)
+  return bridgeAmount(brightSky, brightGlow, tint, haze, maxL)
+}
+
 /**
  * Intensity is daylight. The sky gains more than the glows (twilight skies
  * dim fastest overhead), so more light brightens the whole frame and the top
@@ -230,7 +250,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     glowAxis.push(...axis(glow.radius * reach, glow.aniso, glow.angle))
     glowEdge.push(glow.vary, 1.15, 1.7 * i + 0.3, front)
     const tint = paleTint(light)
-    const amount = front * layout.bridge * bridgeAmount(sky, light, tint, haze) * lightGain
+    const amount = front * layout.bridge * bridgeLight(sky, light, tint, haze, intensity, skyGain, gain, lightGain)
     glowBridge.push(...scale(tint, amount))
   }
   const z = layout.zenith

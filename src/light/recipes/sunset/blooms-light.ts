@@ -39,10 +39,10 @@ function balancePoint(haze: number): number {
 /**
  * Amount of pale light (times `tint`) added where a glow meets the sky. It is
  * solved so that where the two weigh the same, the result after the tone
- * curve reaches the lighter side's Oklab L. Pairs of near hues or with a grey
- * end get none, so their own blend is left alone.
+ * curve reaches the lighter side's Oklab L, or `maxL` if that is lower. Pairs
+ * of near hues or with a grey end get none, so their own blend is left alone.
  */
-export function bridgeAmount(sky: Rgb, glow: Rgb, tint: Rgb, haze: number): number {
+export function bridgeAmount(sky: Rgb, glow: Rgb, tint: Rgb, haze: number, maxL = Infinity): number {
   const [la, ca, ha] = linearToOklch(sky)
   const [lb, cb, hb] = linearToOklch(glow)
   const half = Math.sin(((hb - ha) * Math.PI) / 360)
@@ -50,7 +50,7 @@ export function bridgeAmount(sky: Rgb, glow: Rgb, tint: Rgb, haze: number): numb
   if (gate === 0) return 0
   const k = balancePoint(haze)
   const mid: Rgb = [k * (sky[0] + glow[0]), k * (sky[1] + glow[1]), k * (sky[2] + glow[2])]
-  const target = Math.max(la, lb)
+  const target = Math.min(Math.max(la, lb), maxL)
   const lightness = (amount: number) => linearToOklch(toneCurve(mid.map((v, i) => v + amount * tint[i])))[0]
   if (lightness(0) >= target) return 0
   let lo = 0
