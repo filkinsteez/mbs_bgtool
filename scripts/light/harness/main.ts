@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import {
   buildMask,
   compareImages,
@@ -11,13 +12,45 @@ import {
   type RgbaImage,
   type RowProfiles,
 } from '../../../src/light/audit'
-import { exportPreset, type ExportRequest } from '../../../src/light/engine/export'
-import { LightRenderer } from '../../../src/light/engine/renderer'
+import type * as ExportModule from '../../../src/light/engine/export'
+import { ProgramRenderer } from '../../../src/light/engine/programRenderer'
 import type { SceneInput } from '../../../src/light/engine/resolve'
-import { getRecipe, RECIPE_LIST } from '../../../src/light/recipes'
 import type { IgnoreRect } from '../../../src/light/references'
-import { isRecipeId, type Preset, type RecipeProgram } from '../../../src/light/scene'
+import { isRecipeId, RECIPE_IDS, type Preset, type RecipeDefinition, type RecipeId, type RecipeProgram } from '../../../src/light/scene'
 import { TEST_PROGRAMS } from './testPrograms'
+
+// Each recipe file loads on its own, so a recipe that is broken mid-edit only fails the scenes that use it.
+const RECIPE_FILES = import.meta.glob(['../../../src/light/recipes/*/*.ts', '!../../../src/light/recipes/**/*.test.ts'])
+// Exports go through the whole recipe registry, so that module loads only when an export is asked for.
+const EXPORT_FILES = import.meta.glob('../../../src/light/engine/export.ts')
+
+const recipes = new Map<RecipeId, RecipeDefinition>()
+const recipeErrors = new Map<RecipeId, string>()
+
+function isDefinition(value: unknown, id: RecipeId): value is RecipeDefinition {
+  return typeof value === 'object' && value !== null && (value as RecipeDefinition).id === id && typeof (value as RecipeDefinition).fragment === 'string'
+}
+
+async function loadRecipes(): Promise<void> {
+  await Promise.all(
+    RECIPE_IDS.map(async (id) => {
+      const [mood, name] = id.split('.')
+      const file = `src/light/recipes/${mood}/${name}.ts`
+      const load = RECIPE_FILES[`../../../${file}`]
+      if (!load) {
+        recipeErrors.set(id, `no file ${file}`)
+        return
+      }
+      try {
+        const definition = Object.values((await load()) as Record<string, unknown>).find((value) => isDefinition(value, id))
+        if (definition) recipes.set(id, definition)
+        else recipeErrors.set(id, `${file} exports no recipe with id ${id}`)
+      } catch (error) {
+        recipeErrors.set(id, `${file} failed to load: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }),
+  )
+}
 
 /** A recipe scene (with `recipe`) or a test program scene (with `program`). */
 export type HarnessScene = SceneInput & { recipe?: string; program?: string }
@@ -49,7 +82,7 @@ export interface FitSetupRequest {
 }
 
 const canvas = document.createElement('canvas')
-const renderer = new LightRenderer(canvas)
+const renderer = new ProgramRenderer(canvas)
 let fit: { prepared: FitTarget; width: number; height: number } | null = null
 
 function programFor(scene: HarnessScene): RecipeProgram {
@@ -59,7 +92,9 @@ function programFor(scene: HarnessScene): RecipeProgram {
     return program
   }
   if (!scene.recipe || !isRecipeId(scene.recipe)) throw new Error(`Unknown recipe: ${scene.recipe}`)
-  return getRecipe(scene.recipe)
+  const recipe = recipes.get(scene.recipe)
+  if (!recipe) throw new Error(recipeErrors.get(scene.recipe) ?? `${scene.recipe} is not loaded`)
+  return recipe
 }
 
 function renderImage(request: RenderRequest): { image: RgbaImage; ms: number } {
@@ -97,15 +132,22 @@ const api = {
     const debug = gl.getExtension('WEBGL_debug_renderer_info')
     return {
       renderer: debug ? String(gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)) : String(gl.getParameter(gl.RENDERER)),
-      recipes: RECIPE_LIST.map((recipe) => ({
-        id: recipe.id,
-        mood: recipe.mood,
-        colorSlots: recipe.colorSlots,
-        defaultColors: recipe.defaultColors,
-        params: recipe.params,
-        lens: recipe.lens ?? {},
-        output: recipe.output ?? {},
-      })),
+      recipes: RECIPE_IDS.flatMap((id) => {
+        const recipe = recipes.get(id)
+        if (!recipe) return []
+        return [
+          {
+            id: recipe.id,
+            mood: recipe.mood,
+            colorSlots: recipe.colorSlots,
+            defaultColors: recipe.defaultColors,
+            params: recipe.params,
+            lens: recipe.lens ?? {},
+            output: recipe.output ?? {},
+          },
+        ]
+      }),
+      recipeErrors: Object.fromEntries(recipeErrors),
     }
   },
 
@@ -140,8 +182,9 @@ const api = {
   },
 
   /** Runs the real export path (own offscreen renderer, PNG encode) and uploads the PNG bytes. */
-  async exportPng(preset: Preset, request: ExportRequest, uploadKey: string): Promise<{ fileName: string; width: number; height: number; ms: number }> {
+  async exportPng(preset: Preset, request: ExportModule.ExportRequest, uploadKey: string): Promise<{ fileName: string; width: number; height: number; ms: number }> {
     const start = performance.now()
+    const { exportPreset } = (await EXPORT_FILES['../../../src/light/engine/export.ts']()) as typeof ExportModule
     const result = await exportPreset(preset, request)
     const ms = performance.now() - start
     await upload(uploadKey, new Uint8Array(await result.blob.arrayBuffer()))
@@ -151,7 +194,7 @@ const api = {
   /** Loses a context on purpose and reports what each renderer call does afterwards. */
   contextLoss(scene: HarnessScene): Record<string, string> {
     const lostCanvas = document.createElement('canvas')
-    const lostRenderer = new LightRenderer(lostCanvas)
+    const lostRenderer = new ProgramRenderer(lostCanvas)
     lostRenderer.renderProgram(programFor(scene), scene, { width: 64, height: 64 })
     lostRenderer.gpu.gl.getExtension('WEBGL_lose_context')?.loseContext()
     const outcome = (action: () => unknown): string => {
@@ -165,7 +208,7 @@ const api = {
     return {
       readPixels: outcome(() => lostRenderer.readPixels()),
       render: outcome(() => lostRenderer.renderProgram(programFor(scene), scene, { width: 64, height: 64 })),
-      newRenderer: outcome(() => new LightRenderer(lostCanvas)),
+      newRenderer: outcome(() => new ProgramRenderer(lostCanvas)),
     }
   },
 
@@ -206,5 +249,6 @@ declare global {
   }
 }
 
+await loadRecipes()
 window.lightHarness = api
 document.documentElement.dataset.harness = 'ready'

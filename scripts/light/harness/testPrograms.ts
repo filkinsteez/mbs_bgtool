@@ -245,29 +245,35 @@ vec3 radiance(vec2 uv, vec2 p) {
 }
 
 /**
- * A Meta Blue disk, a thin warm-white line and an orange-red dot at `gain` x nominal (gain 1: every max channel
- * is at most 1) on a neutral background of linear level `background`, for halation checks.
+ * A Meta Blue disk, a thin warm-white line and an orange-red dot, each at its own gain x nominal (gain 1: every
+ * channel at most 1), on a neutral background of linear level `background`, for halation checks.
  */
 export const halationProgram: RecipeProgram = {
   id: 'test.halation',
   colorSlots: [],
   defaultColors: [],
   params: [
-    { kind: 'number', key: 'gain', label: 'Gain', min: 0, max: 16, step: 0.01, default: 4 },
+    { kind: 'number', key: 'blue', label: 'Blue disk', min: 0, max: 16, step: 0.01, default: 4 },
+    { kind: 'number', key: 'white', label: 'White line', min: 0, max: 16, step: 0.01, default: 4 },
+    { kind: 'number', key: 'orange', label: 'Orange dot', min: 0, max: 16, step: 0.01, default: 4 },
     { kind: 'number', key: 'background', label: 'Background', min: 0, max: 1, step: 0.01, default: 0 },
+    { kind: 'number', key: 'glow', label: 'Scene glow around the line', min: 0, max: 2, step: 0.01, default: 0 },
   ],
   fragment: /* glsl */ `
-uniform float uGain;
+uniform vec3 uGains;
 uniform float uBackground;
+uniform float uGlow;
 vec3 radiance(vec2 uv, vec2 p) {
-  vec3 light = vec3(0.0, 0.127, 0.745) * (1.0 - smoothstep(0.1, 0.106, length(p - vec2(-0.45, 0.0))));
+  vec3 light = uGains.x * vec3(0.0, 0.127, 0.745) * (1.0 - smoothstep(0.1, 0.106, length(p - vec2(-0.45, 0.0))));
   float across = p.x / 0.0025;
-  light += vec3(1.0, 0.92, 0.8) * exp(-0.5 * across * across) * (1.0 - smoothstep(0.3, 0.32, abs(p.y)));
-  light += vec3(1.0, 0.078, 0.0) * exp(-0.5 * dot(p - vec2(0.45, 0.0), p - vec2(0.45, 0.0)) / (0.012 * 0.012));
-  return uBackground * vec3(0.8, 0.82, 0.85) + uGain * light;
+  float along = 1.0 - smoothstep(0.3, 0.32, abs(p.y));
+  light += uGains.y * vec3(1.0, 0.92, 0.8) * exp(-0.5 * across * across) * along;
+  light += uGlow * vec3(1.0, 0.45, 0.15) * exp(-abs(p.x) / 0.02) * along;
+  light += uGains.z * vec3(1.0, 0.078, 0.0) * exp(-0.5 * dot(p - vec2(0.45, 0.0), p - vec2(0.45, 0.0)) / (0.012 * 0.012));
+  return uBackground * vec3(0.8, 0.82, 0.85) + light;
 }
 `,
-  uniforms: (ctx) => ({ uGain: ctx.num('gain'), uBackground: ctx.num('background') }),
+  uniforms: (ctx) => ({ uGains: [ctx.num('blue'), ctx.num('white'), ctx.num('orange')], uBackground: ctx.num('background'), uGlow: ctx.num('glow') }),
 }
 
 /** One small gaussian point at the frame center (sigma 0.001 of the short side), for measuring blur widths. */

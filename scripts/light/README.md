@@ -4,6 +4,8 @@ Node scripts that render `src/light` scenes in headless system Chrome (Playwrigh
 
 No GPU flags are passed. On macOS headless Chrome uses the Metal GPU and has `EXT_color_buffer_float`. If a machine falls back to software rendering, set `LIGHT_CHROME_ARGS="--enable-gpu --ignore-gpu-blocklist"`.
 
+The harness page loads each recipe file on its own. A recipe that does not load (often because its owner is mid-edit) only fails the scenes that use it: `check.mjs` prints a note and skips it, `audit.mjs` reports those references as failed and goes on, and the export check is skipped because exports load every recipe. If the page itself cannot start, the harness stops at once with the browser's or Vite's message.
+
 References come from `public/references/awe/manifest.json` when it exists (only entries whose file exists), otherwise from the screenshots in `artifacts/brief-screens/` with their white rounded corners masked. Width and height always come from the image file. Presets are read from `src/light/presets/references/<id>.json`.
 
 ## Commands
@@ -26,9 +28,12 @@ Engine checks in the browser; prints a pass/fail table and exits 1 on a failure.
 - `export-vs-preview.png`: a 16:9 export through `exportPreset` (offscreen renderer, PNG encode; checks size, format and file name) downsampled next to a 960x540 preview of the same preset.
 - context (no image): loses a context on purpose; `readPixels`, `render` and a new `LightRenderer` on that canvas must throw an error starting "WebGL context lost" (so `exportPreset` throws instead of returning a black PNG). Also prints a 1920x1080 1x render's time with and without `measure: true` (which waits for the GPU with a 1-pixel read).
 - `lens.png`: point lights, a line and a disk with the lens off, bloom, halation, and both. Also checks that bloom keeps the mean light of a dim scene.
-- `lens-halation.png`: a Meta Blue disk, a thin line and an orange-red dot at 4x on black with halation off and on, at nominal (max channel 1) on black with halation on, and at 4x on a bright background with halation on. Checks that nominal light makes no halation at all and that bright surroundings hold it back.
+- `lens-halation.png`, `lens-halation-2.png`: a Meta Blue disk, a thin white-hot line and an orange-red dot at 4x with halation off and on, the blue disk alone at 8x, everything at nominal, at nominal with exposure +2, and at 4x on a bright background. Checks that blue lights at 4x and 8x add no light at all, that white-hot and orange lights get a red-orange halo, that nominal light adds nothing, that exposure counts before the threshold, and that bright surroundings hold the halo back.
 
-Lens rules: bloom has no threshold; it mixes the scene with its blur (`mix(scene, bloom, amount)`, per-level weights summing to 1 and tints of luminance 1), so flat fields stay exact and a dim scene keeps its mean light. Halation comes only from light above nominal: per sample of the lens base, luminance times a ramp from max channel `halationThreshold` (at least 1) to twice that; it is added in scene-linear light after bloom, weighted by `exp(-4 Y)` of the pixel it lands on, so it shows on dark surroundings and not on bright ones.
+Lens rules, all in exposed light (exposure is applied first):
+- Bloom has no threshold; it mixes the scene with its blur (`mix(scene, bloom, amount)`, per-level weights summing to 1 and tints of luminance 1), so flat fields stay exact and a dim scene keeps its mean light.
+- Halation is fed by each channel's own light above nominal, like film, where only light that reaches the red layer comes back: per sample of the lens base, channel value times a ramp from `halationThreshold` (at least 1) to twice that. `halationTint` is the per-channel strength; the default `#FF9500` is red 1, green 0.3, blue 0, so blue lights make no halo and white-hot lights get orange near, red farther out. Red sits at `halationRadius`, green `halationSpread` x 1.5 levels narrower (default 0.67: one level).
+- Halation is added in scene-linear light after bloom, times `1 / (1 + max(Y - 1, 0))` (it does not tint the hot core itself) and `1 / (1 + 4 max(Ys - 0.15, 0))`, where `Ys` is the luminance of the wide surroundings (the scene clamped to nominal, blurred to about 0.06 of the short side). Dark scenes keep the full halo, including inside a recipe's own glow; on a bright background it is held back so it does not tint the background.
 - `report.json`: every result and the run time.
 
 ```sh

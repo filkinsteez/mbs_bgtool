@@ -80,6 +80,7 @@ export async function startHarness({ verbose = false } = {}) {
     const deadline = Date.now() + 60_000
     while (!(await page.evaluate(() => document.documentElement.dataset.harness === 'ready'))) {
       if (moduleErrors.length > 0) throw new Error(`a module failed to load:\n${moduleErrors.join('\n')}`)
+      if (pageErrors.length > 0) throw new Error(pageErrors.join('\n'))
       if (Date.now() > deadline) throw new Error('timed out after 60 s')
       await new Promise((resolve) => setTimeout(resolve, 100))
     }

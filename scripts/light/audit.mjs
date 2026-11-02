@@ -97,7 +97,10 @@ try {
   const { HEATMAP_MAX } = await harness.ssr('/src/light/audit/metrics.ts')
   const ids = args.all ? references.map((r) => r.id) : requested
   console.log(`references from ${source}; auditing ${ids.length}`)
+  const { recipeErrors } = await harness.info()
+  for (const [recipe, message] of Object.entries(recipeErrors)) console.warn(`${recipe} did not load, its references will fail: ${message}`)
   const timings = []
+  const failures = []
   for (const id of ids) {
     const ref = references.find((r) => r.id === id)
     if (!ref) {
@@ -116,17 +119,24 @@ try {
     const refStart = Date.now()
     const target = await loadRgba(ref.file)
     harness.putBlob('target', target)
-    const result = await harness.call('audit', {
-      scene: preset.scene,
-      width: target.width,
-      height: target.height,
-      supersample,
-      targetKey: 'target',
-      ignore: ref.ignore,
-      cornerRadius: ref.cornerRadius,
-      upload: 'render',
-      heatmapUpload: 'heatmap',
-    })
+    let result
+    try {
+      result = await harness.call('audit', {
+        scene: preset.scene,
+        width: target.width,
+        height: target.height,
+        supersample,
+        targetKey: 'target',
+        ignore: ref.ignore,
+        cornerRadius: ref.cornerRadius,
+        upload: 'render',
+        heatmapUpload: 'heatmap',
+      })
+    } catch (error) {
+      failures.push(id)
+      console.warn(`${id}: failed: ${String(error instanceof Error ? error.message : error).split('\n')[0]}`)
+      continue
+    }
     const render = { width: target.width, height: target.height, data: harness.takeUpload('render') }
     const heatmap = { width: target.width, height: target.height, data: harness.takeUpload('heatmap') }
     const dir = path.join(outDir, id)
@@ -189,6 +199,10 @@ try {
   if (sheet) console.log(`contact sheet: ${path.relative(ROOT, sheet)}`)
   const files = await readdir(outDir).catch(() => [])
   console.log(`done in ${((Date.now() - started) / 1000).toFixed(1)} s (${timings.length} references, ${files.length} entries in ${path.relative(ROOT, outDir)}/)`)
+  if (failures.length > 0) {
+    console.warn(`failed: ${failures.join(', ')}`)
+    process.exitCode = 1
+  }
 } finally {
   await harness.close()
 }

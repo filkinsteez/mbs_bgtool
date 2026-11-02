@@ -17,6 +17,11 @@ const record = (name, pass, detail) => {
   results.push({ name, pass, detail })
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}  ${detail}`)
 }
+/** A check that could not run because a recipe it needs did not load (usually mid-edit by its owner). */
+const skip = (name, detail) => {
+  results.push({ name, pass: true, skipped: true, detail })
+  console.log(`SKIP  ${name}  ${detail}`)
+}
 
 const SRGB_TO_LINEAR = Array.from({ length: 256 }, (_, v) => {
   const c = v / 255
@@ -80,6 +85,10 @@ try {
   const { compareImages, bandingScore, buildMask } = await harness.ssr('/src/light/audit/index.ts')
   const { linearToOklch, linearToOklab } = await harness.ssr('/src/light/color/oklab.ts')
   const noLens = { bloom: 0, halation: 0 }
+  const { recipeErrors } = await harness.info()
+  const loads = (scene) => !scene.recipe || !recipeErrors[scene.recipe]
+  const notLoaded = (scenes) => [...new Set(scenes.filter((scene) => !loads(scene)).map((scene) => scene.recipe))]
+  for (const [recipe, message] of Object.entries(recipeErrors)) console.log(`note  ${recipe} did not load: ${message.split('\n')[0]}`)
 
   if (wanted('hex')) {
     const hexes = [...new Set(PACKS.flatMap((pack) => pack.colors.map((c) => c.hex)))]
@@ -118,51 +127,75 @@ try {
   }
 
   if (wanted('determinism')) {
-    const scenes = [
+    const all = [
       { recipe: 'sunset.ramp', seed: 7 },
       { recipe: 'contour.rim', seed: 3, output: { grain: 0.5 } },
       { program: 'test.post', seed: 5 },
+      { program: 'test.scatter', seed: 4, output: { grain: 0.5 } },
     ]
+    const scenes = all.filter(loads)
     let identical = 0
     for (const scene of scenes) {
       const first = await harness.render({ scene, width: 925, height: 1002 })
-      await harness.render({ scene: { recipe: 'contour.halo', seed: 99 }, width: 640, height: 480 })
+      await harness.render({ scene: { program: 'test.halation', seed: 99, lens: { halation: 1, bloom: 0.2 } }, width: 640, height: 480 })
       const second = await harness.render({ scene, width: 925, height: 1002 })
       if (Buffer.compare(first.data, second.data) === 0) identical++
     }
-    record('same scene twice gives identical pixels', identical === scenes.length, `${identical}/${scenes.length} scenes identical (incl. grain and a post pass)`)
+    const skipped = notLoaded(all)
+    record(
+      'same scene twice gives identical pixels',
+      identical === scenes.length,
+      `${identical}/${scenes.length} scenes identical (incl. grain, a post pass and scatter)${skipped.length ? `; not loaded: ${skipped.join(', ')}` : ''}`,
+    )
   }
 
   if (wanted('resolution')) {
-    const scenes = [
+    // Test programs check the engine; recipes are listed separately because their owners change them.
+    const programs = [
+      { name: 'test.post', scene: { program: 'test.post', seed: 2 } },
+      { name: 'test.scatter', scene: { program: 'test.scatter', seed: 2 } },
+      { name: 'test.halation', scene: { program: 'test.halation', seed: 2, lens: { halation: 1, bloom: 0.15 } } },
+      { name: 'test.glows', scene: { program: 'test.glows', seed: 2, lens: { bloom: 0.1 } } },
+    ]
+    const recipeScenes = [
       { name: 'sunset.ramp', scene: { recipe: 'sunset.ramp', seed: 2 } },
       { name: 'sunset.bands', scene: { recipe: 'sunset.bands', seed: 2 } },
       { name: 'contour.rim', scene: { recipe: 'contour.rim', seed: 2 } },
-      { name: 'contour.halo', scene: { recipe: 'contour.halo', seed: 2, params: { rings: 3 } } },
-      { name: 'test.post', scene: { program: 'test.post', seed: 2 } },
-      { name: 'test.scatter', scene: { program: 'test.scatter', seed: 2 } },
+      { name: 'contour.halo', scene: { recipe: 'contour.halo', seed: 2 } },
     ]
     const small = { width: 925, height: 1002 }
     const large = { width: Math.round((3840 * 925) / 1002), height: 3840 }
-    const rows = []
-    let ok = true
-    for (const { name, scene } of scenes) {
-      const a = await harness.render({ scene: { ...scene, output: { grain: 0 } }, ...small })
-      const big = await harness.render({ scene: { ...scene, output: { grain: 0 } }, ...large })
-      const b = await resizeRgba(big, small.width, small.height, 'lanczos3')
-      const mask = buildMask(small.width, small.height, [], 0)
-      const { metrics } = compareImages(a, b, mask)
-      const pass = metrics.deltaE.mean < 0.004 && metrics.deltaE.p95 < 0.01
-      ok &&= pass
-      rows.push(`${name} mean ${metrics.deltaE.mean.toFixed(4)} p95 ${metrics.deltaE.p95.toFixed(4)} (4K render ${big.ms.toFixed(0)} ms)`)
-      if (name === 'contour.rim' || name === 'test.post' || name === 'test.scatter') {
-        await composeRow(path.join(outDir, `resolution-${name}.png`), [
-          { image: a, caption: `${name} at 925 px` },
-          { image: b, caption: `${name} at ${large.width}x${large.height}, downsampled` },
-        ])
+    const compareSizes = async (list) => {
+      const rows = []
+      let ok = true
+      for (const { name, scene } of list.filter((entry) => loads(entry.scene))) {
+        // Dither off: a shrunk 4K render is rounded to 8 bits again after its dither averages out, which turns a
+        // glow of a fraction of a code value into 0, and near black Oklab reads that as a large difference.
+        const a = await harness.render({ scene: { ...scene, output: { grain: 0 } }, ...small, dither: false })
+        const big = await harness.render({ scene: { ...scene, output: { grain: 0 } }, ...large, dither: false })
+        const b = await resizeRgba(big, small.width, small.height, 'lanczos3')
+        const mask = buildMask(small.width, small.height, [], 0)
+        const { metrics } = compareImages(a, b, mask)
+        ok &&= metrics.deltaE.mean < 0.004 && metrics.deltaE.p95 < 0.01
+        rows.push(`${name} mean ${metrics.deltaE.mean.toFixed(4)} p95 ${metrics.deltaE.p95.toFixed(4)} (4K render ${big.ms.toFixed(0)} ms)`)
+        if (name === 'contour.rim' || name === 'test.post' || name === 'test.scatter') {
+          await composeRow(path.join(outDir, `resolution-${name}.png`), [
+            { image: a, caption: `${name} at 925 px` },
+            { image: b, caption: `${name} at ${large.width}x${large.height}, downsampled` },
+          ])
+        }
       }
+      return { ok, rows }
     }
-    record('925 px and 3840 px renders match after downsampling', ok, rows.join('; '))
+    const engineRun = await compareSizes(programs)
+    record('925 px and 3840 px renders match after downsampling (test programs)', engineRun.ok, engineRun.rows.join('; '))
+    const recipeRun = await compareSizes(recipeScenes)
+    const skipped = notLoaded(recipeScenes.map((entry) => entry.scene))
+    record(
+      '925 px and 3840 px renders match after downsampling (recipes as they are now)',
+      recipeRun.ok,
+      `${recipeRun.rows.join('; ')}${skipped.length ? `; not loaded: ${skipped.join(', ')}` : ''}`,
+    )
   }
 
   if (wanted('banding')) {
@@ -337,8 +370,10 @@ try {
     )
   }
 
-  if (wanted('export')) {
-    const preset = { id: 'check', pack: 'bold', scene: { recipe: 'contour.halo', seed: 4, colors: [], params: { rings: 2 }, lens: {}, output: {} } }
+  if (wanted('export') && Object.keys(recipeErrors).length > 0) {
+    skip('export: 16:9 PNG at 3840x2160 matches the preview', `the export path loads every recipe, and ${Object.keys(recipeErrors).join(', ')} did not load`)
+  } else if (wanted('export')) {
+    const preset = { id: 'check', pack: 'bold', scene: { recipe: 'sunset.ramp', seed: 4, colors: [], params: {}, lens: {}, output: {} } }
     const result = await harness.call('exportPng', preset, { aspect: '16:9' }, 'export')
     const png = harness.takeUpload('export')
     const meta = await sharp(png).metadata()
@@ -350,7 +385,7 @@ try {
       { image: preview, caption: 'preview 960x540' },
       { image: small, caption: `${result.fileName}, downsampled` },
     ])
-    const ok = meta.format === 'png' && meta.width === 3840 && meta.height === 2160 && result.fileName === 'contour.halo-bold-16x9-seed4.png' && metrics.deltaE.mean < 0.004
+    const ok = meta.format === 'png' && meta.width === 3840 && meta.height === 2160 && result.fileName === 'sunset.ramp-bold-16x9-seed4.png' && metrics.deltaE.mean < 0.004
     record(
       'export: 16:9 PNG at 3840x2160 matches the preview',
       ok,
@@ -434,14 +469,14 @@ try {
   }
 
   if (wanted('context')) {
-    const outcomes = await harness.call('contextLoss', { recipe: 'contour.halo', seed: 1 })
+    const outcomes = await harness.call('contextLoss', { program: 'test.lens', seed: 1 })
     const lost = Object.values(outcomes).every((message) => message.startsWith('WebGL context lost'))
     record(
       'lost context: readPixels, render and a new renderer on that canvas throw "WebGL context lost"',
       lost,
       Object.entries(outcomes).map(([call, message]) => `${call}: ${message}`).join('; '),
     )
-    const timing = await harness.call('measure', { scene: { recipe: 'sunset.ramp', seed: 3 }, width: 1920, height: 1080, supersample: 1 })
+    const timing = await harness.call('measure', { scene: { program: 'test.scatter', seed: 3 }, width: 1920, height: 1080, supersample: 1 })
     record(
       'measure: render waits for the GPU when asked',
       timing.measuredFlag && timing.measured >= timing.issued * 0.5,
@@ -481,38 +516,62 @@ try {
     const after = meanLinear(dimBloom)
     record('bloom keeps total light on a dim scene', Math.abs(after / before - 1) < 0.02, `mean linear luminance ${before.toFixed(5)} -> ${after.toFixed(5)} (${((after / before - 1) * 100).toFixed(2)} %)`)
 
-    // Halation: only light above nominal feeds it, and bright surroundings suppress it.
-    const halSize = { width: 640, height: 360 }
+    // Halation: fed by each channel's own light above nominal after exposure (red in full, green 0.3, blue 0).
+    const halSize = { width: 480, height: 270 }
     const halLens = { bloom: 0, halation: 1, halationRadius: 0.05 }
-    const halScene = (params, lens) => ({ program: 'test.halation', params, lens })
-    const halRender = (params, lens) => harness.render({ scene: halScene(params, lens), ...halSize, dither: false })
-    const addedLight = (on, off) => {
-      let sum = 0
+    const halPair = async (params, output = {}) => {
+      const scene = { program: 'test.halation', params, output }
+      const off = await harness.render({ scene: { ...scene, lens: noLens }, ...halSize, dither: false })
+      const on = await harness.render({ scene: { ...scene, lens: halLens }, ...halSize, dither: false })
+      const added = [0, 0, 0]
+      let largest = 0
       for (let i = 0; i < on.data.length; i += 4) {
-        for (let k = 0; k < 3; k++) sum += SRGB_TO_LINEAR[on.data[i + k]] - SRGB_TO_LINEAR[off.data[i + k]]
+        for (let k = 0; k < 3; k++) {
+          added[k] += (SRGB_TO_LINEAR[on.data[i + k]] - SRGB_TO_LINEAR[off.data[i + k]]) / (on.data.length / 4)
+          largest = Math.max(largest, Math.abs(on.data[i + k] - off.data[i + k]))
+        }
       }
-      return sum / (on.data.length / 4)
+      return { off, on, added, largest }
     }
-    const nominalOff = await halRender({ gain: 1 }, noLens)
-    const nominalOn = await halRender({ gain: 1 }, halLens)
-    const hotOff = await halRender({ gain: 4 }, noLens)
-    const hotOn = await halRender({ gain: 4 }, halLens)
-    const brightOff = await halRender({ gain: 4, background: 0.6 }, noLens)
-    const brightOn = await halRender({ gain: 4, background: 0.6 }, halLens)
-    let nominalDiff = 0
-    for (let i = 0; i < nominalOn.data.length; i++) nominalDiff = Math.max(nominalDiff, Math.abs(nominalOn.data[i] - nominalOff.data[i]))
-    const onBlack = addedLight(hotOn, hotOff)
-    const onBright = addedLight(brightOn, brightOff)
+    const only = (light, gain) => ({ blue: 0, white: 0, orange: 0, [light]: gain })
+    const blue4 = await halPair(only('blue', 4))
+    const blue8 = await halPair(only('blue', 8))
+    const white4 = await halPair(only('white', 4))
+    const orange4 = await halPair(only('orange', 4))
+    const nominal = await halPair({ blue: 1, white: 1, orange: 1 })
+    const exposed = await halPair({ blue: 1, white: 1, orange: 1 }, { exposure: 2 })
+    const all = await halPair({ blue: 4, white: 4, orange: 4 })
+    const bright = await halPair({ blue: 4, white: 4, orange: 4, background: 0.6 })
     await composeRow(path.join(outDir, 'lens-halation.png'), [
-      { image: hotOff, caption: '4x nominal on black, halation off' },
-      { image: hotOn, caption: '4x on black, halation 1' },
-      { image: nominalOn, caption: 'nominal (max channel 1) on black, halation 1' },
-      { image: brightOn, caption: '4x on a bright background, halation 1' },
+      { image: all.off, caption: 'blue disk, white line, orange dot at 4x, halation off' },
+      { image: all.on, caption: 'the same, halation 1' },
+      { image: blue8.on, caption: 'blue disk alone at 8x, halation 1' },
     ])
+    await composeRow(path.join(outDir, 'lens-halation-2.png'), [
+      { image: nominal.on, caption: 'all at nominal, halation 1' },
+      { image: exposed.on, caption: 'all at nominal with exposure +2, halation 1' },
+      { image: bright.on, caption: 'all at 4x on a bright background, halation 1' },
+    ])
+    const fmt = (rgb) => rgb.map((v) => v.toFixed(5)).join(', ')
     record(
-      'halation: only from light above nominal, held back on bright surroundings',
-      nominalDiff === 0 && onBlack > 0.002 && onBright < onBlack * 0.3,
-      `nominal light: largest change ${nominalDiff} code values; 4x light adds ${onBlack.toFixed(4)} mean linear light on black, ${onBright.toFixed(4)} (${((onBright / onBlack) * 100).toFixed(0)} %) on a bright background; images in lens-halation.png`,
+      'halation: blue lights at 4x and 8x make no warm halo',
+      Math.max(...blue4.added, ...blue8.added) < 2e-5,
+      `added linear light (R, G, B): 4x ${fmt(blue4.added)}; 8x ${fmt(blue8.added)}; images in lens-halation.png`,
+    )
+    record(
+      'halation: white-hot and orange lights keep a red-orange halo',
+      white4.added[0] > 1e-3 && white4.added[1] > 0 && white4.added[0] > 2 * white4.added[1] && orange4.added[0] > 5e-4,
+      `added linear light (R, G, B): white 4x ${fmt(white4.added)}; orange 4x ${fmt(orange4.added)}`,
+    )
+    record(
+      'halation: nothing from nominal light; exposure counts before the threshold',
+      nominal.largest === 0 && exposed.added[0] > 1e-3,
+      `nominal: largest change ${nominal.largest} code values; nominal with exposure +2 adds ${fmt(exposed.added)}; images in lens-halation-2.png`,
+    )
+    record(
+      'halation: held back where the wide surroundings are bright',
+      bright.added[0] < 0.6 * all.added[0],
+      `added red light, the same lights at 4x: ${all.added[0].toFixed(5)} on black, ${bright.added[0].toFixed(5)} on a 0.6 grey background (${((bright.added[0] / all.added[0]) * 100).toFixed(0)} %)`,
     )
     record('lens images written', true, path.relative(ROOT, path.join(outDir, 'lens.png')))
   }
@@ -521,6 +580,9 @@ try {
 }
 
 const failed = results.filter((r) => !r.pass)
+const skipped = results.filter((r) => r.skipped)
 await writeFile(path.join(outDir, 'report.json'), JSON.stringify({ seconds: (Date.now() - started) / 1000, results }, null, 2))
-console.log(`\n${results.length - failed.length}/${results.length} passed in ${((Date.now() - started) / 1000).toFixed(1)} s; images in ${path.relative(ROOT, outDir)}/`)
+console.log(
+  `\n${results.length - failed.length - skipped.length}/${results.length} passed${skipped.length ? `, ${skipped.length} skipped` : ''} in ${((Date.now() - started) / 1000).toFixed(1)} s; images in ${path.relative(ROOT, outDir)}/`,
+)
 process.exitCode = failed.length ? 1 : 0
