@@ -109,7 +109,9 @@ interface RimLayout {
 }
 
 /** Where the shape goes for this seed and frame; the light keeps to one part of the frame so the rest stays dark. */
-function rimLayout(kind: ShapeKind, rand: () => number, aspect: number): RimLayout {
+type RimKind = Exclude<ShapeKind, 'logoEdge'>
+
+function rimLayout(kind: RimKind, rand: () => number, aspect: number): RimLayout {
   const [fw, fh] = frameSize(aspect)
   const right = rand() < 0.5
   const top = rand() < 0.65
@@ -201,11 +203,22 @@ function rimLayout(kind: ShapeKind, rand: () => number, aspect: number): RimLayo
   }
 }
 
+/** A point on the line beyond (shift > 0) or before (shift < 0) the end where it leaves the frame. */
+function lineExit(path: readonly Vec2[], fromStart: boolean, shift: number): Vec2 | null {
+  if (path.length < 2) return null
+  const exit = fromStart ? path[0] : path[path.length - 1]
+  const inner = fromStart ? path[Math.min(path.length - 1, 5)] : path[Math.max(0, path.length - 6)]
+  const dx = exit[0] - inner[0]
+  const dy = exit[1] - inner[1]
+  const length = Math.hypot(dx, dy) || 1
+  return [exit[0] + (dx / length) * shift, exit[1] + (dy / length) * shift]
+}
+
 function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition {
   const rand = seededRandom(seed, 7)
   const light = pickLight(pack, rand)
   const base = pickBase(pack, rand)
-  const kind = pickWeighted<ShapeKind>(rand, [
+  const kind = pickWeighted<RimKind>(rand, [
     ['corner', 4],
     ['line', 2],
     ['arc', 2],
@@ -219,14 +232,15 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   // The Light control runs the hot spot from where the curve leaves the frame (0) to its middle (1).
   const fromStart = rand() < 0.5
   const along = fromStart ? lerp(0, 0.5, controls.mood) : lerp(1, 0.5, controls.mood)
-  const hot = pointAlong(path, along) ?? layout.anchor
+  const line = layout.shape.kind === 'line'
+  const logo = layout.shape.kind === 'logo'
+  // A line is brightest where it leaves the frame; the Light control moves that end inward.
+  const hot = (line ? lineExit(path, fromStart, lerp(0.08, -0.3, controls.mood)) : pointAlong(path, along)) ?? layout.anchor
   const at: Vec2 = [hot[0] - layout.anchor[0], hot[1] - layout.anchor[1]]
   const gain = geo(controls.intensity, 0.35, 1, 2.8)
   const soften = geo(controls.softness, 0.45, 1, 2.4)
-  const reach = lerp(0.08, 0.16, rand()) * Math.max(fw, fh)
+  const reach = (line ? lerp(0.22, 0.34, rand()) : lerp(0.08, 0.16, rand())) * Math.max(fw, fh)
   const toward = (Math.atan2(at[1], at[0]) * 180) / Math.PI
-  const line = layout.shape.kind === 'line'
-  const logo = layout.shape.kind === 'logo'
   const params: Record<string, ParamValue> = {
     shape: SHAPE_KINDS.indexOf(layout.shape.kind) + 1,
     at: toFrame(layout.anchor, aspect).map(round4),
@@ -246,6 +260,8 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
       fan: line ? 4 : 1.8,
       spread: line ? 0.003 : 0,
     }),
+    // Lines widen gradually toward the bright end (growth follows the long light, not the hot spot) and open into a haze there.
+    ...(line ? { n2Grow: 1, n2GrowBy: [6, 1.5], n3Weight: 9, f1Grow: 1, f1GrowBy: [2, 1.5], f1Weight: 0.24, f1Width: 0.028 } : {}),
     facing: logo ? 0.85 : 0,
     facingAngle: round4(toward),
     facingPower: 1.5,

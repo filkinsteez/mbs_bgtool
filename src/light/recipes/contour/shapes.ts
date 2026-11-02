@@ -478,6 +478,11 @@ export function metaLogo(): Shape {
   return logoCache
 }
 
+/** Only the outer contour of the Meta logo (no holes), same units and placement as metaLogo. */
+export function metaLogoEdge(): Shape {
+  return { contours: [metaLogo().contours[0]] }
+}
+
 /** Distance from v to the nearest point of the shape. */
 export function distanceToShape(shape: Shape, v: Vec2): number {
   let best = Infinity

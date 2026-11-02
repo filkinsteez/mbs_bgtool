@@ -55,12 +55,12 @@
         1,
         0.4753
       ],
-      "n1Weight": 1.14936,
-      "n1Width": 0.00291719,
-      "n1Shape": 8,
+      "n1Weight": 1.08087,
+      "n1Width": 0.00251355,
+      "n1Shape": 4,
       "n1Side": 0,
       "n1Light": 2,
-      "n2Weight": 0.512483,
+      "n2Weight": 0.449715,
       "n2Width": 0.028183,
       "n2Shape": 8,
       "n2Side": 0,
@@ -96,7 +96,7 @@
       ],
       "n3Offset": -0.0152126,
       "n3Light": 1,
-      "f1Weight": 0.0136256,
+      "f1Weight": 0.0560783,
       "f1Width": 0.035,
       "f1Side": 0,
       "f1Tint": [
@@ -105,8 +105,8 @@
         0.3
       ],
       "f1Light": 1,
-      "f2Weight": 0,
-      "f3Weight": 0,
+      "f2Weight": 0.00964832,
+      "f3Weight": 0.607558,
       "farWidth": 0.012,
       "farStep": 3,
       "light1Kind": 1,
@@ -129,7 +129,25 @@
       ],
       "light2Radius": 0.744568,
       "light2Stretch": 4,
-      "light2Angle": 0
+      "light2Angle": 0,
+      "f2Side": 2,
+      "f2Light": 1,
+      "f2MaskSoft": 0.004,
+      "f2Tint": [
+        0.814604,
+        0.12,
+        0.103466
+      ],
+      "f3Side": 1,
+      "f3Light": 1,
+      "f3MaskSoft": 0.004,
+      "f3Tint": [
+        1.2,
+        0.9,
+        0.15
+      ],
+      "f2Width": 0.00718905,
+      "f3Width": 0.0159679
     },
     "lens": {
       "bloom": 0

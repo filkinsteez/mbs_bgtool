@@ -137,6 +137,8 @@ export interface ProductionLight {
   spread?: number
   /** Light on the other side of the edge, as a far part (replaces the face). */
   outer?: number
+  /** Glow on both sides, with scattered light filling the inside (replaces the face and outer light). */
+  both?: boolean
 }
 
 /**
@@ -186,7 +188,22 @@ export function productionParts(prefix: string, light: ProductionLight): Record<
     f2Light: 2,
     f2LightGamma: 1,
   }
-  if (light.outer !== undefined) {
+  if (light.both) {
+    // Every part spreads to both sides; the concave side still gets more because the curve's light converges there.
+    Object.assign(parts, {
+      n2Side: 0,
+      f1Side: 0,
+      f1Weight: 0.2,
+      f1Width: round6(light.haze ?? 0.07),
+      f2Weight: 0.06,
+      f2Width: 0.045,
+      f3Weight: 0.05,
+      f3Width: 0.2,
+      f3Side: 0,
+      f3Light: 1,
+      f3LightGamma: 0.7,
+    })
+  } else if (light.outer !== undefined) {
     Object.assign(parts, { f3Weight: round4(light.outer), f3Width: 0.07, f3Side: light.side === 1 ? 2 : 1, f3Light: 1, f3LightGamma: 1.5 })
   } else {
     Object.assign(parts, { f3Weight: round4(light.face), f3Width: 0.18, f3Side: 1, f3Light: 2, f3LightGamma: 0.6 })

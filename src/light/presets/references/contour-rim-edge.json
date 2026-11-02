@@ -47,8 +47,8 @@
       "n1Offset": 0.0011,
       "n1Light": 2,
       "n1MaskSoft": 0.0003,
-      "n2Weight": 0.635561,
-      "n2Width": 0.0039944,
+      "n2Weight": 0.667241,
+      "n2Width": 0.0034856,
       "n2Shape": 8,
       "n2Side": 1,
       "n2Tint": [
@@ -69,7 +69,7 @@
         3
       ],
       "n2MaskSoft": 0.0003,
-      "n3Weight": 0.919636,
+      "n3Weight": 0.911478,
       "n3Width": 0.00502803,
       "n3Shape": 8,
       "n3Side": 1,
@@ -86,8 +86,8 @@
         3
       ],
       "n3MaskSoft": 0.0003,
-      "f1Weight": 0.221007,
-      "f1Width": 0.00675206,
+      "f1Weight": 0.273141,
+      "f1Width": 0.00699214,
       "f1Side": 1,
       "f1Tint": [
         0.0296,
@@ -101,8 +101,8 @@
         3
       ],
       "f1MaskSoft": 0.0003,
-      "f2Weight": 0.113443,
-      "f2Width": 0.0159981,
+      "f2Weight": 0.101771,
+      "f2Width": 0.0159149,
       "f2Side": 2,
       "f2Tint": [
         0.1095,

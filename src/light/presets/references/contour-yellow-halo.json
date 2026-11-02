@@ -29,7 +29,7 @@
         -0.146954
       ],
       "ring1MaskGrow": -0.216702,
-      "ring1n1Weight": 0.240308,
+      "ring1n1Weight": 0.165624,
       "ring1n1Width": 0.0398834,
       "ring1n1Shape": 3,
       "ring1n1Side": 0,
@@ -44,8 +44,8 @@
         0.582842,
         1
       ],
-      "ring1n2Weight": 0.487453,
-      "ring1n2Width": 0.104849,
+      "ring1n2Weight": 0.554662,
+      "ring1n2Width": 0.0910044,
       "ring1n2Shape": 2,
       "ring1n2Side": 2,
       "ring1n2Tint": [
@@ -55,8 +55,8 @@
       ],
       "ring1n2MaskSoft": 0.081,
       "ring1n2Light": 1,
-      "ring1n3Weight": 0.696835,
-      "ring1n3Width": 0.204125,
+      "ring1n3Weight": 0.601106,
+      "ring1n3Width": 0.226611,
       "ring1n3Shape": 2,
       "ring1n3Side": 1,
       "ring1n3Tint": [
@@ -66,7 +66,7 @@
       ],
       "ring1n3MaskSoft": 0.081,
       "ring1n3Light": 0,
-      "ring1f1Weight": 0.952367,
+      "ring1f1Weight": 0.950505,
       "ring1f1Width": 4,
       "ring1f1Side": 2,
       "ring1f1Tint": [
@@ -76,7 +76,7 @@
       ],
       "ring1f1Light": 0,
       "ring1f1MaskSoft": 0.349253,
-      "ring1f2Weight": 1.10389,
+      "ring1f2Weight": 1.13108,
       "ring1f2Width": 4,
       "ring1f2Side": 1,
       "ring1f2Tint": [

@@ -6,6 +6,7 @@ import {
   lerp,
   pickBase,
   pickLight,
+  pickWeighted,
   pointAlong,
   productionParts,
   round4,
@@ -24,17 +25,20 @@ import {
   readFar,
   readLights,
   readNear,
+  SHAPE_KINDS,
+  shapeKindAt,
   slotColor,
   type CurveLightLayout,
   type EmitterSettings,
+  type ShapeSettings,
 } from './curveLight'
-import { ring, type Vec2 } from './shapes'
+import type { Vec2 } from './shapes'
 
 const COLORS = 8
 const RINGS = 3
 const NEAR = 3
 const FAR = 3
-const LAYOUT: CurveLightLayout = { emitters: RINGS, primitives: 40, near: NEAR, far: FAR }
+const LAYOUT: CurveLightLayout = { emitters: RINGS, primitives: 64, near: NEAR, far: FAR }
 
 function ringParams(i: number): ParamSpec[] {
   const first = i === 1
@@ -46,6 +50,8 @@ function ringParams(i: number): ParamSpec[] {
   const far = [first ? { Weight: 0.1, Width: 0.04, Side: 1, Light: 1 } : {}, first ? { Weight: 0.02, Width: 0.02, Light: 1 } : {}, {}]
   return [
     { kind: 'boolean', key: `ring${i}On`, label: `Ring ${i}`, default: first },
+    { kind: 'number', key: `ring${i}Shape`, label: `Ring ${i} shape (3 arc, 4 S-curve, 6 ring, 7 logo edge)`, min: 1, max: 7, step: 1, default: 6 },
+    { kind: 'boolean', key: `ring${i}Flip`, label: `Ring ${i} mirror`, default: false },
     { kind: 'vector', key: `ring${i}At`, label: `Ring ${i} center`, min: -8, max: 9, step: 0.0005, default: [1.05, 1.1] },
     { kind: 'number', key: `ring${i}Radius`, label: `Ring ${i} radius`, min: 0.01, max: 8, step: 0.0005, default: 1.1 },
     { kind: 'number', key: `ring${i}Aspect`, label: `Ring ${i} aspect`, min: 0.2, max: 5, step: 0.001, default: 1 },
@@ -74,62 +80,131 @@ const params: ParamSpec[] = [
   { kind: 'number', key: 'soften', label: 'Overall width', min: 0.05, max: 8, step: 0.001, default: 1 },
 ]
 
-/** One ring with its center off the frame, so only an arc shows; the glow spreads into the disc or out from behind it. */
+/** Outer-contour points of the logo (logo units) a halo crop can follow: loop ends, tops and bottoms. */
+const LOGO_EDGE_FEATURES: readonly Vec2[] = [
+  [1000, 1655.86],
+  [2504.83, 1649.66],
+  [1432.41, 1000],
+  [2080, 1000],
+  [1273.1, 2000],
+  [2245.5, 2000],
+]
+const LOGO_CENTER: Vec2 = [1752.4136, 1500]
+
+interface HaloLayout {
+  shape: ShapeSettings
+  /** Shape origin, short-side units from the frame center. */
+  anchor: Vec2
+}
+
+const rotate = (v: Vec2, degrees: number): Vec2 => {
+  const a = (degrees * Math.PI) / 180
+  return [v[0] * Math.cos(a) - v[1] * Math.sin(a), v[0] * Math.sin(a) + v[1] * Math.cos(a)]
+}
+
+/** A large curve crossing one part of the frame: a ring or ellipse centered off the frame, a slow S, or the logo's outer edge. */
+function haloLayout(kind: 'ring' | 'ellipse' | 'sCurve' | 'logoEdge', rand: () => number, aspect: number): HaloLayout {
+  const [fw, fh] = frameSize(aspect)
+  const short = Math.min(fw, fh)
+  const sx = rand() < 0.5 ? 1 : -1
+  const sy = rand() < 0.6 ? -1 : 1
+  switch (kind) {
+    case 'ring':
+    case 'ellipse': {
+      const corner = rand() < 0.55
+      const direction: Vec2 = corner
+        ? [sx * fw * lerp(0.4, 0.6, rand()), sy * fh * lerp(0.4, 0.6, rand())]
+        : rand() < (aspect >= 1 ? 0.6 : 0.3)
+          ? [sx * fw * 0.5, fh * lerp(-0.15, 0.15, rand())]
+          : [fw * lerp(-0.2, 0.2, rand()), sy * fh * 0.5]
+      const length = Math.hypot(direction[0], direction[1])
+      const unit: Vec2 = [direction[0] / length, direction[1] / length]
+      const stretch = kind === 'ellipse' ? lerp(0.5, 0.75, rand()) : 1
+      const turn = kind === 'ellipse' ? lerp(-90, 90, rand()) : 0
+      let radius = lerp(0.7, 1.6, rand()) * short
+      const gap = lerp(0.06, 0.26, rand()) * short
+      // The center stays off the frame (by the shorter semi-axis) so the curve never shows whole.
+      const edge = Math.min(Math.abs(fw / 2 / (unit[0] || 1e-9)), Math.abs(fh / 2 / (unit[1] || 1e-9)))
+      radius = Math.max(radius, (edge + 0.1 - gap) / stretch)
+      const reachTo = radius * stretch + gap
+      return {
+        shape: { kind: 'ring', size: radius, angle: 360, aspect: stretch, rotate: turn, flip: false },
+        anchor: [unit[0] * reachTo, unit[1] * reachTo],
+      }
+    }
+    case 'sCurve': {
+      const vertical = aspect < 1 ? rand() < 0.7 : rand() < 0.25
+      const at: Vec2 = vertical ? [sx * fw * lerp(0.1, 0.25, rand()), fh * lerp(-0.1, 0.1, rand())] : [fw * lerp(-0.15, 0.15, rand()), sy * fh * lerp(0.1, 0.25, rand())]
+      return {
+        shape: { kind: 'sCurve', size: lerp(0.9, 1.8, rand()) * short, angle: lerp(22, 38, rand()), aspect: 1, rotate: (vertical ? 90 : 0) + lerp(-22, 22, rand()), flip: rand() < 0.5 },
+        anchor: at,
+      }
+    }
+    case 'logoEdge': {
+      const feature = LOGO_EDGE_FEATURES[Math.floor(rand() * LOGO_EDGE_FEATURES.length)]
+      const size = lerp(2.8, 4.6, rand())
+      const turn = [0, 180, 90, -90][Math.floor(rand() * 4)] + lerp(-15, 15, rand())
+      const local = rotate([((feature[0] - LOGO_CENTER[0]) / 1000) * size, ((feature[1] - LOGO_CENTER[1]) / 1000) * size], turn)
+      // The feature sits toward the side where the logo body lies, so the body runs off the frame.
+      const norm = Math.hypot(local[0], local[1]) || 1
+      const out = lerp(0.12, 0.3, rand())
+      const target: Vec2 = [(-local[0] / norm) * fw * out, (-local[1] / norm) * fh * out]
+      return {
+        shape: { kind: 'logoEdge', size, angle: 90, aspect: 1, rotate: turn, flip: false },
+        anchor: [target[0] - local[0], target[1] - local[1]],
+      }
+    }
+    default: {
+      const unknown: never = kind
+      throw new Error(`Unknown halo kind: ${String(unknown)}`)
+    }
+  }
+}
+
+/** One large curve of light crossing the frame (never a whole ring); light on both sides, more on the inside. */
 function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Composition {
   const rand = seededRandom(seed, 13)
   const light = pickLight(pack, rand)
   const base = pickBase(pack, rand)
   const [fw, fh] = frameSize(aspect)
-  const inward = rand() < 0.6
-  const corner = rand() < 0.6
-  const sx = rand() < 0.5 ? 1 : -1
-  const sy = rand() < 0.6 ? -1 : 1
-  // Direction of the ring's center from the frame center: past a corner or past an edge.
-  const direction: Vec2 = corner
-    ? [sx * fw * lerp(0.4, 0.6, rand()), sy * fh * lerp(0.4, 0.6, rand())]
-    : rand() < (aspect >= 1 ? 0.6 : 0.3)
-      ? [sx * fw * 0.5, fh * lerp(-0.15, 0.15, rand())]
-      : [fw * lerp(-0.2, 0.2, rand()), sy * fh * 0.5]
-  const length = Math.hypot(direction[0], direction[1])
-  const unit: Vec2 = [direction[0] / length, direction[1] / length]
-  let radius = lerp(0.6, 1.5, rand()) * Math.min(fw, fh)
-  const gap = lerp(0.06, 0.28, rand()) * Math.min(fw, fh)
-  // Keep the center off the frame so the ring never shows whole.
-  const edge = Math.min(Math.abs(fw / 2 / (unit[0] || 1e-9)), Math.abs(fh / 2 / (unit[1] || 1e-9)))
-  radius = Math.max(radius, edge + 0.1 - gap)
-  const center: Vec2 = [unit[0] * (radius + gap), unit[1] * (radius + gap)]
-  const path = visiblePath(ring(radius), center, aspect)
+  const kind = pickWeighted(seededRandom(seed, 29), [
+    ['ring', 2],
+    ['ellipse', 3],
+    ['sCurve', 3],
+    ['logoEdge', 3],
+  ] as const)
+  const layout = haloLayout(kind, rand, aspect)
+  const path = visiblePath(buildShape(layout.shape), layout.anchor, aspect)
   const fromStart = rand() < 0.5
   const along = fromStart ? lerp(0, 0.5, controls.mood) : lerp(1, 0.5, controls.mood)
-  const hot = pointAlong(path, along) ?? center
-  const at: Vec2 = [hot[0] - center[0], hot[1] - center[1]]
+  const hot = pointAlong(path, along) ?? layout.anchor
+  const at: Vec2 = [hot[0] - layout.anchor[0], hot[1] - layout.anchor[1]]
   const gain = geo(controls.intensity, 0.35, 1, 2.8)
   const soften = geo(controls.softness, 0.45, 1, 2.4)
-  const reach = lerp(0.1, 0.2, rand()) * Math.max(fw, fh)
-  const side = inward ? 1 : 2
-  const toward = (Math.atan2(at[1], at[0]) * 180) / Math.PI
+  const reach = lerp(0.12, 0.24, rand()) * Math.max(fw, fh)
   const params: Record<string, ParamValue> = {
     ring1On: true,
-    ring1At: toFrame(center, aspect).map(round4),
-    ring1Radius: round4(radius),
-    ring1Aspect: 1,
-    ring1Sweep: 360,
+    ring1Shape: SHAPE_KINDS.indexOf(layout.shape.kind) + 1,
+    ring1At: toFrame(layout.anchor, aspect).map(round4),
+    ring1Radius: round4(layout.shape.size),
+    ring1Aspect: round4(layout.shape.aspect),
+    ring1Sweep: round4(layout.shape.kind === 'ring' ? 360 : layout.shape.angle),
+    ring1Rotate: round4(layout.shape.rotate),
+    ring1Flip: layout.shape.flip,
     ring1Color: 2,
     ring1Gain: 1,
-    ...productionParts('ring1', { hex: light.hex, side, soften, face: 0, glow: 0.012, haze: 0.06, outer: 0.05 }),
-    ring1Facing: 0.7,
-    ring1FacingAngle: round4(toward),
-    ring1FacingPower: 1.5,
+    ...productionParts('ring1', { hex: light.hex, side: 1, soften, face: 0, glow: 0.011, haze: 0.07, both: true }),
+    ring1Facing: 0,
     ring2On: false,
     ring3On: false,
     farWidth: 0.012,
     light1Kind: 3,
     light1At: at.map(round4),
     light1Radius: round4(reach),
-    light1Power: round4(lerp(1.4, 2.2, rand())),
+    light1Power: round4(lerp(1.3, 2, rand())),
     light2Kind: 1,
     light2At: at.map(round4),
-    light2Radius: round4(lerp(0.06, 0.14, rand())),
+    light2Radius: round4(lerp(0.07, 0.14, rand())),
     base: base.gain > 0 ? 3 : 0,
     baseGain: base.gain,
     gain: round4(gain),
@@ -149,10 +224,11 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
 }
 
 /**
- * Up to three rings or arcs of light, usually cropped by the frame. Each ring
- * is a thin emitter with its own point-spread function: near parts integrated
- * along the ring and far parts from blurred copies of that ring's light alone.
- * Where rings come close or cross, their light adds.
+ * Up to three large curves of light (rings, ellipses, slow S-curves or the
+ * logo's outer edge), usually cropped by the frame. Each is a thin emitter with
+ * its own point-spread function: near parts integrated along the curve and far
+ * parts from blurred copies of that curve's light alone. Where curves come close
+ * or cross, their light adds.
  */
 export const contourHalo: RecipeDefinition = {
   id: 'contour.halo',
@@ -173,14 +249,15 @@ vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 b0, vec3 b1, vec3 b2, vec3 b3) { 
     const emitters: EmitterSettings[] = Array.from({ length: RINGS }, (_, index) => {
       const i = index + 1
       const sweep = ctx.num(`ring${i}Sweep`)
+      const picked = shapeKindAt(ctx.num(`ring${i}Shape`))
       const shape = ctx.bool(`ring${i}On`)
         ? buildShape({
-            kind: sweep >= 359.99 ? 'ring' : 'arc',
+            kind: picked === 'ring' && sweep < 359.99 ? 'arc' : picked,
             size: ctx.num(`ring${i}Radius`),
             angle: sweep,
             aspect: ctx.num(`ring${i}Aspect`),
             rotate: ctx.num(`ring${i}Rotate`),
-            flip: false,
+            flip: ctx.bool(`ring${i}Flip`),
           })
         : null
       return {

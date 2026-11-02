@@ -3,6 +3,7 @@ import {
   circularArc,
   contourLength,
   metaLogo,
+  metaLogoEdge,
   primitiveLength,
   primitivePoint,
   primitiveTangent,
@@ -64,6 +65,8 @@ const EMIT_VEC4 = 3
 const ARC_PIECE = Math.PI / 4
 /** Primitives per bounding circle; layouts use a multiple of it. */
 const CHUNK = 8
+/** Side mask softness the shader never goes below (half a pixel) for frames down to about 64 px on the short side. */
+const MIN_MASK_SOFT = 0.008
 
 function binomial(n: number, k: number): number {
   let r = 1
@@ -338,10 +341,10 @@ float clPrimWinding(int base, vec2 q) {
   return (b.y <= q.y && side < 0.0) ? -1.0 : 0.0;
 }
 
-// Signed distance to the emitter's shape (negative inside, nonzero winding).
+// Signed distance to the emitter's shape (negative inside, nonzero winding), capped at the distance where the side masks saturate.
 float clMaskDistance(int e, vec2 q) {
   int count = int(uClEmit[e * ${EMIT_VEC4}].z + 0.5);
-  float dist = 1e6;
+  float dist = max(uClEmit[e * ${EMIT_VEC4} + 1].w, 1e-4);
   float winding = 0.0;
   for (int chunk = 0; chunk < CL_CHUNKS; chunk++) {
     if (chunk * ${CHUNK} >= count) break;
@@ -793,10 +796,12 @@ export function curveLightUniforms(
       prim.set([entry.e1[0], entry.e1[1], entry.e1[2], 0], o + 12)
     })
     bounds.set(chunkBounds(packed), e * chunks * 4)
-    const masked = [...settings.near, ...settings.far].some((c) => c.weight > 0 && Math.round(c.side) !== 0)
+    const sided = [...settings.near, ...settings.far].filter((c) => c.weight > 0 && Math.round(c.side) !== 0)
     const own = stopAt(settings.stops, 0)
-    emit.set([settings.anchor[0], settings.anchor[1], packed.length, masked ? 1 : 0], e * EMIT_VEC4 * 4)
-    emit.set([settings.maskShift[0] ?? 0, settings.maskShift[1] ?? 0, settings.maskGrow, 0], e * EMIT_VEC4 * 4 + 4)
+    // Past this distance from the edge every side mask is fully on or off (4 softness widths), so only the inside test matters.
+    const maskReach = Math.max(0, ...sided.map((c) => Math.abs(c.maskInset) + 4 * Math.max(c.maskSoft, MIN_MASK_SOFT))) + Math.abs(settings.maskGrow) + 1e-3
+    emit.set([settings.anchor[0], settings.anchor[1], packed.length, sided.length > 0 ? 1 : 0], e * EMIT_VEC4 * 4)
+    emit.set([settings.maskShift[0] ?? 0, settings.maskShift[1] ?? 0, settings.maskGrow, maskReach], e * EMIT_VEC4 * 4 + 4)
     emit.set([own[0], own[1], own[2], 0], e * EMIT_VEC4 * 4 + 8)
     const brightest = Math.max(1e-6, ...packed.flatMap((entry) => [...entry.e0, ...entry.e1]))
     settings.near.slice(0, layout.near).forEach((c, k) => {
@@ -969,12 +974,12 @@ export function slotColor(ctx: RecipeContext, slot: number): number[] {
 // ---------------------------------------------------------------------------
 // Shapes from params
 
-export const SHAPE_KINDS = ['line', 'corner', 'arc', 'sCurve', 'logo', 'ring'] as const
+export const SHAPE_KINDS = ['line', 'corner', 'arc', 'sCurve', 'logo', 'ring', 'logoEdge'] as const
 export type ShapeKind = (typeof SHAPE_KINDS)[number]
 
 export interface ShapeSettings {
   kind: ShapeKind
-  /** Line length, corner radius, arc / ring / S radius, or logo height (short-side units). */
+  /** Line length, corner radius, arc / ring / S radius, or logo height (short-side units). logoEdge is the logo's outer contour only. */
   size: number
   /** Corner inside angle, arc sweep or S sweep, degrees. */
   angle: number
@@ -1010,6 +1015,9 @@ export function buildShape(s: ShapeSettings): Shape {
       break
     case 'ring':
       shape = ring(s.size, s.aspect)
+      break
+    case 'logoEdge':
+      shape = transformShape(metaLogoEdge(), { scale: s.size })
       break
     default: {
       const unknown: never = s.kind
