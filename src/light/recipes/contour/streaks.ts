@@ -1,6 +1,6 @@
 import type { ColorPack } from '../../color/packs'
 import type { ComposeInput, Composition, RecipeDefinition } from '../../scene'
-import { contourLights, frameHalf, geo, lerp, luminanceOf, pickContourLight, round4, seededRandom } from './beam-compose'
+import { contourLights, frameHalf, geo, lerp, luminanceOf, peakChannelOf, pickContourLight, round4, seededRandom } from './beam-compose'
 
 /**
  * Shafts of light through gaps in a cloud layer, converging on a point on
@@ -34,6 +34,7 @@ uniform vec4 uRise;        // amount, start, scale (distance from the point), po
 uniform vec4 uClouds;      // cloud size (per short side), edge contrast, optical depth, light in the shadows
 uniform vec4 uLayer;       // cloud layer inner and outer radius, density beyond it, extra density beyond the lit sky
 uniform vec4 uHorizon;     // sideways reach, level far to the side, variation along it, short smear
+uniform vec4 uHorizonShape; // tilt (height change per unit x), bow (per unit x squared), drift (height), line fade toward the frame edges
 uniform vec4 uGlow;        // offset x from the point, level, core, wide
 uniform vec2 uGlowShape;   // squash (height / width), breakup by the floor streaks
 uniform vec2 uLine;        // level, width
@@ -41,6 +42,7 @@ uniform vec2 uBand;        // level, depth
 uniform vec4 uFloorA;      // sky reflection, pool level, pool depth, pool width
 uniform vec3 uFloorB;      // streaks, streak scale x, streak scale y
 uniform vec3 uPale;        // pale share, from, to (luminance)
+uniform float uPaleWhite;  // how far the pale color goes from the light's color toward white
 uniform vec2 uLook;        // base level, vignette
 
 const int SHADOW_TAPS = 20;
@@ -115,17 +117,27 @@ float shaftLight(vec2 d, float r, float unlit) {
     float density = mix(1.0, uLayer.z, smoothstep(r1 - dr, r1 + dr, rk));
     depth += between * density * cloudCover(uCenter + dir * rk);
   }
+  // Past the lit sky the clouds thicken: the shadow there follows the clouds, so its edge
+  // breaks into shafts and gaps, and less sky light reaches the shadows.
   depth *= uClouds.z * (1.0 + uLayer.w * unlit) * dr / (r1 - r0);
-  return uClouds.w + (1.0 - uClouds.w) * exp(-depth);
+  // Near the light its forward-scattered glow fills the shadows, so shafts grow out of
+  // the glow instead of starting as spikes at the point.
+  float fill = uClouds.w * (1.0 - 0.8 * unlit);
+  fill = mix(1.0, fill, smoothstep(r0, r1 + 0.5 * (r1 - r0), r));
+  return fill + (1.0 - fill) * exp(-depth);
 }
 
 // The sky seen at p (above the horizon): the light by direction, brighter away from the
-// point, times the share that comes through the clouds.
+// point, times the share that comes through the clouds. Close to the light its glare is
+// the same in every direction, so the pattern by direction grows out of it instead of
+// meeting at a corner on the point.
 float skyShafts(vec2 p) {
   vec2 d = p - uCenter;
   float r = length(d);
   float theta = atan(d.y, d.x);
   vec2 dirLight = skyDirection(theta);
+  float glare = 1.0 / (1.0 + r * r / max(0.1 * uLayer.x * uLayer.x, 1e-6));
+  dirLight = vec2(mix(dirLight.x, uSkyLevel.x, glare), dirLight.y * (1.0 - glare));
   if (dirLight.x <= 1e-5) return 0.0;
   float rise = 1.0 + uRise.x * pow(abs(sin(theta)), uRise.w) * smoothstep(uRise.y, uRise.z, r);
   return dirLight.x * rise * shaftLight(d, r, dirLight.y);
@@ -134,6 +146,14 @@ float skyShafts(vec2 p) {
 float floorStreaks(vec2 q) {
   vec2 x = vec2(q.x * uFloorB.y, q.y * uFloorB.z);
   return 0.65 * gradientNoise(x + vec2(8.1, 0.6), uSeed + 211) + 0.35 * gradientNoise(2.1 * x + vec2(1.7, 4.4), uSeed + 223);
+}
+
+// Height of the horizon at x: through the convergence point, with a slight tilt, a bow
+// and a slow drift, so it is never a straight level line.
+float horizonY(float x) {
+  float dx = x - uCenter.x;
+  float drift = valueNoise(vec2(x * 1.3, 9.1), uSeed + 331) - valueNoise(vec2(uCenter.x * 1.3, 9.1), uSeed + 331);
+  return uCenter.y + uHorizonShape.x * dx + uHorizonShape.y * dx * dx + uHorizonShape.z * drift;
 }
 
 // The horizon light falls off sideways from the light's azimuth like a twilight glow,
@@ -150,27 +170,30 @@ vec2 alongHorizon(float x) {
 
 // Soft horizon light at q: the glow at the light, the band of lit haze over the horizon
 // (thicker and brighter near the light) and, below the horizon, the light's reflection
-// on a rough floor: one hot spot under it, stretched toward the camera.
+// on a rough floor: one hot spot under it, stretched toward the camera. Light through
+// haze falls off with a long tail, so none of these has a flat top or an edge.
 float horizonGlow(vec2 q, float streak) {
-  float cy = uCenter.y;
+  float hy = horizonY(q.x);
   float dx = q.x - uCenter.x - uGlow.x;
-  float dy = (q.y - cy) / max(uGlowShape.x, 0.02);
+  float dy = (q.y - hy) / max(uGlowShape.x, 0.02);
   float r2 = dx * dx + dy * dy;
   float core = max(uGlow.z, 1e-3);
   float wide = max(uGlow.w, 1e-3);
-  float glow = uGlow.y * (0.4 * exp(-0.5 * r2 / (core * core)) + 0.6 * exp(-0.5 * r2 / (wide * wide)));
+  float glow = uGlow.y * (0.25 * core / (core + sqrt(r2)) + 0.75 * pow(1.0 + r2 / (wide * wide), -1.25));
   glow *= max(0.0, 1.0 + uGlowShape.y * streak);
   float side = sideways(q.x);
   vec2 drift = alongHorizon(q.x);
   float bandLevel = uBand.x * side * max(0.0, 1.0 + 0.5 * uHorizon.z * drift.x);
-  float bandDepth = max(uBand.y, 1e-3) * (0.45 + 0.55 * side) * (1.0 + 0.4 * uHorizon.z * drift.y) * (q.y < cy ? 1.0 : 0.5);
-  float band = bandLevel * exp(-abs(cy - q.y) / bandDepth);
+  float bandDepth = max(uBand.y, 1e-3) * (0.45 + 0.55 * side) * (1.0 + 0.4 * uHorizon.z * drift.y) * (q.y < hy ? 1.0 : 0.5);
+  float across = (q.y - hy) / bandDepth;
+  float band = bandLevel * pow(1.0 + across * across, -1.5);
   float pool = 0.0;
-  if (q.y > cy) {
-    // Peaks a little below the horizon and fades toward the camera; nearer floor is wider.
-    float t = (q.y - cy) / max(uFloorA.z, 1e-3);
-    float across = dx / (max(uFloorA.w, 1e-3) * (1.0 + 0.5 * t));
-    pool = uFloorA.y * t * exp(0.5 - 0.5 * t * t) * exp(-0.5 * across * across) * max(0.0, 1.0 + 0.6 * uFloorB.x * streak);
+  if (q.y > hy) {
+    // Brightest a little below the horizon, an exponential fade toward the camera and to
+    // the sides; nearer floor is wider.
+    float t = (q.y - hy) / max(uFloorA.z, 1e-3);
+    float wideNear = min(abs(dx) / (max(uFloorA.w, 1e-3) * (1.0 + 0.5 * t)), 20.0);
+    pool = uFloorA.y * t * exp(1.0 - t) / cosh(wideNear) * max(0.0, 1.0 + 0.6 * uFloorB.x * streak);
   }
   return glow + band + pool;
 }
@@ -179,9 +202,9 @@ float horizonGlow(vec2 q, float streak) {
 // shafts (mirrored on the floor), the soft horizon light after a short radial integral,
 // and how the floor's streaks change the sky's reflection.
 vec3 auxRadiance(vec2 uv, vec2 p) {
-  float cy = uCenter.y;
-  bool floorSide = p.y > cy;
-  vec2 skyPoint = floorSide ? vec2(p.x, 2.0 * cy - p.y) : p;
+  float hy = horizonY(p.x);
+  bool floorSide = p.y > hy;
+  vec2 skyPoint = floorSide ? vec2(p.x, 2.0 * hy - p.y) : p;
   float sky = skyShafts(skyPoint);
   float streak = floorStreaks(p);
   vec2 d = p - uCenter;
@@ -193,24 +216,28 @@ vec3 auxRadiance(vec2 uv, vec2 p) {
 }
 
 // The horizon line, at full resolution (a line through the point stays sharp in the
-// radial integral). combine() adds the rest and turns the light into color.
+// radial integral). Its width changes along it, and it fades toward the frame edges.
+// combine() adds the rest and turns the light into color.
 vec3 radiance(vec2 uv, vec2 p) {
-  float across = (p.y - uCenter.y) / max(uLine.y, 1e-4);
+  float width = uLine.y * max(0.3, 1.0 + 0.6 * uHorizon.z * valueNoise(vec2(p.x * 2.9 + 1.7, 5.3), uSeed + 317));
+  float across = (p.y - horizonY(p.x)) / max(width, 1e-4);
   float side = sideways(p.x);
-  return vec3(uLine.x * exp(-0.5 * across * across) * side * side, 0.0, 0.0);
+  float ends = 1.0 - uHorizonShape.w * smoothstep(0.45, 1.0, abs(p.x) / (0.5 * uFrameAspect.x));
+  return vec3(uLine.x * exp(-0.5 * across * across) * side * side * ends, 0.0, 0.0);
 }
 
 vec3 combine(vec2 uv, vec2 p, vec3 line, vec3 cached) {
   // The far floor is seen through the haze at the horizon, so its reflection fades into
   // the sky there instead of stopping at a line.
-  float below = max(p.y - uCenter.y, 0.0);
+  float below = max(p.y - horizonY(p.x), 0.0);
   float far = exp(-below / max(2.0 * uBand.y, 1e-3));
   float sky = cached.x * mix(uFloorA.x * cached.z, 1.0, far);
   float scatter = sky + cached.y + line.x;
   float lumHaze = max(luminance(uHazeColor), 1e-5);
   float lumLight = max(luminance(uLightColor), 1e-5);
   float pale = saturate(uPale.x * smoothstep(uPale.y, uPale.z, scatter * lumHaze));
-  vec3 color = uBaseColor * uLook.x + scatter * mix(uHazeColor, uLightColor * (lumHaze / lumLight), pale);
+  vec3 paleColor = mix(uLightColor / lumLight, vec3(1.0), uPaleWhite) * lumHaze;
+  vec3 color = uBaseColor * uLook.x + scatter * mix(uHazeColor, paleColor, pale);
   vec2 half_ = 0.5 * uFrameAspect;
   float vig = 1.0 - uLook.y * dot(p, p) / dot(half_, half_);
   return color * max(vig, 0.0);
@@ -222,6 +249,13 @@ const SKY_CACHE_BLUR = 0.012
 
 /** Luminance one unit of scattered light should have, whatever the pack's haze color. */
 const HAZE_LUMINANCE = 0.12
+
+/**
+ * Largest channel one unit of scattered light may have. A saturated haze (Meta Blue) has
+ * one channel far above its luminance, so without this it clips into a flat pale patch
+ * at a brightness where pale hazes still have room.
+ */
+const HAZE_PEAK = 0.42
 
 /**
  * Pack output. Light (the mood control) moves the point where the shafts meet along the
@@ -237,9 +271,9 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
   const { halfW, halfH } = frameHalf(aspect)
   const wide = aspect >= 1
   const light = pickContourLight(pack, random)
-  const hazeGain = HAZE_LUMINANCE / Math.max(luminanceOf(light.haze), 0.01)
+  const hazeGain = Math.min(HAZE_LUMINANCE / Math.max(luminanceOf(light.haze), 0.01), HAZE_PEAK / Math.max(peakChannelOf(light.haze), 0.01))
   const soft = (lo: number, hi: number) => lerp(lo, hi, softness)
-  const power = geo(intensity, 0.35, 0.75, 1.7) * hazeGain
+  const power = geo(intensity, 0.35, 0.75, 1.4) * hazeGain
 
   const horizonAt = wide ? lerp(0.58, 0.74, random()) : lerp(0.62, 0.78, random())
   const cy = -halfH + 2 * halfH * horizonAt
@@ -251,25 +285,35 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
   const end = lerp(1.6, 2.4, random())
   const sky = litLeft ? [lerp(-3.3, -3.05, random()), -Math.PI + end] : [lerp(-0.1, 0.15, random()), -end]
   const glowSide = litLeft ? -1 : 1
-  const layerIn = round4(lerp(0.15, 0.25, random()) * Math.min(1, 2 * halfH))
+  // The cloud layer sits within the sky above the point, so short skies (16:9) get it closer.
+  const skyHeight = cy + halfH
+  const layerIn = round4(lerp(0.2, 0.3, random()) * skyHeight)
+  const layerOut = round4(layerIn + lerp(0.12, 0.22, random()) * skyHeight)
+  // The horizon: a slight tilt either way, a slight bow, a slow drift; in most seeds the
+  // line fades out before the frame edges. Tilt and bow never come out near zero, so no
+  // seed gets a level, straight line.
+  const eitherWay = (lo: number, hi: number) => (random() < 0.5 ? -1 : 1) * lerp(lo, hi, random())
+  const horizonShape = [eitherWay(0.012, 0.035), eitherWay(0.01, 0.035), lerp(0.012, 0.024, random()), random() < 0.8 ? lerp(0.6, 1, random()) : lerp(0, 0.3, random())]
 
   return {
     colors: [light.light, light.haze, light.base],
     params: {
       center: [round4(cx), round4(cy)],
-      sky: [round4(sky[0]), round4(sky[1]), round4(soft(0.3, 0.5)), round4(lerp(0.8, 1.2, random()))],
-      skyLevel: [round4(Math.min(8, 2.6 * power)), round4(0.16 * power), round4(lerp(0.15, 0.35, random()))],
+      sky: [round4(sky[0]), round4(sky[1]), round4(soft(0.35, 0.6)), round4(lerp(0.8, 1.2, random()))],
+      skyLevel: [round4(Math.min(8, 2.2 * power)), round4(0.16 * power), round4(lerp(0.45, 0.7, random()))],
       rise: [round4(lerp(4, 7, random())), round4(lerp(0.2, 0.32, random())), round4(lerp(0.9, 1.2, random())), round4(lerp(3.5, 5, random()))],
-      clouds: [round4(lerp(4, 8, random())), round4(soft(2.4, 1.4)), round4(soft(3.2, 1.8)), round4(soft(0.15, 0.4))],
-      layer: [layerIn, round4(layerIn + lerp(0.25, 0.4, random())), round4(lerp(0.25, 0.5, random())), round4(lerp(0.8, 2.2, random()))],
+      clouds: [round4(lerp(17, 24, random())), round4(soft(3.2, 1.6)), round4(soft(4, 1.8)), round4(soft(0.06, 0.32))],
+      layer: [layerIn, layerOut, round4(lerp(0.25, 0.5, random())), round4(lerp(2.5, 5, random()))],
       horizon: [round4(lerp(0.45, 0.75, random())), round4(lerp(0.03, 0.1, random())), round4(lerp(0.4, 0.8, random())), round4(soft(0.1, 0.25))],
-      glow: [round4(glowSide * lerp(0, 0.05, random())), round4(Math.min(4, 1.4 * power)), round4(lerp(0.1, 0.2, random())), round4(lerp(0.25, 0.4, random()))],
-      glowShape: [round4(lerp(0.08, 0.2, random())), round4(lerp(0.3, 0.7, random()))],
-      line: [round4(Math.min(4, 0.35 * power)), round4(soft(0.005, 0.014))],
-      band: [round4(Math.min(6, 2.4 * power)), round4(soft(0.015, 0.03))],
-      floor: [round4(lerp(0.25, 0.45, random())), round4(Math.min(8, 2.4 * power)), round4(lerp(0.06, 0.1, random())), round4(lerp(0.2, 0.32, random()))],
+      horizonShape: horizonShape.map(round4),
+      glow: [round4(glowSide * lerp(0, 0.05, random())), round4(Math.min(4, 1.2 * power)), round4(lerp(0.05, 0.1, random())), round4(lerp(0.2, 0.32, random()))],
+      glowShape: [round4(lerp(0.35, 0.55, random())), round4(lerp(0.3, 0.7, random()))],
+      line: [round4(Math.min(4, 0.3 * power)), round4(soft(0.005, 0.014))],
+      band: [round4(Math.min(6, 0.9 * power)), round4(soft(0.015, 0.03))],
+      floor: [round4(lerp(0.25, 0.45, random())), round4(Math.min(8, 1.6 * power)), round4(lerp(0.05, 0.09, random())), round4(lerp(0.12, 0.22, random()))],
       floorStreaks: [round4(lerp(0.2, 0.45, random())), 1.6, 14],
-      pale: [0, 0.15, 0.8],
+      pale: [0.8, 0.08, 0.45],
+      paleWhite: light.light === light.haze ? 0.5 : 0.2,
       base: light.baseLevel,
       vignette: round4(lerp(0.08, 0.15, random())),
     },
@@ -293,9 +337,10 @@ export const contourStreaks: RecipeDefinition = {
     { kind: 'vector', key: 'sky', label: 'Lit sky', min: -3.6, max: 3.6, step: 0.005, default: [-3.2, -0.72, 0.22, 1.3] },
     { kind: 'vector', key: 'skyLevel', label: 'Sky level', min: 0, max: 8, step: 0.005, default: [3.4, 0.18, 0.3] },
     { kind: 'vector', key: 'rise', label: 'Rise', min: 0, max: 20, step: 0.005, default: [8, 0.25, 0.8, 4] },
-    { kind: 'vector', key: 'clouds', label: 'Clouds', min: 0, max: 16, step: 0.005, default: [7, 2, 3, 0.25] },
-    { kind: 'vector', key: 'layer', label: 'Cloud layer', min: 0, max: 4, step: 0.005, default: [0.15, 0.45, 0.3, 1.5] },
+    { kind: 'vector', key: 'clouds', label: 'Clouds', min: 0, max: 24, step: 0.005, default: [7, 2, 3, 0.25] },
+    { kind: 'vector', key: 'layer', label: 'Cloud layer', min: 0, max: 6, step: 0.005, default: [0.15, 0.45, 0.3, 1.5] },
     { kind: 'vector', key: 'horizon', label: 'Horizon', min: 0, max: 2, step: 0.005, default: [0.55, 0.1, 0.6, 0.3] },
+    { kind: 'vector', key: 'horizonShape', label: 'Horizon shape', min: -1, max: 1, step: 0.0005, default: [0, 0, 0, 0] },
     { kind: 'vector', key: 'glow', label: 'Glow', min: -2, max: 4, step: 0.005, default: [-0.02, 1.35, 0.12, 0.25] },
     { kind: 'vector', key: 'glowShape', label: 'Glow shape', min: 0, max: 3, step: 0.005, default: [0.2, 0.6] },
     { kind: 'vector', key: 'line', label: 'Horizon line', min: 0, max: 4, step: 0.0005, default: [0.6, 0.005] },
@@ -303,6 +348,7 @@ export const contourStreaks: RecipeDefinition = {
     { kind: 'vector', key: 'floor', label: 'Floor', min: 0, max: 8, step: 0.005, default: [0.4, 2, 0.12, 0.3] },
     { kind: 'vector', key: 'floorStreaks', label: 'Floor streaks', min: 0, max: 40, step: 0.005, default: [1, 3, 22] },
     { kind: 'vector', key: 'pale', label: 'Pale', min: 0, max: 2, step: 0.005, default: [0.6, 0.15, 0.8] },
+    { kind: 'number', key: 'paleWhite', label: 'Pale toward white', min: 0, max: 1, step: 0.005, default: 0 },
     { kind: 'number', key: 'base', label: 'Base', min: 0, max: 4, step: 0.005, default: 1 },
     { kind: 'number', key: 'vignette', label: 'Vignette', min: 0, max: 1, step: 0.005, default: 0.1 },
   ],
@@ -318,6 +364,7 @@ export const contourStreaks: RecipeDefinition = {
     uClouds: ctx.vec('clouds'),
     uLayer: ctx.vec('layer'),
     uHorizon: ctx.vec('horizon'),
+    uHorizonShape: ctx.vec('horizonShape'),
     uGlow: ctx.vec('glow'),
     uGlowShape: ctx.vec('glowShape'),
     uLine: ctx.vec('line'),
@@ -325,6 +372,7 @@ export const contourStreaks: RecipeDefinition = {
     uFloorA: ctx.vec('floor'),
     uFloorB: ctx.vec('floorStreaks'),
     uPale: ctx.vec('pale'),
+    uPaleWhite: ctx.num('paleWhite'),
     uLook: [ctx.num('base'), ctx.num('vignette')],
   }),
   scatter: [{ source: 'aux', radius: () => SKY_CACHE_BLUR }],

@@ -35,6 +35,11 @@ export function luminanceOf(hex: string): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
+/** The largest linear channel of a color; light clips once this channel passes 1. */
+export function peakChannelOf(hex: string): number {
+  return Math.max(...hexToLinear(hex))
+}
+
 /** One light for a Contour image: the direct light's color, the color the haze scatters, and the base. */
 export interface ContourLight {
   light: string
