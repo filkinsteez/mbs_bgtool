@@ -1,0 +1,77 @@
+# Light engine harness
+
+Node scripts that render `src/light` scenes in headless system Chrome (Playwright, `channel: 'chrome'`) through a Vite dev server rooted at the repo (`@` points to `src`). Pixels come back to Node over HTTP; Node writes PNGs and composes sheets with sharp. Every output goes under `artifacts/` (gitignored).
+
+No GPU flags are passed. On macOS headless Chrome uses the Metal GPU and has `EXT_color_buffer_float`. If a machine falls back to software rendering, set `LIGHT_CHROME_ARGS="--enable-gpu --ignore-gpu-blocklist"`.
+
+References come from `public/references/awe/manifest.json` when it exists (only entries whose file exists), otherwise from the screenshots in `artifacts/brief-screens/` with their white rounded corners masked. Width and height always come from the image file. Presets are read from `src/light/presets/references/<id>.json`.
+
+## Commands
+
+```sh
+node scripts/light/check.mjs [--only hex,determinism,resolution,banding,tone,lens] [--out dir]
+```
+
+Engine checks in the browser; prints a pass/fail table and exits 1 on a failure. Writes to `artifacts/light-check/`:
+
+- `hex-swatches.png`: flat fields of the 12 pack colors (each must be its exact hex with dither, grain and lens off; also with bloom 0.5; with dither on the mean must be within 0.5 code values).
+- `resolution-*.png`: the same scene at 925 px and at the 3840 px long edge, downsampled (mean Oklab ΔE under 0.004 required).
+- `banding-ramp-4k.png`, `banding-crop.png`: a 3840x2160 ramp #0B0F14 → #1C2B33 and a 4x crop with and without dither, contrast x8. Reports the banding score, the longest run of equal 8-bit values and how far column means stray from the exact ramp.
+- `tone-curve.png`, `tone-curve-onset-zoom.png`: ramps 0 → 16x nominal for every pack color and six primaries, plus glowing dots and lines at 0.5x .. 32x.
+- `lens.png`: point lights, a line and a disk with the lens off, bloom, halation, and both.
+- `report.json`: every result and the run time.
+
+```sh
+node scripts/light/audit.mjs --ref <id>[,<id>...] | --all
+  [--preset <path>]   # with one --ref: audit this preset file instead
+  [--size WxH ...]    # extra renders at these sizes
+  [--export4k]        # also render at the 3840 px long edge with 1:1 crops
+  [--ss 1|2]          # supersample, default 2
+  [--out <dir>]       # default artifacts/light-audit
+```
+
+For each reference, `artifacts/light-audit/<id>/`:
+
+- `render.png`: the preset at the target's size.
+- `compare.png`: target | render | Oklab ΔE heatmap (black 0, white 0.15). Below: row-mean color strips of target (top) and render (bottom), with x = row index, and row-mean Oklab L (solid) and chroma (dashed) for target (white) and render (orange).
+- `metrics.json`: see below, plus timings.
+- With `--size`: `render-WxH.png`. With `--export4k`: `export-4k.png`, `crop-smooth.png` (the gentlest ramp), `crop-bright.png`, `crop-dark.png`, each also as `*-contrast4x.png`.
+
+`artifacts/light-audit/contact-sheet.png` shows target and render for every reference that has a `render.png` in the out dir.
+
+```sh
+node scripts/light/fit.mjs --ref <id>
+  [--params a,b,c | all]      # numeric and vector params; `all` skips booleans and integer counts
+  [--colors [all | slot,...]] # fit these color slots in Oklab
+  [--lens bloom,halation,...] # numeric lens settings
+  [--iters 400] [--restarts 2] [--size 256] [--weights image,rows,columns]
+  [--preset <path>] [--write] [--out <dir>]
+```
+
+Nelder-Mead on values normalized to their ranges, with restarts from the best point at half the step. It renders at `--size` px on the long side (1x, no dither, no grain) in one browser session; the loss is computed in the page. Loss = image ΔE + 0.5 row-profile ΔE + 0.5 column-profile ΔE by default. Prints the loss before and after and writes `artifacts/light-fit/<id>/` (`compare.png`, `render.png` at full size, `preset.json`, `fit.json` with the loss history). Only `--write` overwrites the preset JSON. Look at `compare.png` before keeping a fit: a lower loss can still add a hard edge.
+
+## Metrics (`metrics.json`)
+
+All ΔE values are plain Euclidean Oklab distances (L on 0..1; about 0.02 is one just-noticeable difference). The roadmap's starting targets are mean under 0.03 and p95 under 0.06. Ignore rects and rounded corners are masked everywhere.
+
+- `deltaE`: mean, p95 and max per pixel after area-downsampling both images by 4 and blurring with a gaussian of 1 % of the short edge (removes grain, dither and JPEG blocks).
+- `rowProfileDeltaE`, `columnProfileDeltaE`: ΔE between the mean colors of each row (column), averaged and max.
+- `histogramDistance`: earth mover's distance between the Oklab L histograms and between the chroma histograms.
+- `banding`: share of pixels on monotonic 8-bit steps at least 24 px long (0 none, 1 fully banded), target and render.
+- `clipped`: share of pixels with a channel at 255 (`high`) or all channels at 0 (`low`).
+- `grain`: robust standard deviation of luma minus its gaussian blur (sigma 2 px), in 8-bit code values.
+
+## Speed (Apple M4 Pro)
+
+- Start-up (Vite, Chrome, page): about 1.2 s.
+- One audit at the reference size, 2x supersampled, with metrics and sheet: 1.5 to 3 s. `--all` for 14 references: about 32 s.
+- One fit evaluation at 256 px: about 12 to 14 ms (render 4.5 ms, loss 7.5 ms, the rest is the page round trip). 500 evaluations take 6 to 10 s.
+- `check.mjs`: about 40 s (most of it the 4K renders and pixel scans).
+
+## Writing recipes and presets
+
+Types are in `src/light/scene.ts`. A recipe file (one per recipe, no imports between recipe files) exports a `RecipeDefinition`: `id`, `mood`, `label`, `colorSlots`, `defaultColors`, `params` (`ParamSpec`: number, boolean or vector, each with key, label, range, step, default), `fragment`, `uniforms(ctx)`, optional `post` passes and `lens` / `output` defaults, and `fromPack(pack)`.
+
+`fragment` is GLSL ES 3.00 that defines `vec3 radiance(vec2 uv, vec2 p)` and returns scene-linear light (may exceed 1). `uv` is the frame position (0..1, y down); `p` is the offset from the frame center in short-side units (y down). Write sizes in short-side units so a preset looks the same at every resolution. The engine prepends its uniforms (`uRenderSize`, `uFrameAspect`, `uPixel`, `uSeed`, ...) and the chunk library in `src/light/engine/glsl/` (hashes, noise, fbm, domain warp, dither, falloffs, SDFs, color helpers, `blurredRamp`, `blurredBands`, `sampleSmooth`). `uniforms(ctx)` maps resolved params and linear slot colors to uniform values; arrays may be passed flat.
+
+A preset is `{ id, referenceId, scene: { recipe, seed, colors, params, lens, output } }`. Missing params take the recipe defaults, missing colors the recipe's default colors.
