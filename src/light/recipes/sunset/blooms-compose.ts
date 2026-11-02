@@ -115,6 +115,9 @@ function pick<T>(options: readonly (readonly [T, number])[], u: number): T {
 
 type Kind = 'low' | 'corner' | 'side' | 'pair'
 
+/** Longest half-length of the lead glow, in units of sqrt(width * height) (a 16:9 frame is 1.33 wide). */
+const LEAD_MAX_LONG_RADIUS = 1.15
+
 const KINDS: readonly (readonly [Kind, number])[] = [
   ['low', 0.22],
   ['corner', 0.3],
@@ -206,6 +209,8 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     }
   }
   radius *= size
+  // The lead stays narrower than the frame, so there is sky beside it for the other blooms.
+  radius *= Math.min(1, LEAD_MAX_LONG_RADIUS / (radius * Math.sqrt(aniso)))
   const angle = -side * tilt
   const leadGain = lightGain(colors[lead]) * lerp(0.94, 1.06, r())
 
@@ -250,25 +255,36 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     })
   }
 
-  // The far edge: a weaker light of the other color, or a paler patch of sky. It stays small so it does not cross the lead.
+  // The far edge: a smaller light of the other color, or a paler patch of sky, with blue sky
+  // between it and the lead. It sits on the opposite side, clearly higher than the lead; when the
+  // lead is already high, it sits in the opposite bottom corner instead.
+  // A dim green light over the blue turns grey-teal, so a green far light becomes a paler patch of sky.
   const coolLeadWarmOther = !isWarm(colors[lead]) && isWarm(colors[other])
   const far = pick<'none' | 'other' | 'sky'>(
-    coolLeadWarmOther ? [['none', 0.55], ['sky', 0.45]] : [['none', 0.3], ['other', 0.45], ['sky', 0.25]],
+    coolLeadWarmOther ? [['none', 0.45], ['sky', 0.55]] : [['none', 0.25], ['other', 0.55], ['sky', 0.2]],
     r(),
   )
   if (far !== 'none' && glows.length < GLOW_COUNT) {
-    const farAt: [number, number] = [0.5 - side * lerp(0.44, 0.6, r()), lerp(1.03, 1.12, r())]
-    const farRadius = radius * lerp(0.7, 0.9, r())
-    if (far === 'other') {
+    const farHeight = Math.min(lerp(0.5, 0.72, rise) + lerp(-0.06, 0.06, r()), at[1] - 0.25)
+    const farCorner = farHeight < 0.42
+    const farAt: [number, number] = farCorner
+      ? [0.5 - side * lerp(0.5, 0.62, r()), lerp(1.0, 1.06, r())]
+      : [0.5 - side * lerp(0.6, 0.7, r()), farHeight]
+    const farAngle = side * (farCorner ? lerp(10, 22, r()) : lerp(-4, 8, r()))
+    // From a side edge a very wide shape reads as a streak, so it is rounder there.
+    const farAniso = farCorner ? lerp(3.6, 4.6, r()) : lerp(2.6, 3.4, r())
+    const farRadius = radius * lerp(0.55, 0.72, r())
+    if (far === 'other' && !isGreen(colors[other])) {
       glows.push({
         color: other,
         at: farAt,
         radius: farRadius,
-        aniso: lerp(3.4, 4.6, r()),
-        angle: -angle * lerp(0.2, 0.7, r()),
-        gain: lightGain(colors[other]) * lerp(0.26, 0.42, r()),
-        beta,
-        haze: lerp(0.3, 0.7, r()),
+        aniso: farAniso,
+        angle: farAngle,
+        gain: lightGain(colors[other]) * lerp(0.4, 0.55, r()),
+        beta: beta * lerp(0.85, 0.95, r()),
+        // Little haze: a dim light that hides the blue behind it turns grey.
+        haze: lerp(0.1, 0.35, r()),
         vary: lerp(0.4, 0.8, r()),
         bend: bend(),
       })
@@ -277,9 +293,9 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
         color: SLOT.sky,
         at: farAt,
         radius: farRadius * lerp(1.05, 1.25, r()),
-        aniso: lerp(3.6, 5.0, r()),
-        angle: -angle * lerp(0.2, 0.7, r()),
-        gain: lerp(0.45, 0.75, r()),
+        aniso: farAniso * lerp(1, 1.1, r()),
+        angle: farAngle,
+        gain: lerp(0.6, 0.9, r()),
         beta: beta * lerp(0.85, 0.95, r()),
         haze: 0,
         vary: lerp(0.4, 0.8, r()),
