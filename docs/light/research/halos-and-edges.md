@@ -58,10 +58,18 @@ So a lit curve on a dark ground reads as light, and not as an object, when:
 1. Show a corner only when its vertex sits at or past a frame edge. Never both full edges and the corner in frame.
 2. Let brightness fall by 10 to 100 times along the edge away from the hot spot (`contour-rim-edge`: about 100 times from the corner to the bottom-left), so the far parts fade out and the outline stays open.
 3. Light inside the shape stays near the hot spot and fades with it (`light-art.md`: light inside a slab spreads from where it enters). No even fill.
+4. Meta logo crops: at most one of the crossing, the left loop's top arch and the right loop's top arch may be in frame. Together they are the mark's identifying features, and the eye completes the rest of the outline from them (the same closure as rule 1).
 
 ## How the compare agent checks it
 
 In each round's sheets, a frame counts as "reads as an object" when a filled convex region with a lit edge covers more than about a quarter of the frame, or when an outline is evenly lit all the way from frame edge to frame edge. Round 01: halo seeds 1, 2 and 4, rim seeds 1, 4 and 5 (`artifacts/compare/rounds/01/crops/halo-seeds.png`, `rim-seeds.png`).
+
+Round 02: no halo or rim corner seed reads as an object. Two new cases go the other way:
+
+- The halo, with its inside now at the base level, has no defined edge on either side, so it reads as a smudge rather than a ring (rule 3).
+- A small Meta logo crop with the crossing and both loop tops (Bold 16:9 seed 15) reads as the mark itself (rule 4).
+
+See `artifacts/compare/rounds/02/crops/halo-seeds.png` and `logo.png`.
 
 ## Sources
 
