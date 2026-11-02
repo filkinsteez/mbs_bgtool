@@ -1,0 +1,186 @@
+{
+  "id": "ref-contour-rim-edge",
+  "referenceId": "contour-rim-edge",
+  "scene": {
+    "recipe": "contour.rim",
+    "seed": 1,
+    "colors": [
+      "#59594A",
+      "#B3B861",
+      "#307CE6",
+      "#020814",
+      "#5D9CE6",
+      "#000000",
+      "#616F45"
+    ],
+    "params": {
+      "background": 5,
+      "emitters": [
+        {
+          "shape": {
+            "kind": "wedge",
+            "corner": [
+              0.87027,
+              0.12318
+            ],
+            "angles": [
+              180,
+              116.46
+            ],
+            "radius": 91.4
+          },
+          "sources": [
+            {
+              "pos": [
+                0.5615,
+                0.3267
+              ],
+              "falloff": "plane",
+              "radius": 350.4,
+              "length": 108.9,
+              "angle": -19.46
+            },
+            {
+              "pos": [
+                0.7323,
+                0.1936
+              ],
+              "falloff": "gauss",
+              "radius": 338.8,
+              "aniso": 0.616,
+              "angle": 224.88
+            }
+          ],
+          "lobes": [
+            {
+              "color": 0,
+              "intensity": 1,
+              "offset": -1.1,
+              "sigmaIn": 1.1,
+              "sigmaOut": 0.55,
+              "source": 1
+            },
+            {
+              "color": 6,
+              "intensity": 1,
+              "offset": -1.1,
+              "sigmaIn": 1.4,
+              "sigmaOut": 0.55,
+              "source": 0
+            },
+            {
+              "color": 1,
+              "intensity": 1.05,
+              "offset": -1.1,
+              "plateau": 4,
+              "sigmaIn": 2.6,
+              "sigmaOut": 0.55,
+              "source": 1,
+              "widthSource": 1,
+              "widthGain": 1.2,
+              "widthGamma": 3
+            },
+            {
+              "color": 2,
+              "intensity": 0.7,
+              "offset": -1.1,
+              "sigmaIn": 3.8,
+              "sigmaOut": 0.55,
+              "chSigma": [
+                0.5,
+                0.8,
+                1
+              ],
+              "widthSource": 1,
+              "widthGain": 3.2,
+              "widthGamma": 3
+            },
+            {
+              "color": 2,
+              "intensity": 0.42,
+              "offset": -1.1,
+              "sigmaIn": 13,
+              "sigmaOut": 0.8,
+              "widthSource": 1,
+              "widthGain": 0.8,
+              "widthGamma": 3
+            },
+            {
+              "color": 4,
+              "intensity": 0.03,
+              "offset": 2,
+              "shape": "power",
+              "power": 1,
+              "sigmaIn": 0.8,
+              "sigmaOut": 6
+            },
+            {
+              "color": 2,
+              "intensity": 0.12,
+              "offset": 1.8,
+              "shape": "power",
+              "power": 1.5,
+              "sigmaIn": 0.8,
+              "sigmaOut": 12,
+              "source": 1,
+              "sourceGamma": 3
+            },
+            {
+              "color": 2,
+              "intensity": 0.008,
+              "offset": 1.5,
+              "sigmaIn": 0.8,
+              "sigmaOut": 14,
+              "sourceGamma": 0.3
+            }
+          ],
+          "inside": {
+            "color": 3,
+            "intensity": 1.15,
+            "soft": 0.7,
+            "floor": 0.6,
+            "sourceGamma": 0.6,
+            "scatter": {
+              "strength": 0.35,
+              "sigma": 130,
+              "tint": [
+                0.3,
+                0.7,
+                1
+              ]
+            },
+            "source": 0
+          }
+        }
+      ]
+    },
+    "lens": {
+      "bloom": [
+        {
+          "sigma": 20,
+          "weight": 0.03,
+          "tint": [
+            0.6,
+            0.8,
+            1
+          ]
+        },
+        {
+          "sigma": 60,
+          "weight": 0.02,
+          "tint": [
+            0.5,
+            0.75,
+            1
+          ]
+        }
+      ]
+    },
+    "output": {
+      "grain": 1.7,
+      "grainResponse": "sqrt",
+      "exposure": 0,
+      "white": 1
+    }
+  }
+}
