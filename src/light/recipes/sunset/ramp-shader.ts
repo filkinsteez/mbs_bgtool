@@ -30,6 +30,7 @@ uniform vec2 uAxis;          // sin and cos of the tilt; (0, 1) points straight 
 uniform float uDrop;         // how much lower the ramp sits at the side edges of the frame
 uniform vec4 uWarp;          // horizon warp: amplitude, cycles per short side, phase, octaves
 uniform vec2 uSoftVary;      // horizon softness change: amount, cycles per short side
+uniform float uSoftFollow;   // edges get softer where the warp moves them down and sharper where it lifts them
 uniform vec3 uDrift;         // every edge: bend as a share of its width, cycles per short side, width change
 uniform float uBlur;         // width added to every edge in quadrature
 uniform vec4 uHaze;          // cycles per short side, stretch along the horizon, ramp warp, light change
@@ -50,6 +51,7 @@ uniform vec3 uGlowSpread;    // how much the glow falls off sideways, over what 
                              // which the light far from the sun fades out (the Earth's shadow; 0: none)
 uniform float uExtinction;
 uniform vec2 uHorizonDim;    // how much skylight dims toward the horizon, and over what height
+uniform float uDimBelow;     // share of that dimming on the stops below a horizon edge (ground is not skylight)
 uniform vec4 uRedden;        // deeper below the glow line, paler above it, deeper away from the sun, path at the line
 
 uniform vec3 uSunGlowColor[SUN_LAYERS];
@@ -211,7 +213,7 @@ vec3 radiance(vec2 uv, vec2 p) {
     level[j] = 0.0;
     if (j >= uEdges) continue;
     float m = uEdgeAt[j] + uWarp.x * warpNoise * uEdgeWarp[j];
-    float w = uEdgeWidth[j] * exp(uSoftVary.x * softNoise * uEdgeSoft[j]);
+    float w = uEdgeWidth[j] * exp((uSoftVary.x * softNoise + uSoftFollow * warpNoise) * uEdgeSoft[j]);
     if (drifting) {
       vec2 q = vec2(across * uDrift.y, uEdgeAt[j] * uDrift.y);
       m += uDrift.x * uEdgeWidth[j] * fbm(q + vec2(5.2, 1.7), 2, uSeed + 503);
@@ -266,6 +268,7 @@ vec3 radiance(vec2 uv, vec2 p) {
   }
 
   float dim = uHorizonDim.x * exp(-height / max(uHorizonDim.y, 1e-4));
+  if (uHorizonEdge >= 0) dim *= mix(1.0, uDimBelow, level[uHorizonEdge]);
   vec3 skyGain = gain * exp(-uExtinction * glowDepth - dim);
   vec3 sky = vec3(0.0);
   for (int k = 0; k < RAMP_COLORS; k++) {

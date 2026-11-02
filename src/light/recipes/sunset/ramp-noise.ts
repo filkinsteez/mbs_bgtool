@@ -34,42 +34,15 @@ export function edgeFbm(x: number, seed: number, octaves: number): number {
   return sum / norm
 }
 
-/**
- * Standard deviation of `f(x)` over `[from, to]` after removing its best-fit
- * line and parabola: the wiggle a boundary shaped by `f` shows across that span.
- */
-export function wiggle(f: (x: number) => number, from: number, to: number, samples = 256): number {
-  const xs: number[] = []
-  const ys: number[] = []
-  for (let i = 0; i < samples; i++) {
-    const x = from + ((i + 0.5) / samples) * (to - from)
-    xs.push((2 * (x - from)) / (to - from) - 1)
-    ys.push(f(x))
-  }
-  const s = [
-    [0, 0, 0, 0],
-    [0, 0, 0, 0],
-    [0, 0, 0, 0],
-  ]
-  for (let i = 0; i < samples; i++) {
-    const basis = [1, xs[i], xs[i] * xs[i]]
-    for (let r = 0; r < 3; r++) {
-      for (let c = 0; c < 3; c++) s[r][c] += basis[r] * basis[c]
-      s[r][3] += basis[r] * ys[i]
-    }
-  }
-  for (let c = 0; c < 3; c++) {
-    for (let r = 0; r < 3; r++) {
-      if (r === c) continue
-      const k = s[r][c] / s[c][c]
-      for (let q = c; q < 4; q++) s[r][q] -= k * s[c][q]
-    }
-  }
-  const fit = [s[0][3] / s[0][0], s[1][3] / s[1][1], s[2][3] / s[2][2]]
+/** Standard deviation of `f(x)` over `[from, to]`: how far a boundary shaped by `f` wanders across that span. */
+export function spread(f: (x: number) => number, from: number, to: number, samples = 256): number {
   let sum = 0
+  let squares = 0
   for (let i = 0; i < samples; i++) {
-    const r = ys[i] - (fit[0] + fit[1] * xs[i] + fit[2] * xs[i] * xs[i])
-    sum += r * r
+    const y = f(from + ((i + 0.5) / samples) * (to - from))
+    sum += y
+    squares += y * y
   }
-  return Math.sqrt(sum / samples)
+  const mean = sum / samples
+  return Math.sqrt(Math.max(0, squares / samples - mean * mean))
 }
