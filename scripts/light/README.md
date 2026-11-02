@@ -9,7 +9,7 @@ References come from `public/references/awe/manifest.json` when it exists (only 
 ## Commands
 
 ```sh
-node scripts/light/check.mjs [--only hex,determinism,resolution,banding,tone,export,lens] [--out dir]
+node scripts/light/check.mjs [--only hex,determinism,resolution,banding,tone,scatter,context,export,lens] [--out dir]
 ```
 
 Engine checks in the browser; prints a pass/fail table and exits 1 on a failure. Writes to `artifacts/light-check/`:
@@ -21,6 +21,7 @@ Engine checks in the browser; prints a pass/fail table and exits 1 on a failure.
 - `tone-glows.png`: gaussian dots, then vertical gaussian lines, at 1.5x, 3x and 8x nominal for each of the 12 pack colors (one row each, pack order), shown at 2x zoom. This is where a glow crossing 1 would show an edge.
 - `scatter.png`: the `test.scatter` program (two rims; each disc catches only the other rim's blurred light) with scatter off, at blur 0.06 and at 0.15. Also checks on flat fields that `combine` gets the radiance blur and the aux blur in order, and that the scattered light lands only where `combine` puts it. `test.scatter` is also in the 925 vs 3840 px check.
 - `export-vs-preview.png`: a 16:9 export through `exportPreset` (offscreen renderer, PNG encode; checks size, format and file name) downsampled next to a 960x540 preview of the same preset.
+- context (no image): loses a context on purpose; `readPixels`, `render` and a new `LightRenderer` on that canvas must throw an error starting "WebGL context lost" (so `exportPreset` throws instead of returning a black PNG). Also prints a 1920x1080 1x render's time with and without `measure: true` (which waits for the GPU with a 1-pixel read).
 - `lens.png`: point lights, a line and a disk with the lens off, bloom, halation, and both. Also checks that bloom keeps the mean light of a dim scene.
 - `report.json`: every result and the run time.
 

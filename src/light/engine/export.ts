@@ -53,12 +53,17 @@ export async function encodePng(pixels: Uint8Array<ArrayBuffer>, width: number, 
   return canvas.convertToBlob({ type: 'image/png' })
 }
 
-/** Renders a preset on its own offscreen renderer (preview canvases stay untouched) and returns a PNG. */
+/**
+ * Renders a preset on its own offscreen renderer (preview canvases stay
+ * untouched) and returns a PNG. Throws a LightEngineError when the context is
+ * lost or the GPU runs out of memory, so a caller can retry at 1x.
+ */
 export async function exportPreset(preset: Preset, request: ExportRequest): Promise<ExportResult> {
   const { width, height, label } = exportSize(request)
   const renderer = new LightRenderer()
   try {
     renderer.render(preset.scene, { width, height, supersample: request.supersample ?? 2 })
+    renderer.gpu.checkErrors()
     const pixels = renderer.readPixels()
     const blob = await encodePng(pixels, width, height)
     return { blob, fileName: exportFileName(preset, label), width, height }

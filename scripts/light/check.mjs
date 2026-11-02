@@ -1,5 +1,5 @@
 // Engine checks in the real browser. Writes images to artifacts/light-check/ and prints a pass/fail table.
-// Usage: node scripts/light/check.mjs [--only hex,determinism,resolution,banding,tone,export,lens] [--out dir]
+// Usage: node scripts/light/check.mjs [--only hex,determinism,resolution,banding,tone,scatter,context,export,lens] [--out dir]
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
@@ -297,6 +297,22 @@ try {
       'export: 16:9 PNG at 3840x2160 matches the preview',
       ok,
       `${result.fileName} ${meta.width}x${meta.height} ${meta.format}, ${(png.length / 1e6).toFixed(1)} MB in ${(result.ms / 1000).toFixed(2)} s; vs preview mean ${metrics.deltaE.mean.toFixed(4)} p95 ${metrics.deltaE.p95.toFixed(4)}`,
+    )
+  }
+
+  if (wanted('context')) {
+    const outcomes = await harness.call('contextLoss', { recipe: 'contour.halo', seed: 1 })
+    const lost = Object.values(outcomes).every((message) => message.startsWith('WebGL context lost'))
+    record(
+      'lost context: readPixels, render and a new renderer on that canvas throw "WebGL context lost"',
+      lost,
+      Object.entries(outcomes).map(([call, message]) => `${call}: ${message}`).join('; '),
+    )
+    const timing = await harness.call('measure', { scene: { recipe: 'sunset.ramp', seed: 3 }, width: 1920, height: 1080, supersample: 1 })
+    record(
+      'measure: render waits for the GPU when asked',
+      timing.measuredFlag && timing.measured >= timing.issued * 0.5,
+      `1920x1080 at 1x: ${timing.issued.toFixed(2)} ms to issue, ${timing.measured.toFixed(2)} ms with measure`,
     )
   }
 

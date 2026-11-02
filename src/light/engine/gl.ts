@@ -7,6 +7,9 @@ export class LightEngineError extends Error {
   }
 }
 
+/** A lost context draws nothing and reads back zeros, so every use of one throws with this message. */
+export const CONTEXT_LOST_MESSAGE = 'WebGL context lost: create a new renderer on a new canvas.'
+
 export type TextureFormat = 'rgba16f' | 'rgba8'
 
 export interface Target {
@@ -69,6 +72,7 @@ export class Gpu {
       powerPreference: 'high-performance',
     }) as WebGL2RenderingContext | null
     if (!gl) throw new LightEngineError('WebGL2 is not available in this browser.')
+    if (gl.isContextLost()) throw new LightEngineError(CONTEXT_LOST_MESSAGE)
     const floatTargets = gl.getExtension('EXT_color_buffer_float') ?? gl.getExtension('EXT_color_buffer_half_float')
     if (!floatTargets) {
       throw new LightEngineError(
@@ -91,6 +95,13 @@ export class Gpu {
 
   get isLost(): boolean {
     return this.lost || this.gl.isContextLost()
+  }
+
+  /** Throws if the context is lost or the GPU ran out of memory since the last call. Waits for the GPU, so call it once per export, not per frame. */
+  checkErrors(): void {
+    const error = this.gl.getError()
+    if (this.isLost || error === this.gl.CONTEXT_LOST_WEBGL) throw new LightEngineError(CONTEXT_LOST_MESSAGE)
+    if (error === this.gl.OUT_OF_MEMORY) throw new LightEngineError('The GPU ran out of memory for this render.')
   }
 
   /** Compiles (once per source) a fragment shader drawn over a fullscreen triangle. */
@@ -183,13 +194,15 @@ export class Gpu {
     }
   }
 
-  /** Reads an RGBA8 target. Rows come back in texture order (row 0 first). */
+  /** Reads an RGBA8 target. Rows come back in texture order (row 0 first). Throws if the context is lost before or during the read. */
   readPixels(target: Target, x = 0, y = 0, width = target.width, height = target.height): Uint8Array<ArrayBuffer> {
     if (target.format !== 'rgba8') throw new LightEngineError('readPixels expects an RGBA8 target.')
+    if (this.isLost) throw new LightEngineError(CONTEXT_LOST_MESSAGE)
     const gl = this.gl
     const out = new Uint8Array(width * height * 4)
     gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer)
     gl.readPixels(x, y, width, height, gl.RGBA, gl.UNSIGNED_BYTE, out)
+    if (this.isLost) throw new LightEngineError(CONTEXT_LOST_MESSAGE)
     return out
   }
 

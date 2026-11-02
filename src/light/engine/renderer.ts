@@ -1,7 +1,7 @@
 import { hexToLinear } from '../color/srgb'
 import { getRecipe } from '../recipes'
 import type { RecipeProgram, Scene, UniformMap } from '../scene'
-import { Gpu, LightEngineError, type Target } from './gl'
+import { CONTEXT_LOST_MESSAGE, Gpu, LightEngineError, type Target } from './gl'
 import { lensBaseSize, runLens, TEXTURE_COMPOSITE_SHADER } from './lens'
 import { OUTPUT_SHADER, PRESENT_SHADER, RESOLVE_X_SHADER } from './output'
 import { AREA_RESAMPLE_SHADER, POST_MAX_SHORT_SIDE, runPostPasses } from './passes'
@@ -21,6 +21,8 @@ export interface RenderOptions {
   tileSize?: number
   /** Draw the result on the renderer's canvas, resizing it to the output size. */
   present?: boolean
+  /** Wait for the GPU to finish (one 1-pixel read) so `ms` is the real render time. */
+  measure?: boolean
 }
 
 export interface RenderStats {
@@ -28,11 +30,21 @@ export interface RenderStats {
   height: number
   supersample: number
   tiles: number
-  /** CPU time to issue the passes; the GPU may still be working. */
+  /** Time to issue the passes; with `measure`, until the GPU has finished them. */
   ms: number
+  measured: boolean
 }
 
 const MAX_OUTPUT_SIDE = 8192
+
+/**
+ * Samples per axis for the lens base: 2 x 2 whenever the render is larger than
+ * the base, so previews and exports feed the same light to the lens and the
+ * cost stays low; 1 for small renders (fits). Scatter sources use the same rule.
+ */
+function baseSubsamples(renderShort: number, baseShort: number): number {
+  return renderShort > baseShort ? 2 : 1
+}
 
 /**
  * Renders scenes with the full pipeline: recipe radiance, optional post
@@ -44,6 +56,7 @@ export class LightRenderer {
   readonly gpu: Gpu
   private output: Target | null = null
   private readonly black: Target
+  private readonly probe = new Uint8Array(4)
 
   constructor(canvas?: HTMLCanvasElement | OffscreenCanvas) {
     this.gpu = new Gpu(canvas ?? new OffscreenCanvas(1, 1))
@@ -69,7 +82,7 @@ export class LightRenderer {
   renderProgram(program: RecipeProgram, scene: SceneInput, options: RenderOptions): RenderStats {
     const start = performance.now()
     const gpu = this.gpu
-    if (gpu.isLost) throw new LightEngineError('The WebGL context was lost; create a new renderer.')
+    if (gpu.isLost) throw new LightEngineError(CONTEXT_LOST_MESSAGE)
     const width = Math.round(options.width)
     const height = Math.round(options.height)
     if (!(width >= 1 && height >= 1 && width <= MAX_OUTPUT_SIDE && height <= MAX_OUTPUT_SIDE)) {
@@ -117,7 +130,7 @@ export class LightRenderer {
         uniforms: { uDstSize: [base.width, base.height], uTaps: Math.min(8, Math.ceil(pw / base.width)) },
       })
     } else {
-      const subsamples = Math.min(4, Math.max(1, Math.ceil(Math.min(renderWidth, renderHeight) / Math.min(base.width, base.height))))
+      const subsamples = baseSubsamples(Math.min(renderWidth, renderHeight), Math.min(base.width, base.height))
       gpu.draw(radianceProgram, base, {
         uniforms: engine(base.width, base.height, [0, 0], 1 / (Math.min(base.width, base.height) * subsamples), subsamples),
         textures: scatter.textures,
@@ -201,7 +214,13 @@ export class LightRenderer {
     scatter.release()
     gpu.trimPool()
     if (options.present) this.present()
-    return { width, height, supersample: factor, tiles, ms: performance.now() - start }
+    if (options.measure) {
+      const gl = gpu.gl
+      gl.bindFramebuffer(gl.FRAMEBUFFER, output.framebuffer)
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, this.probe)
+    }
+    if (gpu.isLost) throw new LightEngineError(CONTEXT_LOST_MESSAGE)
+    return { width, height, supersample: factor, tiles, ms: performance.now() - start, measured: Boolean(options.measure) }
   }
 
   /** Draws the last render on the canvas at 1:1. */

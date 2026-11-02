@@ -43,7 +43,7 @@ export function runScatter(
   const short = Math.min(renderShort, Math.min(MAX_SHORT_SIDE, Math.max(MIN_SHORT_SIDE, Math.ceil(MIN_BLUR_PIXELS / smallest))))
   const width = Math.max(1, Math.round((renderWidth * short) / renderShort))
   const height = Math.max(1, Math.round((renderHeight * short) / renderShort))
-  const subsamples = Math.min(4, Math.max(1, Math.ceil(renderShort / short)))
+  const subsamples = renderShort > short ? 2 : 1
 
   const sources = new Map<ScatterBlur['source'], Target>()
   for (const { source } of blurs) {

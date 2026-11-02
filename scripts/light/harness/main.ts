@@ -148,6 +148,37 @@ const api = {
     return { fileName: result.fileName, width: result.width, height: result.height, ms }
   },
 
+  /** Loses a context on purpose and reports what each renderer call does afterwards. */
+  contextLoss(scene: HarnessScene): Record<string, string> {
+    const lostCanvas = document.createElement('canvas')
+    const lostRenderer = new LightRenderer(lostCanvas)
+    lostRenderer.renderProgram(programFor(scene), scene, { width: 64, height: 64 })
+    lostRenderer.gpu.gl.getExtension('WEBGL_lose_context')?.loseContext()
+    const outcome = (action: () => unknown): string => {
+      try {
+        action()
+        return 'no error'
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error)
+      }
+    }
+    return {
+      readPixels: outcome(() => lostRenderer.readPixels()),
+      render: outcome(() => lostRenderer.renderProgram(programFor(scene), scene, { width: 64, height: 64 })),
+      newRenderer: outcome(() => new LightRenderer(lostCanvas)),
+    }
+  },
+
+  /** Times one render without and with measure (GPU finished), in ms. */
+  measure(request: RenderRequest): { issued: number; measured: number; measuredFlag: boolean } {
+    const options = { width: request.width, height: request.height, supersample: request.supersample ?? 1 }
+    renderer.renderProgram(programFor(request.scene), request.scene, { ...options, measure: true })
+    const issued = renderer.renderProgram(programFor(request.scene), request.scene, options)
+    renderer.gpu.gl.finish()
+    const measured = renderer.renderProgram(programFor(request.scene), request.scene, { ...options, measure: true })
+    return { issued: issued.ms, measured: measured.ms, measuredFlag: measured.measured }
+  },
+
   async fitSetup(request: FitSetupRequest): Promise<{ width: number; height: number }> {
     const target = await download(request.targetKey)
     const mask = buildMask(target.width, target.height, request.ignore, request.cornerRadius)
