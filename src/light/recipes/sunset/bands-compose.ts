@@ -101,39 +101,53 @@ type Bump = [x: number, width: number, shift: number]
 
 /** Wiggle each kind of edge should show across the frame, frame heights. */
 const WANDER = { sky: 0.01, glow: 0.009, horizon: 0.006, darkHorizon: 0.004, ground: 0.0045, crisp: 0.004 }
+/** Every ground band is at least this tall (frame heights), so it reads as a band of its own color. */
+const MIN_SPAN = 0.15
+/** A band much darker or much lighter than the bands on both sides is taller, so it reads as a band of its own color instead of a seam. */
+const STAND_SPAN = 0.25
+/** Softest-edge floor: the 10-90 width of a disk edge is 1.38 radii, so no edge is under about 4% of the frame height. */
+const MIN_RADIUS = 0.03
+/** Slow light change inside flat areas: amount (RMS share), lattice along and down (short-side units). */
+const LIGHT_VARY = [0.02, 0.45, 0.35]
+
+/** Every order-kept, non-empty selection of the list. */
+function selections<T>(list: readonly T[]): T[][] {
+  const out: T[][] = []
+  for (let mask = 1; mask < 1 << list.length; mask++) out.push(list.filter((_, i) => mask & (1 << i)))
+  return out
+}
 
 /** soft: blurred hard, free to wave. crisp: nearly hard, small drift, softness changes a lot along it. sky: very soft and slow. */
 type EdgeKind = 'soft' | 'crisp' | 'sky'
 
+/** A band from its top edge down to below the frame. */
 interface BandPlan {
   color: string
   /** Frame heights. */
   top: number
   topRadius: number
-  bottom?: number
-  bottomRadius?: number
   edge: EdgeKind
   light?: number
   opacity?: number
-  line?: boolean
   haze?: number
   pale?: number
   sunLight?: number
   sunCover?: number
+  /** Share of the light above nominal at the top edge, depth where it is full (frame heights). */
+  lightDown?: [number, number]
   bumps?: Bump[]
-  /** Light bumps along the band: x, width (frame widths), gain. */
-  lightBumps?: Bump[]
 }
 
 /**
  * A pack scene for sunset.bands: Meta Blue sky on top, the colors in pack
- * order below it, a thin glow just above the horizon that whitens near the
- * sun and falls off sideways, and the later colors filling the ground. Each
- * band is a layer from its top edge down, painted over the one above, so a
- * crossing mixes two colors. Flat parts of every band are the exact pack hex
- * at the default intensity. The seed picks the colors used, the spacing, the
- * sun's side, the glow's shape, which edge is crisp and the shape of every
- * edge. Which bands exist depends only on the pack, the seed and the frame.
+ * order below it, a wide glow band above the horizon that whitens near the
+ * sun and falls off sideways, and the later colors filling the ground, each
+ * band tall enough to reach its own color. Each band is a layer from its top
+ * edge down, painted over the one above, so a crossing mixes two colors.
+ * Light changes slowly inside flat parts, with the exact pack hex at their
+ * mean at the default intensity. The seed picks the colors used, the spacing,
+ * the sun's side, the glow's shape, which edge is crisp and the shape of every
+ * edge; the room under the horizon decides how many ground bands fit.
  */
 export function composeBands(input: BandsComposeInput): BandsComposition {
   const pack = input.pack ?? PACKS[0]
@@ -152,35 +166,48 @@ export function composeBands(input: BandsComposeInput): BandsComposition {
 
   // Structure: seed and frame only. About a third of seeds use the pack's second warm color.
   const roles = bandRoles(pack, random(seed * 6151 + 29).chance(1 / 3))
-  // With the second warm color, the upper colors always show, so it never meets Meta Blue directly.
-  const keepUpper = roles.upper.map(() => pick.chance(0.8))
-  const upper = roles.upper.filter((_, i) => roles.swapped || keepUpper[i])
-  let ground = roles.ground.filter((_, i) => i === 0 || pick.chance(H > 1.2 ? 0.8 : 0.65))
-  if (ground.length > 2 && W > 1.5 && pick.chance(0.5)) ground = ground.slice(0, 2)
-  if (ground.length === 0) ground = [roles.fallbackGround]
-  // The second warm color always gets the band glow: a thin line would let the sky show between it and its ground.
-  const lineGlow = pick.chance(0.4) && !roles.swapped
+  // The upper colors always show: with them every frame has at least three bands, never one stroke of light on the sky.
+  const upper = roles.upper
+  // The seed's choice among the ground colors that fit under the horizon (below): usually one of the longest.
+  const shorter = pick.chance(0.35) ? 1 : 0
+  const groundPick = pick.next()
   const sunRight = pick.chance(0.5)
   const sunOff = pick.chance(0.2)
   const aureole = pick.chance(0.7)
-  const groundPatch = pick.chance(0.6)
-  const groundShadow = pick.chance(0.5)
-  // A crisp edge only between two ground colors of similar lightness.
-  const lightness = (hex: string) => linearToOklch(hexToLinear(hex))[0]
-  const crispable = ground.map((color, k) => k > 0 && Math.abs(lightness(color) - lightness(ground[k - 1])) < 0.2)
   const crispPick = pick.next()
-  const crispGround = crispable.some(Boolean) && crispPick < 0.45 ? crispable.indexOf(true) : -1
 
   // Placement: seed and controls.
   const radius = geo(softness, 0.03, 0.07, 0.16) * H ** -0.3
   const crispRadius = place.between(0.012, 0.022) * geo(softness, 0.7, 1, 1.6)
-  const horizon = clamp(lerp(0.85, 0.35, horizonControl) + place.between(-0.12, 0.12), 0.2, 0.9)
-  // The glow is thickest under the sun and thins to a line far from it.
-  const glowFar = place.between(0.015, 0.035) / H
-  const glowNear = (place.between(0.04, 0.085) * geo(softness, 0.8, 1, 1.35)) / H
+  const horizon = clamp(lerp(0.85, 0.35, horizonControl) + place.between(-0.12, 0.12), 0.3, 0.9)
+  // The glow is a wide band: about a tenth of the frame tall away from the sun, taller under it.
+  const glowFar = place.between(0.1, 0.14)
+  const glowNear = glowFar + place.between(0.04, 0.09) * geo(softness, 0.8, 1, 1.35)
   const glowTop = horizon - glowFar
-  // Over a ground of the glow's own color the horizon is only a change of light, and crisper.
-  const horizonRadius = radius * place.between(0.55, 0.85) * (roles.swapped ? 0.6 : 1)
+  // Over a ground of the glow's own color the horizon is only a change of light, and crisper; never under the floor.
+  const horizonRadius = Math.max(MIN_RADIUS, radius * place.between(0.55, 0.85) * (roles.swapped ? 0.6 : 1))
+
+  // Every ground band reads as a band of its own color, so the room under the horizon holds as many as fit, in
+  // pack order. A band much darker or much lighter than both neighbours needs more room; where it does not fit,
+  // the seed picks among the colors that do, and neighbours meet through a bridge instead of a seam.
+  const lightness = (hex: string) => linearToOklch(hexToLinear(hex))[0]
+  const sum = (values: number[]) => values.reduce((a, b) => a + b, 0)
+  const groundRoom = 1.04 - horizon
+  const standsOut = (list: string[], k: number) => {
+    if (k + 1 >= list.length) return false
+    const own = lightness(list[k])
+    const above = lightness(k === 0 ? roles.glow : list[k - 1])
+    const below = lightness(list[k + 1])
+    return Math.min(above, below) - own > 0.2 || own - Math.max(above, below) > 0.2
+  }
+  const floors = (list: string[]) => list.map((_, k) => (standsOut(list, k) ? STAND_SPAN : MIN_SPAN))
+  const fitting = selections(roles.ground).filter((list) => list.length === 1 || sum(floors(list)) <= groundRoom)
+  const most = Math.max(0, ...fitting.map((list) => list.length))
+  const pool = fitting.filter((list) => list.length >= most - shorter)
+  const ground = pool.length > 0 ? pool[Math.floor(groundPick * pool.length)] : [roles.fallbackGround]
+  // A crisp edge only between two ground colors of similar lightness.
+  const crispable = ground.map((color, k) => k > 0 && Math.abs(lightness(color) - lightness(ground[k - 1])) < 0.2)
+  const crispGround = crispable.some(Boolean) && crispPick < 0.45 ? crispable.indexOf(true) : -1
   const sunX = sunOff ? (sunRight ? 1.12 : -0.12) : sunRight ? place.between(0.62, 0.92) : place.between(0.08, 0.38)
   const sunWidth = place.between(0.5, 0.85) / W
 
@@ -205,57 +232,42 @@ export function composeBands(input: BandsComposeInput): BandsComposition {
     plans.push({ color, top: upperTop, topRadius: radius * place.between(2.6, 3.6) * (roles.swapped ? 1.2 : 1), edge: 'sky', pale: 0.5 })
   }
   const glowBump: Bump = [sunX, Math.min(1, sunWidth * place.between(1.2, 1.8)), -(glowNear - glowFar)]
-  if (lineGlow) {
-    // A thin line of light on the horizon with a long tail up into the sky.
-    plans.push({
-      color: roles.glow,
-      top: horizon - glowFar,
-      topRadius: glowNear * place.between(0.6, 1),
-      bottom: horizon + glowFar,
-      bottomRadius: glowFar,
-      edge: 'soft',
-      line: true,
-      light: Math.max(peak, far),
-      pale: 0.6,
-      sunLight,
-      sunCover,
-    })
-  } else {
-    // The second warm color's glow sits right under the upper colors' wide edge, so its own top is crisper.
-    plans.push({
-      color: roles.glow,
-      top: glowTop,
-      topRadius: radius * (roles.swapped ? place.between(0.4, 0.55) : place.between(1.6, 2.2)),
-      edge: 'soft',
-      light: Math.max(peak, far),
-      haze: lerp(0.15, 0.4, softness) * (roles.swapped ? 0.35 : 1),
-      pale: 0.7,
-      sunLight,
-      sunCover,
-      bumps: [glowBump],
-    })
-  }
+  // The second warm color's glow sits right under the upper colors' wide edge, so its own top is crisper.
+  // The light above nominal grows toward the horizon, so the glow keeps its pack color in its upper part
+  // and whitens only low down near the sun.
+  plans.push({
+    color: roles.glow,
+    top: glowTop,
+    topRadius: Math.max(MIN_RADIUS, radius * (roles.swapped ? place.between(0.4, 0.55) : place.between(1.1, 1.6))),
+    edge: 'soft',
+    light: Math.max(peak, far),
+    haze: lerp(0.1, 0.25, softness) * (roles.swapped ? 0.35 : 1),
+    pale: 0.45,
+    sunLight,
+    sunCover,
+    lightDown: [0.15, glowFar],
+    bumps: [glowBump],
+  })
   const horizonIndex = plans.length
-  // The first ground band is the thickest, so it never reads as a thin dark strip under the glow.
-  const spans = ground.map((_, k) => (k === 0 ? place.between(1, 1.6) : place.between(0.6, 1.4)))
-  const total = spans.reduce((a, b) => a + b, 0)
-  const groundSpan = ((1.04 - horizon) * spans[0]) / total
+  // Spans fill the room in proportion to the seed's weights, never under each band's floor.
+  const floor = floors(ground)
+  const weights = ground.map(() => place.between(0.75, 1.3))
+  const extra = Math.max(0, groundRoom - sum(floor))
+  const spans = floor.map((f, k) => f + (extra * weights[k]) / sum(weights))
   let at = horizon
   ground.forEach((color, k) => {
     const crisp = k === crispGround
-    // A band's top edge never eats most of the band above it, which would leave a thin dark strip.
-    const above = k > 0 ? ((1.04 - horizon) * spans[k - 1]) / total : Infinity
-    const r = k === 0 ? horizonRadius : Math.min(crisp ? crispRadius : radius * place.between(0.9, 2), 0.45 * above)
-    const lightBumps: Bump[] = [[place.between(0.1, 0.9), place.between(0.3, 0.7), place.between(-0.1, 0.1)]]
+    // A band's top edge never eats much of the bands on either side, so both reach their own color.
+    const room = 0.3 * Math.min(spans[k], k > 0 ? spans[k - 1] : Infinity)
+    const r = k === 0 ? horizonRadius : crisp ? crispRadius : Math.max(MIN_RADIUS, Math.min(radius * place.between(0.9, 2), room))
     // Light the glow reflects onto the first ground band, strongest under the sun; nominal far from it.
     const lit = k === 0 ? place.between(1.1, 1.3) : 1
     const litSun = k === 0 ? clamp((1 - 1 / lit) / (1 - sunFar), 0, 1) : 0
-    plans.push({ color, top: at, topRadius: r, edge: crisp ? 'crisp' : 'soft', light: lit, sunLight: litSun, pale: k === 0 ? 0.4 : 0, lightBumps })
-    at += ((1.04 - horizon) * spans[k]) / total
+    plans.push({ color, top: at, topRadius: r, edge: crisp ? 'crisp' : 'soft', light: lit, sunLight: litSun, pale: k === 0 ? 0.4 : 0 })
+    at += spans[k]
   })
 
-  // Patches: the sky brightest above the glow on the sun's side (sky light added), and a soft
-  // shadow or lit patch inside the first ground band.
+  // A patch of sky light added above the glow on the sun's side.
   const patches: { color: string; shape: number[]; look: number[] }[] = []
   if (aureole) {
     patches.push({
@@ -264,80 +276,74 @@ export function composeBands(input: BandsComposeInput): BandsComposition {
       look: [1, place.between(0.2, 0.4), MODE_ADD],
     })
   }
-  if (groundPatch && groundSpan > 0.08) {
-    const factor = groundShadow ? place.between(0.8, 0.9) : place.between(1.1, 1.2)
-    patches.push({
-      color: ground[0],
-      shape: [place.between(0.15, 0.85), horizon + groundSpan * place.between(0.4, 0.6), place.between(0.4, 0.9) / W, groundSpan * place.between(0.12, 0.22)],
-      look: [place.between(0.5, 0.8), factor, MODE_OVER],
-    })
-  }
 
   // Organic edges: the boundary model moves every edge, sky edges more than ground edges, and changes
-  // its softness along it. The stack also leans a little, each edge by its own amount, so neighbouring
-  // edges are not parallel. The glow's top moves and leans with the horizon. Wander is the wiggle the
-  // frame should show (frame heights). A narrow frame shows less of the pattern across it, so edges ask
-  // for more there, except the horizon: it keeps a landscape's wander in short-side units, so a tall
-  // frame shows the calmer middle of the same horizon instead of a hill line. Softer edges also wander
-  // a little more.
+  // its softness along it. Every edge but the horizon also leans and bows by its own amount, so
+  // neighbouring edges are not parallel and each band gets thicker and thinner along its length; the
+  // horizon stays level, so a ground never slopes up like a hillside. Wander is the wiggle the frame
+  // should show (frame heights). A narrow frame shows less of the pattern across it, so edges ask for
+  // more there, except the horizon: it keeps a landscape's wander in short-side units, so a tall frame
+  // shows the calmer middle of the same horizon. Softer edges also wander a little more.
   const waviness = shape.between(0.8, 1.25)
-  const lean = shape.between(-0.035, 0.035)
+  const lean = shape.between(-0.03, 0.03)
   const shown = clamp(0.48 + 0.22 * W, 0.7, 0.9)
   const wanderScale = waviness * Math.sqrt(geo(softness, 0.03, 0.07, 0.16) / 0.07)
   const used = plans.slice(0, BAND_MAX)
-  const shares = used.map(() => shape.between(0.4, 1.4))
-  const ownTilt = used.map(() => shape.between(-0.02, 0.02))
-  shares[horizonIndex - 1] = shares[horizonIndex]
-  ownTilt[horizonIndex - 1] = ownTilt[horizonIndex]
-  // The glow's top is tied to the horizon; its own wander makes the glow thicker and thinner along it.
   // A horizon over a much darker ground stays calmer, so it never reads as a hill line.
   const luminance = (hex: string) => {
     const [r, g, b] = hexToLinear(hex)
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
   }
   const darkGround = 1 - luminance(ground[0]) / Math.max(luminance(roles.glow), 1e-6) > 0.5
-  // The second warm color's crisper glow top keeps an even thickness; a changing one would rise in mounds.
   const wanderOf = (plan: BandPlan, i: number) => {
     if (plan.edge === 'sky') return WANDER.sky / shown
-    if (i === horizonIndex - 1 && roles.swapped) return wanderOf(used[horizonIndex], horizonIndex)
     if (i === horizonIndex - 1) return WANDER.glow / shown
     if (i === horizonIndex) return (darkGround ? WANDER.darkHorizon : WANDER.horizon) / (0.87 * H)
     return (plan.edge === 'crisp' ? WANDER.crisp : WANDER.ground) / shown
   }
+  // How far each edge leans and bows: the glow's top most, since its soft fade would otherwise sit a fixed
+  // height above the level horizon; then sky and ground edges, the horizon not at all.
+  const bendOf = (plan: BandPlan, i: number) => (i === horizonIndex ? 0 : i === horizonIndex - 1 ? 1.6 : 1)
   // The glow's top fades far up into the sky; softness that changed along it would make that fade rise in peaks.
-  const shapes = used.map((plan, i) => ({
-    wander: wanderOf(plan, i) * wanderScale,
-    tilt: ((lean * shares[i] + ownTilt[i]) * W) / H,
-    softVary: i === horizonIndex - 1 ? shape.between(0.15, 0.3) : plan.edge === 'crisp' ? shape.between(1, 1.3) : shape.between(0.8, 1.2),
-    bumps: plan.bumps ?? [],
-  }))
+  const shapes = used.map((plan, i) => {
+    const bend = bendOf(plan, i)
+    const bow: Bump = [shape.between(0.2, 0.8), shape.between(0.45, 0.85), (shape.between(-0.03, 0.03) * bend) / H]
+    // Ground edges lean only half as much, so a ground never slopes up to one side like a hillside.
+    const leanShare = i > horizonIndex ? 0.5 : 1
+    return {
+      wander: wanderOf(plan, i) * wanderScale,
+      tilt: (((lean * shape.between(0.4, 1.4) + shape.between(-0.025, 0.025)) * W) / H) * bend * leanShare,
+      softVary: i === horizonIndex - 1 ? shape.between(0.15, 0.3) : plan.edge === 'crisp' ? shape.between(1, 1.3) : shape.between(0.8, 1.2),
+      bumps: bend > 0 ? [...(plan.bumps ?? []), bow] : (plan.bumps ?? []),
+    }
+  })
 
   const params: Record<string, ParamValue> = {}
   const colors = [roles.sky]
   used.forEach((plan, i) => {
     const key = (name: Parameters<typeof bandKey>[1]) => bandKey(i, name)
     const own = shapes[i]
-    const lightBumps = plan.lightBumps ?? []
-    const bumps = own.bumps.slice(0, BUMP_MAX - lightBumps.length)
+    const bumps = own.bumps.slice(0, BUMP_MAX)
     colors.push(plan.color)
-    params[key('Edges')] = [plan.top, plan.bottom ?? 2]
-    params[key('Soft')] = [plan.topRadius, plan.bottomRadius ?? 0.05]
+    params[key('Edges')] = [plan.top, 2]
+    params[key('Soft')] = [plan.topRadius, 0.05]
     params[key('Opacity')] = plan.opacity ?? 1
     params[key('Light')] = plan.light ?? 1
     params[key('Mode')] = MODE_OVER
-    params[key('Line')] = plan.line ?? false
+    params[key('Line')] = false
     params[key('Wander')] = [own.wander, own.wander]
     params[key('SoftVary')] = own.softVary
     params[key('Tilt')] = [own.tilt, 0, 0]
     params[key('Sun')] = [plan.sunLight ?? 0, plan.sunCover ?? 0]
     params[key('Haze')] = plan.haze ?? 0
     params[key('Pale')] = plan.pale ?? 0
-    params[key('BumpAt')] = padded([...bumps.map((b) => b[0]), ...lightBumps.map((b) => b[0])], 0.5)
-    params[key('BumpWidth')] = padded([...bumps.map((b) => b[1]), ...lightBumps.map((b) => b[1])], 0)
+    params[key('LightDown')] = plan.lightDown ?? [1, 0]
+    params[key('BumpAt')] = padded(bumps.map((b) => b[0]), 0.5)
+    params[key('BumpWidth')] = padded(bumps.map((b) => b[1]), 0)
     params[key('BumpTop')] = padded(bumps.map((b) => b[2]), 0)
     params[key('BumpBottom')] = padded([], 0)
     params[key('BumpCover')] = padded([], 0)
-    params[key('BumpLight')] = padded([...bumps.map(() => 0), ...lightBumps.map((b) => b[2])], 0)
+    params[key('BumpLight')] = padded([], 0)
   })
   while (colors.length < 1 + BAND_MAX) colors.push(roles.sky)
   patches.forEach((patch, j) => {
@@ -358,6 +364,7 @@ export function composeBands(input: BandsComposeInput): BandsComposition {
   params.ink = 0
   // About the same number of waves across every format: a shorter noise lattice in narrow frames.
   params.boundaryNoise = [0.15, 0.3 * Math.sqrt(W), 0.25, 1]
+  params.lightVary = LIGHT_VARY
 
   return {
     colors,

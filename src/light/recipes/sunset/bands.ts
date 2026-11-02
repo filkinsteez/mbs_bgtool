@@ -36,6 +36,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
   const bumpCover: number[] = []
   const bumpLight: number[] = []
   const pale: number[] = []
+  const down: number[] = []
   const bridgeUnder: number[] = []
   const bridgeOwn: number[] = []
 
@@ -73,6 +74,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     bumpCover.push(...ctx.vec(key('BumpCover')).slice(0, BUMP_MAX))
     bumpLight.push(...ctx.vec(key('BumpLight')).slice(0, BUMP_MAX))
     pale.push(ctx.num(key('Pale')))
+    down.push(...ctx.vec(key('LightDown')))
 
     const under = i === 0 ? base : scaled(bandColor(i - 1), Math.min(1, ctx.num(bandKey(i - 1, 'Light'))))
     const own = scaled(bandColor(i), Math.min(1, light))
@@ -109,6 +111,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     uBumpCover: bumpCover,
     uBumpLight: bumpLight,
     uBandPale: pale,
+    uBandDown: down,
     uBridgeUnder: bridgeUnder,
     uBridgeOwn: bridgeOwn,
     uPatchShape: patchShape,
@@ -120,6 +123,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     uDeepen: ctx.num('deepen'),
     uIntensity: ctx.num('intensity'),
     uGrainInk: ctx.vec('grainInk'),
+    uLightVary: ctx.vec('lightVary'),
   }
 }
 
@@ -166,6 +170,7 @@ uniform vec4 uBumpBottom[BAND_MAX];
 uniform vec4 uBumpCover[BAND_MAX];
 uniform vec4 uBumpLight[BAND_MAX];
 uniform float uBandPale[BAND_MAX];
+uniform vec2 uBandDown[BAND_MAX];   // share of the light above nominal at the top edge, depth where it is full (frame heights; 0 off)
 uniform vec3 uBridgeUnder[BAND_MAX]; // pale light added where a band blends with what is under it, at the under end
 uniform vec3 uBridgeOwn[BAND_MAX];   // the same at the band's own end
 uniform vec4 uPatchShape[PATCH_MAX]; // x, y, radius x, radius y
@@ -177,6 +182,7 @@ uniform vec2 uShade;
 uniform float uDeepen;
 uniform float uIntensity;
 uniform vec2 uGrainInk;              // how much grain follows ink, grain on bare base
+uniform vec3 uLightVary;             // slow change of light: RMS share, lattice along and down (short-side units)
 
 // Set by radiance() for grainWeight(), which the engine calls right after it for the same point.
 float gGrainWeight = 1.0;
@@ -344,6 +350,8 @@ vec3 radiance(vec2 uv, vec2 p) {
     light = max(light, 0.0) * mix(1.0, sunFall, sun.x);
     float top = edge.x + shift + moveTop;
     float bottom = edge.y + shift + shiftBottom + moveBottom;
+    vec2 down = uBandDown[i];
+    if (down.y > 0.0 && light > 1.0) light = 1.0 + (light - 1.0) * mix(down.x, 1.0, smoothstep(0.0, 1.0, (v - top) / down.y));
     float above = max(edge.z * softTop, pixel);
     float below = max(edge.w * softBottom, pixel);
     float shape = 1.0;
@@ -369,6 +377,12 @@ vec3 radiance(vec2 uv, vec2 p) {
 
   vec3 lit = uInk > 0.0 ? pow(max(acc, vec3(0.0)), vec3(1.0 + uInk)) : acc;
   float shade = max(0.0, 1.0 + uShade.x * dx + uShade.y * (v - 0.5));
+  if (uLightVary.x > 0.0) {
+    // Two octaves; 0.3234 is the RMS of the sum, so the share is the RMS change of light.
+    vec2 q = p / max(uLightVary.yz, vec2(1e-3));
+    float n = gradientNoise(q + vec2(3.7, 1.9), uSeed + 811) + 0.35 * gradientNoise(2.0 * q + vec2(8.1, 5.3), uSeed + 977);
+    shade *= 1.0 + uLightVary.x * clamp(n / 0.3234, -2.5, 2.5);
+  }
   if (uGrainInk.x > 0.0) {
     float darkness = saturate(1.0 - luminance(lit) / max(luminance(deepen(uBase, uIntensity)), 1e-4));
     gGrainWeight = mix(1.0, mix(uGrainInk.y, 1.0, darkness), uGrainInk.x);

@@ -127,6 +127,31 @@ export function bridgeEnds(under: Rgb, own: Rgb, scale: number, gain = 1): [Rgb,
   const y = luma(mid)
   const haze: Rgb = [mid[0] / y, mid[1] / y, mid[2] / y]
   const amount = scale * bridgeStrength(under, own, haze, gain) * Math.sqrt(luma(under) * luma(own))
-  const end = (t: Rgb): Rgb => [(t[0] / y) * amount, (t[1] / y) * amount, (t[2] / y) * amount]
-  return [end(lo), end(hi)]
+  const end = (t: Rgb, w: number): Rgb => [(t[0] / y) * amount * w, (t[1] / y) * amount * w, (t[2] / y) * amount * w]
+  const [wUnder, wOwn] = steadyWeights(under, own, end(lo, 1), end(hi, 1), gain)
+  return [end(lo, wUnder), end(hi, wOwn)]
+}
+
+/**
+ * Weights on the bridge light at the two ends (summing to 2, so the middle
+ * keeps its light) that keep the crossing from getting lighter than its
+ * lighter end: the light moves toward the darker end until no point of the
+ * crossing rises above the lighter end after the tone curve.
+ */
+function steadyWeights(under: Rgb, own: Rgb, atUnder: Rgb, atOwn: Rgb, gain: number): [number, number] {
+  const lit = (c: readonly number[]) => linearToOklch(toneCurve(c.map((v) => v * gain)))[0]
+  const underLighter = lit(under) >= lit(own)
+  const ceiling = Math.max(lit(under), lit(own)) + 0.005
+  for (let step = 0; step <= 10; step++) {
+    const w = 1 - step / 10
+    const [wu, wo] = underLighter ? [w, 2 - w] : [2 - w, w]
+    let over = false
+    for (let k = 1; k < 20 && !over; k++) {
+      const a = k / 20
+      const col = [0, 1, 2].map((i) => (1 - a) * under[i] + a * own[i] + 4 * a * (1 - a) * ((1 - a) * wu * atUnder[i] + a * wo * atOwn[i]))
+      over = lit(col) > ceiling
+    }
+    if (!over) return [wu, wo]
+  }
+  return underLighter ? [0, 2] : [2, 0]
 }

@@ -27,6 +27,7 @@ export type BandParamName =
   | 'Sun'
   | 'Haze'
   | 'Pale'
+  | 'LightDown'
   | 'BumpAt'
   | 'BumpWidth'
   | 'BumpTop'
@@ -64,6 +65,8 @@ function bandSpecs(index: number): ParamSpec[] {
     { kind: 'number', key: key('Haze'), label: `Band ${n} haze`, min: 0, max: 0.8, step: 0.005, default: 0 },
     // 1: where the band thins out at its edges its light is the pale member of its color family.
     { kind: 'number', key: key('Pale'), label: `Band ${n} pale edges`, min: 0, max: 1, step: 0.005, default: 0 },
+    // Light above nominal grows down from the top edge: the share it has at the top, and the depth (frame heights) where it is full. Depth 0 is off.
+    { kind: 'vector', key: key('LightDown'), label: `Band ${n} extra light at top, depth to full`, min: 0, max: 1, step: 0.001, default: [1, 0] },
     { kind: 'vector', key: key('BumpAt'), label: `Band ${n} bump at`, min: -0.5, max: 1.5, step: 0.001, default: [0.2, 0.4, 0.6, 0.8] },
     { kind: 'vector', key: key('BumpWidth'), label: `Band ${n} bump width`, min: 0, max: 1, step: 0.001, default: zeros(BUMP_MAX) },
     { kind: 'vector', key: key('BumpTop'), label: `Band ${n} bump top shift`, min: -0.3, max: 0.3, step: 0.0005, default: zeros(BUMP_MAX) },
@@ -94,6 +97,8 @@ export const BANDS_PARAMS: readonly ParamSpec[] = [
   { kind: 'number', key: 'ink', label: 'Ink mixing', min: 0, max: 5, step: 0.01, default: 0 },
   // Grain that follows ink: 0 is even grain; 1 scales it by how much the layers darken the base, down to the floor on bare base.
   { kind: 'vector', key: 'grainInk', label: 'Grain follows ink, floor', min: 0, max: 1, step: 0.01, default: [0, 0.3] },
+  // Slow change of light over the frame with zero mean, so a flat area keeps its color at its mean. Lengths in short-side units.
+  { kind: 'vector', key: 'lightVary', label: 'Slow light change: amount, length along, length down', min: 0, max: 2, step: 0.001, default: [0, 0.45, 0.35] },
   // The shared boundary model (boundary.ts). Lengths in short-side units.
   { kind: 'vector', key: 'boundaryNoise', label: 'Edge noise: shared share, length along, octave gain, rows', min: 0, max: 4, step: 0.005, default: [0.15, 0.4, 0.25, 1] },
   { kind: 'vector', key: 'boundaryAlong', label: 'Wander change along the edge, its length', min: 0, max: 2, step: 0.005, default: [0.3, 0.6] },
