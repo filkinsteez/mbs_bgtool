@@ -4,7 +4,7 @@ import { hexToLinear, type Rgb } from '../../color/srgb'
 import { toneCurve } from '../../engine/output'
 import type { LensSettings, OutputSettings, ParamValue } from '../../scene'
 import { isWarm } from './bands-light'
-import { BAND_MAX, bandKey, BUMP_MAX, MODE_OVER, PATCH_MAX } from './bands-params'
+import { BAND_MAX, bandKey, BUMP_MAX, MODE_ADD, MODE_OVER, PATCH_MAX } from './bands-params'
 
 export interface BandsComposeInput {
   /** null takes the first pack. */
@@ -153,6 +153,9 @@ export function composeBands(input: BandsComposeInput): BandsComposition {
   const rimLine = crispHorizon && pick.chance(0.5)
   const sunRight = pick.chance(0.5)
   const sunOff = pick.chance(0.2)
+  const aureole = pick.chance(0.7)
+  const groundPatch = pick.chance(0.6)
+  const groundShadow = pick.chance(0.5)
 
   // Placement: seed and controls.
   const radius = geo(softness, 0.03, 0.07, 0.16) * H ** -0.3
@@ -213,6 +216,9 @@ export function composeBands(input: BandsComposeInput): BandsComposition {
   const spans = ground.map(() => place.between(0.6, 1.4))
   const total = spans.reduce((a, b) => a + b, 0)
   let at = horizon
+  const firstSpan = ground.length ? ((1.04 - horizon) * spans[0]) / total : 0
+  let groundSpan = firstSpan
+  let groundLight = 1
   ground.forEach((color, k) => {
     const crisp = k === 0 ? crispHorizon : k === crispGround
     const r = k === 0 ? horizonRadius : crisp ? crispRadius : radius * place.between(1, 2.2)
@@ -226,7 +232,9 @@ export function composeBands(input: BandsComposeInput): BandsComposition {
   if (ground.length === 0) {
     // No later pack color: the ground is the sky's own light, dimmer, and dimmer again lower down.
     const lower = lerp(horizon, 1, place.between(0.35, 0.65))
-    plans.push({ color: roles.sky, top: horizon, topRadius: horizonRadius, edge: crispHorizon ? 'crisp' : 'soft', light: place.between(0.5, 0.65) })
+    groundSpan = lower - horizon
+    groundLight = place.between(0.5, 0.65)
+    plans.push({ color: roles.sky, top: horizon, topRadius: horizonRadius, edge: crispHorizon ? 'crisp' : 'soft', light: groundLight })
     plans.push({ color: roles.sky, top: lower, topRadius: radius * place.between(1.2, 2.4), edge: 'soft', light: place.between(0.28, 0.4) })
   }
   if (rimLine && plans.length < BAND_MAX) {
@@ -242,6 +250,25 @@ export function composeBands(input: BandsComposeInput): BandsComposition {
       opacity: place.between(0.5, 0.8),
       sunCover: 1,
       follows: horizonIndex,
+    })
+  }
+
+  // Patches: the sky brightest above the glow on the sun's side (sky light added), and a soft
+  // shadow or lit patch inside the first ground band.
+  const patches: { color: string; shape: number[]; look: number[] }[] = []
+  if (aureole) {
+    patches.push({
+      color: roles.sky,
+      shape: [clamp(sunX, 0.05, 0.95), glowTop - place.between(0.1, 0.22) / H, Math.min(2, sunWidth * place.between(1, 1.8)), place.between(0.08, 0.16) / H],
+      look: [1, place.between(0.2, 0.4), MODE_ADD],
+    })
+  }
+  if (groundPatch && groundSpan > 0.08) {
+    const factor = groundShadow ? place.between(0.7, 0.85) : place.between(1.15, 1.3)
+    patches.push({
+      color: ground[0] ?? roles.sky,
+      shape: [place.between(0.15, 0.85), horizon + groundSpan * place.between(0.4, 0.6), place.between(0.4, 0.9) / W, groundSpan * place.between(0.12, 0.22)],
+      look: [place.between(0.5, 0.8), groundLight * factor, MODE_OVER],
     })
   }
 
@@ -301,10 +328,16 @@ export function composeBands(input: BandsComposeInput): BandsComposition {
     params[key('BumpCover')] = padded([], 0)
     params[key('BumpLight')] = padded([...bumps.map(() => 0), ...lightBumps.map((b) => b[2])], 0)
   })
+  while (colors.length < 1 + BAND_MAX) colors.push(roles.sky)
+  patches.forEach((patch, j) => {
+    colors.push(patch.color)
+    params[`patch${j + 1}Shape`] = patch.shape
+    params[`patch${j + 1}Look`] = patch.look
+  })
   while (colors.length < 1 + BAND_MAX + PATCH_MAX) colors.push(roles.sky)
 
   params.bands = used.length
-  params.patches = 0
+  params.patches = patches.length
   params.intensity = daylight
   params.sun = [sunX, sunWidth]
   params.bridge = 1
