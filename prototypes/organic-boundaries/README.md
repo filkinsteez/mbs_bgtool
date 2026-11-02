@@ -437,6 +437,83 @@ Numbers from the curves: `boundaryGeometry` (wander, tilt, bow, wiggle, DCT spec
 5. Contour: no warp on cores. Softness and brightness variation along the edge at a scale of at least 0.3 S, on top of the light field.
 6. Compare sheet: the isoline overlay and the boundary table above. Generic bands for production frames.
 
+## Current Sunset recipes, measured
+
+Measured on 2026-11-02 between 16:28 and 16:31 EST. The code was commit `4daccf7`, the last Sunset commit, plus uncommitted edits: the ramp agent's compose rework, `softFollow` and `dimBelow`, and engine edits in `gl`, `lens`, `passes`, `programRenderer` and `scatter`. The recipes change every few minutes, so re-run before relying on these numbers: `node recipes-audit.mjs`, then `node recipes-table.mjs`, then `node ramp-warp.mjs`.
+
+How:
+
+- **Reference presets:** `scripts/light/audit.mjs` renders each preset at its target's size. The render is projected onto the target's color path and checked against the 1:1 bands.
+- **Pack frames:** `composeScene` with every control at 0.5, Bold / Elemental / Atmospheric, seeds 1-3, 16:9 and 9:16, through the engine, checked against the generic bands.
+- **Main transitions:** found from each frame's own color path, one per rise of t between two plateaus.
+- **t:** these frames pass the same blues twice (a dim blue ground, a light band between blues), so t is computed three ways that differ only in how such a color is resolved: a row window, a column walk that may only step back a little (`lib/tracked.mjs`), and the same walk free to jump forward. Each frame uses the one that fits its colors best (projection distance within 20% of the best) and has the fewest multi-crossings.
+- **Folds:** a fold counts only where the color is changing. A short hook (extra crossings within 3% H) is a warp fold and fails. Crossings farther apart are a closed outline (a glow inside the frame) and are reported but don't fail.
+- **Not measured:** a check is left out when it needs two boundaries and the frame has one, or (wavelength) when no boundary wiggles more than 0.3% H.
+- **Left out:** Bands' Bold seed 2 (16:9 and 9:16) puts a cream band between a Meta Blue sky and a Meta Blue ground, and every projection confuses the two blues there, so those two frames are left out.
+
+Pack frames, frames passing / frames measured:
+
+| recipe | wander | wavelength | width | neighbours | spacing | folds |
+| --- | --- | --- | --- | --- | --- | --- |
+| sunset.ramp | 9/18 | 2/13 | 9/18 | 9/10 | 9/10 | 15/18 |
+| sunset.bands | 3/16 | 1/6 | 6/16 | 16/16 | 12/16 | 12/16 |
+| sunset.blooms | 9/18 | 2/12 | 14/18 | 4/4 | 4/4 | 17/18 |
+
+Medians:
+
+- **Ramp:** widest boundary wiggles 0.56% H, top component share 0.69, width min/max 0.76, neighbour correlation 0.11, spacing CV 0.18.
+- **Bands:** widest boundary wiggles 0.22% H, top share 0.88, min/max 0.72, correlation 0.16, CV 0.09.
+- **Blooms:** widest boundary wiggles 0.70% H, top share 0.70, min/max 0.74.
+
+None of the three makes a warp fold. The fold failures are an implied slope p01 of -0.60 to -0.63, just past the -0.6 band, plus two short hooks: Bands Elemental 16:9 s2 (0.33%) and Blooms Bold 9:16 s2 (0.34%).
+
+Reference presets (1:1 bands):
+
+| reference | recipe | wander | wavelength | width | neighbours | spacing | folds |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| sky-peach | sunset.ramp | FAIL | pass | FAIL | pass | pass | pass |
+| violet-wave | sunset.ramp | FAIL | pass | FAIL | FAIL | FAIL | FAIL |
+| red-yellow-arcs | sunset.ramp | pass | pass | FAIL | pass | pass | pass |
+| blue-diagonal | sunset.ramp | FAIL | pass | FAIL | FAIL | pass | pass |
+| film-poster-bands | sunset.bands | FAIL | pass | FAIL | FAIL | pass | pass |
+| green-riso | sunset.bands | pass | pass | FAIL | FAIL | pass | FAIL |
+| blue-riso | sunset.bands | FAIL | pass | FAIL | pass | pass | FAIL |
+| pink-riso | sunset.bands | FAIL | pass | FAIL | pass | pass | pass |
+
+The largest misses, target / render:
+
+- sky-peach's top boundary wiggles 1.89 / 0.27% H, and its width is too even (min/max 0.82 / 0.94).
+- blue-diagonal's boundaries move together (adjacent correlation 0.02 / 0.43).
+- pink-riso's cream-to-magenta edge wiggles 0.40 / 0.06% H.
+- The poster's adjacent correlation is 0.26 / -0.48.
+- Width min/max misses by more than 0.15 on at least one boundary of every reference.
+
+![pack frames](results/recipes-packs.jpg)
+
+Rows: ramp, bands, blooms, each Bold / Elemental / Atmospheric; columns: 16:9 seeds 1-3, then 9:16 seeds 1-3. Grey lines are the 14 equal-t levels and colored lines each main transition's 50% line. Reference presets, target and render isolines: `results/recipes-refs.jpg`. Full-size sheets: `artifacts/organic-boundaries/recipes/iso-packs-sunset.*.jpg` and `iso-refs-sunset.*.jpg`, frames and `report.json` in the same folder.
+
+What the sheets show:
+
+- **Ramp:** smooth domes over the glow, nearly concentric.
+- **Bands:** edges that are almost straight, perfectly parallel in the portraits (spacing CV 0.00-0.02).
+- **Blooms:** smooth concentric arcs around the glow, with almost no wander in every portrait (0.04-0.12% H).
+
+### The ramp's warp, checked
+
+The claim was: "every edge moves with the same noise (one `warpNoise` scaled per edge by `uEdgeWarp[j]`), and the warp is 0.01 of the sky scale". `ramp-warp.mjs` renders each composed scene four times with the glow off: warp and drift off, warp only, drift only, both. It then compares the equal-t isolines between the renders.
+
+- **The same noise: confirmed, and it reaches further than the edges.** Edge j sits at `at_j + warp · warpNoise(across) · exp(-|at_j - horizon| / 0.25)`. The same noise also does two more things:
+  - When the horizon is below the frame, the shader moves the horizon itself by the full `warp · warpNoise`. The glow, sunlight and horizon dimming are measured from that line, so the whole lower sky moves as one by the full wander. With drift off, the highest and lowest isolines that the warp moves correlate 0.83-1.00 in five of the six frames whose horizon is below the frame. Most of that movement comes from the horizon line, not from the edges' own share. In the sixth frame (Bold seed 2), the sky edge moves only 0.02-0.07% H.
+  - In the wave look, `softFollow = 0.45 / noiseSpread` sets the horizon edge's width from the same noise, about ×0.4 to ×2.5. Isolines on either side of that edge move up to 4.5% H in opposite directions.
+  - The softness variation (`softNoise`) is also one noise for every edge. The only noise that differs between edges is the drift: `0.16 · width` (0.08 in the wave look), on a 2D noise of position along the edge and the edge's height.
+- **0.01 of the sky scale: no longer true.** Compose now asks for a wander of `0.006 · skyScale` (open, corner and arcs looks), measured at 0.65% S on the horizon. The wave look asks for `0.010-0.018 · √haze`. Compose sets `warp = min(0.12, wander / noise spread)`, and the 0.12 cap binds in all three wave frames: they get 0.57% S instead of 1.0-1.8%. The sky edge, 0.44-0.53 S above the horizon, gets `exp(-d / 0.25)` = 0.12-0.17 of the warp: 0.08-0.11% S predicted. On the Bold frames, where the sky edge is clear of the lower sky's light, it measures 0.02-0.31% H. Its visible wander comes from the drift, 0.5-1.1% H.
+
+### What each recipe agent should change
+
+- **sunset.ramp:** move each sky edge with `boundary.ts` (coordinate mode, ramp-mode `v`, share 0.35) instead of the one `warpNoise` plus drift, so the sky edge gets its own 1.2-1.8% S wander instead of about 0.1%. Remove the 0.12 warp cap that holds the wave look at 0.57% S, and vary the wide sky edge's softness along it (min/max is 0.90-0.98 in several frames).
+- **sunset.bands:** move every band edge in edge mode, so sky bands get 0.5-2.5% H of wander and ground bands 0.3-1% (now 0.04-0.5%). Give each edge softness that varies along it (min/max 0.5-0.9) and different widths (widest at least 3× the narrowest), and use the 0.03 feather on the riso presets to match the prints' edge wobble.
+- **sunset.blooms:** warp each glow's minor-axis coordinate in its own frame with `boundaryWarp` (distance mode, vertical lattice about the minor radius, wander at most a tenth of it) and vary its softness along the arc with `boundarySoftAt`. Today the glow edge is a smooth arc (top component share 0.70, 0.04-0.12% H wander in portraits).
+
 ## Files
 
 - `measure.mjs`, `tables.mjs`: Task 1, Sunset measurement, tables and plots. `contour.mjs`: Contour edges.
@@ -445,5 +522,6 @@ Numbers from the curves: `boundaryGeometry` (wander, tilt, bow, wiggle, DCT spec
 - `lib/boundary.mjs` (the model), `lib/scene.mjs` (ramp, band and layer recipe), `lib/production.mjs` (pack scenes), `lib/audit.mjs`, `lib/rampcoord.mjs`, `lib/isolines.mjs`, `lib/config.mjs`, `lib/draw.mjs`, plus color, image, blur, noise, output and refs helpers.
 - `glsl/boundary.glsl`: the model for the shader.
 - `gpu-compare.mjs`: the engine module on the GPU next to the CPU and the prototype (`out/gpu/`, `results/gpu-vs-cpu.jpg`).
+- `recipes-audit.mjs`, `recipes-table.mjs`, `ramp-warp.mjs`, `lib/tracked.mjs`: the audit of the current Sunset recipes (`artifacts/organic-boundaries/`, `results/recipes-*.jpg`). `tools/fold-map.mjs` marks where isolines are crossed twice; `tools/crease.mjs` shows abrupt slope changes in a frame's lightness.
 - `tools/`: noise bounds and correlation, octave bounds.
 - `presets/ref-sunset-*.json`: the six reference presets (`scene.params` holds the recipe fields above).
