@@ -1,0 +1,33 @@
+{
+  "note": "Recommended grain filter. Mono grain on Oklab L after the tone curve, before dither. Sizes are blob sigma as a fraction of the output's short side; amp is Oklab L standard deviation at mid-tones. The strength slider (0..1) is film-only up to filmUntil, then blends film -> riso by smoothstep(filmUntil, 1, s).",
+  "slider": { "filmUntil": 0.6, "suggestedStart": 0.5 },
+  "ends": {
+    "film": {
+      "amp": 0.015,
+      "size": 0.0005,
+      "octaves": [
+        { "rel": 0.5, "w": 0.35 },
+        { "rel": 1, "w": 0.85 },
+        { "rel": 2, "w": 0.35 },
+        { "rel": 8, "w": 0 }
+      ],
+      "shadowEnd": 0.25,
+      "highlightCut": 0.5,
+      "inkBoost": 0
+    },
+    "riso": {
+      "amp": 0.016,
+      "size": 0.0011,
+      "octaves": [
+        { "rel": 0.5, "w": 0.1 },
+        { "rel": 1, "w": 0.6 },
+        { "rel": 2, "w": 0.72 },
+        { "rel": 8, "w": 0.12 }
+      ],
+      "shadowEnd": 0.2,
+      "highlightCut": 0,
+      "inkBoost": 0.9
+    }
+  },
+  "dither": { "shape": "triangular", "lsb": 1 }
+}

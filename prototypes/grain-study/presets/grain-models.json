@@ -1,0 +1,68 @@
+{
+  "note": "Grain model parameters fitted to the clean riso targets (public/references/awe, 925 px wide). Lengths in px at 925 wide, amplitudes in Oklab L. amp.knots are [L, std] pairs from the target's residual per L bin, raised about 5% (a) and 8% (b) because the high-pass used for measuring removes part of the coarser octaves.",
+  "refs": {
+    "sunset-green-riso": {
+      "film": { "sigma": 1.35, "amp": { "knots": [[0.65, 0.0108], [0.75, 0.0084], [0.85, 0.0084], [0.95, 0.0103]] } },
+      "octaves": {
+        "octaves": [
+          { "sigma": 1.0, "weight": 0.467 },
+          { "sigma": 2.0, "weight": 0.884 }
+        ],
+        "amp": { "knots": [[0.65, 0.0111], [0.75, 0.0086], [0.85, 0.0086], [0.95, 0.0106]] }
+      },
+      "riso": {
+        "sigma": 1.2,
+        "strength": 0.045,
+        "paper": [0.92, -0.002, 0.006],
+        "lInk": 0,
+        "tooth": { "amp": 0.004, "ink": 0.015, "sigmaX": 0.6, "sigmaY": 3 },
+        "misreg": [1, 0]
+      },
+      "jitter": { "jitterPx": 12, "sigma": 0.9 }
+    },
+    "sunset-blue-riso": {
+      "film": {
+        "sigma": 1.35,
+        "amp": { "knots": [[0.45, 0.0189], [0.55, 0.0193], [0.65, 0.0148], [0.75, 0.0139], [0.85, 0.0101], [0.95, 0.0086]] }
+      },
+      "octaves": {
+        "octaves": [
+          { "sigma": 1.0, "weight": 0.698 },
+          { "sigma": 2.0, "weight": 0.716 }
+        ],
+        "amp": { "knots": [[0.45, 0.0194], [0.55, 0.0199], [0.65, 0.0152], [0.75, 0.0143], [0.85, 0.0104], [0.95, 0.0089]] }
+      },
+      "riso": {
+        "sigma": 1.2,
+        "strength": 0.05,
+        "paper": [0.955, 0.002, -0.002],
+        "lInk": 0,
+        "tooth": { "amp": 0.004, "ink": 0.015, "sigmaX": 0.6, "sigmaY": 3 },
+        "misreg": [1, 0]
+      },
+      "jitter": { "jitterPx": 12, "sigma": 0.9 }
+    },
+    "sunset-pink-riso": {
+      "film": {
+        "sigma": 1.35,
+        "amp": { "knots": [[0.45, 0.0197], [0.55, 0.0159], [0.65, 0.0095], [0.75, 0.0069], [0.85, 0.0068], [0.95, 0.0077]] }
+      },
+      "octaves": {
+        "octaves": [
+          { "sigma": 1.0, "weight": 0.51 },
+          { "sigma": 2.0, "weight": 0.86 }
+        ],
+        "amp": { "knots": [[0.45, 0.0203], [0.55, 0.0163], [0.65, 0.0097], [0.75, 0.0071], [0.85, 0.007], [0.95, 0.0079]] }
+      },
+      "riso": {
+        "sigma": 1.2,
+        "strength": 0.05,
+        "paper": [0.95, 0.005, 0.008],
+        "lInk": 0,
+        "tooth": { "amp": 0.004, "ink": 0.015, "sigmaX": 0.6, "sigmaY": 3 },
+        "misreg": [1, 0]
+      },
+      "jitter": { "jitterPx": 12, "sigma": 0.9 }
+    }
+  }
+}
