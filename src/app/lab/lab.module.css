@@ -32,7 +32,7 @@
   flex: 1;
   gap: 8px;
   min-height: 0;
-  padding: 0 8px 8px;
+  padding: 0 0 0 8px;
 }
 
 .hidden {
@@ -44,6 +44,7 @@
   flex: 1;
   gap: 8px;
   min-width: 0;
+  padding-bottom: 8px;
 }
 
 .panel {
@@ -80,68 +81,12 @@
 }
 
 .side {
-  display: flex;
   flex: none;
-  flex-direction: column;
-  gap: 12px;
   width: 320px;
-  overflow-y: auto;
-  padding-right: 2px;
+  background: var(--chrome-1);
+  border-left: 1px solid var(--chrome-2);
 }
 
-.group {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.row {
-  display: grid;
-  grid-template-columns: 104px minmax(0, 1fr) 64px;
-  align-items: center;
-  gap: 6px;
-}
-
-.field {
-  display: grid;
-  grid-template-columns: 104px minmax(0, 1fr);
-  align-items: center;
-  gap: 6px;
-}
-
-.colorRow {
-  display: grid;
-  grid-template-columns: 104px 40px minmax(0, 1fr);
-  align-items: center;
-  gap: 6px;
-}
-
-.label {
-  overflow: hidden;
-  color: #9a9a9a;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.toggles {
-  display: flex;
-  gap: 12px;
-}
-
-.toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  cursor: pointer;
-}
-
-.buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.button,
 .tab {
   margin: 0;
   padding: 3px 8px;
@@ -154,61 +99,12 @@
   cursor: pointer;
 }
 
-.button:disabled {
-  cursor: default;
-  opacity: 0.5;
-}
-
 .tab[aria-pressed='true'] {
   border-color: #6a6a6a;
   background: #333;
 }
 
-.number,
-.text,
-.select {
-  width: 100%;
-  min-width: 0;
-  margin: 0;
-  padding: 2px 4px;
-  border: 1px solid #333;
-  border-radius: 2px;
-  background: #1b1b1b;
-  color: inherit;
-  font: inherit;
-}
-
-.number,
-.text {
-  font-family: ui-monospace, Menlo, monospace;
-}
-
-.range {
-  width: 100%;
-  min-width: 0;
-  margin: 0;
-  accent-color: #8c8c8c;
-}
-
-.check {
-  margin: 0;
-  accent-color: #8c8c8c;
-}
-
-.swatch {
-  width: 100%;
-  height: 20px;
-  margin: 0;
-  padding: 0;
-  border: 1px solid #333;
-  background: none;
-  cursor: pointer;
-}
-
-.swatch::-webkit-color-swatch-wrapper {
-  padding: 0;
-}
-
-.swatch::-webkit-color-swatch {
-  border: none;
+.tab:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
 }

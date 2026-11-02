@@ -1,24 +1,18 @@
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
+import { useDialKitController, type DialConfig } from 'dialkit'
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type RefObject } from 'react'
 import { buildMask } from '@/light/audit/mask'
-import { defaultParams, resolveColors, resolveScene } from '@/light/engine/resolve'
+import { defaultParams } from '@/light/engine/resolve'
 import { RECIPE_LIST, getRecipe } from '@/light/recipes'
 import type { IgnoreRect } from '@/light/references'
-import {
-  LENS_COLORS,
-  LENS_NUMBERS,
-  OUTPUT_NUMBERS,
-  isRecipeId,
-  type LensSettings,
-  type OutputSettings,
-  type ParamValue,
-  type Preset,
-  type RecipeId,
-  type Scene,
-} from '@/light/scene'
-import { ColorRow, NumberRow, ParamControls, RECIPE_OPTIONS, SeedRow, SelectRow, Toggle } from './controls'
+import { isRecipeId, type LensSettings, type OutputSettings, type ParamValue, type Preset, type RecipeId } from '@/light/scene'
+import { mergeAccess, panelAccessFor, usePanelAccess } from '@/tool/panelAccess'
 import { DiffWorker, type DiffResult } from './diff'
 import { errorMessage, useFlash, useLightCanvas } from './hooks'
+import { presetToSave, sceneKeySteps } from './sceneConfig'
+import { useScenePanel } from './useScenePanel'
 import styles from './lab.module.css'
+
+const REFERENCE_PANEL = 'lab-reference'
 
 /** One entry of GET /api/light-preset. */
 interface ReferenceInfo {
@@ -45,9 +39,26 @@ interface TargetImage {
 interface Loaded {
   reference: ReferenceInfo
   target: TargetImage
+  file: Preset
+  /** The Preset panel's DialKit id. */
+  panelId: string
+}
+
+interface ViewSettings {
+  diff: boolean
+  blink: boolean
+  supersample: 1 | 2
 }
 
 let loadCount = 0
+
+/**
+ * The Preset panel id last used and how many reference loads this page has
+ * made. A reference picked in the panel gets a new id, so it starts from its
+ * file; coming back from the Packs tab reuses the id and finds the edits.
+ */
+let lastPresetPanel: { referenceId: string; panelId: string } | null = null
+let presetLoads = 0
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -141,97 +152,26 @@ function drawImage(canvas: HTMLCanvasElement | null, image: ImageData) {
   canvas.getContext('2d', { colorSpace: 'srgb' })?.putImageData(image, 0, 0)
 }
 
-export function ReferencesView({ active }: { active: boolean }) {
-  const [references, setReferences] = useState<ReferenceInfo[]>([])
-  const [selectedId, setSelectedId] = useState('')
-  const [loaded, setLoaded] = useState<Loaded | null>(null)
-  const [preset, setPreset] = useState<Preset | null>(null)
+function MessageStage({ message }: { message: string | null }) {
+  return (
+    <div className={styles.stage}>
+      <div className={styles.panel}>{message ? <p className={styles.message}>{message}</p> : null}</div>
+      <div className={styles.panel} />
+    </div>
+  )
+}
+
+export function ReferencesView({ panelRoot }: { panelRoot: RefObject<HTMLElement | null> }) {
+  const [references, setReferences] = useState<ReferenceInfo[] | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
-  const [diff, setDiff] = useState(false)
-  const [blink, setBlink] = useState(false)
-  const [blinkOn, setBlinkOn] = useState(false)
-  const [supersample, setSupersample] = useState<1 | 2>(1)
-  const flash = useFlash()
-
-  const targetCanvas = useRef<HTMLCanvasElement>(null)
-  const diffCanvas = useRef<HTMLCanvasElement>(null)
-  const overlayCanvas = useRef<HTMLCanvasElement>(null)
-  const renderHost = useRef<HTMLDivElement>(null)
-  const loadToken = useRef(0)
-  const diffWorker = useRef<DiffWorker | null>(null)
-
-  const recipe = preset ? getRecipe(preset.scene.recipe) : null
-  const resolved = useMemo(() => (preset ? resolveScene(getRecipe(preset.scene.recipe), preset.scene) : null), [preset])
-
-  const view = useLightCanvas({
-    host: renderHost,
-    scene: loaded && preset ? preset.scene : null,
-    width: loaded?.target.width ?? 1,
-    height: loaded?.target.height ?? 1,
-    supersample,
-    canvasClass: styles.canvas,
-    onRendered: () => {
-      if (diff) requestDiff()
-    },
-  })
-
-  function requestDiff() {
-    const worker = diffWorker.current
-    if (!worker || !loaded) return
-    const { target } = loaded
-    worker.request(() => {
-      const pixels = view.readPixels()
-      if (!pixels || pixels.width !== target.width || pixels.height !== target.height) return null
-      return { key: target.key, width: target.width, height: target.height, target: target.image.data, render: pixels.data, mask: target.mask }
-    })
-  }
-
-  const showDiff = useEffectEvent((result: DiffResult) => {
-    const canvas = diffCanvas.current
-    if (!canvas || !loaded || result.key !== loaded.target.key) return
-    drawImage(canvas, new ImageData(result.heat, result.width, result.height))
-  })
-
-  useEffect(() => {
-    const worker = new DiffWorker(
-      (result) => showDiff(result),
-      (message) => setProblem(message),
-    )
-    diffWorker.current = worker
-    return () => {
-      worker.dispose()
-      diffWorker.current = null
-    }
-  }, [])
-
-  async function pick(reference: ReferenceInfo) {
-    const token = ++loadToken.current
-    setSelectedId(reference.id)
-    try {
-      const [nextPreset, target] = await Promise.all([fetchPreset(reference), fetchTarget(reference)])
-      if (token !== loadToken.current) return
-      setLoaded({ reference, target })
-      setPreset(nextPreset)
-      setProblem(null)
-    } catch (cause) {
-      if (token !== loadToken.current) return
-      setLoaded(null)
-      setPreset(null)
-      setProblem(errorMessage(cause))
-    }
-  }
-
-  const start = useEffectEvent((list: ReferenceInfo[]) => {
-    setReferences(list)
-    if (list.length > 0) void pick(list[0])
-    else setProblem('No reference images found.')
-  })
 
   useEffect(() => {
     let cancelled = false
     fetchReferences().then(
       (list) => {
-        if (!cancelled) start(list)
+        if (cancelled) return
+        if (list.length > 0) setReferences(list)
+        else setProblem('No reference images found.')
       },
       (cause: unknown) => {
         if (!cancelled) setProblem(errorMessage(cause))
@@ -242,183 +182,235 @@ export function ReferencesView({ active }: { active: boolean }) {
     }
   }, [])
 
+  if (!references) return <MessageStage message={problem} />
+  return (
+    <ReferenceEditor
+      references={references}
+      panelRoot={panelRoot}
+      onSaved={(id) => setReferences((list) => list?.map((reference) => (reference.id === id ? { ...reference, hasPreset: true } : reference)) ?? list)}
+    />
+  )
+}
+
+function ReferenceEditor({
+  references,
+  panelRoot,
+  onSaved,
+}: {
+  references: ReferenceInfo[]
+  panelRoot: RefObject<HTMLElement | null>
+  onSaved: (referenceId: string) => void
+}) {
+  const flash = useFlash()
+  const [loaded, setLoaded] = useState<Loaded | null>(null)
+  const [problem, setProblem] = useState<string | null>(null)
+  const firstLoad = useRef(true)
+  const presetToCopy = useRef<Preset | null>(null)
+
+  const config = useMemo<DialConfig>(
+    () => ({
+      reference: { type: 'select', options: references.map((reference) => ({ value: reference.id, label: reference.id })), default: references[0].id },
+      diff: false,
+      blink: false,
+      supersample: false,
+      copyPreset: { type: 'action', label: flash.label('copy', 'Copy preset JSON') },
+      savePreset: { type: 'action', label: flash.label('save', 'Save preset') },
+    }),
+    [references, flash],
+  )
+  const dial = useDialKitController('Reference', config, { id: REFERENCE_PANEL, onAction: (action) => void act(action) })
+  const referenceId = typeof dial.values.reference === 'string' ? dial.values.reference : references[0].id
+  const view: ViewSettings = { diff: dial.values.diff === true, blink: dial.values.blink === true, supersample: dial.values.supersample === true ? 2 : 1 }
+  const access = useMemo(() => panelAccessFor(REFERENCE_PANEL, 'Reference', config), [config])
+
+  const load = useEffectEvent((id: string, isCancelled: () => boolean) => {
+    const reference = references.find((candidate) => candidate.id === id)
+    if (!reference) return
+    Promise.all([fetchPreset(reference), fetchTarget(reference)]).then(
+      ([file, target]) => {
+        if (isCancelled()) return
+        const reuse = firstLoad.current && lastPresetPanel?.referenceId === reference.id ? lastPresetPanel.panelId : null
+        const panelId = reuse ?? `lab-preset-${reference.id}-${++presetLoads}`
+        lastPresetPanel = { referenceId: reference.id, panelId }
+        firstLoad.current = false
+        setLoaded({ reference, target, file, panelId })
+        setProblem(null)
+      },
+      (cause: unknown) => {
+        if (isCancelled()) return
+        setLoaded(null)
+        setProblem(errorMessage(cause))
+      },
+    )
+  })
+
   useEffect(() => {
-    if (!loaded) return
-    drawImage(targetCanvas.current, loaded.target.image)
-    drawImage(overlayCanvas.current, loaded.target.image)
-    const canvas = diffCanvas.current
-    if (canvas) {
-      canvas.width = loaded.target.width
-      canvas.height = loaded.target.height
+    let cancelled = false
+    load(referenceId, () => cancelled)
+    return () => {
+      cancelled = true
     }
-  }, [loaded])
+  }, [referenceId])
+
+  async function act(action: string) {
+    const preset = presetToCopy.current
+    if (!preset) return
+    switch (action) {
+      case 'copyPreset':
+        try {
+          await navigator.clipboard.writeText(JSON.stringify(orderedPreset(preset), null, 2))
+          flash.show('copy', 'Copied')
+        } catch (cause) {
+          flash.show('copy', errorMessage(cause))
+        }
+        return
+      case 'savePreset':
+        try {
+          const response = await fetch('/api/light-preset', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(orderedPreset(preset)),
+          })
+          if (!response.ok) throw await responseError(response)
+          flash.show('save', 'Saved')
+          if (preset.referenceId) onSaved(preset.referenceId)
+        } catch (cause) {
+          flash.show('save', errorMessage(cause))
+        }
+        return
+      default:
+        return
+    }
+  }
+
+  if (!loaded) {
+    return <ReferenceAccess panelRoot={panelRoot} access={access} message={problem} />
+  }
+  return (
+    <PresetEditor
+      loaded={loaded}
+      view={view}
+      panelRoot={panelRoot}
+      referenceAccess={access}
+      onPreset={(preset) => {
+        presetToCopy.current = preset
+      }}
+    />
+  )
+}
+
+/** The stage while nothing is loaded, with keyboard support for the Reference panel. */
+function ReferenceAccess({ panelRoot, access, message }: { panelRoot: RefObject<HTMLElement | null>; access: ReturnType<typeof panelAccessFor>; message: string | null }) {
+  usePanelAccess(panelRoot, access)
+  return <MessageStage message={message} />
+}
+
+function PresetEditor({
+  loaded,
+  view,
+  panelRoot,
+  referenceAccess,
+  onPreset,
+}: {
+  loaded: Loaded
+  view: ViewSettings
+  panelRoot: RefObject<HTMLElement | null>
+  referenceAccess: ReturnType<typeof panelAccessFor>
+  onPreset: (preset: Preset) => void
+}) {
+  const { target, file, panelId } = loaded
+  const [blinkOn, setBlinkOn] = useState(false)
+  const targetCanvas = useRef<HTMLCanvasElement>(null)
+  const diffCanvas = useRef<HTMLCanvasElement>(null)
+  const overlayCanvas = useRef<HTMLCanvasElement>(null)
+  const renderHost = useRef<HTMLDivElement>(null)
+  const diffWorker = useRef<DiffWorker | null>(null)
+
+  const { scene, recipe, config } = useScenePanel({ id: panelId, name: 'Preset', base: file.scene, colors: true })
+  const access = useMemo(
+    () => mergeAccess(referenceAccess, panelAccessFor(panelId, 'Preset', config, { keySteps: sceneKeySteps(recipe) })),
+    [referenceAccess, panelId, config, recipe],
+  )
+  usePanelAccess(panelRoot, access)
 
   useEffect(() => {
-    if (!blink || !active) return
-    const timer = window.setInterval(() => setBlinkOn((on) => !on), 500)
-    return () => window.clearInterval(timer)
-  }, [blink, active])
+    onPreset(presetToSave(file, scene))
+  })
 
-  function updateScene(change: (scene: Scene) => Scene) {
-    setPreset((current) => (current ? { ...current, scene: change(current.scene) } : current))
-  }
+  const canvas = useLightCanvas({
+    host: renderHost,
+    scene,
+    width: target.width,
+    height: target.height,
+    supersample: view.supersample,
+    canvasClass: styles.canvas,
+    onRendered: () => {
+      if (view.diff) requestDiff()
+    },
+  })
 
-  function setParam(key: string, value: ParamValue) {
-    updateScene((scene) => ({ ...scene, params: { ...scene.params, [key]: value } }))
-  }
-
-  function setColor(index: number, hex: string) {
-    updateScene((scene) => ({
-      ...scene,
-      colors: resolveColors(getRecipe(scene.recipe), scene.colors).map((color, i) => (i === index ? hex : color)),
-    }))
-  }
-
-  function setRecipe(id: RecipeId) {
-    updateScene((scene) => {
-      const next = getRecipe(id)
-      const kept = resolveColors(getRecipe(scene.recipe), scene.colors)
-      return {
-        ...scene,
-        recipe: id,
-        colors: next.colorSlots.map((_, i) => kept[i] ?? next.defaultColors[i]),
-        params: defaultParams(next),
-      }
+  function requestDiff() {
+    const worker = diffWorker.current
+    if (!worker) return
+    worker.request(() => {
+      const pixels = canvas.readPixels()
+      if (!pixels || pixels.width !== target.width || pixels.height !== target.height) return null
+      return { key: target.key, width: target.width, height: target.height, target: target.image.data, render: pixels.data, mask: target.mask }
     })
   }
 
-  function setLens<K extends keyof LensSettings>(key: K, value: LensSettings[K]) {
-    updateScene((scene) => ({ ...scene, lens: { ...scene.lens, [key]: value } }))
-  }
+  const showDiff = useEffectEvent((result: DiffResult) => {
+    const element = diffCanvas.current
+    if (!element || result.key !== target.key) return
+    drawImage(element, new ImageData(result.heat, result.width, result.height))
+  })
 
-  function setOutput<K extends keyof OutputSettings>(key: K, value: OutputSettings[K]) {
-    updateScene((scene) => ({ ...scene, output: { ...scene.output, [key]: value } }))
-  }
-
-  function toggleDiff(on: boolean) {
-    setDiff(on)
-    if (on) requestDiff()
-  }
-
-  async function copy() {
-    if (!preset) return
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(orderedPreset(preset), null, 2))
-      flash.show('copy', 'Copied')
-    } catch (cause) {
-      flash.show('copy', errorMessage(cause))
+  const [diffProblem, setDiffProblem] = useState<string | null>(null)
+  useEffect(() => {
+    const worker = new DiffWorker(
+      (result) => showDiff(result),
+      (message) => setDiffProblem(message),
+    )
+    diffWorker.current = worker
+    return () => {
+      worker.dispose()
+      diffWorker.current = null
     }
-  }
+  }, [])
 
-  async function save() {
-    if (!preset) return
-    const referenceId = preset.referenceId
-    try {
-      const response = await fetch('/api/light-preset', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(orderedPreset(preset)),
-      })
-      if (!response.ok) throw await responseError(response)
-      flash.show('save', 'Saved')
-      setReferences((list) => list.map((reference) => (reference.id === referenceId ? { ...reference, hasPreset: true } : reference)))
-    } catch (cause) {
-      flash.show('save', errorMessage(cause))
+  useEffect(() => {
+    drawImage(targetCanvas.current, target.image)
+    drawImage(overlayCanvas.current, target.image)
+    const element = diffCanvas.current
+    if (element) {
+      element.width = target.width
+      element.height = target.height
     }
-  }
+  }, [target])
 
-  const referenceOptions = references.map((reference) => ({ value: reference.id, label: reference.id }))
-  const showOverlay = loaded !== null && blink && active && blinkOn
+  const askDiff = useEffectEvent(() => requestDiff())
+  useEffect(() => {
+    if (view.diff) askDiff()
+  }, [view.diff])
 
+  useEffect(() => {
+    if (!view.blink) return
+    const timer = window.setInterval(() => setBlinkOn((on) => !on), 500)
+    return () => window.clearInterval(timer)
+  }, [view.blink])
+
+  const showOverlay = view.blink && blinkOn
   return (
-    <div className={active ? styles.view : styles.hidden}>
-      <div className={styles.stage}>
-        <div className={styles.panel}>
-          <canvas ref={targetCanvas} className={loaded && !diff ? styles.fill : styles.hidden} />
-          <canvas ref={diffCanvas} className={loaded && diff ? styles.fill : styles.hidden} />
-          {problem ? <p className={styles.message}>{problem}</p> : null}
-        </div>
-        <div className={styles.panel}>
-          <div ref={renderHost} className={loaded && !view.error ? styles.fill : styles.hidden} />
-          <canvas ref={overlayCanvas} className={showOverlay ? styles.fill : styles.hidden} />
-          {view.error ? <p className={styles.message}>{view.error}</p> : null}
-        </div>
+    <div className={styles.stage}>
+      <div className={styles.panel}>
+        <canvas ref={targetCanvas} className={view.diff ? styles.hidden : styles.fill} />
+        <canvas ref={diffCanvas} className={view.diff ? styles.fill : styles.hidden} />
+        {diffProblem ? <p className={styles.message}>{diffProblem}</p> : null}
       </div>
-      <div className={styles.side}>
-        <div className={styles.group}>
-          <SelectRow
-            label="Reference"
-            value={selectedId}
-            options={referenceOptions}
-            onChange={(id) => {
-              const reference = references.find((candidate) => candidate.id === id)
-              if (reference) void pick(reference)
-            }}
-          />
-          <div className={styles.toggles}>
-            <Toggle label="Diff" checked={diff} onChange={toggleDiff} />
-            <Toggle label="Blink" checked={blink} onChange={setBlink} />
-            <Toggle label="2x" checked={supersample === 2} onChange={(on) => setSupersample(on ? 2 : 1)} />
-          </div>
-          <div className={styles.buttons}>
-            <button type="button" className={styles.button} disabled={!preset} onClick={() => void copy()}>
-              {flash.label('copy', 'Copy preset JSON')}
-            </button>
-            <button type="button" className={styles.button} disabled={!preset} onClick={() => void save()}>
-              {flash.label('save', 'Save preset')}
-            </button>
-          </div>
-        </div>
-        {preset && recipe && resolved ? (
-          <>
-            <div className={styles.group}>
-              <SelectRow label="Recipe" value={preset.scene.recipe} options={RECIPE_OPTIONS} onChange={setRecipe} />
-              <SeedRow value={preset.scene.seed} onChange={(seed) => updateScene((scene) => ({ ...scene, seed }))} />
-            </div>
-            <div className={styles.group}>
-              {recipe.colorSlots.map((slot, index) => (
-                <ColorRow key={slot.key} label={slot.label} value={resolved.hex[index]} onChange={(hex) => setColor(index, hex)} />
-              ))}
-            </div>
-            <div className={styles.group}>
-              <ParamControls specs={recipe.params} values={resolved.params} onChange={setParam} />
-            </div>
-            <div className={styles.group}>
-              {LENS_NUMBERS.map((setting) => (
-                <NumberRow
-                  key={setting.key}
-                  label={setting.label}
-                  min={setting.min}
-                  max={setting.max}
-                  step={setting.step}
-                  value={resolved.lens[setting.key]}
-                  onChange={(value) => setLens(setting.key, value)}
-                />
-              ))}
-              {LENS_COLORS.map((setting) => (
-                <ColorRow
-                  key={setting.key}
-                  label={setting.label}
-                  value={resolved.lens[setting.key]}
-                  onChange={(hex) => setLens(setting.key, hex)}
-                />
-              ))}
-            </div>
-            <div className={styles.group}>
-              {OUTPUT_NUMBERS.map((setting) => (
-                <NumberRow
-                  key={setting.key}
-                  label={setting.label}
-                  min={setting.min}
-                  max={setting.max}
-                  step={setting.step}
-                  value={resolved.output[setting.key]}
-                  onChange={(value) => setOutput(setting.key, value)}
-                />
-              ))}
-            </div>
-          </>
-        ) : null}
+      <div className={styles.panel}>
+        <div ref={renderHost} className={canvas.error ? styles.hidden : styles.fill} />
+        <canvas ref={overlayCanvas} className={showOverlay ? styles.fill : styles.hidden} />
+        {canvas.error ? <p className={styles.message}>{canvas.error}</p> : null}
       </div>
     </div>
   )

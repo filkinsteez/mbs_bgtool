@@ -1,6 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import '@/styles/dialkit.css'
+import '@/styles/dial-panel.css'
+import { DialRoot } from 'dialkit'
+import { useRef, useState } from 'react'
 import { PacksView } from './PacksView'
 import { ReferencesView } from './ReferencesView'
 import styles from './lab.module.css'
@@ -9,6 +12,7 @@ type View = 'references' | 'packs'
 
 export default function LabClient() {
   const [view, setView] = useState<View>('references')
+  const panelRoot = useRef<HTMLElement>(null)
   return (
     <div className={styles.root}>
       <div className={styles.bar}>
@@ -19,8 +23,12 @@ export default function LabClient() {
           Packs
         </button>
       </div>
-      <ReferencesView active={view === 'references'} />
-      <PacksView active={view === 'packs'} />
+      <div className={styles.view}>
+        {view === 'references' ? <ReferencesView panelRoot={panelRoot} /> : <PacksView panelRoot={panelRoot} />}
+        <aside ref={panelRoot} className={`${styles.side} dial-column`}>
+          <DialRoot mode="inline" theme="dark" />
+        </aside>
+      </div>
     </div>
   )
 }
