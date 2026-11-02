@@ -1,27 +1,71 @@
+import { linearToOklab, oklabToLinear } from '../color/oklab'
 import { CHUNK_LIBRARY, GLSL_HEADER } from './glsl'
 
 /**
- * Tone curve. Colors whose largest channel is <= 1 pass through unchanged, so
- * a pack color at nominal intensity encodes to its exact hex. Above 1 the
- * color moves toward white: out = mix(c / m, white, 1 - exp(-(m - 1) k)) with
- * m the largest channel and k = Y / (1 - Y), Y the luminance of c / m. That k
- * makes luminance continuous in value and slope at m = 1, then it rises
- * toward 1 and levels off.
+ * Tone curve. Colors whose largest channel m is <= 1 pass through unchanged,
+ * so a pack color at nominal intensity encodes to its exact hex. Above 1 the
+ * color h = c / m moves toward white along a straight line in Oklab (constant
+ * hue; chroma is lowered further only where the line rises above 1 in some
+ * channel), with s = 1 - exp(-(m - 1) k) of the way done.
+ * k = Y(h) / (dY/ds at s = 0) keeps linear luminance continuous in value and
+ * slope at m = 1; above that it rises toward 1 and levels off.
  */
 export const TONE_CURVE_GLSL = /* glsl */ `
+// Point s (0..1) of the Oklab line from lab to white. Where a channel would pass 1,
+// chroma is lowered at constant L and hue; dips below 0 on this path are under 0.001 and are clamped.
+vec3 pathToWhite(vec3 lab, float s) {
+  float L = lab.x + (1.0 - lab.x) * s;
+  vec2 ab = lab.yz * (1.0 - s);
+  vec3 rgb = oklabToLinear(vec3(L, ab));
+  if (maxComponent(rgb) > 1.0) {
+    float lo = 0.0;
+    float hi = 1.0;
+    for (int i = 0; i < 20; i++) {
+      float mid = 0.5 * (lo + hi);
+      if (maxComponent(oklabToLinear(vec3(L, ab * mid))) > 1.0) hi = mid;
+      else lo = mid;
+    }
+    rgb = oklabToLinear(vec3(L, ab * lo));
+  }
+  return max(rgb, vec3(0.0));
+}
+
 vec3 toneCurve(vec3 c) {
   c = max(c, vec3(0.0));
   float m = maxComponent(c);
   if (m <= 1.0) return c;
   vec3 h = c / m;
+  vec3 lab = linearToOklab(h);
+  if (lab.x >= 0.9999) return vec3(1.0);
   float y = luminance(h);
-  float k = y / max(1.0 - y, 1e-4);
+  const float eps = 1e-3;
+  float slope = (luminance(pathToWhite(lab, eps)) - y) / eps;
+  float k = y / max(slope, 1e-4);
   float s = 1.0 - exp(-(m - 1.0) * k);
-  return mix(h, vec3(1.0), s);
+  return saturate(pathToWhite(lab, s));
 }
 `
 
 const LUMA = [0.2126, 0.7152, 0.0722] as const
+const luminance = (rgb: readonly number[]) => LUMA[0] * rgb[0] + LUMA[1] * rgb[1] + LUMA[2] * rgb[2]
+
+function pathToWhite(lab: readonly number[], s: number): number[] {
+  const L = lab[0] + (1 - lab[0]) * s
+  const a = lab[1] * (1 - s)
+  const b = lab[2] * (1 - s)
+  let rgb = oklabToLinear([L, a, b])
+  if (Math.max(...rgb) > 1) {
+    let lo = 0
+    let hi = 1
+    for (let i = 0; i < 20; i++) {
+      const mid = 0.5 * (lo + hi)
+      if (Math.max(...oklabToLinear([L, a * mid, b * mid])) > 1) hi = mid
+      else lo = mid
+    }
+    rgb = oklabToLinear([L, a * lo, b * lo])
+  }
+  return rgb.map((v) => Math.max(0, v))
+}
 
 /** CPU twin of the GLSL tone curve, for tests and checks. */
 export function toneCurve(rgb: readonly number[]): [number, number, number] {
@@ -29,10 +73,15 @@ export function toneCurve(rgb: readonly number[]): [number, number, number] {
   const m = Math.max(c[0], c[1], c[2])
   if (m <= 1) return [c[0], c[1], c[2]]
   const h = c.map((v) => v / m)
-  const y = LUMA[0] * h[0] + LUMA[1] * h[1] + LUMA[2] * h[2]
-  const k = y / Math.max(1 - y, 1e-4)
+  const lab = linearToOklab(h)
+  if (lab[0] >= 0.9999) return [1, 1, 1]
+  const y = luminance(h)
+  const eps = 1e-3
+  const slope = (luminance(pathToWhite(lab, eps)) - y) / eps
+  const k = y / Math.max(slope, 1e-4)
   const s = 1 - Math.exp(-(m - 1) * k)
-  return [h[0] + (1 - h[0]) * s, h[1] + (1 - h[1]) * s, h[2] + (1 - h[2]) * s]
+  const out = pathToWhite(lab, s).map((v) => Math.min(1, Math.max(0, v)))
+  return [out[0], out[1], out[2]]
 }
 
 /** Mitchell-Netravali (B = C = 1/3) weights, support |x| < 2. */

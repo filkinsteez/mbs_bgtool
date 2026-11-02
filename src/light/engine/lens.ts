@@ -14,9 +14,17 @@ export const LENS_BASE_SHORT_SIDE = 512
 export const LENS_LEVELS = 8
 const LUMA: Rgb = [0.2126, 0.7152, 0.0722]
 
-/** Approximate gaussian sigma of pyramid level i, in short-side units. Measured with a point source. */
+/**
+ * Gaussian sigma of pyramid level i in short-side units. Measured with a disk
+ * on a grey base: about 1.2 texels of the level for levels 1..5, 0.9 for level 0.
+ */
 export function levelSigma(level: number): number {
-  return (0.9 * 2 ** level) / LENS_BASE_SHORT_SIDE
+  return (level <= 0 ? 0.9 : 1.2 * 2 ** level) / LENS_BASE_SHORT_SIDE
+}
+
+/** The (fractional) pyramid level whose blur is closest to a radius in short-side units. */
+export function levelForRadius(radius: number): number {
+  return Math.log2((Math.max(radius, 1e-5) * LENS_BASE_SHORT_SIDE) / 1.2)
 }
 
 export function lensBaseSize(width: number, height: number): { width: number; height: number } {
@@ -45,7 +53,7 @@ export function bloomLevelFactors(lens: LensSettings): Rgb[] {
 
 /** Per-level, per-channel halation weights; each channel sums to 1. Red sits wider than blue by the spread. */
 export function halationLevelFactors(lens: LensSettings): Rgb[] {
-  const center = Math.log2(Math.max(lens.halationRadius, 1e-4) / levelSigma(0))
+  const center = levelForRadius(lens.halationRadius)
   const spread = lens.halationSpread * 1.5
   const centers = [center + spread, center, center - spread]
   const columns = centers.map((c) => {
