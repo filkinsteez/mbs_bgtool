@@ -37,7 +37,9 @@ import type { Vec2 } from './shapes'
 
 const COLORS = 8
 const STOPS = 6
-const LAYOUT: CurveLightLayout = { emitters: 1, primitives: 96, near: 3, far: 3 }
+// The whole Meta logo outline (104 pieces, 3 contours) plus a cut at every stop in each contour must fit:
+// pieces past the limit are dropped, and the inside test then flips inside and outside in horizontal bands.
+const LAYOUT: CurveLightLayout = { emitters: 1, primitives: 128, near: 3, far: 3 }
 
 const params: ParamSpec[] = [
   { kind: 'number', key: 'shape', label: 'Shape (1 line, 2 corner, 3 arc, 4 S-curve, 5 logo, 6 ring)', min: 1, max: 6, step: 1, default: 2 },
