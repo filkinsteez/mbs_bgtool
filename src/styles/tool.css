@@ -1,0 +1,99 @@
+.tool {
+  display: flex;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--chrome-0);
+}
+
+.tool-stage {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tool-frame {
+  flex: none;
+  background: #000;
+}
+
+.tool-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.tool-panel {
+  flex: none;
+  width: 300px;
+  height: 100%;
+  overflow: hidden;
+  background: var(--chrome-1);
+  border-left: 1px solid var(--chrome-2);
+}
+
+/* DialKit, inline in the column. Its inline panel only scrolls when every level has a set height. */
+.tool-panel .dialkit-root {
+  height: 100%;
+  --dial-glass-bg: var(--chrome-1);
+  --dial-dropdown-bg: var(--chrome-2);
+  font-family: var(--font-optimistic), system-ui, sans-serif;
+}
+
+.tool-panel .dialkit-panel,
+.tool-panel .dialkit-panel-wrapper,
+.tool-panel .dialkit-panel-inline {
+  height: 100%;
+  max-height: 100%;
+}
+
+.tool-panel .dialkit-panel-inline {
+  padding-top: 14px;
+}
+
+.tool-panel .dialkit-slider-value,
+.tool-panel .dialkit-slider-input {
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-panel :is(
+    .dialkit-slider,
+    .dialkit-select-trigger,
+    .dialkit-select-option,
+    .dialkit-button,
+    .dialkit-toolbar-add,
+    .dialkit-preset-trigger
+  ):focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.tool-panel .dialkit-slider:focus-visible .dialkit-slider-fill {
+  background: var(--dial-border-hover);
+}
+
+.tool-panel .dialkit-button[data-busy] {
+  opacity: 0.5;
+  cursor: progress;
+  pointer-events: none;
+}
+
+.tool-panel .dialkit-select-option[data-swatches] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tool-panel .dialkit-select-trigger[data-swatches] .dialkit-select-right::before,
+.tool-panel .dialkit-select-option[data-swatches]::after {
+  content: '';
+  flex: none;
+  width: 52px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--swatches);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.14);
+}
