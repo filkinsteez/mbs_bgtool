@@ -1,5 +1,5 @@
 // Engine checks in the real browser. Writes images to artifacts/light-check/ and prints a pass/fail table.
-// Usage: node scripts/light/check.mjs [--only hex,determinism,resolution,banding,tone,grain,scatter,context,export,lens] [--out dir]
+// Usage: node scripts/light/check.mjs [--only hex,determinism,resolution,banding,tone,grain,scatter,speed,context,export,lens] [--out dir]
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
@@ -489,6 +489,41 @@ try {
     }
     record('grain: riso crops within 20 % of their prints with an ink weight', within === riso.length, rows.join('; '))
     record('grain images written', true, `grain-strength-0.5.png, grain-strength-1.png; ${riso.map((ref) => `grain-${ref.id}.png`).join(', ')}`)
+  }
+
+  if (wanted('speed')) {
+    // radianceScale 0.5 on smooth recipes: time at 1080p 1x, look against full resolution, preview against 4K export.
+    const smoothScenes = [
+      { recipe: 'sunset.ramp', seed: 3 },
+      { recipe: 'sunset.blooms', seed: 3 },
+      { recipe: 'contour.beam', seed: 3 },
+    ]
+    const usable = smoothScenes.filter(loads)
+    const median = async (request) => {
+      const runs = []
+      for (let i = 0; i < 3; i++) runs.push((await harness.call('measure', request)).measured)
+      return runs.sort((a, b) => a - b)[1]
+    }
+    const rows = []
+    let ok = usable.length > 0
+    for (const base of usable) {
+      const scene = { ...base, output: { grain: 0 } }
+      const fullMs = await median({ scene, width: 1920, height: 1080, supersample: 1 })
+      const halfMs = await median({ scene, width: 1920, height: 1080, supersample: 1, radianceScale: 0.5 })
+      const full = await harness.render({ scene, width: 960, height: 540, dither: false })
+      const preview = await harness.render({ scene, width: 960, height: 540, dither: false, radianceScale: 0.5 })
+      const big = await harness.render({ scene, width: 3840, height: 2160, dither: false, radianceScale: 0.5 })
+      const shrunk = await resizeRgba(big, 960, 540, 'lanczos3')
+      const look = compareImages(full, preview, buildMask(960, 540, [], 0)).metrics.deltaE
+      const match = compareImages(preview, shrunk, buildMask(960, 540, [], 0)).metrics.deltaE
+      ok &&= look.p95 < 0.004 && match.mean < 0.004 && match.p95 < 0.01
+      rows.push(
+        `${base.recipe}: ${fullMs.toFixed(1)} -> ${halfMs.toFixed(1)} ms at 1920x1080 1x; vs full resolution p95 ${look.p95.toFixed(4)}; preview vs 4K export mean ${match.mean.toFixed(4)} p95 ${match.p95.toFixed(4)}`,
+      )
+    }
+    const skipped = notLoaded(smoothScenes)
+    if (usable.length === 0) skip('radianceScale 0.5: faster, same look, preview matches 4K export', `not loaded: ${skipped.join(', ')}`)
+    else record('radianceScale 0.5: faster, same look, preview matches 4K export', ok, `${rows.join('; ')}${skipped.length ? `; not loaded: ${skipped.join(', ')}` : ''}`)
   }
 
   if (wanted('context')) {

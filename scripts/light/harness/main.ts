@@ -66,6 +66,8 @@ export interface RenderRequest {
   tileSize?: number
   /** Upload the RGBA bytes to the Node side under this key. */
   upload?: string
+  /** Render the recipe as if it set this radianceScale (for speed and match checks). */
+  radianceScale?: number
 }
 
 export interface AuditRequest extends RenderRequest {
@@ -101,9 +103,14 @@ function programFor(scene: HarnessScene): RecipeProgram {
   return recipe
 }
 
+function requestProgram(request: Pick<RenderRequest, 'scene' | 'radianceScale'>): RecipeProgram {
+  const program = programFor(request.scene)
+  return request.radianceScale ? { ...program, radianceScale: request.radianceScale } : program
+}
+
 function renderImage(request: RenderRequest): { image: RgbaImage; ms: number } {
   const start = performance.now()
-  renderer.renderProgram(programFor(request.scene), request.scene, {
+  renderer.renderProgram(requestProgram(request), request.scene, {
     width: request.width,
     height: request.height,
     supersample: request.supersample ?? 2,
@@ -233,10 +240,11 @@ const api = {
   /** Times one render without and with measure (GPU finished), in ms. */
   measure(request: RenderRequest): { issued: number; measured: number; measuredFlag: boolean } {
     const options = { width: request.width, height: request.height, supersample: request.supersample ?? 1 }
-    renderer.renderProgram(programFor(request.scene), request.scene, { ...options, measure: true })
-    const issued = renderer.renderProgram(programFor(request.scene), request.scene, options)
+    const program = requestProgram(request)
+    renderer.renderProgram(program, request.scene, { ...options, measure: true })
+    const issued = renderer.renderProgram(program, request.scene, options)
     renderer.gpu.gl.finish()
-    const measured = renderer.renderProgram(programFor(request.scene), request.scene, { ...options, measure: true })
+    const measured = renderer.renderProgram(program, request.scene, { ...options, measure: true })
     return { issued: issued.ms, measured: measured.ms, measuredFlag: measured.measured }
   },
 

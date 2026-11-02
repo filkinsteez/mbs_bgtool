@@ -255,6 +255,13 @@ export interface RecipeProgram {
    * gets weight 1.
    */
   grainWeight?: boolean
+  /**
+   * For smooth looks: render the radiance at this share of the render
+   * resolution (0.5 or 0.25; one sample per pixel) and upsample it with a
+   * cubic B-spline before the lens and grain. Features narrower than about
+   * 2 / scale render pixels get soft. A function can pick it per scene.
+   */
+  radianceScale?: number | ((ctx: RecipeContext) => number)
   post?: readonly PostPass[]
   lens?: Partial<LensSettings>
   output?: Partial<OutputSettings>

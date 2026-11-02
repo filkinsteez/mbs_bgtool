@@ -1,5 +1,5 @@
 import { hexToLinear } from '../color/srgb'
-import type { RecipeProgram, UniformMap } from '../scene'
+import type { RecipeContext, RecipeProgram, UniformMap } from '../scene'
 import { CONTEXT_LOST_MESSAGE, Gpu, LightEngineError, type Target } from './gl'
 import { grainUniforms } from './grain'
 import { halationStart, lensBaseSize, runLens, TEXTURE_COMPOSITE_SHADER } from './lens'
@@ -44,6 +44,13 @@ const MAX_OUTPUT_SIDE = 8192
  */
 function baseSubsamples(renderShort: number, baseShort: number): number {
   return renderShort > baseShort ? 2 : 1
+}
+
+/** The recipe's radianceScale for this scene, snapped to 1, 0.5 or 0.25. */
+export function radianceScaleFor(program: RecipeProgram, ctx: RecipeContext): number {
+  const asked = typeof program.radianceScale === 'function' ? program.radianceScale(ctx) : (program.radianceScale ?? 1)
+  if (!Number.isFinite(asked) || asked >= 0.75) return 1
+  return asked >= 0.375 ? 0.5 : 0.25
 }
 
 /**
@@ -111,20 +118,26 @@ export class ProgramRenderer {
     // Scattered light first: blurred copies of the recipe's light that its combine function reads.
     const scatter = runScatter(gpu, program, ctx, renderWidth, renderHeight, engine)
 
-    // Lens base (512 px short side) and, for recipes with post passes, the processed radiance. When the base is drawn
-    // straight from the recipe and halation is on, its second image takes the per-sample light above nominal.
+    // Lens base (512 px short side) and, for recipes with post passes or a reduced radianceScale, the radiance as a
+    // texture that the composite samples. When the base is drawn straight from the recipe and halation is on, its
+    // second image takes the per-sample light above nominal.
     const usesPost = Boolean(program.post && program.post.length > 0)
+    const radianceScale = radianceScaleFor(program, ctx)
+    const usesTexture = usesPost || radianceScale < 1
     const baseSize = lensBaseSize(width, height)
-    const base = gpu.acquire(baseSize.width, baseSize.height, 'rgba16f', !usesPost && resolved.lens.halation > 0 ? 2 : 1)
+    const base = gpu.acquire(baseSize.width, baseSize.height, 'rgba16f', !usesTexture && resolved.lens.halation > 0 ? 2 : 1)
     let postScene: Target | null = null
     const radianceProgram = gpu.program(buildRecipeShader(program, 'radiance'))
-    if (usesPost && program.post) {
-      const scale = Math.min(1, POST_MAX_SHORT_SIDE / Math.min(renderWidth, renderHeight))
+    if (usesTexture) {
+      const renderShort = Math.min(renderWidth, renderHeight)
+      const scale = Math.min(radianceScale, usesPost ? POST_MAX_SHORT_SIDE / renderShort : 1)
       const pw = Math.max(1, Math.round(renderWidth * scale))
       const ph = Math.max(1, Math.round(renderHeight * scale))
+      // A reduced scale is for smooth looks, so one sample per pixel; post-pass input keeps 2 x 2.
+      const subsamples = radianceScale < 1 ? 1 : 2
       const raw = gpu.acquire(pw, ph)
-      gpu.draw(radianceProgram, raw, { uniforms: engine(pw, ph, [0, 0], 1 / (Math.min(pw, ph) * 2), 2), textures: scatter.textures })
-      postScene = runPostPasses(gpu, raw, program.post, ctx)
+      gpu.draw(radianceProgram, raw, { uniforms: engine(pw, ph, [0, 0], 1 / (Math.min(pw, ph) * subsamples), subsamples), textures: scatter.textures })
+      postScene = usesPost && program.post ? runPostPasses(gpu, raw, program.post, ctx) : raw
       if (postScene !== raw) gpu.release(raw)
       gpu.draw(gpu.program(AREA_RESAMPLE_SHADER), base, {
         textures: { uSrc: postScene },

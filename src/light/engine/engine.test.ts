@@ -3,12 +3,13 @@ import { linearToOklch } from '../color/oklab'
 import { PACKS } from '../color/packs'
 import { hexToLinear } from '../color/srgb'
 import { getRecipe, RECIPE_LIST } from '../recipes'
-import { DEFAULT_LENS, RECIPE_IDS, type RecipeProgram } from '../scene'
+import { DEFAULT_LENS, RECIPE_IDS, type RecipeContext, type RecipeProgram } from '../scene'
 import { exportFileName, exportSize } from './export'
 import { grainAmplitude, grainParams, grainUniforms } from './grain'
 import { bloomLevelFactors, halationLevelFactors, lensBaseSize, levelForRadius } from './lens'
 import { toneCurve } from './output'
-import { coerceParam, resolveScene } from './resolve'
+import { radianceScaleFor } from './programRenderer'
+import { coerceParam, recipeContext, resolveScene } from './resolve'
 
 const luminance = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 const packHexes = [...new Set(PACKS.flatMap((pack) => pack.colors.map((c) => c.hex)))]
@@ -207,6 +208,28 @@ describe('grain', () => {
     }
     const resolved = resolveScene(program, { output: { grain: 1, grainSize: 1.5, grainChroma: 0.2 } as Record<string, number> })
     expect(resolved.output).toEqual({ exposure: 0, grain: 1 })
+  })
+})
+
+describe('radiance scale', () => {
+  const base: RecipeProgram = {
+    id: 'test.scale',
+    colorSlots: [],
+    defaultColors: [],
+    params: [{ kind: 'number', key: 'soft', label: 'Soft', min: 0, max: 1, step: 0.01, default: 0.8 }],
+    fragment: 'vec3 radiance(vec2 uv, vec2 p) { return vec3(0.0); }',
+    uniforms: () => ({}),
+  }
+  const ctx = (program: RecipeProgram) => recipeContext(resolveScene(program, {}))
+
+  it('snaps to 1, 0.5 or 0.25 and can depend on the scene', () => {
+    expect(radianceScaleFor(base, ctx(base))).toBe(1)
+    for (const [asked, expected] of [[1, 1], [0.8, 1], [0.5, 0.5], [0.4, 0.5], [0.3, 0.25], [0.1, 0.25], [Number.NaN, 1]]) {
+      const program = { ...base, radianceScale: asked }
+      expect(radianceScaleFor(program, ctx(program)), String(asked)).toBe(expected)
+    }
+    const bySoftness = { ...base, radianceScale: (c: RecipeContext) => (c.num('soft') > 0.5 ? 0.5 : 1) }
+    expect(radianceScaleFor(bySoftness, ctx(bySoftness))).toBe(0.5)
   })
 })
 
