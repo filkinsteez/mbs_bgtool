@@ -1,0 +1,28 @@
+---
+description: Light model and reference matching rules for the light engine, its audit scripts and the prototypes
+globs: src/light/**,scripts/light/**,prototypes/**
+alwaysApply: false
+---
+
+# Light engine
+
+## Light model
+
+- Light adds. Build images by adding emitted and scattered light in linear RGB (float buffers; values may go above 1). Never mix colors in sRGB and never use HSV. Use Oklab to measure and to ease, not to move light.
+- Where two distant hues meet, the blend is lighter and less saturated, never darker than both sides. Check it with Oklab L.
+- Light above nominal rolls off toward white, like overexposed film, with no visible ring where the roll-off starts.
+- Glows have a sharp core and a long soft tail: a sum of a few radii (core, glow, haze) or a lens point-spread shape, not one gaussian.
+- Every edge is soft. Warp horizons with low-frequency noise and vary their softness along their length. A horizon is never a ruler line.
+- Large, smooth structure first, fine texture last: grain at output size, then dither before 8-bit so long ramps never band.
+- Pipeline order: recipe writes linear light, then recipe post passes (directional or radial blur), then lens (bloom pyramid with a tint per level, halation), then exposure and tone curve, then sRGB encode, then the output filter at output size (grain, then dither).
+- A pack color at nominal intensity encodes to its exact hex from slide 33:200 (`docs/light/BRIEF.md`, section 5). Keep a test for all twelve.
+- The same preset and seed give the same pixels. Keep the inputs to shader random functions small so GPUs agree.
+
+## Reference matching
+
+- Reference images are visual targets only. Never sample reference pixels into textures, lookup tables, per-row color tables or any other data the renderer reads.
+- A reference preset is a recipe, a seed, a handful of colors and a few dozen numbers. It must still look right at other aspect ratios and seeds.
+- Reference presets may use colors picked from the reference. Production presets use pack colors only.
+- Judge by looking: open the target, the render, a side-by-side and zoomed crops as images. Oklab ΔE and row or column profiles guide but never decide.
+- Ignore what is not light: riso fold creases, poster text, rounded tile corners (the `ignore` areas in `public/references/awe/manifest.json`). Keep grain where the reference has it.
+- Prototypes write images to `prototypes/<name>/out/` (gitignored) and end with a written verdict.
