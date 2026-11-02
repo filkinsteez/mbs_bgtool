@@ -2,6 +2,7 @@ import { hexToLinear } from '../color/srgb'
 import { getRecipe } from '../recipes'
 import type { RecipeProgram, Scene, UniformMap } from '../scene'
 import { CONTEXT_LOST_MESSAGE, Gpu, LightEngineError, type Target } from './gl'
+import { grainUniforms } from './grain'
 import { lensBaseSize, runLens, TEXTURE_COMPOSITE_SHADER } from './lens'
 import { OUTPUT_SHADER, PRESENT_SHADER, RESOLVE_X_SHADER } from './output'
 import { AREA_RESAMPLE_SHADER, POST_MAX_SHORT_SIDE, runPostPasses } from './passes'
@@ -166,7 +167,7 @@ export class LightRenderer {
       : gpu.program(buildRecipeShader(program, 'composite'))
     const resolveX = gpu.program(RESOLVE_X_SHADER)
     const outputProgram = gpu.program(OUTPUT_SHADER)
-    const out = resolved.output
+    const grain = grainUniforms(resolved.output.grain, width, height)
     let tiles = 0
     for (let ty = 0; ty < height; ty += tileH) {
       for (let tx = 0; tx < width; tx += tileW) {
@@ -197,10 +198,8 @@ export class LightRenderer {
             uFactor: factor,
             uApron: apron,
             uSeed: resolved.seed,
-            uGrain: out.grain,
-            uGrainSize: out.grainSize,
-            uGrainChroma: out.grainChroma,
             uDither: dither,
+            ...grain,
           },
         })
         tiles++

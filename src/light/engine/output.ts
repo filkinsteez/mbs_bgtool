@@ -1,4 +1,5 @@
 import { CHUNK_LIBRARY, GLSL_HEADER } from './glsl'
+import { GRAIN_GLSL } from './grain'
 
 /**
  * Tone curve. Colors whose largest channel m is <= 1 pass through unchanged,
@@ -103,8 +104,9 @@ void main() {
 
 /**
  * Output filter at output size: vertical half of the resolve (when
- * supersampled), exact sRGB encode, grain, then TPDF dither of about +-1 LSB
- * and rounding to 8 bits. Grain and dither are keyed to output pixels.
+ * supersampled), exact sRGB encode, grain (mono, on Oklab L; see grain.ts),
+ * then TPDF dither of about +-1 LSB and rounding to 8 bits. Grain and dither
+ * are keyed to output pixels; grain sizes follow the short side.
  */
 export const OUTPUT_SHADER =
   GLSL_HEADER +
@@ -116,11 +118,11 @@ uniform ivec2 uTileOrigin;
 uniform int uFactor;
 uniform int uApron;
 uniform int uSeed;
-uniform float uGrain;
-uniform float uGrainSize;
-uniform float uGrainChroma;
 uniform bool uDither;
 out vec4 fragColor;
+` +
+  GRAIN_GLSL +
+  /* glsl */ `
 
 vec3 resolveColumn(ivec2 local) {
   if (uFactor == 1) return texelFetch(uSrc, local, 0).rgb;
@@ -136,34 +138,6 @@ vec3 resolveColumn(ivec2 local) {
     weights += w;
   }
   return sum / weights;
-}
-
-// Unit-variance grain per channel: mono plus an optional per-channel share.
-vec3 grainNoise(ivec2 px) {
-  if (uGrainSize <= 1.0) {
-    vec3 mono = gaussianNoise3(px, uSeed + 4241);
-    vec3 chroma = gaussianNoise3(px, uSeed + 7919);
-    vec3 g = mix(vec3(mono.x), chroma, uGrainChroma);
-    return g / sqrt((1.0 - uGrainChroma) * (1.0 - uGrainChroma) + uGrainChroma * uGrainChroma);
-  }
-  // Gaussian splats on a lattice of uGrainSize px, normalized to unit variance at every pixel.
-  vec2 q = (vec2(px) + 0.5) / uGrainSize;
-  ivec2 cell = ivec2(floor(q));
-  vec3 sum = vec3(0.0);
-  float energy = 0.0;
-  for (int j = -1; j <= 1; j++) {
-    for (int i = -1; i <= 1; i++) {
-      ivec2 c = cell + ivec2(i, j);
-      vec2 d = q - (vec2(c) + 0.5);
-      float k = exp(-dot(d, d) / (2.0 * 0.6 * 0.6));
-      vec3 mono = gaussianNoise3(c, uSeed + 4241);
-      vec3 chroma = gaussianNoise3(c, uSeed + 7919);
-      sum += k * mix(vec3(mono.x), chroma, uGrainChroma);
-      energy += k * k;
-    }
-  }
-  float spread = sqrt((1.0 - uGrainChroma) * (1.0 - uGrainChroma) + uGrainChroma * uGrainChroma);
-  return sum / (sqrt(energy) * spread);
 }
 
 // TPDF noise of +-1 LSB; within half a code value of 0 and 255 it blends to uniform +-0.5 LSB noise, so clamping
@@ -182,11 +156,7 @@ void main() {
   ivec2 px = ivec2(gl_FragCoord.xy);
   vec3 display = saturate(resolveColumn(px - uTileOrigin));
   vec3 encoded = linearToSrgb(display);
-  if (uGrain > 0.0) {
-    float luma = dot(encoded, LUMA);
-    float weight = mix(0.3, 1.0, saturate(4.0 * luma * (1.0 - luma)));
-    encoded += uGrain * weight * grainNoise(px);
-  }
+  if (uGrainAmp > 0.0) encoded = linearToSrgb(applyGrain(display, px));
   if (uDither) encoded = dither(saturate(encoded), px);
   fragColor = vec4(floor(saturate(encoded) * 255.0 + 0.5) / 255.0, 1.0);
 }

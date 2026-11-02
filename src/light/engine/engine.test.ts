@@ -5,6 +5,7 @@ import { hexToLinear } from '../color/srgb'
 import { getRecipe, RECIPE_LIST } from '../recipes'
 import { DEFAULT_LENS, RECIPE_IDS, type RecipeProgram } from '../scene'
 import { exportFileName, exportSize } from './export'
+import { grainAmplitude, grainParams, grainUniforms } from './grain'
 import { bloomLevelFactors, halationLevelFactors, lensBaseSize } from './lens'
 import { toneCurve } from './output'
 import { coerceParam, resolveScene } from './resolve'
@@ -157,6 +158,47 @@ describe('lens weights', () => {
   it('works on a 512 px short side at any output size', () => {
     expect(lensBaseSize(925, 1001)).toEqual({ width: 512, height: 554 })
     expect(lensBaseSize(3840, 2160)).toEqual({ width: 910, height: 512 })
+  })
+})
+
+describe('grain', () => {
+  it('maps one strength to the film and riso ends of the grain study', () => {
+    expect(grainParams(0.5).amp).toBeCloseTo(0.0125, 6)
+    expect(grainParams(0.5).size).toBeCloseTo(0.0005, 8)
+    expect(grainParams(1).amp).toBeCloseTo(0.016, 6)
+    expect(grainParams(1).size).toBeCloseTo(0.0011, 8)
+    expect(grainParams(1).inkBoost).toBeCloseTo(0.9, 6)
+    expect(grainParams(0).amp).toBe(0)
+  })
+
+  it('fades to 0 at black and eases off toward white', () => {
+    const film = grainParams(0.5)
+    expect(grainAmplitude(film, 0)).toBe(0)
+    expect(grainAmplitude(film, 0.45)).toBeCloseTo(0.0125, 6)
+    expect(grainAmplitude(film, 1)).toBeCloseTo(0.00625, 6)
+    const riso = grainParams(1)
+    expect(grainAmplitude(riso, 0.45)).toBeGreaterThan(grainAmplitude(riso, 0.9))
+  })
+
+  it('sizes octaves to the short side and lowers the ones smaller than a pixel', () => {
+    const preview = grainUniforms(0.5, 960, 540)
+    const exported = grainUniforms(0.5, 3840, 2160)
+    expect((exported.uGrainSigmaPx as number[])[1]).toBeCloseTo(4 * (preview.uGrainSigmaPx as number[])[1], 6)
+    expect((preview.uGrainWeight as number[])[0]).toBeLessThan((exported.uGrainWeight as number[])[0])
+    expect(grainUniforms(0, 960, 540).uGrainAmp).toBe(0)
+  })
+
+  it('ignores grain settings from before the strength scale', () => {
+    const program: RecipeProgram = {
+      id: 'test.grain',
+      colorSlots: [],
+      defaultColors: [],
+      params: [],
+      fragment: 'vec3 radiance(vec2 uv, vec2 p) { return vec3(0.0); }',
+      uniforms: () => ({}),
+    }
+    const resolved = resolveScene(program, { output: { grain: 1, grainSize: 1.5, grainChroma: 0.2 } as Record<string, number> })
+    expect(resolved.output).toEqual({ exposure: 0, grain: 1 })
   })
 })
 

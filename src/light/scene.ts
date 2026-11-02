@@ -87,12 +87,13 @@ export interface LensSettings {
 export interface OutputSettings {
   /** Stops applied before the tone curve. */
   exposure: number
-  /** Grain standard deviation in encoded sRGB units (0.01 = 1 %). 0 turns it off. */
+  /**
+   * Grain strength 0..1, mono on Oklab L, sized to the short side: 0 off,
+   * 0.5 fine film grain (about 1.25 % at mid-tones), 1 the riso prints.
+   * Presets from before this change may carry grainSize (px) and grainChroma;
+   * those keys are ignored.
+   */
   grain: number
-  /** Grain size in output pixels. */
-  grainSize: number
-  /** Share of grain that differs per channel, 0 (mono) .. 1. */
-  grainChroma: number
 }
 
 export const DEFAULT_LENS: LensSettings = {
@@ -110,8 +111,6 @@ export const DEFAULT_LENS: LensSettings = {
 export const DEFAULT_OUTPUT: OutputSettings = {
   exposure: 0,
   grain: 0,
-  grainSize: 1,
-  grainChroma: 0,
 }
 
 type NumericKeys<T> = { [K in keyof T]-?: T[K] extends number ? K : never }[keyof T]
@@ -142,9 +141,7 @@ export const LENS_COLORS: readonly { key: StringKeys<LensSettings>; label: strin
 
 export const OUTPUT_NUMBERS: readonly NumericSetting<NumericKeys<OutputSettings>>[] = [
   { key: 'exposure', label: 'Exposure', min: -4, max: 4, step: 0.01 },
-  { key: 'grain', label: 'Grain', min: 0, max: 0.08, step: 0.001 },
-  { key: 'grainSize', label: 'Grain size', min: 1, max: 4, step: 0.05 },
-  { key: 'grainChroma', label: 'Grain chroma', min: 0, max: 1, step: 0.01 },
+  { key: 'grain', label: 'Grain', min: 0, max: 1, step: 0.01 },
 ]
 
 // ---------------------------------------------------------------------------

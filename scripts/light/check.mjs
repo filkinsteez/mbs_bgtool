@@ -1,11 +1,12 @@
 // Engine checks in the real browser. Writes images to artifacts/light-check/ and prints a pass/fail table.
-// Usage: node scripts/light/check.mjs [--only hex,determinism,resolution,banding,tone,scatter,context,export,lens] [--out dir]
+// Usage: node scripts/light/check.mjs [--only hex,determinism,resolution,banding,tone,grain,scatter,context,export,lens] [--out dir]
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
 import { list, parseArgs } from './lib/args.mjs'
 import { ROOT, startHarness } from './lib/harness.mjs'
-import { composeRow, cropRgba, resizeRgba, savePng, zoom } from './lib/images.mjs'
+import { composeRow, cropRgba, loadRgba, resizeRgba, savePng, zoom } from './lib/images.mjs'
+import { loadReferences } from './lib/references.mjs'
 
 const args = parseArgs()
 const only = new Set(list(args.only))
@@ -17,6 +18,58 @@ const record = (name, pass, detail) => {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}  ${detail}`)
 }
 
+const SRGB_TO_LINEAR = Array.from({ length: 256 }, (_, v) => {
+  const c = v / 255
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+})
+
+function oklabLightness(image, linearToOklab) {
+  const out = new Float32Array(image.width * image.height)
+  for (let p = 0; p < out.length; p++) {
+    out[p] = linearToOklab([SRGB_TO_LINEAR[image.data[p * 4]], SRGB_TO_LINEAR[image.data[p * 4 + 1]], SRGB_TO_LINEAR[image.data[p * 4 + 2]]])[0]
+  }
+  return out
+}
+
+/** Standard deviation of values minus their (2r+1)^2 box mean, over pixels whose whole box is inside. */
+function highpassStd(values, width, height, r) {
+  let sum = 0
+  let sum2 = 0
+  let n = 0
+  for (let y = r; y < height - r; y++) {
+    for (let x = r; x < width - r; x++) {
+      let box = 0
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) box += values[(y + dy) * width + x + dx]
+      const d = values[y * width + x] - box / ((2 * r + 1) * (2 * r + 1))
+      sum += d
+      sum2 += d * d
+      n++
+    }
+  }
+  const mean = sum / n
+  return Math.sqrt(Math.max(0, sum2 / n - mean * mean))
+}
+
+/** The size x size window with the lowest mean luma (densest ink), on a 20 px grid, clear of ignore rects. */
+function darkestWindow(image, size, ignore) {
+  let best = { left: 0, top: 0, luma: Infinity }
+  for (let top = 0; top + size <= image.height; top += 20) {
+    for (let left = 0; left + size <= image.width; left += 20) {
+      const overlaps = ignore.some(({ rect: [x, y, w, h] }) => left < x + w && left + size > x && top < y + h && top + size > y)
+      if (overlaps) continue
+      let sum = 0
+      for (let y = top; y < top + size; y += 4) {
+        for (let x = left; x < left + size; x += 4) {
+          const i = (y * image.width + x) * 4
+          sum += 0.2126 * image.data[i] + 0.7152 * image.data[i + 1] + 0.0722 * image.data[i + 2]
+        }
+      }
+      if (sum < best.luma) best = { left, top, luma: sum }
+    }
+  }
+  return best
+}
+
 const started = Date.now()
 const harness = await startHarness()
 try {
@@ -25,7 +78,7 @@ try {
   const { hexToBytes, hexToLinear, linearToSrgb } = await harness.ssr('/src/light/color/srgb.ts')
   const { toneCurve } = await harness.ssr('/src/light/engine/output.ts')
   const { compareImages, bandingScore, buildMask } = await harness.ssr('/src/light/audit/index.ts')
-  const { linearToOklch } = await harness.ssr('/src/light/color/oklab.ts')
+  const { linearToOklch, linearToOklab } = await harness.ssr('/src/light/color/oklab.ts')
   const noLens = { bloom: 0, halation: 0 }
 
   if (wanted('hex')) {
@@ -62,7 +115,7 @@ try {
   if (wanted('determinism')) {
     const scenes = [
       { recipe: 'sunset.ramp', seed: 7 },
-      { recipe: 'contour.rim', seed: 3, output: { grain: 0.02 } },
+      { recipe: 'contour.rim', seed: 3, output: { grain: 0.5 } },
       { program: 'test.post', seed: 5 },
     ]
     let identical = 0
@@ -298,6 +351,81 @@ try {
       ok,
       `${result.fileName} ${meta.width}x${meta.height} ${meta.format}, ${(png.length / 1e6).toFixed(1)} MB in ${(result.ms / 1000).toFixed(2)} s; vs preview mean ${metrics.deltaE.mean.toFixed(4)} p95 ${metrics.deltaE.p95.toFixed(4)}`,
     )
+  }
+
+  if (wanted('grain')) {
+    // Oklab L of grey pixels is the cube root of linear light.
+    const decode = Array.from({ length: 256 }, (_, v) => Math.cbrt(hexToLinear(`#${v.toString(16).padStart(2, '0').repeat(3)}`)[0]))
+    const lightnessStd = (image) => {
+      let sum = 0
+      let sum2 = 0
+      const n = image.data.length / 4
+      for (let i = 0; i < image.data.length; i += 4) {
+        const L = decode[image.data[i + 1]]
+        sum += L
+        sum2 += L * L
+      }
+      const mean = sum / n
+      return Math.sqrt(Math.max(0, sum2 / n - mean * mean))
+    }
+    const grey = (grain, size, dither = false) =>
+      harness.render({ scene: { program: 'test.flat', colors: ['#555555'], lens: noLens, output: { grain } }, ...size, dither })
+    const export4k = await grey(0.5, { width: 3840, height: 2160 })
+    const preview = await grey(0.5, { width: 960, height: 540 })
+    const shrunk = await resizeRgba(export4k, 960, 540, 'lanczos3')
+    const std4k = lightnessStd(export4k)
+    const stdPreview = lightnessStd(preview)
+    const stdShrunk = lightnessStd(shrunk)
+    const riso4k = lightnessStd(await grey(1, { width: 3840, height: 2160 }))
+    record(
+      'grain: strength 0.5 is about 1.25 % Oklab L at mid-tones, sized to the picture',
+      Math.abs(std4k - 0.012) < 0.0015 && Math.abs(stdShrunk / stdPreview - 1) < 0.15,
+      `L 0.45 grey: std ${(std4k * 100).toFixed(2)} % at 3840x2160, ${(stdPreview * 100).toFixed(2)} % at 960x540, ${(stdShrunk * 100).toFixed(2)} % for the 4K render shrunk to 960x540; strength 1: ${(riso4k * 100).toFixed(2)} %`,
+    )
+    const black = await harness.render({ scene: { program: 'test.flat', colors: ['#000000'], lens: noLens, output: { grain: 1 } }, width: 640, height: 360 })
+    record('grain: black stays exact black at strength 1 with dither', black.data.every((v, i) => i % 4 === 3 || v === 0), 'every pixel 0,0,0')
+
+    const ramp = { program: 'test.ramp', colors: ['#000000', '#FFFFFF'], lens: noLens }
+    for (const grain of [0.5, 1]) {
+      const image = await harness.render({ scene: { ...ramp, output: { grain } }, width: 1920, height: 1080 })
+      const panels = []
+      for (const [left, name] of [[0, 'black end'], [800, 'middle'], [1600, 'white end']]) {
+        panels.push({ image: await zoom(await cropRgba(image, left, 480, 320, 160), 2), caption: `grain ${grain}, ${name} of a black-white ramp, 2x` })
+      }
+      await composeRow(path.join(outDir, `grain-strength-${grain}.png`), panels)
+    }
+
+    // The grain filter alone: a flat field of each riso crop's mean color at strength 1, next to the target crop.
+    const { references } = await loadReferences(harness)
+    const riso = references.filter((ref) => ref.id.endsWith('-riso'))
+    const rows = []
+    for (const ref of riso) {
+      const target = await loadRgba(ref.file)
+      const crop = darkestWindow(target, 160, ref.ignore)
+      const targetCrop = await cropRgba(target, crop.left, crop.top, 160, 160)
+      const mean = [0, 1, 2].map((k) => {
+        let sum = 0
+        for (let i = k; i < targetCrop.data.length; i += 4) sum += hexToLinear(`#${targetCrop.data[i].toString(16).padStart(2, '0').repeat(3)}`)[0]
+        return linearToSrgb(sum / (targetCrop.data.length / 4))
+      })
+      const hex = `#${mean.map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('')}`
+      const scene = { program: 'test.flat', colors: [hex], lens: noLens, output: { grain: 1 } }
+      const render = await harness.render({ scene, width: ref.width, height: ref.height })
+      const scale = 3840 / Math.max(ref.width, ref.height)
+      const size = Math.round(160 * scale)
+      const big = await harness.render({ scene, width: Math.round(ref.width * scale), height: Math.round(ref.height * scale) })
+      const bigCrop = await cropRgba(big, Math.round(crop.left * scale), Math.round(crop.top * scale), size, size)
+      await composeRow(path.join(outDir, `grain-${ref.id}.png`), [
+        { image: await zoom(targetCrop, 3), caption: `${ref.id} 1:1, shown 3x` },
+        { image: await zoom(await cropRgba(render, crop.left, crop.top, 160, 160), 3), caption: `grain 1 on ${hex} at ${ref.width} px, 3x` },
+        { image: await resizeRgba(targetCrop, size, size, 'lanczos3'), caption: 'target enlarged to 4K' },
+        { image: bigCrop, caption: `grain 1 at ${big.width}x${big.height}, 1:1` },
+      ])
+      const renderCrop = await cropRgba(render, crop.left, crop.top, 160, 160)
+      const fine = (image) => (highpassStd(oklabLightness(image, linearToOklab), image.width, image.height, 3) * 100).toFixed(2)
+      rows.push(`${ref.id} on ${hex}: fine Oklab L std target ${fine(targetCrop)} %, render ${fine(renderCrop)} %`)
+    }
+    record('grain images written', true, `grain-strength-0.5.png, grain-strength-1.png; ${riso.map((ref) => `grain-${ref.id}.png`).join(', ')}; ${rows.join('; ')}`)
   }
 
   if (wanted('context')) {
