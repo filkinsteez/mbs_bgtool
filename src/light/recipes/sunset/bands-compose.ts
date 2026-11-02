@@ -72,22 +72,29 @@ interface Roles {
   upper: string[]
   glow: string
   ground: string[]
+  /** The ground when no pack color comes after the glow. */
+  fallbackGround: string
+  /** The pack's second warm color took the first one's place. */
+  swapped: boolean
 }
 
-/** Pack order with Meta Blue as the sky and at most one warm color; the brightest of the rest is the horizon glow. */
-export function bandRoles(pack: ColorPack): Roles {
+/**
+ * Pack order with Meta Blue as the sky and at most one warm color; the
+ * brightest of the rest is the horizon glow. With `secondWarm`, a pack with
+ * two warm colors (Bold: Yellow, Orange-red) uses the second one instead,
+ * and that warm color is the glow: its hot core whitens through yellow near
+ * the sun, and the ground under it is the same color at nominal light.
+ */
+export function bandRoles(pack: ColorPack, secondWarm = false): Roles {
   const [sky, ...rest] = pack.colors.map((c) => c.hex)
-  let warm = false
-  const kept = rest.filter((hex) => {
-    if (!isWarm(hexToLinear(hex))) return true
-    if (warm) return false
-    warm = true
-    return true
-  })
+  const warms = rest.filter((hex) => isWarm(hexToLinear(hex)))
+  const swapped = secondWarm && warms.length > 1
+  const warm = swapped ? warms[1] : warms[0]
+  const kept = rest.filter((hex) => !isWarm(hexToLinear(hex)) || hex === warm)
   const lightness = (hex: string) => linearToOklch(hexToLinear(hex))[0]
-  const glow = kept.reduce((a, b) => (lightness(b) > lightness(a) ? b : a), kept[0])
+  const glow = swapped ? warm : kept.reduce((a, b) => (lightness(b) > lightness(a) ? b : a), kept[0])
   const at = kept.indexOf(glow)
-  return { sky, upper: kept.slice(0, at), glow, ground: kept.slice(at + 1) }
+  return { sky, upper: kept.slice(0, at), glow, ground: kept.slice(at + 1), fallbackGround: swapped ? glow : sky, swapped }
 }
 
 type Bump = [x: number, width: number, shift: number]
@@ -140,13 +147,16 @@ export function composeBands(input: BandsComposeInput): BandsComposition {
   const W = Math.max(aspect, 1)
   const H = Math.max(1 / aspect, 1)
 
-  // Structure: seed and frame only.
-  const roles = bandRoles(pack)
-  const upper = roles.upper.filter(() => pick.chance(0.8))
+  // Structure: seed and frame only. About a third of seeds use the pack's second warm color.
+  const roles = bandRoles(pack, random(seed * 6151 + 29).chance(1 / 3))
+  // With the second warm color, the upper colors always show, so it never meets Meta Blue directly.
+  const keepUpper = roles.upper.map(() => pick.chance(0.8))
+  const upper = roles.upper.filter((_, i) => roles.swapped || keepUpper[i])
   let ground = roles.ground.filter((_, i) => i === 0 || pick.chance(H > 1.2 ? 0.8 : 0.65))
   if (ground.length > 2 && W > 1.5 && pick.chance(0.5)) ground = ground.slice(0, 2)
-  if (ground.length === 0) ground = [roles.sky]
-  const lineGlow = pick.chance(0.4)
+  if (ground.length === 0) ground = [roles.fallbackGround]
+  // The second warm color always gets the band glow: a thin line would let the sky show between it and its ground.
+  const lineGlow = pick.chance(0.4) && !roles.swapped
   const sunRight = pick.chance(0.5)
   const sunOff = pick.chance(0.2)
   const aureole = pick.chance(0.7)
@@ -177,7 +187,7 @@ export function composeBands(input: BandsComposeInput): BandsComposition {
   const glowColor = hexToLinear(roles.glow)
   const room = headroom(glowColor)
   const far = Math.min(daylight, Math.max(1, 0.85 * room)) / daylight
-  const peak = clamp(1.15 * room, 1.05, 2.2) * Math.min(1, geo(intensity, 0.72, 1, 1.4) / daylight)
+  const peak = clamp(1.15 * room, 1.05, 3) * Math.min(1, geo(intensity, 0.72, 1, 1.4) / daylight)
   const sunCover = place.between(0.3, 0.55)
   const farthest = Math.max(Math.abs(sunX), Math.abs(1 - sunX))
   const sunFar = 1 / (1 + (farthest / sunWidth) ** 1.6)

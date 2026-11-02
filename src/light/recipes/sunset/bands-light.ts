@@ -32,32 +32,35 @@ export function paleTint(color: Rgb, p = 0.12): Rgb {
  * that would go grey (distant hues) or olive, khaki or brown (a dim warm
  * middle) get it; near hues and grey pairs get none.
  */
-function bridgeGates(a: Rgb, b: Rgb): { distant: number; olive: number } {
+/** Oklab hues from magenta through pink to red: a blend that lands there between two ends that aren't, invents a pink. */
+const isPinkHue = (h: number) => h >= 290 || h <= 25
+
+function bridgeGates(a: Rgb, b: Rgb): { distant: number; olive: number; pink: number } {
   const [, ca, ha] = linearToOklch(a)
   const [, cb, hb] = linearToOklch(b)
   const half = Math.sin(((hb - ha) * Math.PI) / 360)
   const distant = smoothstep(0.2, 0.6, half * half * smoothstep(0.03, 0.08, Math.min(ca, cb)))
+  const blend = (t: number) => linearToOklch([0, 1, 2].map((i) => a[i] + (b[i] - a[i]) * t))
   const muddy = (t: number) => {
-    const [lm, cm, hm] = linearToOklch([0, 1, 2].map((i) => a[i] + (b[i] - a[i]) * t))
+    const [lm, cm, hm] = blend(t)
     return hm > 40 && hm < 140 ? smoothstep(0.11, 0.06, cm) * smoothstep(0.78, 0.6, lm) : 0
   }
   const olive = Math.max(muddy(0.25), muddy(0.5), muddy(0.75)) * smoothstep(0.03, 0.06, Math.max(ca, cb))
-  return { distant, olive }
+  const pinkAt = (t: number) => {
+    const [, cm, hm] = blend(t)
+    return isPinkHue(hm) ? smoothstep(0.03, 0.07, cm) : 0
+  }
+  const pink = isPinkHue(ha) || isPinkHue(hb) ? 0 : Math.max(pinkAt(0.3), pinkAt(0.5), pinkAt(0.7))
+  return { distant, olive, pink }
 }
 
-/**
- * The strength for bridge light where `a` and `b` blend under a daylight
- * gain: enough pale light that the middle of the blend, after the tone
- * curve, is as light as the lighter end. Above the default gain the target
- * stays at the lighter end's nominal lightness, so brighter daylight needs
- * less bridge light instead of pushing the middle to white.
- */
 export function bridgeStrength(a: Rgb, b: Rgb, haze: Rgb, gain = 1): number {
-  const { distant, olive } = bridgeGates(a, b)
-  const gate = Math.max(distant, olive)
+  const { distant, olive, pink } = bridgeGates(a, b)
+  const gate = Math.max(distant, olive, pink)
   if (gate === 0) return 0
   const lit = (c: Rgb, k: number) => linearToOklch(toneCurve(c.map((v) => v * k)))[0]
-  const target = Math.max(lit(a, Math.min(gain, 1)), lit(b, Math.min(gain, 1)))
+  // A blend that would turn pink is lifted a little above the lighter end, so it reads pale instead.
+  const target = Math.max(lit(a, Math.min(gain, 1)), lit(b, Math.min(gain, 1))) + 0.05 * pink
   const mid = [0, 1, 2].map((i) => ((a[i] + b[i]) / 2) * gain)
   const level = Math.sqrt(luma(a) * luma(b)) * gain
   if (linearToOklch(toneCurve(mid))[0] >= target) return 0
@@ -82,11 +85,14 @@ export function bridgeStrength(a: Rgb, b: Rgb, haze: Rgb, gain = 1): number {
  */
 export function bridgeEnds(under: Rgb, own: Rgb, scale: number, gain = 1): [Rgb, Rgb] {
   if (scale <= 0) return [[0, 0, 0], [0, 0, 0]]
-  // A crossing that would go olive or khaki gets only the lighter color's pale light, at both ends.
-  const { distant, olive } = bridgeGates(under, own)
+  // A crossing that would go olive or khaki gets only the lighter color's pale light at both ends,
+  // and one that would turn pink only the warm color's (peach for Orange-red).
+  const { distant, olive, pink } = bridgeGates(under, own)
   const lighter = luma(own) > luma(under) ? own : under
-  const lo = paleTint(olive > distant ? lighter : under)
-  const hi = paleTint(olive > distant ? lighter : own)
+  const warmer = isWarm(own) ? own : isWarm(under) ? under : lighter
+  const single = pink > Math.max(distant, olive) ? warmer : olive > distant ? lighter : null
+  const lo = paleTint(single ?? under)
+  const hi = paleTint(single ?? own)
   const mid = [0, 1, 2].map((i) => (lo[i] + hi[i]) / 2)
   const y = luma(mid)
   const haze: Rgb = [mid[0] / y, mid[1] / y, mid[2] / y]
