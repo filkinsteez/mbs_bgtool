@@ -1,0 +1,122 @@
+{
+  "id": "ob-ref-sunset-sky-peach",
+  "referenceId": "sunset-sky-peach",
+  "zoom": [
+    300,
+    330,
+    330,
+    240
+  ],
+  "scene": {
+    "recipe": "sunset.ramp",
+    "seed": 1,
+    "colors": [
+      "#6A92C7",
+      "#B0B1B1",
+      "#D1B99F",
+      "#D09568",
+      "#C16E46",
+      "#A13F2E",
+      "#792127"
+    ],
+    "params": {
+      "base": {
+        "tilt": 0,
+        "anchor": [
+          0.5,
+          0
+        ],
+        "bend": 0
+      },
+      "stops": [
+        {
+          "at": 0.204,
+          "width": 0.32
+        },
+        {
+          "at": 0.471,
+          "width": 0.155
+        },
+        {
+          "at": 0.675,
+          "width": 0.165
+        },
+        {
+          "at": 0.811,
+          "width": 0.09
+        },
+        {
+          "at": 0.904,
+          "width": 0.065
+        },
+        {
+          "at": 0.969,
+          "width": 0.046
+        }
+      ],
+      "boundary": {
+        "wander": [
+          [
+            0.204,
+            0.025
+          ],
+          [
+            0.471,
+            0.0148
+          ],
+          [
+            0.675,
+            0.0054
+          ],
+          [
+            0.811,
+            0.0046
+          ],
+          [
+            0.904,
+            0.0028
+          ],
+          [
+            0.969,
+            0.004
+          ]
+        ],
+        "share": 0.45,
+        "sharedScale": 0.32,
+        "scale": 0.32,
+        "lyMode": "ramp",
+        "ly": 2.5,
+        "octaves": 2,
+        "gain": 0.28,
+        "clip": 1.3,
+        "alongMod": {
+          "amount": 0.25,
+          "scale": 0.8
+        },
+        "soft": {
+          "amount": 0.05,
+          "scale": 0.5,
+          "ly": 0.25
+        },
+        "calWidth": 0
+      },
+      "bridge": {
+        "pull": 0,
+        "lift": 0.1
+      },
+      "light": {
+        "lateral": {
+          "k": 0.38,
+          "tint": [
+            1.15,
+            1,
+            0.9
+          ]
+        }
+      }
+    },
+    "output": {
+      "grain": 0
+    }
+  }
+}

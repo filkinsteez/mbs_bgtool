@@ -1,0 +1,124 @@
+{
+  "id": "ob-ref-sunset-red-yellow-arcs",
+  "referenceId": "sunset-red-yellow-arcs",
+  "zoom": [
+    0,
+    980,
+    300,
+    250
+  ],
+  "scene": {
+    "recipe": "sunset.ramp",
+    "seed": 1,
+    "colors": [
+      "#7B2116",
+      "#8D2117",
+      "#BA191A",
+      "#E42E18",
+      "#E96214",
+      "#F39C0B",
+      "#FCD32E",
+      "#ECE07A",
+      "#A9D8DE",
+      "#95D4EF"
+    ],
+    "params": {
+      "base": {
+        "tilt": 0,
+        "anchor": [
+          0.5,
+          0
+        ],
+        "bendKnots": [
+          [
+            0,
+            1.45
+          ],
+          [
+            0.16,
+            1.3
+          ],
+          [
+            0.32,
+            1.035
+          ],
+          [
+            1,
+            1.035
+          ]
+        ]
+      },
+      "stops": [
+        {
+          "at": 0.075,
+          "width": 0.085
+        },
+        {
+          "at": 0.19,
+          "width": 0.12
+        },
+        {
+          "at": 0.34,
+          "width": 0.12
+        },
+        {
+          "at": 0.482,
+          "width": 0.09
+        },
+        {
+          "at": 0.585,
+          "width": 0.105
+        },
+        {
+          "at": 0.682,
+          "width": 0.118
+        },
+        {
+          "at": 0.79,
+          "width": 0.084
+        },
+        {
+          "at": 0.878,
+          "width": 0.1
+        },
+        {
+          "at": 0.964,
+          "width": 0.08
+        }
+      ],
+      "boundary": {
+        "wander": [
+          [
+            0,
+            0.0015
+          ],
+          [
+            1,
+            0.0015
+          ]
+        ],
+        "share": 0.5,
+        "sharedScale": 0.3,
+        "scale": 0.3,
+        "lyMode": "ramp",
+        "ly": 2.5,
+        "octaves": 2,
+        "gain": 0.3,
+        "clip": 1.3,
+        "soft": {
+          "amount": 0.03,
+          "scale": 0.5,
+          "ly": 0.25
+        },
+        "calWidth": 0
+      },
+      "bridge": {
+        "pull": 0,
+        "lift": 0.1
+      }
+    },
+    "output": {
+      "grain": 0
+    }
+  }
+}
