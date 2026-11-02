@@ -177,11 +177,16 @@ try {
     await savePng(path.join(outDir, 'tone-curve.png'), image)
     // 1x so each pixel is one sample of the curve (at 2x the resolve filter averages across the knee).
     const plain = await harness.render({ scene: { program: 'test.tone', lens: noLens }, ...size, dither: false, supersample: 1 })
-    const { TONE_COLOR_LIST, TONE_RAMP_MAX } = await harness.ssr('/scripts/light/harness/testPrograms.ts')
+    const { TONE_COLOR_LIST, TONE_RAMP_MAX, GLOW_GRID } = await harness.ssr('/scripts/light/harness/testPrograms.ts')
+    const hueDiff = (a, b) => ((a - b + 540) % 360) - 180
+    const warm = new Set(['#FF4F00', '#FFD61E', '#B8996E', '#FF0000'])
+    const blue = new Set(['#0064E0', '#6A7788', '#384753', '#1C2B33', '#0000FF'])
     let monotonic = true
     let worstGpu = 0
     let worstHueStep = 0
-    let worstHueDrift = 0
+    let warmBackward = 0
+    let warmEnd = Infinity
+    let blueTowardViolet = -Infinity
     let worstSlopeRatio = 0
     const rampsEnd = 0.72
     TONE_COLOR_LIST.forEach((hex, index) => {
@@ -189,6 +194,7 @@ try {
       const y = Math.floor(((index + 0.44) / TONE_COLOR_LIST.length) * rampsEnd * size.height)
       let previous = -1
       let previousHue = null
+      let lastWarmHue = null
       const nominal = linearToOklch(linear)
       for (let x = 0; x < size.width; x++) {
         const i = (y * size.width + x) * 4
@@ -201,15 +207,17 @@ try {
         const expected = toneCurve(linear.map((v) => v * intensity)).map((v) => Math.round(Math.min(1, Math.max(0, linearToSrgb(v))) * 255))
         for (let k = 0; k < 3; k++) worstGpu = Math.max(worstGpu, Math.abs(expected[k] - bytes[k]))
         const lch = linearToOklch(toneCurve(linear.map((v) => v * intensity)))
-        if (lch[1] > 0.03 && previousHue !== null) {
-          const step = Math.abs(((lch[2] - previousHue + 540) % 360) - 180)
-          worstHueStep = Math.max(worstHueStep, step)
+        if (lch[1] > 0.05 && previousHue !== null) worstHueStep = Math.max(worstHueStep, Math.abs(hueDiff(lch[2], previousHue)))
+        previousHue = lch[1] > 0.05 ? lch[2] : null
+        if (lch[1] > 0.03 && intensity * Math.max(...linear) > 1) {
+          if (warm.has(hex)) {
+            if (lastWarmHue !== null) warmBackward = Math.max(warmBackward, hueDiff(lastWarmHue, lch[2]))
+            lastWarmHue = lch[2]
+          }
+          if (blue.has(hex)) blueTowardViolet = Math.max(blueTowardViolet, hueDiff(lch[2], nominal[2]))
         }
-        if (lch[1] > 0.03 && nominal[1] > 0.03 && intensity > 1) {
-          worstHueDrift = Math.max(worstHueDrift, Math.abs(((lch[2] - nominal[2] + 540) % 360) - 180))
-        }
-        previousHue = lch[1] > 0.03 ? lch[2] : null
       }
+      if (warm.has(hex) && lastWarmHue !== null) warmEnd = Math.min(warmEnd, lastWarmHue)
       // Luminance slope just below and just above the start of compression (max channel = 1), from the CPU twin.
       const m = Math.max(...linear)
       const lumAt = (scale) => {
@@ -225,12 +233,16 @@ try {
     record('tone curve: GPU output matches the CPU curve', worstGpu <= 2, `worst channel difference ${worstGpu} code values`)
     record('tone curve: luminance slope continuous where compression starts', worstSlopeRatio < 0.01, `worst slope mismatch ${(worstSlopeRatio * 100).toFixed(2)} %`)
     record(
-      'tone curve: hue holds on the way to white',
-      worstHueStep < 1 && worstHueDrift < 2,
-      `largest hue step between neighboring columns ${worstHueStep.toFixed(2)} deg; largest drift from the nominal hue ${worstHueDrift.toFixed(2)} deg`,
+      'tone curve: warm light whitens through yellow, blue through cyan-white, hue moves smoothly',
+      worstHueStep < 1 && warmBackward < 0.5 && warmEnd > 85 && blueTowardViolet < 8,
+      `largest hue step between neighboring columns ${worstHueStep.toFixed(2)} deg; warm hues never step back toward pink by more than ${warmBackward.toFixed(2)} deg and reach ${warmEnd.toFixed(0)} deg or more; ` +
+        `blues move toward violet by at most ${blueTowardViolet.toFixed(2)} deg`,
     )
     const crop = await cropRgba(image, 300, 0, 400, Math.round(rampsEnd * size.height))
     await savePng(path.join(outDir, 'tone-curve-onset-zoom.png'), await zoom(crop, 2))
+    const glows = await harness.render({ scene: { program: 'test.glows', lens: noLens }, width: GLOW_GRID.columns * 64, height: GLOW_GRID.rows * 64 })
+    await savePng(path.join(outDir, 'tone-glows.png'), await zoom(glows, 2))
+    record('tone glows written', true, `${path.relative(ROOT, path.join(outDir, 'tone-glows.png'))}: gaussian dots and lines at 1.5x, 3x, 8x per pack color, 2x zoom`)
   }
 
   if (wanted('export')) {

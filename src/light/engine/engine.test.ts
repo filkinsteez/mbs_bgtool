@@ -40,16 +40,51 @@ describe('tone curve', () => {
     }
   })
 
-  it('keeps the Oklab hue while it desaturates', () => {
+  const hueAt = (hex: string, scale: number) => {
+    const c = hexToLinear(hex)
+    const m = Math.max(...c)
+    return linearToOklch(toneCurve(c.map((v) => (v / m) * scale)))
+  }
+  const hueDiff = (a: number, b: number) => ((a - b + 540) % 360) - 180
+
+  it('turns warm light toward yellow as it whitens, never toward pink', () => {
+    for (const hex of ['#FF4F00', '#FFD61E', '#B8996E', '#FF0000', '#FFB300']) {
+      let previous = hueAt(hex, 1)[2]
+      for (let scale = 1.1; scale < 32; scale *= 1.1) {
+        const [, chroma, hue] = hueAt(hex, scale)
+        if (chroma < 0.03) break
+        expect(hueDiff(hue, previous), `${hex} at ${scale.toFixed(2)}x`).toBeGreaterThan(-0.5)
+        expect(hue, `${hex} at ${scale.toFixed(2)}x`).toBeLessThan(112)
+        previous = hue
+      }
+    }
+    expect(hueAt('#FF4F00', 4)[2]).toBeGreaterThan(85)
+  })
+
+  it('keeps blue light blue: toward cyan-white, not violet', () => {
+    for (const hex of ['#0064E0', '#0000FF', '#6A7788', '#384753', '#1C2B33']) {
+      const nominal = hueAt(hex, 1)[2]
+      for (let scale = 1.1; scale < 64; scale *= 1.1) {
+        const [, chroma, hue] = hueAt(hex, scale)
+        if (chroma < 0.03) break
+        expect(hueDiff(hue, nominal), `${hex} at ${scale.toFixed(2)}x`).toBeLessThan(8)
+        expect(hue, `${hex} at ${scale.toFixed(2)}x`).toBeGreaterThan(190)
+      }
+    }
+    expect(Math.abs(hueDiff(hueAt('#0064E0', 2)[2], 259))).toBeLessThan(3)
+  })
+
+  it('moves hue smoothly for every pack color', () => {
     for (const hex of packHexes) {
-      const c = hexToLinear(hex)
-      const nominal = linearToOklch(c)
-      if (nominal[1] < 0.03) continue
-      for (const scale of [1.2, 2, 4, 8]) {
-        const lch = linearToOklch(toneCurve(c.map((v) => v * scale)))
-        if (lch[1] < 0.02) continue
-        const drift = Math.abs(((lch[2] - nominal[2] + 540) % 360) - 180)
-        expect(drift).toBeLessThan(1)
+      let previous: number | null = null
+      for (let scale = 1; scale < 64; scale *= 1.01) {
+        const [, chroma, hue] = hueAt(hex, scale)
+        if (chroma < 0.05) {
+          previous = null
+          continue
+        }
+        if (previous !== null) expect(Math.abs(hueDiff(hue, previous)), `${hex} at ${scale.toFixed(2)}x`).toBeLessThan(1.5)
+        previous = hue
       }
     }
   })

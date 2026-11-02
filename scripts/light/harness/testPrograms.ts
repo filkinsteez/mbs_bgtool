@@ -87,6 +87,44 @@ vec3 radiance(vec2 uv, vec2 p) {
 
 export const TONE_COLOR_LIST = TONE_COLORS
 
+const PACK_COLORS = [...new Set(PACKS.flatMap((pack) => packHexes(pack.id)))]
+export const GLOW_GAINS = [1.5, 3, 8]
+/** Frame for the glow grid: 6 square cells across, one row per pack color. */
+export const GLOW_GRID = { columns: 6, rows: PACK_COLORS.length }
+
+/**
+ * Soft glows crossing 1 inside the frame: one row per pack color, gaussian dots
+ * then vertical gaussian lines, each at 1.5x, 3x and 8x nominal at the peak.
+ */
+export const glowsProgram: RecipeProgram = {
+  id: 'test.glows',
+  colorSlots: [],
+  defaultColors: [],
+  params: [],
+  fragment: /* glsl */ `
+#define GLOW_COLORS ${PACK_COLORS.length}
+uniform vec3 uGlowColors[GLOW_COLORS];
+const float GLOW_GAINS[3] = float[3](${GLOW_GAINS.map((g) => g.toFixed(1)).join(', ')});
+
+vec3 radiance(vec2 uv, vec2 p) {
+  vec2 grid = uv * vec2(${GLOW_GRID.columns.toFixed(1)}, float(GLOW_COLORS));
+  int column = clamp(int(floor(grid.x)), 0, ${GLOW_GRID.columns - 1});
+  int row = clamp(int(floor(grid.y)), 0, GLOW_COLORS - 1);
+  vec2 q = fract(grid) - 0.5;
+  float glow;
+  if (column < 3) {
+    glow = exp(-dot(q, q) / (2.0 * 0.125 * 0.125));
+  } else {
+    float along = abs(q.y) / 0.4375;
+    float ends = along < 0.6 ? 1.0 : exp(-pow((along - 0.6) / 0.18, 2.0));
+    glow = ends * exp(-q.x * q.x / (2.0 * 0.078 * 0.078));
+  }
+  return uGlowColors[row] * GLOW_GAINS[column % 3] * glow;
+}
+`,
+  uniforms: () => ({ uGlowColors: PACK_COLORS.flatMap(hexToLinear) }),
+}
+
 /** Small bright spots spread by a radial blur: exercises the post-pass path. */
 export const postProgram: RecipeProgram = {
   id: 'test.post',
@@ -171,6 +209,7 @@ export const TEST_PROGRAMS: Record<string, RecipeProgram> = {
   [flatProgram.id]: flatProgram,
   [rampProgram.id]: rampProgram,
   [toneProgram.id]: toneProgram,
+  [glowsProgram.id]: glowsProgram,
   [postProgram.id]: postProgram,
   [lensProgram.id]: lensProgram,
 }

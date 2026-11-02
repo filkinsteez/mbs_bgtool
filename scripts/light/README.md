@@ -17,10 +17,19 @@ Engine checks in the browser; prints a pass/fail table and exits 1 on a failure.
 - `hex-swatches.png`: flat fields of the 12 pack colors (each must be its exact hex with dither, grain and lens off; also with bloom 0.5; with dither on the mean must be within 0.5 code values).
 - `resolution-*.png`: the same scene at 925 px and at the 3840 px long edge, downsampled (mean Oklab ΔE under 0.004 required).
 - `banding-ramp-4k.png`, `banding-crop.png`: a 3840x2160 ramp #0B0F14 → #1C2B33 and a 4x crop with and without dither, contrast x8. Reports the banding score, the longest run of equal 8-bit values and how far column means stray from the exact ramp.
-- `tone-curve.png`, `tone-curve-onset-zoom.png`: ramps 0 → 16x nominal for every pack color and six primaries, plus glowing dots and lines at 0.5x .. 32x.
+- `tone-curve.png`, `tone-curve-onset-zoom.png`: ramps 0 → 16x nominal for every pack color and six primaries, plus glowing dots and lines at 0.5x .. 32x. Checks that the GPU matches the CPU curve, luminance keeps its slope where compression starts, warm colors whiten through yellow (never back toward pink), blues stay within 8° of their hue on the violet side, and hue never jumps.
+- `tone-glows.png`: gaussian dots, then vertical gaussian lines, at 1.5x, 3x and 8x nominal for each of the 12 pack colors (one row each, pack order), shown at 2x zoom. This is where a glow crossing 1 would show an edge.
 - `export-vs-preview.png`: a 16:9 export through `exportPreset` (offscreen renderer, PNG encode; checks size, format and file name) downsampled next to a 960x540 preview of the same preset.
 - `lens.png`: point lights, a line and a disk with the lens off, bloom, halation, and both. Also checks that bloom keeps the mean light of a dim scene.
 - `report.json`: every result and the run time.
+
+```sh
+node scripts/light/tone-study.mjs [--curves old,engine,camera,...] [--out dir]
+```
+
+CPU only, about 2 s. Puts the previous engine tone curve (`old`: straight Oklab line to white at constant hue) next to each alternative that was tried, and prints each pack color's hex and Oklab L, C, h at 1x .. 32x. Writes `artifacts/tone-study/glows-<pack>-<curve>.png` (dots and lines at 1.5x, 3x, 8x, 2x zoom) and `ramps-<curve>.png`. `engine` repeats the constants in `src/light/engine/output.ts`.
+
+The engine curve: below max channel 1 nothing changes. Above it the largest channel stays at 1 and the other channels fill toward 1 like a camera's: each at a rate set by its own light plus crosstalk from the others, with one overall rate that keeps the luminance slope continuous at the knee. Orange-red goes orange (2x), yellow (4x), pale yellow (8x), white (16x+); Meta Blue keeps its hue to about 2x, then turns pale cyan-white. Pack colors that are already bright at nominal (Lime, Ice, and less so Cyan and Yellow) have little room above 1, so their glows still level off into a pale disc within a short distance.
 
 ```sh
 node scripts/light/audit.mjs --ref <id>[,<id>...] | --all
