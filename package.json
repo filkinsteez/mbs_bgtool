@@ -10,7 +10,8 @@
     "test": "vitest run",
     "light:check": "node scripts/light/check.mjs",
     "light:audit": "node scripts/light/audit.mjs",
-    "light:fit": "node scripts/light/fit.mjs"
+    "light:fit": "node scripts/light/fit.mjs",
+    "light:profile": "node scripts/light/profile.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

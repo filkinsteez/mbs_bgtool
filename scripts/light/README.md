@@ -10,7 +10,7 @@ References come from `public/references/awe/manifest.json` when it exists (only 
 
 ## Commands
 
-The same scripts run as `npm run light:check`, `npm run light:audit -- --all` and `npm run light:fit -- --ref <id>` (arguments after `--`).
+The same scripts run as `npm run light:check`, `npm run light:audit -- --all`, `npm run light:fit -- --ref <id>` and `npm run light:profile -- --recipe <id>` (arguments after `--`).
 
 ```sh
 node scripts/light/check.mjs [--only hex,determinism,resolution,banding,tone,scatter,context,export,lens] [--out dir]
@@ -76,6 +76,15 @@ node scripts/light/fit.mjs --ref <id>
 
 Nelder-Mead on values normalized to their ranges, with restarts from the best point at half the step. It renders at `--size` px on the long side (1x, no dither, no grain) in one browser session; the loss is computed in the page. Loss = image ΔE + 0.5 row-profile ΔE + 0.5 column-profile ΔE by default. Prints the loss before and after and writes `artifacts/light-fit/<id>/` (`compare.png`, `render.png` at full size, `preset.json`, `fit.json` with the loss history). Only `--write` overwrites the preset JSON. Look at `compare.png` before keeping a fit: a lower loss can still add a hard edge.
 
+```sh
+node scripts/light/profile.mjs [--recipe <id>[,<id>...]] [--pack bold] [--seed 3] [--size 1920x1080] [--ss 1]
+  [--runs 5] [--defaults] [--json <file>] [--save <dir>] [--against <dir>]
+```
+
+Where a recipe's render time goes. Each recipe renders its compose scene (the pack, controls at 0.5, the frame's aspect; with `--defaults` or without a compose, the recipe defaults and the seed), then the same scene with a stub of its program whose shader functions return constants. It prints the time of single renders that wait for the GPU, the time per frame of 10 renders drawn back to back, and a table per stage (scatter sources, scatter blurs, radiance texture, post passes, lens base, lens bloom, lens halation, composite, resolve, output) with the total, the engine alone (the stub) and the difference, which is the recipe's own shader. Compare the back-to-back times: a GPU that sits idle between single renders slows down, so single renders vary more. Stage times come from renders that wait for the GPU after every stage, so they add up to more than a normal render. Other programs drawing on the GPU at the same time slow everything down, so compare runs made one after the other.
+
+`--save <dir>` writes a 1080p 1x preview and a 4K 2x export of each scene (no grain, no dither) and prints preview vs export ΔE. `--against <dir>` renders again and prints ΔE against images saved earlier, which shows whether a speedup changed the image.
+
 ## Metrics (`metrics.json`)
 
 All ΔE values are plain Euclidean Oklab distances (L on 0..1; about 0.02 is one just-noticeable difference). The roadmap's starting targets are mean under 0.03 and p95 under 0.06. Ignore rects and rounded corners are masked everywhere.
@@ -94,7 +103,7 @@ All ΔE values are plain Euclidean Oklab distances (L on 0..1; about 0.02 is one
 - One audit at the reference size, 2x supersampled, with metrics and sheet: 0.6 to 1.3 s. `--all` for 14 references: about 16 s.
 - One fit evaluation at 256 px: about 12 to 14 ms (render 4.5 ms, loss 7.5 ms, the rest is the page round trip). 500 evaluations take 6 to 10 s.
 - `check.mjs`: about 13 s.
-- Preview cost, 1920x1080 at 1x, GPU finished (`measure: true`): engine passes with a flat field 2.2 ms; the rest is the recipe's own shader (evaluated once per output pixel and 4 times per pixel of the 512 px lens base).
+- Preview cost, 1920x1080 at 1x, frames back to back (`profile.mjs`): the engine's own passes take 0.7 to 1.7 ms for the Contour recipes, about 1.2 ms of it the scatter blurs; the rest is the recipe's own shader. That runs once per output pixel. With bloom or halation on, 1x frames with a short side of 1024 px or more (up to 2560x1600) build the 512 px lens base from those same samples; smaller frames and 2x renders evaluate the base on its own, 4 samples per base pixel. Scatter sources run the shader again at their working size, 2 x 2 samples per pixel.
 
 ## Writing recipes and presets
 
