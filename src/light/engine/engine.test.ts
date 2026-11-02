@@ -3,7 +3,7 @@ import { linearToOklch } from '../color/oklab'
 import { PACKS } from '../color/packs'
 import { hexToLinear } from '../color/srgb'
 import { getRecipe, RECIPE_LIST } from '../recipes'
-import { RECIPE_IDS } from '../scene'
+import { DEFAULT_LENS, RECIPE_IDS, type RecipeProgram } from '../scene'
 import { exportFileName, exportSize } from './export'
 import { bloomLevelFactors, halationLevelFactors, lensBaseSize } from './lens'
 import { toneCurve } from './output'
@@ -91,15 +91,30 @@ describe('tone curve', () => {
 })
 
 describe('scene resolution', () => {
+  const program: RecipeProgram = {
+    id: 'test.resolve',
+    colorSlots: [
+      { key: 'a', label: 'A' },
+      { key: 'b', label: 'B' },
+    ],
+    defaultColors: ['#000000', '#FFFFFF'],
+    params: [
+      { kind: 'number', key: 'softness', label: 'Softness', min: 0, max: 0.4, step: 0.01, default: 0.1 },
+      { kind: 'number', key: 'angle', label: 'Angle', min: -90, max: 90, step: 1, default: 0 },
+    ],
+    fragment: 'vec3 radiance(vec2 uv, vec2 p) { return vec3(0.0); }',
+    uniforms: () => ({}),
+    lens: { bloom: 0.07 },
+  }
+
   it('fills defaults, clamps numbers and rejects wrong types', () => {
-    const recipe = getRecipe('sunset.ramp')
-    const resolved = resolveScene(recipe, { seed: 3.6, colors: ['#123456'], params: { softness: 99, angle: 'x' as unknown as number } })
+    const resolved = resolveScene(program, { seed: 3.6, colors: ['#123456'], params: { softness: 99, angle: 'x' as unknown as number } })
     expect(resolved.seed).toBe(4)
-    expect(resolved.hex[0]).toBe('#123456')
-    expect(resolved.hex.length).toBe(recipe.colorSlots.length)
+    expect(resolved.hex).toEqual(['#123456', '#FFFFFF'])
     expect(resolved.params.softness).toBe(0.4)
     expect(resolved.params.angle).toBe(0)
-    expect(resolved.lens.bloom).toBe(recipe.lens?.bloom)
+    expect(resolved.lens.bloom).toBe(0.07)
+    expect(resolved.lens.halation).toBe(DEFAULT_LENS.halation)
   })
 
   it('coerces vectors by length', () => {
