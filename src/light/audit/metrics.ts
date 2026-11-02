@@ -1,13 +1,15 @@
 import { linearToSrgb } from '../color/srgb'
-import { blur, luma8, resizeAreaMasked, toLinear, toOklab, type FloatImage, type RgbaImage } from './image'
+import { blur, blurMasked, luma8, resizeAreaMasked, toLinear, toOklab, type FloatImage, type RgbaImage } from './image'
 import { maskedShare } from './mask'
 
-/** All deltaE values are Euclidean Oklab distances times 100 (a just-noticeable difference is about 2). */
-export const DELTA_E_SCALE = 100
-/** Heatmap color scale: 0 (black) .. HEATMAP_MAX (white), in deltaE x 100. */
-export const HEATMAP_MAX = 20
-/** Metric images are area-downsampled by this factor first, which removes grain and dither. */
+/** deltaE values are plain Euclidean Oklab distances (L on 0..1); about 0.02 is one just-noticeable difference. */
+export const DELTA_E_SCALE = 1
+/** Heatmap color scale: 0 (black) .. HEATMAP_MAX (white), in Oklab deltaE. */
+export const HEATMAP_MAX = 0.15
+/** Metric images are area-downsampled by this factor first. */
 export const METRIC_DOWNSAMPLE = 4
+/** Then blurred with a gaussian of this share of the short edge (removes grain, dither and JPEG blocks). */
+export const METRIC_BLUR = 0.01
 
 export interface ClipShare {
   /** Share of pixels with a channel at 255. */
@@ -20,10 +22,11 @@ export interface AuditMetrics {
   width: number
   height: number
   maskedShare: number
+  /** On images area-downsampled by METRIC_DOWNSAMPLE and blurred by METRIC_BLUR of the short edge. */
   deltaE: { mean: number; p95: number; max: number }
   rowProfileDeltaE: { mean: number; max: number }
   columnProfileDeltaE: { mean: number; max: number }
-  /** Earth mover's distance between Oklab L histograms and between chroma histograms, x 100. */
+  /** Earth mover's distance between Oklab L histograms and between chroma histograms. */
   histogramDistance: { L: number; C: number }
   /** Share of pixels on long monotonic 8-bit steps (0 = no banding, 1 = fully banded). */
   banding: { target: number; render: number }
@@ -138,8 +141,12 @@ function histogramEmd(a: Float32Array, b: Float32Array, weight: Float32Array, ch
   return emd * DELTA_E_SCALE
 }
 
-/** Share of valid pixels that sit on monotonic 8-bit steps at least `minRun` pixels long, worst channel and axis. */
-export function bandingScore(image: RgbaImage, mask: Uint8Array, minRun = 6): number {
+/**
+ * Share of valid pixels that sit on monotonic 8-bit steps at least `minRun`
+ * pixels long, worst channel and axis. TPDF dither rarely leaves 24 equal
+ * values in a row, so a dithered ramp scores near 0 and an undithered one near 1.
+ */
+export function bandingScore(image: RgbaImage, mask: Uint8Array, minRun = 24): number {
   const { width, height, data } = image
   let worst = 0
   for (let channel = 0; channel < 3; channel++) {
@@ -225,7 +232,7 @@ export function heatColor(value: number): [number, number, number] {
   return [255, 255, 255]
 }
 
-/** Per-pixel deltaE x 100 between two images after a light blur (sigma in px). */
+/** Per-pixel Oklab deltaE between two images after a light blur (sigma in px). */
 export function deltaEMap(target: RgbaImage, render: RgbaImage, sigma = 1.5): Float32Array {
   const a = toOklab(blur(toLinear(target), sigma)).data
   const b = toOklab(blur(toLinear(render), sigma)).data
@@ -257,15 +264,18 @@ export function compareImages(target: RgbaImage, render: RgbaImage, mask: Uint8A
 
   const dw = Math.max(1, Math.round(width / METRIC_DOWNSAMPLE))
   const dh = Math.max(1, Math.round(height / METRIC_DOWNSAMPLE))
-  const smallT = resizeAreaMasked(linT, mask, dw, dh)
-  const smallR = resizeAreaMasked(linR, mask, dw, dh)
+  const sigma = METRIC_BLUR * Math.min(dw, dh)
+  const reducedT = resizeAreaMasked(linT, mask, dw, dh)
+  const reducedR = resizeAreaMasked(linR, mask, dw, dh)
+  const smallT = blurMasked(reducedT.image, reducedT.weight, sigma)
+  const smallR = blurMasked(reducedR.image, reducedT.weight, sigma)
   const labT = toOklab(smallT.image).data
   const labR = toOklab(smallR.image).data
   const errors: number[] = []
   let sum = 0
   let max = 0
   for (let p = 0; p < dw * dh; p++) {
-    if (smallT.weight[p] < 0.999) continue
+    if (reducedT.weight[p] < 0.999) continue
     const d = deltaEAt(labT, labR, p * 3)
     errors.push(d)
     sum += d
@@ -302,8 +312,8 @@ export function compareImages(target: RgbaImage, render: RgbaImage, mask: Uint8A
     rowProfileDeltaE: profileDeltaE(rowsT, rowsR),
     columnProfileDeltaE: profileDeltaE(colsT, colsR),
     histogramDistance: {
-      L: histogramEmd(labT, labR, smallT.weight, (lab, i) => lab[i], 0, 1),
-      C: histogramEmd(labT, labR, smallT.weight, (lab, i) => Math.hypot(lab[i + 1], lab[i + 2]), 0, 0.4),
+      L: histogramEmd(labT, labR, reducedT.weight, (lab, i) => lab[i], 0, 1),
+      C: histogramEmd(labT, labR, reducedT.weight, (lab, i) => Math.hypot(lab[i + 1], lab[i + 2]), 0, 0.4),
     },
     banding: { target: bandingScore(target, mask), render: bandingScore(render, mask) },
     clipped: { target: clipShare(target, mask), render: clipShare(render, mask) },

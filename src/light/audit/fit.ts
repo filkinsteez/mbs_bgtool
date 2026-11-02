@@ -1,5 +1,5 @@
-import { blur, resizeAreaMasked, toLinear, toOklab, type FloatImage, type RgbaImage } from './image'
-import { DELTA_E_SCALE } from './metrics'
+import { blurMasked, resizeAreaMasked, toLinear, toOklab, type FloatImage, type RgbaImage } from './image'
+import { DELTA_E_SCALE, METRIC_BLUR } from './metrics'
 
 export interface FitWeights {
   /** Weight of the mean per-pixel deltaE. */
@@ -24,8 +24,9 @@ export interface FitTarget {
   columnLab: Float32Array
 }
 
-/** Blur sigma in fit pixels applied to target and render before comparing. */
-const FIT_BLUR = 1
+function fitSigma(width: number, height: number): number {
+  return Math.max(0.75, METRIC_BLUR * Math.min(width, height))
+}
 
 function weightedProfiles(linear: FloatImage, weight: Float32Array) {
   const { width, height, data } = linear
@@ -57,12 +58,12 @@ function weightedProfiles(linear: FloatImage, weight: Float32Array) {
 
 export function prepareFitTarget(target: RgbaImage, mask: Uint8Array, width: number, height: number): FitTarget {
   const small = resizeAreaMasked(toLinear(target), mask, width, height)
-  const blurred = blur(small.image, FIT_BLUR)
-  const profiles = weightedProfiles(blurred, small.weight)
+  const blurred = blurMasked(small.image, small.weight, fitSigma(width, height))
+  const profiles = weightedProfiles(small.image, small.weight)
   return {
     width,
     height,
-    lab: toOklab(blurred).data,
+    lab: toOklab(blurred.image).data,
     weight: small.weight,
     rowLab: profiles.rows,
     columnLab: profiles.columns,
@@ -87,21 +88,22 @@ export interface FitLossParts {
   columns: number
 }
 
-/** Loss of a render at the fit size against a prepared target, in deltaE x 100 units. */
+/** Loss of a render at the fit size against a prepared target, in Oklab deltaE. */
 export function fitLoss(prepared: FitTarget, render: RgbaImage, weights: FitWeights = DEFAULT_FIT_WEIGHTS): FitLossParts {
   if (render.width !== prepared.width || render.height !== prepared.height) {
     throw new Error(`Fit render is ${render.width}x${render.height}, expected ${prepared.width}x${prepared.height}`)
   }
-  const linear = blur(toLinear(render), FIT_BLUR)
-  const lab = toOklab(linear).data
+  const linear = toLinear(render)
+  const blurred = blurMasked(linear, prepared.weight, fitSigma(render.width, render.height))
+  const lab = toOklab(blurred.image).data
   let sum = 0
   let total = 0
   for (let p = 0; p < prepared.weight.length; p++) {
     const w = prepared.weight[p]
-    if (w <= 0) continue
+    if (w < 0.999) continue
     const i = p * 3
-    sum += w * Math.hypot(lab[i] - prepared.lab[i], lab[i + 1] - prepared.lab[i + 1], lab[i + 2] - prepared.lab[i + 2])
-    total += w
+    sum += Math.hypot(lab[i] - prepared.lab[i], lab[i + 1] - prepared.lab[i + 1], lab[i + 2] - prepared.lab[i + 2])
+    total++
   }
   const image = total ? (sum / total) * DELTA_E_SCALE : 0
   const profiles = weightedProfiles(linear, prepared.weight)

@@ -108,40 +108,58 @@ function gaussianKernel(sigma: number): Float32Array {
   return kernel
 }
 
+/** Gaussian along one line of `count` samples `stride` apart starting at `start`; edges clamped. */
+function blurLine(src: Float32Array, dst: Float32Array, start: number, count: number, stride: number, kernel: Float32Array): void {
+  const r = (kernel.length - 1) / 2
+  const taps = kernel.length
+  for (let i = 0; i < count; i++) {
+    let s = 0
+    if (i >= r && i < count - r) {
+      let index = start + (i - r) * stride
+      for (let t = 0; t < taps; t++, index += stride) s += kernel[t] * src[index]
+    } else {
+      for (let t = 0; t < taps; t++) {
+        const j = Math.min(count - 1, Math.max(0, i + t - r))
+        s += kernel[t] * src[start + j * stride]
+      }
+    }
+    dst[start + i * stride] = s
+  }
+}
+
 /** Separable gaussian blur with clamped edges. */
 export function blur(image: FloatImage, sigma: number): FloatImage {
   if (sigma <= 0) return image
   const { width, height, channels: c, data } = image
   const kernel = gaussianKernel(sigma)
-  const r = (kernel.length - 1) / 2
   const tmp = new Float32Array(data.length)
   const out = new Float32Array(data.length)
-  for (let y = 0; y < height; y++) {
-    const row = y * width
-    for (let x = 0; x < width; x++) {
-      for (let k = 0; k < c; k++) {
-        let s = 0
-        for (let i = -r; i <= r; i++) {
-          const xx = Math.min(width - 1, Math.max(0, x + i))
-          s += kernel[i + r] * data[(row + xx) * c + k]
-        }
-        tmp[(row + x) * c + k] = s
-      }
-    }
-  }
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      for (let k = 0; k < c; k++) {
-        let s = 0
-        for (let i = -r; i <= r; i++) {
-          const yy = Math.min(height - 1, Math.max(0, y + i))
-          s += kernel[i + r] * tmp[(yy * width + x) * c + k]
-        }
-        out[(y * width + x) * c + k] = s
-      }
-    }
+  for (let k = 0; k < c; k++) {
+    for (let y = 0; y < height; y++) blurLine(data, tmp, y * width * c + k, width, c, kernel)
+    for (let x = 0; x < width; x++) blurLine(tmp, out, x * c + k, height, width * c, kernel)
   }
   return { width, height, channels: c, data: out }
+}
+
+/** Gaussian blur that ignores pixels with zero weight (normalized convolution). Returns the blurred image and weight. */
+export function blurMasked(image: FloatImage, weight: Float32Array, sigma: number): { image: FloatImage; weight: Float32Array } {
+  const { width, height, channels: c, data } = image
+  if (weight.every((w) => w === 1)) return { image: blur(image, sigma), weight }
+  const premultiplied = new Float32Array(width * height * (c + 1))
+  for (let p = 0; p < width * height; p++) {
+    const w = weight[p]
+    for (let k = 0; k < c; k++) premultiplied[p * (c + 1) + k] = data[p * c + k] * w
+    premultiplied[p * (c + 1) + c] = w
+  }
+  const blurred = blur({ width, height, channels: c + 1, data: premultiplied }, sigma).data
+  const out = new Float32Array(width * height * c)
+  const outWeight = new Float32Array(width * height)
+  for (let p = 0; p < width * height; p++) {
+    const w = blurred[p * (c + 1) + c]
+    outWeight[p] = w
+    for (let k = 0; k < c; k++) out[p * c + k] = w > 1e-6 ? blurred[p * (c + 1) + k] / w : 0
+  }
+  return { image: { width, height, channels: c, data: out }, weight: outWeight }
 }
 
 /** Encoded luma (0..255) per pixel. */
