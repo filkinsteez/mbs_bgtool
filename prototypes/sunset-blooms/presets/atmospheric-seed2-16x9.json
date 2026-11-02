@@ -1,0 +1,59 @@
+{
+  "id": "sunset-blooms-atmospheric-seed2",
+  "scene": {
+    "recipe": "sunset.blooms",
+    "seed": 2,
+    "colors": [
+      "#0064E0",
+      "#F2F4F7",
+      "#6A7788",
+      "#384753",
+      "#1C2B33"
+    ],
+    "params": {
+      "base": {
+        "top": 4,
+        "topI": 1,
+        "bottom": 0,
+        "bottomI": 1,
+        "angle": -20.926,
+        "curve": 0.919
+      },
+      "blooms": [
+        {
+          "color": 1,
+          "intensity": 0.744,
+          "x": 0.318,
+          "y": 1.031,
+          "radius": 0.668,
+          "aniso": 2.726,
+          "angle": 4.874,
+          "beta": 2.2,
+          "absorb": 1.4,
+          "absorbPow": 2
+        },
+        {
+          "color": 2,
+          "intensity": 0.487,
+          "x": 0.842,
+          "y": 1.067,
+          "radius": 0.759,
+          "aniso": 4.007,
+          "angle": 4.698,
+          "beta": 2.2
+        }
+      ],
+      "warp": {
+        "amount": 0.08,
+        "scale": 1
+      }
+    },
+    "lens": {
+      "bloom": 0.12
+    },
+    "output": {
+      "grain": 0.012,
+      "exposure": 0
+    }
+  }
+}

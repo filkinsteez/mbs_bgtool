@@ -1,0 +1,98 @@
+{
+  "id": "ref-sunset-violet-wave",
+  "referenceId": "sunset-violet-wave",
+  "scene": {
+    "recipe": "sunset.blooms",
+    "seed": 1,
+    "colors": [
+      "#6AB0DE",
+      "#000B21",
+      "#FFF2EC",
+      "#C500F1",
+      "#5355DD",
+      "#FF9CAE"
+    ],
+    "params": {
+      "base": {
+        "top": 0,
+        "bottom": 1,
+        "angle": -1,
+        "curve": 0.98,
+        "center": 0.4624684951098839,
+        "width": 0.23211112082835472,
+        "front": true,
+        "wave": [
+          {
+            "amp": 0.04516194885778893,
+            "freq": 1,
+            "phase": 0.182088176907264
+          },
+          {
+            "amp": 0.023201185453206322,
+            "freq": 2,
+            "phase": 0.20152498607395838
+          }
+        ]
+      },
+      "blooms": [
+        {
+          "color": 2,
+          "intensity": 1,
+          "x": 0.794,
+          "y": 0.363,
+          "radius": 0.485,
+          "aniso": 2.594,
+          "angle": -7.762,
+          "beta": 1.8,
+          "absorb": 2.28,
+          "absorbPow": 2
+        },
+        {
+          "color": 5,
+          "intensity": 0.27,
+          "x": 0.862,
+          "y": 0.452,
+          "radius": 0.306,
+          "aniso": 8.404,
+          "angle": -15.666,
+          "beta": 1.8,
+          "absorb": 8,
+          "absorbPow": 2
+        },
+        {
+          "color": 3,
+          "intensity": 0.421,
+          "x": 1.107,
+          "y": 0.522,
+          "radius": 0.411,
+          "aniso": 12,
+          "angle": -0.036,
+          "beta": 3,
+          "front": true
+        },
+        {
+          "color": 4,
+          "intensity": 0.459,
+          "x": 0.956,
+          "y": 0.667,
+          "radius": 0.698,
+          "aniso": 11.159,
+          "angle": 0.761,
+          "beta": 2.406,
+          "front": true
+        }
+      ],
+      "warp": {
+        "amount": 0,
+        "scale": 1
+      }
+    },
+    "lens": {
+      "bloom": 0.12
+    },
+    "output": {
+      "grain": 0.004,
+      "exposure": 0
+    }
+  }
+}

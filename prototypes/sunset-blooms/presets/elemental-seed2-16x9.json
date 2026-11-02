@@ -1,0 +1,59 @@
+{
+  "id": "sunset-blooms-elemental-seed2",
+  "scene": {
+    "recipe": "sunset.blooms",
+    "seed": 2,
+    "colors": [
+      "#0064E0",
+      "#D6F26C",
+      "#0F3D33",
+      "#B8996E",
+      "#4A0A3C"
+    ],
+    "params": {
+      "base": {
+        "top": 2,
+        "topI": 1,
+        "bottom": 0,
+        "bottomI": 1,
+        "angle": -20.926,
+        "curve": 0.685
+      },
+      "blooms": [
+        {
+          "color": 3,
+          "intensity": 1.861,
+          "x": 0.318,
+          "y": 1.031,
+          "radius": 0.668,
+          "aniso": 4.543,
+          "angle": 4.874,
+          "beta": 2.2,
+          "absorb": 1.4,
+          "absorbPow": 2
+        },
+        {
+          "color": 1,
+          "intensity": 0.195,
+          "x": 0.842,
+          "y": 1.067,
+          "radius": 0.759,
+          "aniso": 4.007,
+          "angle": 4.698,
+          "beta": 2.2
+        }
+      ],
+      "warp": {
+        "amount": 0.08,
+        "scale": 1
+      }
+    },
+    "lens": {
+      "bloom": 0.12
+    },
+    "output": {
+      "grain": 0.012,
+      "exposure": 0
+    }
+  }
+}

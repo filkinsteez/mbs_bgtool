@@ -1,0 +1,72 @@
+{
+  "id": "ref-sunset-blue-diagonal",
+  "referenceId": "sunset-blue-diagonal",
+  "scene": {
+    "recipe": "sunset.blooms",
+    "seed": 1,
+    "colors": [
+      "#062C7B",
+      "#5A90F9",
+      "#B0C6ED",
+      "#FFC05C",
+      "#FF8A30"
+    ],
+    "params": {
+      "base": {
+        "top": 0,
+        "bottom": 1,
+        "angle": -39.9,
+        "curve": 1.26
+      },
+      "blooms": [
+        {
+          "color": 2,
+          "intensity": 0.738,
+          "x": -0.152,
+          "y": 0.465,
+          "radius": 0.712,
+          "aniso": 4.604,
+          "angle": 23.849,
+          "beta": 2.821,
+          "absorb": 2.178,
+          "absorbPow": 2
+        },
+        {
+          "color": 3,
+          "intensity": 1.024,
+          "x": -0.132,
+          "y": 0.764,
+          "radius": 0.732,
+          "aniso": 4.087,
+          "angle": 20.821,
+          "beta": 4,
+          "absorb": 1.526,
+          "absorbPow": 2
+        },
+        {
+          "color": 4,
+          "intensity": 0.2,
+          "x": 0.362,
+          "y": 0.94,
+          "radius": 1.138,
+          "aniso": 8.126,
+          "angle": 8,
+          "beta": 3.855,
+          "absorb": 8,
+          "absorbPow": 2
+        }
+      ],
+      "warp": {
+        "amount": 0,
+        "scale": 1
+      }
+    },
+    "lens": {
+      "bloom": 0.12
+    },
+    "output": {
+      "grain": 0.008,
+      "exposure": 0
+    }
+  }
+}

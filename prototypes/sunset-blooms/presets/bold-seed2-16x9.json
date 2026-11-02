@@ -1,0 +1,58 @@
+{
+  "id": "sunset-blooms-bold-seed2",
+  "scene": {
+    "recipe": "sunset.blooms",
+    "seed": 2,
+    "colors": [
+      "#0064E0",
+      "#1FCDF0",
+      "#FFD61E",
+      "#FF4F00"
+    ],
+    "params": {
+      "base": {
+        "top": 0,
+        "topI": 0.45,
+        "bottom": 0,
+        "bottomI": 1,
+        "angle": -20.926,
+        "curve": 1.17
+      },
+      "blooms": [
+        {
+          "color": 2,
+          "intensity": 0.931,
+          "x": 0.318,
+          "y": 1.031,
+          "radius": 0.668,
+          "aniso": 4.543,
+          "angle": 4.874,
+          "beta": 2.2,
+          "absorb": 1.4,
+          "absorbPow": 2
+        },
+        {
+          "color": 1,
+          "intensity": 0.248,
+          "x": 0.842,
+          "y": 1.067,
+          "radius": 0.759,
+          "aniso": 4.007,
+          "angle": 4.698,
+          "beta": 2.2
+        }
+      ],
+      "warp": {
+        "amount": 0.08,
+        "scale": 1
+      }
+    },
+    "lens": {
+      "bloom": 0.12
+    },
+    "output": {
+      "grain": 0.012,
+      "exposure": 0
+    }
+  }
+}
