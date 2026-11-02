@@ -189,8 +189,13 @@ vec3 radiance(vec2 uv, vec2 p) {
     vec2 floorAt = vec2(p.x * zFloor / F, zFloor);
     vec2 q = (floorAt - vec2(xb, zb)) / a;
     float d = length(q);
+    // The pool: the beam's light per unit area on the floor. Its edge is softer than the
+    // beam's (the penumbra widens with distance from the source), so it has no rim.
     float cosIn = 1.0 / length(vec3(uBeamShape.x, 1.0, uBeamShape.y));
-    float lit = beamAperture(d) * cosIn;
+    float hole = uBeamLight.y;
+    float footEdge = min(uBeamShape.w, 2.2);
+    float inner = hole > 0.001 ? uBeamLight.z * beamSoftDisk(d / hole, footEdge) : 0.0;
+    float lit = max(beamSoftDisk(d, footEdge) - inner, 0.0) * cosIn;
 
     // Fine surface texture, faded out where its cells get smaller than about two samples.
     float cell = uFloorLook.w;
@@ -213,8 +218,11 @@ vec3 radiance(vec2 uv, vec2 p) {
       float fresnel = 0.04 + 0.96 * pow(1.0 - view.y, 5.0);
       float lanes = 1.0;
       if (uLanes.x > 0.0) {
-        float lx = floorAt.x / (uLanes.y * a) + 37.0 * float(uSeed % 97);
-        float n = 0.65 * valueNoise(vec2(lx, 0.5), uSeed + 131) + 0.35 * valueNoise(vec2(2.1 * lx, 3.5), uSeed + 137);
+        // Gloss varies across the floor much faster than along it, and the lanes drift.
+        vec2 l = floorAt / (uLanes.y * a);
+        l.x += 0.35 * valueNoise(vec2(l.y * 0.08, 7.3), uSeed + 127);
+        l.y *= 0.08;
+        float n = 0.65 * valueNoise(l, uSeed + 131) + 0.35 * valueNoise(vec2(2.1 * l.x, 2.1 * l.y + 3.5), uSeed + 137);
         lanes = max(0.0, 1.0 + uLanes.x * n);
       }
       reflection = uFloorLook.x * fresnel * lanes * (uBeamLight.x * mirrored + mBounce);
@@ -269,11 +277,12 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
   const lean = random() < 0.5 ? -1 : 1
   const tilt = [lean * lerp(0.03, 0.22, random()), lerp(-0.1, 0.1, random())]
   const hollow = random() < 0.3 ? [lerp(0.3, 0.45, random()), lerp(0.15, 0.3, random())] : [0, 0]
-  // The beam may widen toward the floor, but keeps at least 70 % of its floor width at the frame's top.
+  // The beam may widen toward the floor, but keeps at least 85 % of its floor width at the
+  // frame's top, so it never reads as a cone.
   const horizon = floorY - drop
   const landZ = focal / drop / (1 - Math.min(0.9, landing * (width / focal)))
   const heightInFrame = 1 - ((-halfH - horizon) * landZ) / focal
-  const spread = lerp(0, 0.3 / Math.max(heightInFrame, 1), random())
+  const spread = lerp(0, 0.15 / Math.max(heightInFrame, 1), random())
 
   const power = geo(intensity, 0.35, 0.8, 1.9) * hazeGain * lerp(0.85, 1.15, random())
   const pool = geo(intensity, 3.5, 7, 16) * (luminanceOf(light.haze) / Math.max(luminanceOf(light.light), 0.01))
@@ -297,7 +306,7 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
       extinction: round4(lerp(0, 0.6, random())),
       haze: round4(lerp(0.02, 0.05, random())),
       ceiling: [round4(lerp(0.2, 1.5, random())), round4(lerp(0.1, 0.25, random()) * 2 * halfH), round4(-halfH - lerp(0, 0.2, random()))],
-      floorHaze: [round4(lerp(1, 2.5, random())), round4(width * soft(0.35, 0.7))],
+      floorHaze: [round4(lerp(0.6, 1.6, random())), round4(width * soft(0.25, 0.5))],
       forward: round4(lerp(0, 0.6, random())),
       hazeNoise: [round4(lerp(0.08, 0.18, random())), round4(lerp(2, 3, random())), round4(lerp(0.6, 1.4, random()))],
       bounce: [round4(lerp(0.4, 0.8, random())), round4(soft(0.15, 0.45) * 2 * halfH * 0.5), 2, 0.08],

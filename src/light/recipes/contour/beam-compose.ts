@@ -52,7 +52,8 @@ function hexByName(pack: ColorPack, name: string): string {
 
 /**
  * The lights a pack offers, in the order a seed is most likely to pick them.
- * Each keeps to one hue family. Dark pack colors only appear as bases.
+ * Each keeps to one hue family. Dark pack colors (Forest, Plum, Slate,
+ * Near-black) only appear as bases, never as light.
  */
 export function contourLights(pack: ColorPack): ContourLight[] {
   const blue = pack.colors[0].hex
@@ -65,14 +66,14 @@ export function contourLights(pack: ColorPack): ContourLight[] {
       ]
     case 'elemental':
       return [
-        { light: hexByName(pack, 'Lime'), haze: hexByName(pack, 'Forest'), base: hexByName(pack, 'Forest'), baseLevel: 0.12 },
         { light: blue, haze: blue, base: hexByName(pack, 'Forest'), baseLevel: 0.15 },
-        { light: blue, haze: blue, base: hexByName(pack, 'Plum'), baseLevel: 0.12 },
+        { light: hexByName(pack, 'Lime'), haze: hexByName(pack, 'Lime'), base: hexByName(pack, 'Forest'), baseLevel: 0.12 },
+        { light: hexByName(pack, 'Tan'), haze: hexByName(pack, 'Tan'), base: hexByName(pack, 'Plum'), baseLevel: 0.12 },
       ]
     case 'atmospheric':
       return [
-        { light: hexByName(pack, 'Ice'), haze: blue, base: hexByName(pack, 'Near-black'), baseLevel: 0.18 },
         { light: hexByName(pack, 'Ice'), haze: hexByName(pack, 'Steel'), base: hexByName(pack, 'Near-black'), baseLevel: 0.2 },
+        { light: hexByName(pack, 'Ice'), haze: blue, base: hexByName(pack, 'Near-black'), baseLevel: 0.18 },
         { light: blue, haze: blue, base: hexByName(pack, 'Slate'), baseLevel: 0.1 },
       ]
     default: {
