@@ -45,15 +45,11 @@
       "band1Light": 1,
       "band1Mode": 1,
       "band1Line": false,
-      "band1Warp": [
-        0,
-        0
+      "band1Wander": [
+        0.0025,
+        0.003
       ],
-      "band1Waves": 2.2,
-      "band1Vary": [
-        0,
-        0
-      ],
+      "band1SoftVary": 0.3,
       "band1Tilt": [
         -0.02557014512785073,
         0.05114029025570146,
@@ -65,7 +61,6 @@
       ],
       "band1Haze": 0,
       "band1Pale": 0,
-      "band1Noise": 0,
       "band1BumpAt": [
         0.5,
         0.5,
@@ -114,15 +109,11 @@
       "band2Light": 1,
       "band2Mode": 1,
       "band2Line": false,
-      "band2Warp": [
-        0,
+      "band2Wander": [
+        0.003,
         0
       ],
-      "band2Waves": 2.2,
-      "band2Vary": [
-        0,
-        0
-      ],
+      "band2SoftVary": 0.3,
       "band2Tilt": [
         0,
         0,
@@ -134,7 +125,6 @@
       ],
       "band2Haze": 0,
       "band2Pale": 0,
-      "band2Noise": 1,
       "band2BumpAt": [
         0.5,
         0.5,
@@ -174,7 +164,30 @@
       "grainInk": [
         1,
         0.12
-      ]
+      ],
+      "boundaryNoise": [
+        0.5,
+        0.25,
+        0.4,
+        2.5
+      ],
+      "boundaryAlong": [
+        0.2,
+        0.9
+      ],
+      "boundarySoft": [
+        0.1,
+        0.5,
+        0.25,
+        0.5
+      ],
+      "boundaryFeather": [
+        0.03,
+        0.02,
+        1.5
+      ],
+      "boundaryGap": 0.35,
+      "boundaryWindow": 0
     },
     "lens": {
       "bloom": 0,

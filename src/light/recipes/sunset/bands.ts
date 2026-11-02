@@ -1,6 +1,7 @@
 import type { ColorPack } from '../../color/packs'
 import type { Rgb } from '../../color/srgb'
 import type { RecipeContext, RecipeDefinition, UniformMap } from '../../scene'
+import { bandBoundary } from './bands-boundary'
 import { composeBands } from './bands-compose'
 import { bridgeEnds } from './bands-light'
 import {
@@ -13,6 +14,7 @@ import {
   PATCH_MAX,
   patchKey,
 } from './bands-params'
+import { BOUNDARY_GLSL } from './boundary'
 
 /** Frame heights added to every band's reach; covers the one-pixel floor on edge radii at sizes down to about 100 px. */
 const REACH_MARGIN = 0.01
@@ -21,10 +23,10 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
   const count = Math.round(ctx.num('bands'))
   const base = ctx.colors[0]
   const bandColor = (i: number) => ctx.colors[1 + i]
+  const boundary = bandBoundary(ctx, Math.min(count, BAND_MAX))
   const edge: number[] = []
   const reach: number[] = []
   const look: number[] = []
-  const warp: number[] = []
   const tilt: number[] = []
   const sun: number[] = []
   const bumpAt: number[] = []
@@ -43,27 +45,27 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     const key = (name: Parameters<typeof bandKey>[1]) => bandKey(i, name)
     const [top, bottom] = ctx.vec(key('Edges'))
     const [above, below] = ctx.vec(key('Soft'))
-    const [warpTop, warpBottom] = ctx.vec(key('Warp'))
-    const [softVary, coverVary] = ctx.vec(key('Vary'))
     const [tiltTop, tiltBottom, tiltCover] = ctx.vec(key('Tilt'))
     const [sunLight, sunCover] = ctx.vec(key('Sun'))
     const mode = Math.round(ctx.num(key('Mode')))
     const line = ctx.bool(key('Line'))
     const light = ctx.num(key('Light'))
     const hazeShare = ctx.num(key('Haze'))
+    const softVary = ctx.num(key('SoftVary'))
     const widths = ctx.vec(key('BumpWidth'))
     const sumAbs = (values: number[]) => values.reduce((s, v, j) => s + (widths[j] > 0 ? Math.abs(v) : 0), 0)
-    const topShift = warpTop + Math.abs(tiltTop) / 2 + sumAbs(ctx.vec(key('BumpTop')))
-    const bottomShift = topShift + warpBottom + Math.abs(tiltBottom) / 2 + sumAbs(ctx.vec(key('BumpBottom')))
-    const blur = (1 + softVary) * (line ? 9 : hazeShare > 0 ? 3 : 1 + 1.7321 * ctx.num('rounding'))
+    const [moveTop, moveBottom] = boundary.move[i]
+    const leanTop = Math.abs(tiltTop) / 2 + sumAbs(ctx.vec(key('BumpTop')))
+    const topShift = leanTop + moveTop
+    const bottomShift = leanTop + Math.abs(tiltBottom) / 2 + sumAbs(ctx.vec(key('BumpBottom'))) + moveBottom
+    const blur = boundary.softMax ** softVary * (line ? 9 : hazeShare > 0 ? 3 : 1 + 1.7321 * ctx.num('rounding'))
     const upReach = topShift + above * blur + REACH_MARGIN
     const downReach = bottomShift + below * blur + REACH_MARGIN
     reach.push(upReach, upReach, downReach, downReach)
     edge.push(top, bottom, above, below)
     look.push(ctx.num(key('Opacity')), light, mode, line ? 1 : 0)
-    warp.push(warpTop, warpBottom, ctx.num(key('Waves')), softVary)
-    tilt.push(tiltTop, tiltBottom, tiltCover, coverVary)
-    sun.push(sunLight, sunCover, ctx.num(key('Haze')), Math.round(ctx.num(key('Noise'))))
+    tilt.push(tiltTop, tiltBottom, tiltCover, 0)
+    sun.push(sunLight, sunCover, hazeShare, softVary)
     bumpAt.push(...ctx.vec(key('BumpAt')).slice(0, BUMP_MAX))
     bumpWidth.push(...ctx.vec(key('BumpWidth')).slice(0, BUMP_MAX))
     bumpTop.push(...ctx.vec(key('BumpTop')).slice(0, BUMP_MAX))
@@ -89,6 +91,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
 
   const [sunX, sunWidth] = ctx.vec('sun')
   return {
+    ...boundary.uniforms,
     uBandCount: Math.min(count, BAND_MAX),
     uPatchCount: Math.min(Math.round(ctx.num('patches')), PATCH_MAX),
     uBase: base,
@@ -97,7 +100,6 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     uBandEdge: edge,
     uBandReach: reach,
     uBandLook: look,
-    uBandWarp: warp,
     uBandTilt: tilt,
     uBandSun: sun,
     uBumpAt: bumpAt,
@@ -128,10 +130,11 @@ function scaled(color: Rgb, k: number): Rgb {
 /**
  * Up to six stacked bands of light, each a translucent layer over the ones
  * above it (or light added to them, or a filter on them), with lens-defocus
- * (disk) edges. Every edge has its own warp, tilt, bumps and softness that
- * change along its length; light and cover can fall off sideways from the
- * sun. Up to four soft patches go on top. Where two distant hues blend, pale
- * light is added so the middle is lighter, not grey.
+ * (disk) edges. Every edge wanders and changes softness along its length
+ * through the shared boundary model (boundary.ts, edge mode), on top of its
+ * own tilt and bumps; light and cover can fall off sideways from the sun. Up
+ * to four soft patches go on top. Where two distant hues blend, pale light is
+ * added so the middle is lighter, not grey.
  */
 export const sunsetBands: RecipeDefinition = {
   id: 'sunset.bands',
@@ -141,6 +144,7 @@ export const sunsetBands: RecipeDefinition = {
   defaultColors: composeBands({ pack: null, seed: 1, aspect: 16 / 9 }).colors,
   params: BANDS_PARAMS,
   fragment: /* glsl */ `
+${BOUNDARY_GLSL}
 #define BAND_MAX ${BAND_MAX}
 #define PATCH_MAX ${PATCH_MAX}
 
@@ -152,9 +156,9 @@ uniform vec3 uPatchColor[PATCH_MAX];
 uniform vec4 uBandEdge[BAND_MAX];   // top, bottom, softness above, softness below (frame heights)
 uniform vec4 uBandReach[BAND_MAX];  // how far each edge's blur and shift reach: above top, below top, above bottom, below bottom
 uniform vec4 uBandLook[BAND_MAX];   // opacity, light, mode (0 over, 1 multiply, 2 add), thin line
-uniform vec4 uBandWarp[BAND_MAX];   // warp of the top edge, extra warp of the bottom edge, waves across, softness variation
-uniform vec4 uBandTilt[BAND_MAX];   // tilt of the top edge, extra tilt of the bottom edge, cover tilt, cover variation
-uniform vec4 uBandSun[BAND_MAX];    // light toward the sun, cover toward the sun, haze share, noise number
+uniform vec3 uEdgeBnd[2 * BAND_MAX]; // per band, top then bottom edge: boundary transition (-1: none), distance from its group's anchor (frame heights, 0 or less), amount of the factor on that distance
+uniform vec4 uBandTilt[BAND_MAX];   // tilt of the top edge, extra tilt of the bottom edge, cover tilt, 0
+uniform vec4 uBandSun[BAND_MAX];    // light toward the sun, cover toward the sun, haze share, power on the softness change
 uniform vec4 uBumpAt[BAND_MAX];
 uniform vec4 uBumpWidth[BAND_MAX];
 uniform vec4 uBumpTop[BAND_MAX];
@@ -177,28 +181,39 @@ uniform vec2 uGrainInk;              // how much grain follows ink, grain on bar
 // Set by radiance() for grainWeight(), which the engine calls right after it for the same point.
 float gGrainWeight = 1.0;
 
-float edgeHash(int i, int seed) {
-  uint h = pcgHash(uint(i + 65536) ^ (uint(seed) * 2654435769u));
-  return float(h >> 8u) * (1.0 / 16777216.0);
+// The last transition evaluated at this point, so the edges of one group (a glow's top and its
+// horizon) share the work. radiance() resets it.
+int gBndJ = -1;
+float gBndMove = 0.0;
+float gBndSoft = 1.0;
+
+// An edge's move from the boundary model, in frame heights: its group's displacement and, for an edge
+// above the group's anchor, its distance from the anchor times a slow positive factor, so the two never
+// cross. soft gets the edge's softness factor, raised to the band's power.
+float edgeMove(float a, float frameH, vec3 link, float power, inout float soft) {
+  if (link.x < 0.0) return 0.0;
+  int j = int(link.x + 0.5);
+  if (j != gBndJ) {
+    gBndJ = j;
+    gBndMove = boundaryEdge(a, j);
+    gBndSoft = boundarySoft(a, j);
+  }
+  float move = gBndMove / frameH;
+  if (link.z > 0.0) {
+    // Two octaves on the model's own lattice along the edge.
+    float n = gradientNoise(vec2(a * uBndWarp.y + 13.7, 3.1 * float(j) + 0.4), uBndSeed + 4243);
+    n += uBndShape.x * gradientNoise(vec2(a * 2.0 * uBndWarp.y + 16.0, 3.1 * float(j) + 2.9), uBndSeed + 4304);
+    move += link.y * (exp(link.z * clamp(n / BND_RMS, -2.5, 2.5)) - 1.0);
+  }
+  soft = pow(gBndSoft, power);
+  return move;
 }
 
-// Low-frequency 1D value noise, roughly in [-1, 1].
-float edgeNoise(float x, int seed, int octaves) {
-  float sum = 0.0;
-  float amplitude = 1.0;
-  float norm = 0.0;
-  for (int o = 0; o < 3; o++) {
-    if (o >= octaves) break;
-    float i = floor(x);
-    float f = x - i;
-    float u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-    int s = seed + o * 7919;
-    sum += amplitude * (mix(edgeHash(int(i), s), edgeHash(int(i) + 1, s), u) * 2.0 - 1.0);
-    norm += amplitude;
-    amplitude *= 0.5;
-    x = x * 2.03 + 7.31;
-  }
-  return sum / norm;
+// The model's fine feather of an edge at signed distance d (frame heights) from it.
+float edgeFeather(float a, float frameH, float transition, float d) {
+  if (transition < 0.0 || uBndFeather.x <= 0.0) return 0.0;
+  int j = int(transition + 0.5);
+  return boundaryFeather(a, uBndTrans[j].x + d * frameH, j) / frameH;
 }
 
 // Share of a defocus disk of radius 1 that lies past an edge at signed distance t.
@@ -264,7 +279,9 @@ vec3 radiance(vec2 uv, vec2 p) {
   float x = uv.x;
   float v = uv.y;
   float dx = x - 0.5;
-  float pixel = uPixel / uFrameAspect.y;
+  float frameH = uFrameAspect.y;
+  float pixel = uPixel / frameH;
+  gBndJ = -1;
   float sunFall = 1.0 / (1.0 + pow(abs(x - uSun.x) / max(uSun.y, 1e-3), 1.6));
   vec3 base = toMix(deepen(uBase, uIntensity));
   vec3 acc = vec3(0.0);
@@ -289,29 +306,29 @@ vec3 radiance(vec2 uv, vec2 p) {
     vec4 reach = uBandReach[i];
     if (v < edge.x - reach.x || v > edge.y + reach.w) continue;
     vec4 look = uBandLook[i];
-    vec4 warp = uBandWarp[i];
+    vec3 linkTop = uEdgeBnd[2 * i];
+    vec3 linkBottom = uEdgeBnd[2 * i + 1];
     vec4 tilt = uBandTilt[i];
     vec4 sun = uBandSun[i];
     bool line = look.w > 0.5;
     bool nearTop = line || v < edge.x + reach.y;
     bool nearBottom = line || v > edge.y - reach.z;
-    int noise = int(sun.w + 0.5);
-    int seed = uSeed * 7 + noise * 131;
-    float phase = 3.7 * float(noise);
+    // The bottom edge follows the top edge's tilt and bumps; each edge has its own move from the boundary model.
     float shift = 0.0;
     float shiftBottom = 0.0;
-    float softness = 1.0;
+    float moveTop = 0.0;
+    float moveBottom = 0.0;
+    float softTop = 1.0;
+    float softBottom = 1.0;
     if (nearTop || nearBottom) {
       shift = tilt.x * dx;
-      if (warp.x > 0.0) shift += warp.x * edgeNoise(x * warp.z + phase, seed, 3);
+      if (nearTop) moveTop = edgeMove(p.x, frameH, linkTop, sun.w, softTop);
       if (nearBottom) {
         shiftBottom = tilt.y * dx;
-        if (warp.y > 0.0) shiftBottom += warp.y * edgeNoise(x * warp.z + phase + 11.3, seed + 1, 3);
+        moveBottom = edgeMove(p.x, frameH, linkBottom, sun.w, softBottom);
       }
-      if (warp.w > 0.0) softness = max(0.05, 1.0 + warp.w * edgeNoise(x * warp.z * 0.8 + phase + 21.1, seed + 2, 2));
     }
     float cover = 1.0 + tilt.z * dx;
-    if (tilt.w > 0.0) cover *= 1.0 + tilt.w * edgeNoise(x * warp.z * 0.7 + phase + 31.7, seed + 3, 2);
     float light = look.y;
     for (int j = 0; j < 4; j++) {
       float width = uBumpWidth[i][j];
@@ -325,17 +342,17 @@ vec3 radiance(vec2 uv, vec2 p) {
     }
     cover = max(cover, 0.0) * mix(1.0, sunFall, sun.y);
     light = max(light, 0.0) * mix(1.0, sunFall, sun.x);
-    float top = edge.x + shift;
-    float bottom = edge.y + shift + shiftBottom;
-    float above = max(edge.z * softness, pixel);
-    float below = max(edge.w * softness, pixel);
+    float top = edge.x + shift + moveTop;
+    float bottom = edge.y + shift + shiftBottom + moveBottom;
+    float above = max(edge.z * softTop, pixel);
+    float below = max(edge.w * softBottom, pixel);
     float shape = 1.0;
     if (line) {
       float d = v - 0.5 * (top + bottom);
       shape = lineCover(d, d < 0.0 ? above : below);
     } else if (nearTop || nearBottom) {
-      float enter = nearTop ? edgeStep(v - top, above, sun.z) : 1.0;
-      float leave = nearBottom ? edgeStep(v - bottom, below, sun.z) : 0.0;
+      float enter = nearTop ? edgeStep(v - top + edgeFeather(p.x, frameH, linkTop.x, v - top), above, sun.z) : 1.0;
+      float leave = nearBottom ? edgeStep(v - bottom + edgeFeather(p.x, frameH, linkBottom.x, v - bottom), below, sun.z) : 0.0;
       shape = max(0.0, enter - leave);
     }
     if (shape <= 1e-5) continue;
@@ -363,14 +380,16 @@ float grainWeight(vec2 uv, vec2 p) { return gGrainWeight; }
 `,
   uniforms: bandUniforms,
   grainWeight: true,
-  // Half-resolution radiance when every edge is wider than about 0.6% of the frame height.
+  // Half-resolution radiance when every edge, at its sharpest along its length, is wider than about 0.6% of the frame height.
   radianceScale: (ctx) => {
     const count = Math.min(Math.round(ctx.num('bands')), BAND_MAX)
+    const sharpest = Math.exp(-2.5 * ctx.vec('boundarySoft')[0])
     let thinnest = Infinity
     for (let i = 0; i < count; i++) {
       const [above, below] = ctx.vec(bandKey(i, 'Soft'))
       const [top, bottom] = ctx.vec(bandKey(i, 'Edges'))
-      thinnest = Math.min(thinnest, top > -0.5 ? above : Infinity, bottom < 1.5 ? below : Infinity)
+      const k = sharpest ** ctx.num(bandKey(i, 'SoftVary'))
+      thinnest = Math.min(thinnest, top > -0.5 ? above * k : Infinity, bottom < 1.5 ? below * k : Infinity)
     }
     return thinnest >= 0.006 ? 0.5 : 1
   },

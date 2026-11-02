@@ -26,12 +26,6 @@ export function paleTint(color: Rgb, p = 0.12): Rgb {
   return [r[0] / y, r[1] / y, r[2] / y]
 }
 
-/**
- * How much pale light to add where `a` and `b` blend so the middle of the
- * blend, after the tone curve, is as light as the lighter end. Only blends
- * that would go grey (distant hues) or olive, khaki or brown (a dim warm
- * middle) get it; near hues and grey pairs get none.
- */
 /** Oklab hues from magenta through pink to red: a blend that lands there between two ends that aren't, invents a pink. */
 const isPinkHue = (h: number) => h >= 290 || h <= 25
 
@@ -54,6 +48,12 @@ function bridgeGates(a: Rgb, b: Rgb): { distant: number; olive: number; pink: nu
   return { distant, olive, pink }
 }
 
+/**
+ * How much pale light to add where `a` and `b` blend so the middle of the
+ * blend, after the tone curve, is as light as the lighter end. Only blends
+ * that would go grey (distant hues) or olive, khaki or brown (a dim warm
+ * middle) get it; near hues and grey pairs get none.
+ */
 export function bridgeStrength(a: Rgb, b: Rgb, haze: Rgb, gain = 1): number {
   const { distant, olive, pink } = bridgeGates(a, b)
   const gate = Math.max(distant, olive, pink)
@@ -76,6 +76,30 @@ export function bridgeStrength(a: Rgb, b: Rgb, haze: Rgb, gain = 1): number {
 }
 
 /**
+ * Light that brings the middle of the blend from `a` to `b` to the palest
+ * tint of `warm`, lighter than the lighter end: cyan and orange-red light add
+ * up to near-white with a little peach. Nominal units; the lightness is
+ * solved at the daylight gain.
+ */
+function whiteningLight(a: Rgb, b: Rgb, warm: Rgb, gain: number): Rgb {
+  const tint = paleTint(warm, 0.05)
+  const mid = [0, 1, 2].map((i) => (a[i] + b[i]) / 2)
+  const lit = (c: Rgb, k: number) => linearToOklch(toneCurve(c.map((v) => v * k)))[0]
+  const target = Math.min(0.95, Math.max(lit(a, Math.min(gain, 1)), lit(b, Math.min(gain, 1))) + 0.1)
+  // The least level of the tint that covers the middle in every channel, so no channel has to be taken away.
+  const floor = Math.max(...mid.map((v, i) => v / tint[i]))
+  let lo = 0
+  let hi = MAX_BRIDGE * 4
+  for (let i = 0; i < 40; i++) {
+    const k = (lo + hi) / 2
+    if (lit(tint, k * gain) < target) lo = k
+    else hi = k
+  }
+  const level = Math.max(floor, (lo + hi) / 2)
+  return [0, 1, 2].map((i) => Math.max(0, level * tint[i] - mid[i])) as Rgb
+}
+
+/**
  * Pale light for the blend from `under` to `own`: at each end it is the pale
  * member of that end's own light family, so a blend from Meta Blue to a warm
  * glow passes through pale cyan-white and then cream, not lavender. Returns the
@@ -85,12 +109,18 @@ export function bridgeStrength(a: Rgb, b: Rgb, haze: Rgb, gain = 1): number {
  */
 export function bridgeEnds(under: Rgb, own: Rgb, scale: number, gain = 1): [Rgb, Rgb] {
   if (scale <= 0) return [[0, 0, 0], [0, 0, 0]]
-  // A crossing that would go olive or khaki gets only the lighter color's pale light at both ends,
-  // and one that would turn pink only the warm color's (peach for Orange-red).
   const { distant, olive, pink } = bridgeGates(under, own)
   const lighter = luma(own) > luma(under) ? own : under
   const warmer = isWarm(own) ? own : isWarm(under) ? under : lighter
-  const single = pink > Math.max(distant, olive) ? warmer : olive > distant ? lighter : null
+  // A crossing whose middle would turn pink gets the light that makes it near-white with a little of the warm color.
+  if (pink > 0.5 && pink >= olive) {
+    const light = whiteningLight(under, own, warmer, gain)
+    const k = scale * pink
+    const end: Rgb = [light[0] * k, light[1] * k, light[2] * k]
+    return [end, end]
+  }
+  // A crossing that would go olive or khaki gets only the lighter color's pale light at both ends.
+  const single = olive > distant ? lighter : null
   const lo = paleTint(single ?? under)
   const hi = paleTint(single ?? own)
   const mid = [0, 1, 2].map((i) => (lo[i] + hi[i]) / 2)
