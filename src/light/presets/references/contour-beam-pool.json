@@ -3,39 +3,100 @@
   "referenceId": "contour-beam-pool",
   "scene": {
     "recipe": "contour.beam",
-    "seed": 1,
+    "seed": 342,
     "colors": [
-      "#01050B",
-      "#2A5468",
-      "#E8FBFF",
-      "#3E7090"
+      "#C6E4F8",
+      "#366685",
+      "#00040B"
     ],
     "params": {
-      "source": [
-        0.55,
-        -0.1
+      "horizon": 0.1084,
+      "focal": 1.6236,
+      "floorY": 0.4395,
+      "stageRound": 0.2821,
+      "beamAt": 0,
+      "beamWidth": 0.1559,
+      "landing": 0,
+      "tilt": [
+        0,
+        0
       ],
-      "floorY": 0.715,
-      "spread": 6,
-      "beamWidth": 0.16,
-      "beamGain": 0.5,
-      "haze": 1.6,
-      "poolGain": 2.5,
-      "poolWidth": 0.25,
-      "poolHeight": 0.012,
-      "floorGain": 0.9,
-      "floorReach": 0.25,
-      "streaks": 0.7,
-      "streakCount": 10,
-      "skyStreaks": 0,
-      "intensity": 1
+      "spread": 0,
+      "beamEdge": 3.0417,
+      "hollow": [
+        0.4797,
+        0.4721
+      ],
+      "power": 0.5718,
+      "extinction": 0,
+      "haze": 0.0357,
+      "ceiling": [
+        1.3084,
+        0.1552,
+        -0.9828
+      ],
+      "floorHaze": [
+        3.3599,
+        0.1822
+      ],
+      "forward": -0.0908,
+      "hazeNoise": [
+        0.12,
+        2.5,
+        0.8
+      ],
+      "bounce": [
+        1.1041,
+        0.3667,
+        2.1404,
+        0.17
+      ],
+      "pool": [
+        2.2634,
+        1.489,
+        1.7264
+      ],
+      "edgeSoftness": 0.009,
+      "gloss": [
+        2.7561,
+        0.3058
+      ],
+      "texture": [
+        0.06,
+        0.006
+      ],
+      "lanes": [
+        2.0397,
+        0.9013
+      ],
+      "pale": [
+        0.5683,
+        0.046,
+        0.1932
+      ],
+      "ambient": [
+        1,
+        0,
+        1
+      ],
+      "vignette": 0.15
     },
     "lens": {
-      "bloom": 0.08,
+      "bloom": 0.05,
+      "bloomLevels": [
+        1,
+        0.6,
+        0.3,
+        0.15,
+        0.1,
+        0.05,
+        0,
+        0
+      ],
       "halation": 0
     },
     "output": {
-      "grain": 0.006,
+      "grain": 0,
       "exposure": 0
     }
   }

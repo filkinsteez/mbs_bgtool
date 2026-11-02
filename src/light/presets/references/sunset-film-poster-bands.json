@@ -31,8 +31,7 @@
       "bloom": 0.03
     },
     "output": {
-      "grain": 0.016,
-      "grainSize": 1.5,
+      "grain": 0,
       "exposure": 0
     }
   }
