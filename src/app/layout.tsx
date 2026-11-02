@@ -1,7 +1,6 @@
 import type { Metadata } from 'next'
 import localFont from 'next/font/local'
 import '@/styles/globals.css'
-import '@/styles/lab.css'
 
 // Optimistic is the whole type system: one variable family carrying
 // weight (300..800), width (80..100), italic and DRKM.
@@ -15,7 +14,7 @@ const optimistic = localFont({
 export const metadata: Metadata = {
   title: 'MBS Background Generator',
   description:
-    'Generate static Meta backgrounds with approved Color Packs, presets, 2D and 3D framing, and 4K export.',
+    'Generate static Meta backgrounds with approved Color Packs and 4K export.',
 }
 
 export default function RootLayout({

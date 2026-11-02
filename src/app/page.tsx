@@ -1,5 +1,3 @@
-import { BackgroundShell } from '@/components/background/BackgroundShell'
-
 export default function Home() {
-  return <BackgroundShell />
+  return <main style={{ minHeight: '100dvh', background: 'var(--chrome-0)' }} />
 }

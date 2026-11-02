@@ -14,8 +14,6 @@
   --text: #f2f0eb;
   --text-dim: #a1a3aa;
   --text-faint: #858891;
-  --paper: #f4f2ed;
-  --ink: #141412;
   --control-sm: 28px;
   --control-md: 32px;
   --control-lg: 36px;
@@ -25,13 +23,6 @@
   --duration-fast: 120ms;
   --duration-ui: 200ms;
   --ease-ui: cubic-bezier(0.22, 1, 0.36, 1);
-
-  /* Construction geometry (setup overlay, drawn over paper) */
-  --overlay-curve: rgba(20, 20, 18, 0.16);
-  --overlay-line: rgba(20, 20, 18, 0.12);
-  --overlay-strong: rgba(20, 20, 18, 0.45);
-  --overlay-node: rgba(20, 20, 18, 0.5);
-  --overlay-node-strong: rgba(20, 20, 18, 0.9);
 }
 
 * {
