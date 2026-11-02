@@ -69,6 +69,10 @@ export interface LensSettings {
   bloomWidth: number
   /** Tint of the widest level; levels in between blend from white to this tint. */
   bloomTint: string
+  /** Optional explicit weight per pyramid level (8 values, finest first); replaces bloomRadius and bloomWidth. */
+  bloomLevels?: number[]
+  /** Optional explicit tint per pyramid level (up to 8 hexes, finest first); replaces bloomTint. */
+  bloomLevelTints?: string[]
   /** Strength of the warm glow added around highlights. 0 turns it off. */
   halation: number
   /** Scene-linear luminance above which light feeds the halation. */

@@ -9,7 +9,7 @@ References come from `public/references/awe/manifest.json` when it exists (only 
 ## Commands
 
 ```sh
-node scripts/light/check.mjs [--only hex,determinism,resolution,banding,tone,lens] [--out dir]
+node scripts/light/check.mjs [--only hex,determinism,resolution,banding,tone,export,lens] [--out dir]
 ```
 
 Engine checks in the browser; prints a pass/fail table and exits 1 on a failure. Writes to `artifacts/light-check/`:
@@ -18,7 +18,8 @@ Engine checks in the browser; prints a pass/fail table and exits 1 on a failure.
 - `resolution-*.png`: the same scene at 925 px and at the 3840 px long edge, downsampled (mean Oklab ΔE under 0.004 required).
 - `banding-ramp-4k.png`, `banding-crop.png`: a 3840x2160 ramp #0B0F14 → #1C2B33 and a 4x crop with and without dither, contrast x8. Reports the banding score, the longest run of equal 8-bit values and how far column means stray from the exact ramp.
 - `tone-curve.png`, `tone-curve-onset-zoom.png`: ramps 0 → 16x nominal for every pack color and six primaries, plus glowing dots and lines at 0.5x .. 32x.
-- `lens.png`: point lights, a line and a disk with the lens off, bloom, halation, and both.
+- `export-vs-preview.png`: a 16:9 export through `exportPreset` (offscreen renderer, PNG encode; checks size, format and file name) downsampled next to a 960x540 preview of the same preset.
+- `lens.png`: point lights, a line and a disk with the lens off, bloom, halation, and both. Also checks that bloom keeps the mean light of a dim scene.
 - `report.json`: every result and the run time.
 
 ```sh

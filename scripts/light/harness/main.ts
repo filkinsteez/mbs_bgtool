@@ -11,11 +11,12 @@ import {
   type RgbaImage,
   type RowProfiles,
 } from '../../../src/light/audit'
+import { exportPreset, type ExportRequest } from '../../../src/light/engine/export'
 import { LightRenderer } from '../../../src/light/engine/renderer'
 import type { SceneInput } from '../../../src/light/engine/resolve'
 import { getRecipe, RECIPE_LIST } from '../../../src/light/recipes'
 import type { IgnoreRect } from '../../../src/light/references'
-import { isRecipeId, type RecipeProgram } from '../../../src/light/scene'
+import { isRecipeId, type Preset, type RecipeProgram } from '../../../src/light/scene'
 import { TEST_PROGRAMS } from './testPrograms'
 
 /** A recipe scene (with `recipe`) or a test program scene (with `program`). */
@@ -136,6 +137,15 @@ const api = {
     ])
     const uploadMs = performance.now() - uploadStart
     return { metrics: comparison.metrics, rows: comparison.rows, renderMs: ms, metricsMs, downloadMs, uploadMs }
+  },
+
+  /** Runs the real export path (own offscreen renderer, PNG encode) and uploads the PNG bytes. */
+  async exportPng(preset: Preset, request: ExportRequest, uploadKey: string): Promise<{ fileName: string; width: number; height: number; ms: number }> {
+    const start = performance.now()
+    const result = await exportPreset(preset, request)
+    const ms = performance.now() - start
+    await upload(uploadKey, new Uint8Array(await result.blob.arrayBuffer()))
+    return { fileName: result.fileName, width: result.width, height: result.height, ms }
   },
 
   async fitSetup(request: FitSetupRequest): Promise<{ width: number; height: number }> {

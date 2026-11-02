@@ -92,6 +92,18 @@ describe('lens weights', () => {
     for (let channel = 0; channel < 3; channel++) expect(halation.reduce((sum, f) => sum + f[channel], 0)).toBeCloseTo(1, 6)
   })
 
+  it('accepts explicit per-level bloom weights and tints from a scene', () => {
+    const recipe = getRecipe('contour.rim')
+    const resolved = resolveScene(recipe, { lens: { bloom: 0.3, bloomLevels: [1, 0, 0, 0, 0, 0, 0, 3], bloomLevelTints: ['#ffffff', '#ff0000'] } })
+    expect(resolved.lens.bloomLevels).toEqual([1, 0, 0, 0, 0, 0, 0, 3])
+    expect(resolved.lens.bloomLevelTints).toEqual(['#FFFFFF', '#FF0000'])
+    const factors = bloomLevelFactors(resolved.lens)
+    expect(luminance(factors[0])).toBeCloseTo(0.25, 6)
+    expect(luminance(factors[7])).toBeCloseTo(0.75, 6)
+    expect(factors[1]).toEqual([0, 0, 0])
+    expect(resolveScene(recipe, { lens: { bloomLevels: [-1] } }).lens.bloomLevels).toBeUndefined()
+  })
+
   it('works on a 512 px short side at any output size', () => {
     expect(lensBaseSize(925, 1001)).toEqual({ width: 512, height: 554 })
     expect(lensBaseSize(3840, 2160)).toEqual({ width: 910, height: 512 })

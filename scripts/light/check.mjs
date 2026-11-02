@@ -1,7 +1,8 @@
 // Engine checks in the real browser. Writes images to artifacts/light-check/ and prints a pass/fail table.
-// Usage: node scripts/light/check.mjs [--only hex,determinism,resolution,banding,tone,lens] [--out dir]
+// Usage: node scripts/light/check.mjs [--only hex,determinism,resolution,banding,tone,export,lens] [--out dir]
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import sharp from 'sharp'
 import { list, parseArgs } from './lib/args.mjs'
 import { ROOT, startHarness } from './lib/harness.mjs'
 import { composeRow, cropRgba, resizeRgba, savePng, zoom } from './lib/images.mjs'
@@ -230,6 +231,27 @@ try {
     )
     const crop = await cropRgba(image, 300, 0, 400, Math.round(rampsEnd * size.height))
     await savePng(path.join(outDir, 'tone-curve-onset-zoom.png'), await zoom(crop, 2))
+  }
+
+  if (wanted('export')) {
+    const preset = { id: 'check', pack: 'bold', scene: { recipe: 'contour.halo', seed: 4, colors: [], params: { rings: 2 }, lens: {}, output: {} } }
+    const result = await harness.call('exportPng', preset, { aspect: '16:9' }, 'export')
+    const png = harness.takeUpload('export')
+    const meta = await sharp(png).metadata()
+    const exported = { width: meta.width, height: meta.height, data: (await sharp(png).ensureAlpha().raw().toBuffer()) }
+    const preview = await harness.render({ scene: preset.scene, width: 960, height: 540, supersample: 2 })
+    const small = await resizeRgba(exported, 960, 540, 'lanczos3')
+    const { metrics } = compareImages(preview, small, buildMask(960, 540, [], 0))
+    await composeRow(path.join(outDir, 'export-vs-preview.png'), [
+      { image: preview, caption: 'preview 960x540' },
+      { image: small, caption: `${result.fileName}, downsampled` },
+    ])
+    const ok = meta.format === 'png' && meta.width === 3840 && meta.height === 2160 && result.fileName === 'contour.halo-bold-16x9-seed4.png' && metrics.deltaE.mean < 0.004
+    record(
+      'export: 16:9 PNG at 3840x2160 matches the preview',
+      ok,
+      `${result.fileName} ${meta.width}x${meta.height} ${meta.format}, ${(png.length / 1e6).toFixed(1)} MB in ${(result.ms / 1000).toFixed(2)} s; vs preview mean ${metrics.deltaE.mean.toFixed(4)} p95 ${metrics.deltaE.p95.toFixed(4)}`,
+    )
   }
 
   if (wanted('lens')) {

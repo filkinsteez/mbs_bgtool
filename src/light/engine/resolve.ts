@@ -80,7 +80,16 @@ function mergeNumbers<T extends object>(base: T, ...layers: (Partial<T> | undefi
 }
 
 export function resolveLens(program: RecipeProgram, lens?: Partial<LensSettings>): LensSettings {
-  return mergeNumbers(DEFAULT_LENS, program.lens, lens)
+  const out = mergeNumbers(DEFAULT_LENS, program.lens, lens)
+  const levels = lens?.bloomLevels ?? program.lens?.bloomLevels
+  if (Array.isArray(levels) && levels.length > 0 && levels.every((v) => typeof v === 'number' && Number.isFinite(v) && v >= 0)) {
+    out.bloomLevels = levels.slice(0, 8)
+  }
+  const tints = lens?.bloomLevelTints ?? program.lens?.bloomLevelTints
+  if (Array.isArray(tints) && tints.length > 0 && tints.every((v) => typeof v === 'string' && isHex(v))) {
+    out.bloomLevelTints = tints.slice(0, 8).map(normalizeHex)
+  }
+  return out
 }
 
 export function resolveOutput(program: RecipeProgram, output?: Partial<OutputSettings>): OutputSettings {

@@ -37,16 +37,25 @@ function normalizeLuminance(rgb: Rgb): Rgb {
   return y > 1e-6 ? [rgb[0] / y, rgb[1] / y, rgb[2] / y] : [1, 1, 1]
 }
 
-/** Per-level bloom weights times tints. Weights sum to 1 and tints have luminance 1, so bloom keeps total luminance. */
+/**
+ * Per-level bloom weights times tints. Weights sum to 1 and tints have
+ * luminance 1, so bloom keeps total luminance. Explicit bloomLevels and
+ * bloomLevelTints replace the gaussian over levels and the white-to-tint ramp.
+ */
 export function bloomLevelFactors(lens: LensSettings): Rgb[] {
   const center = lens.bloomRadius * (LENS_LEVELS - 1)
   const width = Math.max(0.05, lens.bloomWidth)
-  const weights = Array.from({ length: LENS_LEVELS }, (_, i) => Math.exp(-0.5 * ((i - center) / width) ** 2))
-  const total = weights.reduce((a, b) => a + b, 0)
+  const explicit = lens.bloomLevels
+  const weights = Array.from({ length: LENS_LEVELS }, (_, i) =>
+    explicit ? (explicit[i] ?? 0) : Math.exp(-0.5 * ((i - center) / width) ** 2),
+  )
+  const total = weights.reduce((a, b) => a + b, 0) || 1
   const tint = hexToLinear(lens.bloomTint)
   return weights.map((w, i) => {
     const t = i / (LENS_LEVELS - 1)
-    const mixed = normalizeLuminance([1 + (tint[0] - 1) * t, 1 + (tint[1] - 1) * t, 1 + (tint[2] - 1) * t])
+    const levelTint = lens.bloomLevelTints?.[i]
+    const base: Rgb = levelTint ? hexToLinear(levelTint) : [1 + (tint[0] - 1) * t, 1 + (tint[1] - 1) * t, 1 + (tint[2] - 1) * t]
+    const mixed = normalizeLuminance(base)
     return [(mixed[0] * w) / total, (mixed[1] * w) / total, (mixed[2] * w) / total]
   })
 }
