@@ -250,6 +250,12 @@ vec3 radiance(vec2 uv, vec2 p) {
 const HAZE_LUMINANCE = 0.12
 
 /**
+ * Stage edges at least this soft (short-side units) survive half-resolution radiance in a
+ * 1x preview; crisper edges (the beam-pool reference's flare line) keep full resolution.
+ */
+const HALF_SCALE_EDGE = 0.012
+
+/**
  * Pack output. The seed picks the light, where the beam lands (on the stage
  * edge or out on the floor), its width and tilt, the camera height, the haze
  * layers and the floor's gloss lanes. Light (the mood control) moves the beam
@@ -311,7 +317,7 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
       hazeNoise: [round4(lerp(0.08, 0.18, random())), round4(lerp(2, 3, random())), round4(lerp(0.6, 1.4, random()))],
       bounce: [round4(lerp(0.4, 0.8, random())), round4(soft(0.15, 0.45) * 2 * halfH * 0.5), 2, 0.08],
       pool: [round4(Math.min(10, pool)), round4(lerp(0.3, 0.7, random())), round4(soft(1.3, 2.4))],
-      edgeSoftness: round4(soft(0.008, 0.03)),
+      edgeSoftness: round4(soft(HALF_SCALE_EDGE, 0.03)),
       gloss: [round4(lerp(0.8, 3, random())), round4(soft(0.06, 0.3))],
       texture: [0.03, 0.004],
       lanes: [round4(lerp(0.4, 1.8, random())), round4(lerp(0.5, 1.2, random()))],
@@ -405,6 +411,7 @@ export const contourBeam: RecipeDefinition = {
       uVignette: ctx.num('vignette'),
     }
   },
+  radianceScale: (ctx) => (ctx.num('edgeSoftness') >= HALF_SCALE_EDGE ? 0.5 : 1),
   lens: { bloom: 0.04, bloomLevels: [1, 0.6, 0.3, 0.15, 0, 0, 0, 0], halation: 0 },
   fromPack: (pack: ColorPack) => {
     const { light, haze, base } = contourLights(pack)[0]
