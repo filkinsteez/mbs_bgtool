@@ -461,6 +461,7 @@ vec3 radiance(vec2 uv, vec2 p) {
 }
 `,
   uniforms: (ctx) => layoutUniforms(readLayout(ctx), ctx.colors, ctx.num('intensity'), ctx.seed),
+  radianceScale: 0.5,
   lens: { bloom: 0.12, bloomRadius: 0.75, bloomWidth: 1.5 },
   fromPack: rolesFromPack,
   compose: ({ pack, controls, seed }): Composition => {
