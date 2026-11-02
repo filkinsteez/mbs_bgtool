@@ -63,13 +63,26 @@ export async function startHarness({ verbose = false } = {}) {
   const browser = await chromium.launch({ channel: 'chrome', headless: true, args: extraArgs })
   const page = await browser.newPage()
   const pageErrors = []
+  // A module that fails to transform (for example an import of a file that does not exist yet) never runs, so the
+  // page would only time out; report Vite's message as soon as the request fails instead.
+  const moduleErrors = []
   page.on('pageerror', (error) => pageErrors.push(error.message))
   page.on('console', (message) => {
     if (message.type() === 'error' || verbose) console.error(`[page] ${message.text()}`)
   })
+  page.on('response', async (response) => {
+    if (response.status() < 500) return
+    const body = await response.text().catch(() => '')
+    moduleErrors.push(`${response.url().replace(`http://127.0.0.1:${port}`, '')}: ${body.slice(0, 2000)}`)
+  })
   await page.goto(`http://127.0.0.1:${port}/scripts/light/harness/index.html`)
   try {
-    await page.waitForFunction(() => document.documentElement.dataset.harness === 'ready', null, { timeout: 60_000 })
+    const deadline = Date.now() + 60_000
+    while (!(await page.evaluate(() => document.documentElement.dataset.harness === 'ready'))) {
+      if (moduleErrors.length > 0) throw new Error(`a module failed to load:\n${moduleErrors.join('\n')}`)
+      if (Date.now() > deadline) throw new Error('timed out after 60 s')
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
   } catch (error) {
     await browser.close()
     await server.close()
