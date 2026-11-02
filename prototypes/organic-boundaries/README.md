@@ -154,7 +154,14 @@ What this means for the model:
 
 Code: `lib/boundary.mjs` (CPU), `glsl/boundary.glsl` (shader), `lib/scene.mjs` (a ramp, band and layer recipe that uses it).
 
-The engine's copy is `src/light/recipes/sunset/boundary.ts`: the same model, the TypeScript calibration and the GLSL chunk, in short-side units. It changes two things from this prototype. The fold guard works per column instead of one factor for the frame. Very wide transitions get less wander. See [How each recipe plugs in](#how-each-recipe-plugs-in).
+The engine's copy is `src/light/recipes/sunset/boundary.ts`: the same model, the TypeScript calibration and the GLSL chunk, in short-side units. It changes four things from this prototype:
+
+- the fold guard works along the boundary instead of one factor for the frame;
+- very wide transitions get less wander;
+- every transition's bumps are kept long in the frame (the bump rule);
+- an edge over a much darker ground gets its own rules (silhouette edges).
+
+See the CPU calibration section and [How each recipe plugs in](#how-each-recipe-plugs-in).
 
 ### Formulas
 
@@ -207,7 +214,19 @@ C  ← C + β · (Y' · tint - C)
 The engine module changes steps 3 and 4:
 
 - **Wide transitions** (before step 3): a knot nearest a transition wider than `wideWidth` (0.25 S) asks for `wander · wideWidth / width`. On Bold's 0.42-wide cyan ramp that is 0.95% instead of 1.6% S. The faint columns came from moving that whole gradient up and down; the row-to-row lightness spread inside it drops by 27-33% (seeds 1-3) and the columns are no longer visible.
-- **Guard per column** (step 4): each of 128 columns gets the factor it needs (`0.675 / |steepest|` in coordinate mode, the edge gap in edge mode). The factors are reduced to 16 samples (the lowest within one sample spacing) and joined by a Catmull-Rom curve `G(a)`, which the shader evaluates the same way. The samples are lowered until the curve is at or below every column's need. So only the steep part of the frame is calmed. In the sky settings the guard touches at most 9% of the width; the two portraits that were flattened to 0.47-0.66 now keep 70-72% of their horizon wander, and the guard acts on 63% (Elemental) and 30% (Atmospheric) of the width.
+- **Guard along the boundary** (step 4): each of 128 columns gets the factor it needs (`0.675 / |steepest|` in coordinate mode, the edge gap in edge mode). Each of 16 samples takes the lowest need within 0.6 lattice (0.24 S at the default lattice) on either side. A Catmull-Rom curve `G(a)` joins the samples, and the shader evaluates it the same way. The samples are lowered until the curve is at or below every column's need. So only the steep part of the frame is calmed, over at least the length of a wave. The first version took the lowest need within one sample spacing. That let the guard calm one stretch and leave its neighbour at full wander, which cut a mound out of the edge.
+- **Bump rule** (after step 3, repeated with the guard until both hold): each transition's 50% line is followed across the frame (160 columns). Its amplitude `F` is lowered until all three of these hold:
+  - the audit's bump aspect is at least 12 (the band is 10; this leaves room for measuring from pixels);
+  - every single rise or fall between turning points is at least 5 times as long as it is tall;
+  - its steepest point is no steeper than a sine of bump aspect 5, or 10 on a silhouette edge (pi / slope).
+
+  The limits are `BOUNDARY_BUMPS`, and `report.scale` and `report.bumps` give the result. Without this rule, the Elemental and Atmospheric portraits kept 70% of a wander the recipe asked for in frame heights (1.78 times as much in short sides), and the horizon reached a slope of pi / 4.4 to pi / 5.8 at its steepest. Read from the pixels, that was a tree line: a rounded mound and short bumps. The references' sky boundaries reach pi / 3.6 to pi / 28 at their steepest, so light-over-light boundaries keep the looser limit.
+- **Silhouette edges** (transition `contrast`, from 0.3 up to 0.8; only for an edge whose lower side is darker). Within 1.2 widths of the edge, the boundary follows the same noise:
+  - stretched 1 + 0.4 k times along the edge, so its waves are longer;
+  - with 1 - 0.7 k of its finer octaves;
+  - read at the edge's own noise row and amplitude, so the whole edge moves as one piece (the top and bottom of the edge move with correlation 1.00 and the same amplitude).
+
+  The change back to the usual field happens in the flat color beside the edge. The edge is softer at its crests: its width grows by exp(0.24 k (crest - mean)), the crest in spreads, and its softness noise is calmed by 0.65 k. Crests end up 1.1-1.5 times softer than troughs, width min/max stays 0.62-0.83 (one 0.96), and the edge keeps 2.2-2.6 times less of its wiggle in waves shorter than 0.25 S.
 
 Measured on the engine's noise (`tools/`): RMS 0.3052, largest value 3.2 RMS, steepest slope 9.5 RMS per lattice unit (12.7 with two octaves), correlation 0.5 at 0.39 lattice units. So a measured half-correlation distance `d` means `Ly = d / 0.39`. A strict guard on the steepest point allows a typical slope of only about 0.19, which is why the guard is measured on the actual frame instead of using a worst-case formula.
 
@@ -215,7 +234,7 @@ Measured on the engine's noise (`tools/`): RMS 0.3052, largest value 3.2 RMS, st
 
 Prototype (`glsl/boundary.glsl`): `uBSeed`; `uBShared` (cS, 1/Ls, S_mean, octaves); `uBWarp` (cI, 1/Lx, 1/Ly, octaves); `uBGain`; `uBClip`; `uBMod` (μ, 1/Lm); `uBKnotCount`, `uBKnotS0[8]`, `uBKnotAmp[8]` (guard applied); `uBSoft` (κ, 1/Lk, 1/Lky, wRef); `uBFeather` (A_f guarded, 1/Lf, Ly_f); `uBEdgeFactor[16]`. Functions: `boundaryWarp(a, s0, v)`, `boundaryEdge(a, j, m, v)`, `boundarySoft(a, m, w)`, `boundaryFeather(a, s, m, w, j)`, `bRampV(...)`.
 
-Engine (`BOUNDARY_GLSL` in `boundary.ts`): `uBndSeed`; `uBndShared` (cS, 1/Ls, S_mean, octaves); `uBndWarp` (cI, 1/Lx, 1/Ly, octaves); `uBndShape` (gain, clip, μ, 1/Lm); `uBndKnotCount`, `uBndKnots[8]` (s0, amplitude); `uBndGuard[16]` and `uBndGuardSpan` (the guard curve along the boundary); `uBndSoft` (κ, 1/Lk, 1/Lky, wRef); `uBndFeather` (A_f guarded, 1/Lf, Ly_f); `uBndTransCount`, `uBndTrans[16]` (position, width, noise row, 0); `uBndVertical`.
+Engine (`BOUNDARY_GLSL` in `boundary.ts`): `uBndSeed`; `uBndShared` (cS, 1/Ls, S_mean, octaves); `uBndWarp` (cI, 1/Lx, 1/Ly, octaves); `uBndShape` (gain, clip, μ, 1/Lm); `uBndKnotCount`, `uBndKnots[8]` (s0, amplitude); `uBndGuard[16]` and `uBndGuardSpan` (the guard curve along the boundary); `uBndSoft` (κ, 1/Lk, 1/Lky, wRef); `uBndFeather` (A_f guarded, 1/Lf, Ly_f); `uBndTransCount`, `uBndTrans[16]` (position, width, noise row, amplitude scale `F`); `uBndDark[16]` (silhouette strength, half-height of its long-wave zone, crest scale, crest mean); `uBndVertical`.
 
 ### Parameters and ranges
 
@@ -240,8 +259,13 @@ The engine module is `src/light/recipes/sunset/boundary.ts`, with tests in `boun
 - In the recipe's `uniforms()`, call `calibrateBoundary(params, aspect, seed)` and spread the returned `uniforms` into the recipe's own. The same parameters, aspect and seed give the same uniforms, so the result can be cached by those three.
 - Put `BOUNDARY_GLSL` in front of the recipe's fragment. It uses the engine's `gradientNoise` from the chunk library and adds only `boundary*` functions and `uBnd*` uniforms.
 - Lengths are in short-side units, like the engine's `p`: the frame is `aspect × 1` (landscape) or `1 × 1/aspect` (portrait), centered on 0. `a` runs along the boundaries; `s0` runs across them, increasing from the first color to the last.
-- `params` (`BoundaryParams`): `wander` knots `[s0, spread]` (up to 8) and `transitions` `{at, width}` (up to 16) are required; the rest default to `BOUNDARY_DEFAULTS`, which are the production values in the table above. New: `wideWidth` (0.25; 0 turns the wide-transition rule off) and `range` (the s0 range over the frame).
-- `field` gives the same numbers on the CPU (`warp`, `edge`, `soft`, `softAt`, `feather`, `v`, `guard`) for audits and tests. `report` gives the requested and realized wander per knot, the guard's lowest value, and the share of the width where it acts.
+- `params` (`BoundaryParams`): `wander` knots `[s0, spread]` (up to 8) and `transitions` `{at, width, contrast?}` (up to 16, in order of `at`) are required; the rest default to `BOUNDARY_DEFAULTS`, which are the production values in the table above. New: `wideWidth` (0.25; 0 turns the wide-transition rule off) and `range` (the s0 range over the frame).
+- `contrast` on a transition: `boundaryContrast(Y before, Y after)` from the linear luminance of its two colors, gain included. Pass it on every transition. It does something only where the color after the transition (lower in the frame) is much darker. Without it, a light sky over a dark ground is treated as an ordinary edge.
+- `field` gives the same numbers on the CPU (`warp`, `edge`, `soft`, `softAt`, `feather`, `v`, `guard`) for audits and tests. `report` gives:
+  - the requested and realized wander per knot;
+  - the guard's lowest value and the share of the width where it acts;
+  - the bump rule's amplitude per transition (`scale`) and the lowest bump numbers it left (`bumps`).
+- The bump rule lowers wander a recipe asks for when its bumps would be steep, most of all in tall frames when the request grows with the frame height. Read `report.realized` instead of assuming the request.
 
 In the shader:
 
@@ -249,7 +273,7 @@ In the shader:
 - edge mode: transition j sits at `uBndTrans[j].x + boundaryEdge(a, j)` with the same softness;
 - `boundarySoftAt(a, m, w)` for a boundary that is not in the transition list (a glow's side), `boundaryFeather(a, s, j)` for print looks.
 
-`gpu-compare.mjs` is a working example: a small ramp fragment on top of `BOUNDARY_GLSL`, rendered through the engine's `ProgramRenderer` next to the same scene on the CPU. Bold seeds 1-3 match to 0.01 mean and 0.35 max Oklab ΔE × 100 (8-bit rounding):
+`gpu-compare.mjs` is a working example: a small ramp fragment on top of `BOUNDARY_GLSL`, rendered through the engine's `ProgramRenderer` next to the same scene on the CPU and next to the previous version of the module (899c06d), for all three packs at 16:9 and 9:16. GPU and CPU match to 0.009-0.011 mean and 0.35-0.40 max Oklab ΔE × 100 (8-bit rounding). Under each landscape row, the portrait's dark ground edge is shown 1.1 times larger, now and before:
 
 ![GPU vs CPU](results/gpu-vs-cpu.jpg)
 
@@ -344,7 +368,7 @@ Audit of all 18 frames:
 - neighbour correlation -0.1 to 0.7;
 - spacing CV 0.02-0.09.
 
-Two frames (Elemental 9:16 seed 1, Atmospheric 9:16 seed 1) came out flatter, because the guard cut them to 0.47-0.66. Faint broad columns are still visible in the widest cyan ramp of Bold; they come from the warp acting on a 0.42 H wide transition. The engine module fixes both: the guard now calms only the columns that need it, and very wide transitions get less wander (see the CPU calibration section). The bottom row of `results/gpu-vs-cpu.jpg` shows the two portraits before and after.
+Two frames (Elemental 9:16 seed 1, Atmospheric 9:16 seed 1) came out flatter, because the guard cut them to 0.47-0.66. Faint broad columns are still visible in the widest cyan ramp of Bold; they come from the warp acting on a 0.42 H wide transition. The engine module fixes both: the guard now calms only the part of the boundary that needs it, and very wide transitions get less wander (see the CPU calibration section). The first version of that fix kept 70% of the portraits' wander but made their dark ground edges read as a tree line. The bump rule and the silhouette rule fix that (`results/gpu-vs-cpu.jpg`, right column and the enlarged crops). Measured from the rendered pixels at seed 1, the Elemental and Atmospheric portrait horizons now reach pi / 10.3 and pi / 10.8 at their steepest (before: pi / 4.4 and pi / 5.8). Their bump aspect is 15 and 16 and their wiggle 0.54 and 0.51% H, inside the 0.3-3% H band.
 
 ## Audit spec for the engine's compare sheet
 
@@ -521,7 +545,8 @@ The claim was: "every edge moves with the same noise (one `warpNoise` scaled per
 - `failures.mjs`, `packs.mjs`, `make-results.mjs`: Tasks 3 and 4, and the committed images.
 - `lib/boundary.mjs` (the model), `lib/scene.mjs` (ramp, band and layer recipe), `lib/production.mjs` (pack scenes), `lib/audit.mjs`, `lib/rampcoord.mjs`, `lib/isolines.mjs`, `lib/config.mjs`, `lib/draw.mjs`, plus color, image, blur, noise, output and refs helpers.
 - `glsl/boundary.glsl`: the model for the shader.
-- `gpu-compare.mjs`: the engine module on the GPU next to the CPU and the prototype (`out/gpu/`, `results/gpu-vs-cpu.jpg`).
+- `gpu-compare.mjs`: the engine module on the GPU next to the CPU and its previous version (`out/gpu/`, `results/gpu-vs-cpu.jpg`). `lib/engine-scene.mjs`: the production layouts for the engine module, the test ramp in GLSL and on the CPU, and the audit's bump numbers for a line.
+- `tools/aspect-probe.mjs`: the bump numbers of every transition in the production layouts, landscape and portrait, from the module's CPU field. `tools/ref-steepness.mjs`: how steep the references' own boundaries get.
 - `recipes-audit.mjs`, `recipes-table.mjs`, `ramp-warp.mjs`, `lib/tracked.mjs`: the audit of the current Sunset recipes (`artifacts/organic-boundaries/`, `results/recipes-*.jpg`). `tools/fold-map.mjs` marks where isolines are crossed twice; `tools/crease.mjs` shows abrupt slope changes in a frame's lightness.
 - `tools/`: noise bounds and correlation, octave bounds.
 - `presets/ref-sunset-*.json`: the six reference presets (`scene.params` holds the recipe fields above).
