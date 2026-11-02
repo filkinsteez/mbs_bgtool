@@ -715,6 +715,12 @@ vec3 ditherTPDF(vec3 s, vec2 fragCoord) {         // s: sRGB-encoded, 0..1, befo
 
 ## 10. Grain
 
+> **Superseded by measurement.** `prototypes/grain-study/README.md` measured the references. Follow it instead of this section where they disagree:
+> - Grain size is a fraction of the short side, not output pixels; fixed 1 px grain loses about two thirds of its strength when an export is shown smaller.
+> - Strength fades to zero at black and eases off toward white. The prints don't follow `sqrt(u(1−u))`.
+> - Riso presets use multi-octave mono grain on Oklab L at strength 1, not the threshold model.
+> - Only the three riso references have real grain. All other references use grain 0.
+
 ### Physical model
 
 [Newson et al. 2017](https://doi.org/10.1111/cgf.13159) ([IPOL article and code](https://www.ipol.im/pub/art/2017/192/), GPL-3.0-or-later; [IPOL DOI](https://doi.org/10.5201/ipol.2017.192)):
