@@ -6,6 +6,8 @@ const clamp01 = (t: number) => Math.min(1, Math.max(0, t))
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
 /** 2 to the power of `stops` times (t - 0.5): 1 at the middle of a control. */
 const stops2 = (t: number, stops: number) => 2 ** ((t - 0.5) * stops)
+const WARP_SCALE = 1.6
+const WARP_OCTAVES = 3
 
 /** Deterministic random numbers in [0, 1) for one seed. */
 function seeded(seed: number): () => number {
@@ -146,18 +148,40 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
 
   const glowScale = glowHaze * day * skyScale * air
   const glowRise = 0.09 * day * skyScale * air * stops2(softness, 0.5)
-  const skyEdgeAt = -(look.lowSkyGain < 1 ? 0.42 : 0.55) * skyHeight * skyEdgeScale
-  const skyEdgeWidth = 1.1 * Math.abs(skyEdgeAt) * Math.sqrt(haze)
   const narrow = 0.65 + 0.35 * Math.min(1, frameWidth / 1.78)
 
   // The hills' wiggle across the visible width, whatever the seed's noise does there; hills
   // stay at least ten times wider than tall.
+  const half = frameWidth / 2
   const hillWiggle = Math.min(hillTarget, 1 / (29 * hillScale))
   const hillNoise = (x: number) => edgeFbm(x * hillScale + hillPhase, Math.round(seed) + 211, 3)
-  const hillWarp = Math.min(0.12, hillWiggle / Math.max(1e-3, wiggle(hillNoise, -frameWidth / 2, frameWidth / 2)))
+  const hillWarp = Math.min(0.12, hillWiggle / Math.max(1e-3, wiggle(hillNoise, -half, half)))
+  const landSoft = 0.03 + 0.04 * stops2(softness, 1.8)
+
+  // The land follows the sky's horizon line (its tilt, dome and warp) and its hills rise above
+  // it, with the deepest valley just above the horizon: a valley shows the bright band above the
+  // horizon, never the dim sky below it.
+  const skyWarp = 0.01 * skyScale
+  const turn = (tilt * Math.PI) / 180
+  const skyLift = (x: number) => (skyWarp * edgeFbm(x * Math.cos(turn) * WARP_SCALE + 3.7 + warpPhase, Math.round(seed), WARP_OCTAVES)) / Math.cos(turn)
+  let lowest = -Infinity
+  let mean = 0
+  for (let i = 0; i <= 64; i++) {
+    const x = -half + (i / 64) * 2 * half
+    const below = hillSlope * x + hillWarp * hillNoise(x) - skyLift(x)
+    lowest = Math.max(lowest, below)
+    mean += below / 65
+  }
+  // The land's mean edge stays at the composed horizon height; the sky's horizon sits below it.
+  const landBelow = lowest + 0.5 * landSoft
+  const skyY = horizonY + (0.01 + landBelow - mean) / tall
+  const landAt = skyY - landBelow / tall
+
+  const skyEdgeAt = -(look.lowSkyGain < 1 ? 0.42 : 0.55) * skyHeight * skyEdgeScale
+  const skyEdgeWidth = 1.1 * Math.abs(skyEdgeAt) * Math.sqrt(haze)
 
   const params: Record<string, ParamValue> = {
-    anchor: [0.5, horizonY],
+    anchor: [0.5, skyY],
     angle: tilt,
     drop: dome,
     stops: 2,
@@ -166,10 +190,10 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     gain1: zenithGain,
     gain2: lowGain,
     horizonEdge: 0,
-    warp: 0.01 * skyScale,
-    warpScale: 1.6,
+    warp: skyWarp,
+    warpScale: WARP_SCALE,
     warpPhase,
-    warpOctaves: 3,
+    warpOctaves: WARP_OCTAVES,
     warpReach: 0.3,
     softVary: 0.25 + 0.35 * softness,
     softScale: 1.3,
@@ -178,7 +202,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     driftScale: 1.4,
     vary: 0.3,
     softness: 0,
-    sunAt: [sunX, horizonY + 0.03 / tall],
+    sunAt: [sunX, skyY + 0.03 / tall],
     sunlight: 0.3 * glowGain,
     sunlightWidth: 0.55 * glowWidthScale * Math.sqrt(day) * narrow,
     sunlightHeight: 0.6,
@@ -221,14 +245,14 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     bridgeWarmth: 0.6,
     bridgeFloor: 0.18,
     land: 0.92,
-    landAt: horizonY + 0.01 / tall,
-    landTilt: hillSlope,
-    landDrop: 0,
+    landAt,
+    landTilt: hillSlope - Math.tan(turn),
+    landDrop: dome * Math.cos(turn),
     landWarp: hillWarp,
     landWarpScale: hillScale,
     landWarpPhase: hillPhase,
     landOctaves: 3,
-    landSoft: 0.03 + 0.04 * stops2(softness, 1.8),
+    landSoft,
     landSoftVary: 0.7,
     landTopGain: look.landTop[1] * stops2(intensity, 0.8),
     landBottomGain: look.landBottom[1] * stops2(intensity, 0.8),
