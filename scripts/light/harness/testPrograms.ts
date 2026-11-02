@@ -125,6 +125,76 @@ vec3 radiance(vec2 uv, vec2 p) {
   uniforms: () => ({ uGlowColors: PACK_COLORS.flatMap(hexToLinear) }),
 }
 
+/**
+ * Two overlapping rings on black. auxRadiance carries each ring's light in its
+ * own channel (r: ring A, g: ring B); combine puts the blurred light of the
+ * other ring inside each disc, plus a faint haze of all light (a second blur of
+ * radiance) inside both. `amount` 0 turns the scattered light off.
+ */
+export const scatterProgram: RecipeProgram = {
+  id: 'test.scatter',
+  colorSlots: [
+    { key: 'ringA', label: 'Ring A' },
+    { key: 'ringB', label: 'Ring B' },
+  ],
+  defaultColors: ['#5AB4FF', '#FF7A4A'],
+  params: [
+    { kind: 'number', key: 'amount', label: 'Amount', min: 0, max: 8, step: 0.01, default: 3 },
+    { kind: 'number', key: 'radius', label: 'Radius', min: 0, max: 0.3, step: 0.005, default: 0.06 },
+  ],
+  fragment: /* glsl */ `
+uniform vec3 uRingA;
+uniform vec3 uRingB;
+uniform float uAmount;
+const vec2 CENTER_A = vec2(-0.12, -0.16);
+const vec2 CENTER_B = vec2(0.1, 0.2);
+const float RADIUS_A = 0.34;
+const float RADIUS_B = 0.3;
+
+float rim(vec2 p, vec2 center, float radius) {
+  float d = length(p - center) - radius;
+  return gaussianSum(abs(d), vec3(0.003, 0.012, 0.04), vec3(1.2, 0.3, 0.05)) * mix(1.0, 0.6, smoothstep(-0.006, 0.006, d));
+}
+float inside(vec2 p, vec2 center, float radius) { return 1.0 - smoothstep(-0.01, 0.01, length(p - center) - radius); }
+
+vec3 radiance(vec2 uv, vec2 p) {
+  return uRingA * rim(p, CENTER_A, RADIUS_A) + uRingB * rim(p, CENTER_B, RADIUS_B);
+}
+vec3 auxRadiance(vec2 uv, vec2 p) {
+  return vec3(rim(p, CENTER_A, RADIUS_A), rim(p, CENTER_B, RADIUS_B), 0.0);
+}
+vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 others, vec3 haze) {
+  vec3 intoB = uRingA * others.r * inside(p, CENTER_B, RADIUS_B);
+  vec3 intoA = uRingB * others.g * inside(p, CENTER_A, RADIUS_A);
+  float discs = max(inside(p, CENTER_A, RADIUS_A), inside(p, CENTER_B, RADIUS_B));
+  return light + uAmount * (intoA + intoB + 0.15 * haze * discs);
+}
+`,
+  uniforms: (ctx) => ({ uRingA: ctx.color('ringA'), uRingB: ctx.color('ringB'), uAmount: ctx.num('amount') }),
+  scatter: [
+    { source: 'aux', radius: (ctx) => ctx.num('radius') },
+    { source: 'radiance', radius: (ctx) => ctx.num('radius') * 2.5 },
+  ],
+}
+
+/** Flat fields: radiance (0.2, 0.3, 0.4), aux (0.8, 0.4, 0); combine returns 0.5 radiance + 0.5 blurred0 + 0.25 blurred1. */
+export const scatterFlatProgram: RecipeProgram = {
+  id: 'test.scatter.flat',
+  colorSlots: [],
+  defaultColors: [],
+  params: [],
+  fragment: /* glsl */ `
+vec3 radiance(vec2 uv, vec2 p) { return vec3(0.2, 0.3, 0.4); }
+vec3 auxRadiance(vec2 uv, vec2 p) { return vec3(0.8, 0.4, 0.0); }
+vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 blurred0, vec3 blurred1) { return 0.5 * light + 0.5 * blurred0 + 0.25 * blurred1; }
+`,
+  uniforms: () => ({}),
+  scatter: [
+    { source: 'radiance', radius: () => 0.05 },
+    { source: 'aux', radius: () => 0.1 },
+  ],
+}
+
 /** Small bright spots spread by a radial blur: exercises the post-pass path. */
 export const postProgram: RecipeProgram = {
   id: 'test.post',
@@ -210,6 +280,8 @@ export const TEST_PROGRAMS: Record<string, RecipeProgram> = {
   [rampProgram.id]: rampProgram,
   [toneProgram.id]: toneProgram,
   [glowsProgram.id]: glowsProgram,
+  [scatterProgram.id]: scatterProgram,
+  [scatterFlatProgram.id]: scatterFlatProgram,
   [postProgram.id]: postProgram,
   [lensProgram.id]: lensProgram,
 }

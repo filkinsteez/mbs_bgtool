@@ -201,6 +201,20 @@ export type PostPass =
   | { kind: 'directionalBlur'; settings: (ctx: RecipeContext) => { angle: number; length: number } }
   | { kind: 'radialBlur'; settings: (ctx: RecipeContext) => { center: readonly number[]; amount: number } }
 
+/**
+ * One blur of the recipe's light, handed to its `combine` function. `radius`
+ * is the gaussian sigma in short-side units. Source 'radiance' blurs
+ * `radiance(uv, p)`; 'aux' blurs the fragment's `vec3 auxRadiance(vec2 uv, vec2 p)`,
+ * a second output that can hold any part of the light (or other non-negative
+ * data, one value per channel).
+ */
+export interface ScatterBlur {
+  source: 'radiance' | 'aux'
+  radius: (ctx: RecipeContext) => number
+}
+
+export const MAX_SCATTER_BLURS = 4
+
 /** What the renderer needs to draw a scene. Test programs implement only this. */
 export interface RecipeProgram {
   id: string
@@ -216,6 +230,14 @@ export interface RecipeProgram {
    */
   fragment: string
   uniforms: (ctx: RecipeContext) => UniformMap
+  /**
+   * Scattered light, before post passes and the lens. The engine blurs the
+   * light once per entry (up to MAX_SCATTER_BLURS) and calls the fragment's
+   * `vec3 combine(vec2 uv, vec2 p, vec3 radiance, vec3 blurred0, ...)`, with
+   * one blurred argument per entry in order; what it returns is the radiance
+   * the rest of the pipeline sees.
+   */
+  scatter?: readonly ScatterBlur[]
   post?: readonly PostPass[]
   lens?: Partial<LensSettings>
   output?: Partial<OutputSettings>

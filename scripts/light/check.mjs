@@ -82,6 +82,7 @@ try {
       { name: 'contour.rim', scene: { recipe: 'contour.rim', seed: 2 } },
       { name: 'contour.halo', scene: { recipe: 'contour.halo', seed: 2, params: { rings: 3 } } },
       { name: 'test.post', scene: { program: 'test.post', seed: 2 } },
+      { name: 'test.scatter', scene: { program: 'test.scatter', seed: 2 } },
     ]
     const small = { width: 925, height: 1002 }
     const large = { width: Math.round((3840 * 925) / 1002), height: 3840 }
@@ -96,7 +97,7 @@ try {
       const pass = metrics.deltaE.mean < 0.004 && metrics.deltaE.p95 < 0.01
       ok &&= pass
       rows.push(`${name} mean ${metrics.deltaE.mean.toFixed(4)} p95 ${metrics.deltaE.p95.toFixed(4)} (4K render ${big.ms.toFixed(0)} ms)`)
-      if (name === 'contour.rim' || name === 'test.post') {
+      if (name === 'contour.rim' || name === 'test.post' || name === 'test.scatter') {
         await composeRow(path.join(outDir, `resolution-${name}.png`), [
           { image: a, caption: `${name} at 925 px` },
           { image: b, caption: `${name} at ${large.width}x${large.height}, downsampled` },
@@ -243,6 +244,39 @@ try {
     const glows = await harness.render({ scene: { program: 'test.glows', lens: noLens }, width: GLOW_GRID.columns * 64, height: GLOW_GRID.rows * 64 })
     await savePng(path.join(outDir, 'tone-glows.png'), await zoom(glows, 2))
     record('tone glows written', true, `${path.relative(ROOT, path.join(outDir, 'tone-glows.png'))}: gaussian dots and lines at 1.5x, 3x, 8x per pack color, 2x zoom`)
+  }
+
+  if (wanted('scatter')) {
+    const flat = await harness.render({ scene: { program: 'test.scatter.flat', lens: noLens, output: { grain: 0 } }, width: 160, height: 90, dither: false })
+    const expected = [0.4, 0.4, 0.4].map((v) => Math.round(linearToSrgb(v) * 255))
+    let matching = 0
+    for (let i = 0; i < flat.data.length; i += 4) {
+      if (flat.data[i] === expected[0] && flat.data[i + 1] === expected[1] && flat.data[i + 2] === expected[2]) matching++
+    }
+    const pixels = flat.data.length / 4
+    record(
+      'scatter: combine gets the radiance blur, then the aux blur',
+      matching === pixels,
+      `flat fields: ${matching}/${pixels} pixels at the expected ${expected.join(',')} (0.5 radiance + 0.5 blurred radiance + 0.25 blurred aux)`,
+    )
+    const size = { width: 900, height: 900 }
+    const off = await harness.render({ scene: { program: 'test.scatter', params: { amount: 0 }, lens: noLens }, ...size, dither: false })
+    const on = await harness.render({ scene: { program: 'test.scatter', lens: noLens }, ...size, dither: false })
+    const wide = await harness.render({ scene: { program: 'test.scatter', params: { radius: 0.15 }, lens: noLens }, ...size, dither: false })
+    await composeRow(path.join(outDir, 'scatter.png'), [
+      { image: off, caption: 'two rims, no scatter' },
+      { image: on, caption: 'each disc catches the other rim, blur 0.06' },
+      { image: wide, caption: 'blur 0.15' },
+    ])
+    const at = (image, x, y) => [0, 1, 2].map((k) => image.data[(y * size.width + x) * 4 + k])
+    const outsideSame = at(off, 20, 20).join() === at(on, 20, 20).join()
+    const insideB = at(on, 540, 630)
+    const insideBOff = at(off, 540, 630)
+    record(
+      'scatter: light lands only inside the discs',
+      outsideSame && insideB[0] > insideBOff[0] + 10,
+      `outside both discs ${at(on, 20, 20).join(',')} with and without scatter; inside disc B ${insideBOff.join(',')} -> ${insideB.join(',')}; images in scatter.png`,
+    )
   }
 
   if (wanted('export')) {

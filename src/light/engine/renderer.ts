@@ -7,6 +7,7 @@ import { OUTPUT_SHADER, PRESENT_SHADER, RESOLVE_X_SHADER } from './output'
 import { AREA_RESAMPLE_SHADER, POST_MAX_SHORT_SIDE, runPostPasses } from './passes'
 import { buildRecipeShader } from './recipeShader'
 import { recipeContext, resolveScene, type SceneInput } from './resolve'
+import { runScatter } from './scatter'
 
 export interface RenderOptions {
   /** Output size in pixels. */
@@ -95,6 +96,9 @@ export class LightRenderer {
       uSubsamples: subsamples,
     })
 
+    // Scattered light first: blurred copies of the recipe's light that its combine function reads.
+    const scatter = runScatter(gpu, program, ctx, renderWidth, renderHeight, engine)
+
     // Lens base (512 px short side) and, for recipes with post passes, the processed radiance.
     const baseSize = lensBaseSize(width, height)
     const base = gpu.acquire(baseSize.width, baseSize.height)
@@ -105,7 +109,7 @@ export class LightRenderer {
       const pw = Math.max(1, Math.round(renderWidth * scale))
       const ph = Math.max(1, Math.round(renderHeight * scale))
       const raw = gpu.acquire(pw, ph)
-      gpu.draw(radianceProgram, raw, { uniforms: engine(pw, ph, [0, 0], 1 / (Math.min(pw, ph) * 2), 2) })
+      gpu.draw(radianceProgram, raw, { uniforms: engine(pw, ph, [0, 0], 1 / (Math.min(pw, ph) * 2), 2), textures: scatter.textures })
       postScene = runPostPasses(gpu, raw, program.post, ctx)
       if (postScene !== raw) gpu.release(raw)
       gpu.draw(gpu.program(AREA_RESAMPLE_SHADER), base, {
@@ -116,6 +120,7 @@ export class LightRenderer {
       const subsamples = Math.min(4, Math.max(1, Math.ceil(Math.min(renderWidth, renderHeight) / Math.min(base.width, base.height))))
       gpu.draw(radianceProgram, base, {
         uniforms: engine(base.width, base.height, [0, 0], 1 / (Math.min(base.width, base.height) * subsamples), subsamples),
+        textures: scatter.textures,
       })
     }
     const lens = runLens(gpu, base, resolved.lens)
@@ -160,7 +165,7 @@ export class LightRenderer {
         gpu.draw(compositeProgram, sceneTile, {
           viewport: [0, 0, sw, sh],
           uniforms: { ...engine(renderWidth, renderHeight, origin, 1 / Math.min(renderWidth, renderHeight), 1), ...lensUniforms },
-          textures: postScene ? { ...lensTextures, uRadianceTex: postScene } : lensTextures,
+          textures: postScene ? { ...lensTextures, uRadianceTex: postScene } : { ...lensTextures, ...scatter.textures },
         })
         let source = sceneTile
         if (resolveTile) {
@@ -193,6 +198,7 @@ export class LightRenderer {
     gpu.release(lens.bloom)
     gpu.release(lens.halation)
     gpu.release(postScene)
+    scatter.release()
     gpu.trimPool()
     if (options.present) this.present()
     return { width, height, supersample: factor, tiles, ms: performance.now() - start }
