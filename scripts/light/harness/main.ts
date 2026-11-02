@@ -75,7 +75,7 @@ function renderImage(request: RenderRequest): { image: RgbaImage; ms: number } {
 }
 
 async function upload(key: string, bytes: Uint8Array | Uint8ClampedArray): Promise<void> {
-  const body = new Uint8Array(bytes.buffer as ArrayBuffer, bytes.byteOffset, bytes.byteLength)
+  const body = new Blob([new Uint8Array(bytes.buffer as ArrayBuffer, bytes.byteOffset, bytes.byteLength)])
   const response = await fetch(`/__light/upload/${encodeURIComponent(key)}`, { method: 'POST', body })
   if (!response.ok) throw new Error(`Upload ${key} failed: ${response.status}`)
 }
@@ -115,8 +115,12 @@ const api = {
     return { ms, uploadMs: performance.now() - start }
   },
 
-  async audit(request: AuditRequest): Promise<{ metrics: AuditMetrics; rows: RowProfiles; renderMs: number; metricsMs: number }> {
+  async audit(
+    request: AuditRequest,
+  ): Promise<{ metrics: AuditMetrics; rows: RowProfiles; renderMs: number; metricsMs: number; downloadMs: number; uploadMs: number }> {
+    const downloadStart = performance.now()
     const target = await download(request.targetKey)
+    const downloadMs = performance.now() - downloadStart
     if (target.width !== request.width || target.height !== request.height) {
       throw new Error(`Target is ${target.width}x${target.height}, render request is ${request.width}x${request.height}`)
     }
@@ -125,9 +129,13 @@ const api = {
     const mask = buildMask(request.width, request.height, request.ignore, request.cornerRadius)
     const comparison = compareImages(target, image, mask)
     const metricsMs = performance.now() - start
-    if (request.upload) await upload(request.upload, image.data)
-    await upload(request.heatmapUpload, comparison.heatmap.data)
-    return { metrics: comparison.metrics, rows: comparison.rows, renderMs: ms, metricsMs }
+    const uploadStart = performance.now()
+    await Promise.all([
+      request.upload ? upload(request.upload, image.data) : Promise.resolve(),
+      upload(request.heatmapUpload, comparison.heatmap.data),
+    ])
+    const uploadMs = performance.now() - uploadStart
+    return { metrics: comparison.metrics, rows: comparison.rows, renderMs: ms, metricsMs, downloadMs, uploadMs }
   },
 
   async fitSetup(request: FitSetupRequest): Promise<{ width: number; height: number }> {

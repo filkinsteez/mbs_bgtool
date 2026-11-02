@@ -150,34 +150,39 @@ export function bandingScore(image: RgbaImage, mask: Uint8Array, minRun = 24): n
   const { width, height, data } = image
   let worst = 0
   for (let channel = 0; channel < 3; channel++) {
-    for (const vertical of [false, true]) {
-      const lines = vertical ? width : height
-      const length = vertical ? height : width
-      let stepped = 0
-      let counted = 0
-      for (let line = 0; line < lines; line++) {
-        const at = (i: number) => (vertical ? i * width + line : line * width + i)
-        let start = 0
-        let previous = -1
-        for (let i = 1; i <= length; i++) {
-          const ended = i === length || data[at(i) * 4 + channel] !== data[at(start) * 4 + channel]
-          if (!ended) continue
-          const value = data[at(start) * 4 + channel]
-          const next = i < length ? data[at(i) * 4 + channel] : -1
-          const run = i - start
-          let validInRun = 0
-          for (let k = start; k < i; k++) if (mask[at(k)]) validInRun++
-          counted += validInRun
-          const monotonic = previous >= 0 && next >= 0 && (previous - value) * (value - next) > 0
-          if (monotonic && run >= minRun) stepped += validInRun
-          previous = value
-          start = i
-        }
-      }
-      if (counted > 0) worst = Math.max(worst, stepped / counted)
-    }
+    worst = Math.max(worst, stepShare(data, mask, height, width, width, 1, channel, minRun))
+    worst = Math.max(worst, stepShare(data, mask, width, height, 1, width, channel, minRun))
   }
   return worst
+}
+
+/** Scans `lines` lines of `length` pixels; pixel i of line l is l * lineStep + i * step. */
+function stepShare(data: RgbaImage['data'], mask: Uint8Array, lines: number, length: number, lineStep: number, step: number, channel: number, minRun: number): number {
+  let stepped = 0
+  let counted = 0
+  for (let line = 0; line < lines; line++) {
+    const base = line * lineStep
+    let start = 0
+    let value = data[base * 4 + channel]
+    let previous = -1
+    let validInRun = mask[base] ? 1 : 0
+    for (let i = 1; i <= length; i++) {
+      const p = base + i * step
+      const current = i < length ? data[p * 4 + channel] : -1
+      if (i < length && current === value) {
+        if (mask[p]) validInRun++
+        continue
+      }
+      counted += validInRun
+      const monotonic = previous >= 0 && current >= 0 && (previous - value) * (value - current) > 0
+      if (monotonic && i - start >= minRun) stepped += validInRun
+      previous = value
+      value = current
+      start = i
+      validInRun = i < length && mask[p] ? 1 : 0
+    }
+  }
+  return counted > 0 ? stepped / counted : 0
 }
 
 function clipShare(image: RgbaImage, mask: Uint8Array): ClipShare {
@@ -197,17 +202,44 @@ function clipShare(image: RgbaImage, mask: Uint8Array): ClipShare {
   return { high: n ? high / n : 0, low: n ? low / n : 0 }
 }
 
-/** Robust std (1.4826 x median absolute deviation) of luma minus its gaussian blur (sigma 2 px). */
+/**
+ * Robust std (1.4826 x median absolute value) of luma minus its 5x5 box mean,
+ * in 8-bit code values, on up to about 250k pixels where the whole box is valid.
+ */
 export function grainLevel(image: RgbaImage, mask: Uint8Array): number {
-  const luma = luma8(image)
-  const smooth = blur(luma, 2)
-  const residuals: number[] = []
-  const stride = Math.max(1, Math.floor(luma.data.length / 400000))
-  for (let p = 0; p < luma.data.length; p += stride) {
-    if (!mask[p]) continue
-    residuals.push(Math.abs(luma.data[p] - smooth.data[p]))
+  const { width, height } = image
+  const luma = luma8(image).data
+  const binWidth = 0.02
+  const bins = new Uint32Array(2000)
+  let count = 0
+  const stride = Math.max(1, Math.floor(Math.sqrt((width * height) / 250000)))
+  for (let y = 2; y < height - 2; y += stride) {
+    for (let x = 2; x < width - 2; x += stride) {
+      let sum = 0
+      let valid = true
+      for (let dy = -2; dy <= 2 && valid; dy++) {
+        const row = (y + dy) * width
+        for (let dx = -2; dx <= 2; dx++) {
+          if (!mask[row + x + dx]) {
+            valid = false
+            break
+          }
+          sum += luma[row + x + dx]
+        }
+      }
+      if (!valid) continue
+      const residual = Math.abs(luma[y * width + x] - sum / 25)
+      bins[Math.min(bins.length - 1, Math.floor(residual / binWidth))]++
+      count++
+    }
   }
-  return 1.4826 * percentile(residuals, 0.5)
+  if (count === 0) return 0
+  let seen = 0
+  for (let i = 0; i < bins.length; i++) {
+    seen += bins[i]
+    if (seen >= count / 2) return 1.4826 * (i + 0.5) * binWidth * (25 / 24)
+  }
+  return 0
 }
 
 const HEAT_STOPS: [number, number, number, number][] = [
@@ -232,12 +264,24 @@ export function heatColor(value: number): [number, number, number] {
   return [255, 255, 255]
 }
 
-/** Per-pixel Oklab deltaE between two images after a light blur (sigma in px). */
+/**
+ * Per-pixel Oklab deltaE between two images after a light blur (sigma in full-size px),
+ * computed at half size and repeated to full size.
+ */
 export function deltaEMap(target: RgbaImage, render: RgbaImage, sigma = 1.5): Float32Array {
-  const a = toOklab(blur(toLinear(target), sigma)).data
-  const b = toOklab(blur(toLinear(render), sigma)).data
-  const out = new Float32Array(target.width * target.height)
-  for (let p = 0; p < out.length; p++) out[p] = deltaEAt(a, b, p * 3)
+  const { width, height } = target
+  const hw = Math.max(1, Math.round(width / 2))
+  const hh = Math.max(1, Math.round(height / 2))
+  const half = (image: RgbaImage) => toOklab(blur(resizeAreaMasked(toLinear(image), null, hw, hh).image, sigma / 2)).data
+  const a = half(target)
+  const b = half(render)
+  const small = new Float32Array(hw * hh)
+  for (let p = 0; p < small.length; p++) small[p] = deltaEAt(a, b, p * 3)
+  const out = new Float32Array(width * height)
+  for (let y = 0; y < height; y++) {
+    const sy = Math.min(hh - 1, Math.floor((y * hh) / height))
+    for (let x = 0; x < width; x++) out[y * width + x] = small[sy * hw + Math.min(hw - 1, Math.floor((x * hw) / width))]
+  }
   return out
 }
 

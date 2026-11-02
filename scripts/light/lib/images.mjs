@@ -4,6 +4,12 @@ import sharp from 'sharp'
 
 const BACKGROUND = '#161616'
 const GAP = 8
+/** Faster to write than the default 6; files are somewhat larger. */
+const PNG_LEVEL = 3
+
+function rawInput(image) {
+  return { input: image.data, raw: { width: image.width, height: image.height, channels: 4 } }
+}
 
 export function raw(image) {
   return sharp(image.data, { raw: { width: image.width, height: image.height, channels: 4 } })
@@ -11,7 +17,7 @@ export function raw(image) {
 
 export async function savePng(file, image) {
   await mkdir(path.dirname(file), { recursive: true })
-  await raw(image).png().toFile(file)
+  await raw(image).png({ compressionLevel: PNG_LEVEL }).toFile(file)
 }
 
 /** Decodes any image file to { width, height, data } RGBA (sharp converts embedded profiles to sRGB). */
@@ -30,8 +36,12 @@ export async function cropRgba(image, left, top, width, height) {
   return { width: info.width, height: info.height, data }
 }
 
-/** Nearest-neighbour enlargement, optionally with contrast stretched around the crop's mean. */
-export async function zoom(image, factor, stretch = 1) {
+/**
+ * Nearest-neighbour enlargement, optionally with contrast stretched around the
+ * crop's mean; with `center`, the mean is moved to that level so steps in dark
+ * crops become visible.
+ */
+export async function zoom(image, factor, stretch = 1, center = null) {
   let source = image
   if (stretch !== 1) {
     const data = Buffer.from(image.data)
@@ -39,7 +49,10 @@ export async function zoom(image, factor, stretch = 1) {
     const n = image.width * image.height
     for (let i = 0; i < data.length; i += 4) for (let k = 0; k < 3; k++) mean[k] += data[i + k] / n
     for (let i = 0; i < data.length; i += 4) {
-      for (let k = 0; k < 3; k++) data[i + k] = Math.max(0, Math.min(255, Math.round(mean[k] + (data[i + k] - mean[k]) * stretch)))
+      for (let k = 0; k < 3; k++) {
+        const base = center ?? mean[k]
+        data[i + k] = Math.max(0, Math.min(255, Math.round(base + (data[i + k] - mean[k]) * stretch)))
+      }
     }
     source = { ...image, data }
   }
@@ -50,14 +63,14 @@ function escapeXml(text) {
   return String(text).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c])
 }
 
-function textSvg(width, height, items) {
-  const body = items
-    .map(
-      ({ x, y, text, size = 13, color = '#9a9a9a', anchor = 'start' }) =>
-        `<text x="${x}" y="${y}" fill="${color}" font-family="Helvetica, Arial, sans-serif" font-size="${size}" text-anchor="${anchor}">${escapeXml(text)}</text>`,
-    )
-    .join('')
-  return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">${body}</svg>`)
+/** One small SVG per label (rendering a full-size transparent SVG costs a few hundred ms). */
+function labels(items) {
+  return items.map(({ x, y, text, size = 13, color = '#9a9a9a' }) => {
+    const width = Math.max(40, Math.ceil(String(text).length * size * 0.62) + 8)
+    const height = size + 8
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><text x="0" y="${size}" fill="${color}" font-family="Helvetica, Arial, sans-serif" font-size="${size}">${escapeXml(text)}</text></svg>`
+    return { input: Buffer.from(svg), left: Math.max(0, Math.round(x)), top: Math.max(0, Math.round(y - size)) }
+  })
 }
 
 /** A width x 1 strip of colors stretched to width x height. */
@@ -130,27 +143,23 @@ export async function composeCompare(file, { target, render, heatmap, rows, heat
   const y0 = labelHeight
   const yStrips = y0 + height + GAP + labelHeight
   const composites = [
-    { input: await raw(target).png().toBuffer(), left: 0, top: y0 },
-    { input: await raw(render).png().toBuffer(), left: width + GAP, top: y0 },
-    { input: await raw(heatmap).png().toBuffer(), left: (width + GAP) * 2, top: y0 },
+    { ...rawInput(target), left: 0, top: y0 },
+    { ...rawInput(render), left: width + GAP, top: y0 },
+    { ...rawInput(heatmap), left: (width + GAP) * 2, top: y0 },
     { input: await stripImage(rows.target, panelsWidth, stripHeight), left: 0, top: yStrips },
     { input: await stripImage(rows.render, panelsWidth, stripHeight), left: 0, top: yStrips + stripHeight + 4 },
     { input: curvesSvg(rows, panelsWidth, curvesHeight), left: 0, top: yStrips + stripHeight * 2 + 4 + GAP },
-    {
-      input: textSvg(panelsWidth, totalHeight, [
-        { x: 4, y: 14, text: 'target' },
-        { x: width + GAP + 4, y: 14, text: 'render' },
-        { x: (width + GAP) * 2 + 4, y: 14, text: `Oklab deltaE, black 0 .. white ${heatmapMax}` },
-        { x: 4, y: yStrips - 6, text: 'row means: target (top), render (bottom)' },
-      ]),
-      left: 0,
-      top: 0,
-    },
+    ...labels([
+      { x: 4, y: 14, text: 'target' },
+      { x: width + GAP + 4, y: 14, text: 'render' },
+      { x: (width + GAP) * 2 + 4, y: 14, text: `Oklab deltaE, black 0 .. white ${heatmapMax}` },
+      { x: 4, y: yStrips - 6, text: 'row means: target (top), render (bottom)' },
+    ]),
   ]
   await mkdir(path.dirname(file), { recursive: true })
   await sharp({ create: { width: panelsWidth, height: totalHeight, channels: 3, background: BACKGROUND } })
     .composite(composites)
-    .png()
+    .png({ compressionLevel: PNG_LEVEL })
     .toFile(file)
 }
 
@@ -185,11 +194,11 @@ export async function composeSheet(file, entries, { height = 360, imageWidth = 2
     })
     captions.push({ x: left, y: top + height + 18, text: tile.caption, size: 15 })
   })
-  composites.push({ input: textSvg(sheetWidth, sheetHeight, captions), left: 0, top: 0 })
+  composites.push(...labels(captions))
   await mkdir(path.dirname(file), { recursive: true })
   await sharp({ create: { width: sheetWidth, height: sheetHeight, channels: 3, background: BACKGROUND } })
     .composite(composites)
-    .png()
+    .png({ compressionLevel: PNG_LEVEL })
     .toFile(file)
 }
 
@@ -202,11 +211,11 @@ export async function composeRow(file, panels) {
   const captions = []
   let x = 0
   for (const panel of panels) {
-    composites.push({ input: await raw(panel.image).png().toBuffer(), left: x, top: labelHeight })
+    composites.push({ ...rawInput(panel.image), left: x, top: labelHeight })
     captions.push({ x: x + 4, y: 14, text: panel.caption ?? '' })
     x += panel.image.width + GAP
   }
-  composites.push({ input: textSvg(width, height, captions), left: 0, top: 0 })
+  composites.push(...labels(captions))
   await mkdir(path.dirname(file), { recursive: true })
-  await sharp({ create: { width, height, channels: 3, background: BACKGROUND } }).composite(composites).png().toFile(file)
+  await sharp({ create: { width, height, channels: 3, background: BACKGROUND } }).composite(composites).png({ compressionLevel: PNG_LEVEL }).toFile(file)
 }

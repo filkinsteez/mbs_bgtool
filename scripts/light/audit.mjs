@@ -23,7 +23,7 @@ if (args.preset && requested.length !== 1) {
   process.exit(2)
 }
 
-/** Top-left corners of the smoothest (gentle ramp), brightest and darkest windows, searched on a 1/8 copy. */
+/** Top-left corners of the smoothest ramp, the brightest window and the darkest window that still has a gradient, searched on a 1/8 copy. */
 async function findCrops(image, cropSize) {
   const factor = 8
   const w = Math.max(1, Math.round(image.width / factor))
@@ -55,6 +55,7 @@ async function findCrops(image, cropSize) {
   let smooth = null
   let bright = null
   let dark = null
+  let darkest = null
   for (let y = 0; y + win <= h; y += 2) {
     for (let x = 0; x + win <= w; x += 2) {
       const mean = lumaSum(x, y, win) / (win * win)
@@ -63,10 +64,11 @@ async function findCrops(image, cropSize) {
       const candidate = { x: x * factor, y: y * factor, mean, energy, range: Math.max(...corners) - Math.min(...corners) }
       if (candidate.range >= 3 && (!smooth || energy < smooth.energy)) smooth = candidate
       if (!bright || mean > bright.mean) bright = candidate
-      if (!dark || mean < dark.mean) dark = candidate
+      if (candidate.range >= 2 && (!dark || mean < dark.mean)) dark = candidate
+      if (!darkest || mean < darkest.mean) darkest = candidate
     }
   }
-  return { smooth: smooth ?? dark, bright, dark }
+  return { smooth: smooth ?? darkest, bright, dark: dark ?? darkest }
 }
 
 async function writeContactSheet(references) {
@@ -150,7 +152,7 @@ try {
       for (const [name, at] of Object.entries(crops)) {
         const crop = await cropRgba(image, at.x, at.y, Math.min(cropSize, image.width - at.x), Math.min(cropSize, image.height - at.y))
         await savePng(path.join(dir, `crop-${name}.png`), crop)
-        await savePng(path.join(dir, `crop-${name}-contrast4x.png`), await zoom(crop, 1, 4))
+        await savePng(path.join(dir, `crop-${name}-contrast4x.png`), await zoom(crop, 1, 4, 128))
         written[name] = { x: at.x, y: at.y, size: cropSize }
       }
       export4k = { ...size, renderMs: Math.round(image.ms), crops: written }
