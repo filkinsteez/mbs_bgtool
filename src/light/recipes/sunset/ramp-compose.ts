@@ -1,5 +1,6 @@
 import { getPack, type PackId } from '../../color/packs'
 import type { Composition, ControlValues, ParamValue } from '../../scene'
+import { edgeFbm, wiggle } from './ramp-noise'
 
 const clamp01 = (t: number) => Math.min(1, Math.max(0, t))
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
@@ -116,7 +117,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const glowWidthScale = lerp(0.78, 1.3, random())
   const skyEdgeScale = lerp(0.68, 1, random())
   const hillPhase = lerp(-8, 8, random())
-  const hillAmount = lerp(0.7, 2.2, random())
+  const hillTarget = lerp(0.008, 0.022, random())
   const hillScale = lerp(0.8, 2.8, random())
   const hillSlope = lerp(-0.08, 0.08, random())
   const dome = lerp(0, 0.025, random())
@@ -148,6 +149,12 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const skyEdgeAt = -(look.lowSkyGain < 1 ? 0.42 : 0.55) * skyHeight * skyEdgeScale
   const skyEdgeWidth = 1.1 * Math.abs(skyEdgeAt) * Math.sqrt(haze)
   const narrow = 0.65 + 0.35 * Math.min(1, frameWidth / 1.78)
+
+  // The hills' wiggle across the visible width, whatever the seed's noise does there; hills
+  // stay at least ten times wider than tall.
+  const hillWiggle = Math.min(hillTarget, 1 / (29 * hillScale))
+  const hillNoise = (x: number) => edgeFbm(x * hillScale + hillPhase, Math.round(seed) + 211, 3)
+  const hillWarp = Math.min(0.12, hillWiggle / Math.max(1e-3, wiggle(hillNoise, -frameWidth / 2, frameWidth / 2)))
 
   const params: Record<string, ParamValue> = {
     anchor: [0.5, horizonY],
@@ -217,7 +224,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     landAt: horizonY + 0.01 / tall,
     landTilt: hillSlope,
     landDrop: 0,
-    landWarp: 0.03 * hillAmount,
+    landWarp: hillWarp,
     landWarpScale: hillScale,
     landWarpPhase: hillPhase,
     landOctaves: 3,
