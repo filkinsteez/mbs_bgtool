@@ -20,6 +20,7 @@
 | [`light-photography.md`](research/light-photography.md) | Camera-less and abstract light photography (Fabian Miller, Welling, Sugimoto, Fuss, Kasten): softness comes from the light's path; a "paper" response curve with a shoulder and an optional toe |
 | [`prior-art-per-reference.md`](research/prior-art-per-reference.md) | Existing shader code and techniques for each of the 14 references, with license, formula and how to port, plus a ranked top 10 |
 | [`perception-additive-light.md`](research/perception-additive-light.md) | How added light looks: hue shifts on the way to white, within-pack mixes that go grey, the bridge term, warm glow tails, recipe rules for bright and dark pack colors |
+| [`halos-and-edges.md`](research/halos-and-edges.md) | Why a lit disc reads as a planet and a lit corner as a device: natural halos and coronas light the outside of their circle, edges belong to filled convex regions; rules for `contour.halo` and `contour.rim` |
 
 ## `docs/references/awe/`
 
