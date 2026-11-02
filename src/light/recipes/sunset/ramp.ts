@@ -1,6 +1,4 @@
-import { linearToOklab } from '../../color/oklab'
-import type { ColorPack } from '../../color/packs'
-import { hexToLinear } from '../../color/srgb'
+import { packHexesByLightness, type ColorPack } from '../../color/packs'
 import type { RecipeDefinition } from '../../scene'
 
 const STOP_COUNT = 6
@@ -102,7 +100,6 @@ vec3 radiance(vec2 uv, vec2 p) {
   fromPack: (pack: ColorPack) => {
     const hexes = pack.colors.map((c) => c.hex)
     const stops = Array.from({ length: STOP_COUNT }, (_, i) => hexes[Math.min(i, hexes.length - 1)])
-    const lightest = [...hexes].sort((x, y) => linearToOklab(hexToLinear(y))[0] - linearToOklab(hexToLinear(x))[0])[0]
-    return [...stops, lightest]
+    return [...stops, packHexesByLightness(pack).at(-1) ?? hexes[0]]
   },
 }

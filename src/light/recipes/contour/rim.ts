@@ -1,4 +1,4 @@
-import type { ColorPack } from '../../color/packs'
+import { packHexesByLightness, type ColorPack } from '../../color/packs'
 import type { RecipeDefinition } from '../../scene'
 
 /**
@@ -115,7 +115,7 @@ vec3 radiance(vec2 uv, vec2 p) {
   }),
   lens: { bloom: 0.06, bloomRadius: 0.45, bloomWidth: 1.5, halation: 0.15, halationThreshold: 0.8, halationRadius: 0.04 },
   fromPack: (pack: ColorPack) => {
-    const hexes = pack.colors.map((c) => c.hex)
-    return ['#000000', hexes[hexes.length - 1], hexes[1 % hexes.length], hexes[0]]
+    const byLightness = packHexesByLightness(pack)
+    return ['#000000', byLightness[0], byLightness.at(-1) ?? byLightness[0], pack.colors[0].hex]
   },
 }

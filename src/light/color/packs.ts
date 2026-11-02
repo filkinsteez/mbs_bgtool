@@ -1,3 +1,6 @@
+import { linearToOklab } from './oklab'
+import { hexToLinear } from './srgb'
+
 export type PackId = 'bold' | 'elemental' | 'atmospheric'
 
 export interface PackColor {
@@ -66,4 +69,12 @@ export function isPackId(value: string): value is PackId {
 /** The pack's hexes in pack order. */
 export function packHexes(id: PackId): string[] {
   return getPack(id).colors.map((color) => color.hex)
+}
+
+/** The pack's hexes from darkest to lightest (Oklab L). */
+export function packHexesByLightness(pack: ColorPack): string[] {
+  return pack.colors
+    .map((color) => ({ hex: color.hex, L: linearToOklab(hexToLinear(color.hex))[0] }))
+    .sort((a, b) => a.L - b.L)
+    .map((entry) => entry.hex)
 }

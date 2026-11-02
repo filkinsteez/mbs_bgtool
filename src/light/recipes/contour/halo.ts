@@ -1,4 +1,4 @@
-import type { ColorPack } from '../../color/packs'
+import { packHexesByLightness, type ColorPack } from '../../color/packs'
 import type { RecipeDefinition } from '../../scene'
 
 const RING_COUNT = 3
@@ -102,6 +102,7 @@ vec3 radiance(vec2 uv, vec2 p) {
   lens: { bloom: 0.06, bloomRadius: 0.6, bloomWidth: 1.5 },
   fromPack: (pack: ColorPack) => {
     const hexes = pack.colors.map((c) => c.hex)
-    return [hexes[hexes.length - 1], hexes[0], hexes[1 % hexes.length], hexes[2 % hexes.length], hexes[3 % hexes.length]]
+    const lightest = packHexesByLightness(pack).at(-1) ?? hexes[0]
+    return ['#000000', hexes[0], lightest, hexes[1 % hexes.length], hexes[2 % hexes.length]]
   },
 }

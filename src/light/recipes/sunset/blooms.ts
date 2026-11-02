@@ -1,4 +1,4 @@
-import type { ColorPack } from '../../color/packs'
+import { packHexesByLightness, type ColorPack } from '../../color/packs'
 import type { RecipeDefinition } from '../../scene'
 
 const GLOW_COUNT = 4
@@ -30,7 +30,7 @@ export const sunsetBlooms: RecipeDefinition = {
         default: [[0.25, 0.3], [0.75, 0.55], [0.45, 0.95], [0.5, 0.5]][i],
       },
       { kind: 'number' as const, key: `glow${i + 1}Radius`, label: `Glow ${i + 1} radius`, min: 0.02, max: 2, step: 0.005, default: [0.45, 0.35, 0.5, 0.3][i] },
-      { kind: 'number' as const, key: `glow${i + 1}Gain`, label: `Glow ${i + 1} gain`, min: 0, max: 4, step: 0.01, default: [0.45, 0.3, 0.35, 0.3][i] },
+      { kind: 'number' as const, key: `glow${i + 1}Gain`, label: `Glow ${i + 1} gain`, min: 0, max: 4, step: 0.01, default: [0.3, 0.2, 0.24, 0.2][i] },
       { kind: 'number' as const, key: `glow${i + 1}Stretch`, label: `Glow ${i + 1} stretch`, min: 0.25, max: 4, step: 0.01, default: [1.6, 1.3, 2, 1][i] },
     ]).flat(),
     { kind: 'number', key: 'haze', label: 'Haze', min: 0, max: 1, step: 0.01, default: 0.25 },
@@ -85,7 +85,8 @@ vec3 radiance(vec2 uv, vec2 p) {
   lens: { bloom: 0.08, bloomRadius: 0.8, bloomWidth: 1.5 },
   fromPack: (pack: ColorPack) => {
     const hexes = pack.colors.map((c) => c.hex)
-    const dark = hexes[hexes.length - 1]
-    return [dark, hexes[0], hexes[1 % hexes.length], hexes[2 % hexes.length], hexes[3 % hexes.length], hexes[0]]
+    const byLightness = packHexesByLightness(pack)
+    const others = hexes.slice(1)
+    return [byLightness[0], hexes[0], others[0], others[1 % others.length], others[2 % others.length], hexes[0]]
   },
 }
