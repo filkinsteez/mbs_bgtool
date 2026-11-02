@@ -16,53 +16,56 @@
       "glows": 3,
       "glow1Color": 4,
       "glow1At": [
-        -0.3,
-        0.372
+        -0.298,
+        0.393
       ],
-      "glow1Radius": 0.647,
+      "glow1Radius": 0.675,
       "glow1Aniso": 4.824,
       "glow1Angle": 18.382,
-      "glow1Gain": 0.628,
+      "glow1Gain": 0.667,
       "glow1Beta": 2.82,
       "glow1Haze": 1.957,
       "glow1Vary": 0.4,
       "glow2Color": 3,
       "glow2At": [
-        -0.079,
-        0.839
+        -0.053,
+        0.843
       ],
-      "glow2Radius": 0.608,
-      "glow2Aniso": 3.826,
-      "glow2Angle": 29.746,
-      "glow2Gain": 1.057,
+      "glow2Radius": 0.613,
+      "glow2Aniso": 4.238,
+      "glow2Angle": 32.144,
+      "glow2Gain": 1.016,
       "glow2Beta": 4.583,
       "glow2Haze": 3.539,
       "glow2Vary": 0.4,
       "glow3Color": 2,
       "glow3At": [
-        0.76,
-        0.888
+        0.698,
+        0.877
       ],
       "glow3Radius": 0.685,
       "glow3Aniso": 10.502,
       "glow3Angle": 12.828,
-      "glow3Gain": 0.384,
+      "glow3Gain": 0.394,
       "glow3Beta": 4.267,
       "glow3Haze": 3,
       "glow3Vary": 0.3,
       "zenithColor": 1,
       "zenithAt": [
-        1.398,
-        -0.382
+        1.48,
+        -0.432
       ],
-      "zenithRadius": 2.283,
+      "zenithRadius": 2.483,
       "zenithAniso": 1.2,
       "zenithAngle": -40,
       "zenithAmount": 1,
-      "zenithFalloff": 1.21,
+      "zenithFalloff": 1.128,
       "warp": 0.03,
       "warpScale": 1.1,
-      "bridge": 0.02
+      "bridge": 0.012,
+      "glow1Bend": -0.122,
+      "glow2Bend": 0.126,
+      "glow3Bend": 0.313
     },
     "lens": {
       "bloom": 0.12

@@ -23,6 +23,8 @@ export interface GlowSpec {
   haze: number
   /** How much the glow's reach and falloff change along its edge, 0..1. */
   vary: number
+  /** How much the long axis bows: positive lowers both ends, so the light is highest above its source. */
+  bend: number
 }
 
 /** Where and how strongly the sky deepens toward a deep color. Its radius is in units of the frame's short side. */
@@ -160,8 +162,12 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const side = r() < 0.5 ? -1 : 1
   const { lead, other } = pickLead(colors, r())
 
-  const size = lerp(0.8, 1.2, r()) * lerp(0.86, 1.2, soft) * lerp(0.9, 1.14, rise) * (isGreen(colors[lead]) ? 0.72 : 1)
-  const beta = lerp(2.6, 1.8, soft)
+  // Softness changes how the light falls off, not how far it reaches: the radius is scaled so the
+  // half-brightness extent stays put while the tail gets longer. Rise lifts and widens the light.
+  const beta = lerp(3.0, 1.6, soft)
+  const sameHalfWidth = Math.sqrt(2 ** (1 / 2.2) - 1) / Math.sqrt(2 ** (1 / beta) - 1)
+  const size = lerp(0.8, 1.2, r()) * lerp(0.95, 1.08, soft) * sameHalfWidth * lerp(0.88, 1.16, rise) * (isGreen(colors[lead]) ? 0.72 : 1)
+  const bend = () => lerp(0.04, 0.2, r())
 
   // Centers stay off-frame: below the bottom edge, beyond a lower corner, or beyond a side.
   let at: [number, number]
@@ -170,10 +176,10 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   let aniso: number
   switch (kind) {
     case 'low':
-      at = [0.5 + side * lerp(0.14, 0.34, r()), Math.max(1.01, lerp(1.17, 1.0, rise) + lerp(-0.02, 0.03, r()))]
+      at = [0.5 + side * lerp(0.16, 0.34, r()), Math.max(1.01, lerp(1.15, 1.0, rise) + lerp(-0.02, 0.03, r()))]
       tilt = lerp(2, 9, r())
-      radius = lerp(0.5, 0.6, r())
-      aniso = lerp(4.2, 5.2, r())
+      radius = lerp(0.58, 0.7, r())
+      aniso = lerp(3.8, 4.6, r())
       break
     case 'corner':
       // Beyond the side edge, low, with the horizon tilted down away from the light.
@@ -189,10 +195,10 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
       aniso = lerp(3.8, 4.8, r())
       break
     case 'pair':
-      at = [0.5 + side * lerp(0.16, 0.3, r()), Math.max(1.01, lerp(1.17, 1.0, rise) + lerp(-0.02, 0.02, r()))]
+      at = [0.5 + side * lerp(0.22, 0.34, r()), Math.max(1.01, lerp(1.15, 1.0, rise) + lerp(-0.02, 0.02, r()))]
       tilt = lerp(1, 6, r())
-      radius = lerp(0.52, 0.62, r())
-      aniso = lerp(4.8, 6.2, r())
+      radius = lerp(0.54, 0.64, r())
+      aniso = lerp(3.6, 4.4, r())
       break
     default: {
       const unknown: never = kind
@@ -204,21 +210,22 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const leadGain = lightGain(colors[lead]) * lerp(0.94, 1.06, r())
 
   const glows: GlowSpec[] = [
-    { color: lead, at, radius, aniso, angle, gain: leadGain, beta, haze: lerp(1.2, 1.7, r()), vary: lerp(0.45, 0.85, r()) },
+    { color: lead, at, radius, aniso, angle, gain: leadGain, beta, haze: lerp(1.8, 2.6, r()), vary: lerp(0.45, 0.85, r()), bend: bend() },
   ]
 
   if (kind === 'pair') {
-    // A second, weaker light of the same color across the horizon.
+    // A second, weaker light of the same color across the horizon, with sky between the two.
     glows.push({
       color: lead,
-      at: [0.5 - side * lerp(0.22, 0.36, r()), Math.max(1.01, at[1] + lerp(0.01, 0.06, r()))],
-      radius: radius * lerp(0.75, 0.95, r()),
-      aniso: lerp(4.4, 5.8, r()),
+      at: [0.5 - side * lerp(0.28, 0.4, r()), Math.max(1.01, at[1] + lerp(0.01, 0.06, r()))],
+      radius: radius * lerp(0.7, 0.88, r()),
+      aniso: lerp(3.6, 4.6, r()),
       angle: -angle * lerp(0.3, 1.0, r()),
       gain: leadGain * lerp(0.5, 0.7, r()),
       beta,
       haze: lerp(0.9, 1.4, r()),
       vary: lerp(0.45, 0.85, r()),
+      bend: bend(),
     })
   }
 
@@ -239,6 +246,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
       beta,
       haze: lerp(0.6, 1.0, r()),
       vary: lerp(0.4, 0.8, r()),
+      bend: bend(),
     })
   }
 
@@ -262,6 +270,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
         beta,
         haze: lerp(0.3, 0.7, r()),
         vary: lerp(0.4, 0.8, r()),
+        bend: bend(),
       })
     } else {
       glows.push({
@@ -274,21 +283,23 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
         beta: beta * lerp(0.85, 0.95, r()),
         haze: 0,
         vary: lerp(0.4, 0.8, r()),
+        bend: bend(),
       })
     }
   }
 
-  // The sky deepens in an upper corner away from the light (for a pair, either upper corner).
+  // The sky deepens broadly toward the top, most in the upper corner away from the light
+  // (for a pair, either one). It lies along the top edge so it never parallels a tilted glow.
   const deep = r() < 0.5 ? SLOT.deep1 : SLOT.deep2
   const zSide = kind === 'pair' ? (r() < 0.5 ? -1 : 1) : -side
   const zenith: ZenithSpec = {
     color: deep,
-    at: [0.5 + zSide * lerp(0.5, 0.7, r()), lerp(-0.26, -0.12, r())],
-    radius: lerp(0.5, 0.66, r()) * lerp(0.92, 1.12, soft),
-    aniso: lerp(2.6, 3.6, r()),
-    angle: -zSide * lerp(6, 18, r()),
-    amount: lerp(0.45, 0.7, r()),
-    falloff: 2.4,
+    at: [0.5 + zSide * lerp(0.45, 0.65, r()), lerp(-0.3, -0.18, r())],
+    radius: lerp(0.48, 0.64, r()) * lerp(0.92, 1.12, soft),
+    aniso: lerp(1.5, 2.1, r()),
+    angle: lerp(-8, 8, r()),
+    amount: lerp(0.32, 0.5, r()),
+    falloff: 2.2,
   }
 
   return {

@@ -1,6 +1,7 @@
 import { linearToOklab } from '../../color/oklab'
 import type { ColorPack } from '../../color/packs'
 import { hexToLinear, type Rgb } from '../../color/srgb'
+import { NO_LIGHT } from '../../compose'
 import type {
   Composition,
   NumberParam,
@@ -15,10 +16,10 @@ import { composeLayout, GLOW_COUNT, isWarm, random, SLOT, SLOT_COUNT, type Bloom
 import { bridgeAmount, deepen, paleTint } from './blooms-light'
 
 const DEFAULT_GLOWS: readonly GlowSpec[] = [
-  { color: SLOT.light1, at: [-0.09, 0.88], radius: 0.62, aniso: 4.4, angle: 21, gain: 0.9, beta: 2.2, haze: 1.45, vary: 0.65 },
-  { color: SLOT.light1, at: [0.26, 1.08], radius: 0.38, aniso: 4.4, angle: 16, gain: 0.42, beta: 2.2, haze: 0.8, vary: 0.6 },
-  { color: SLOT.light2, at: [1.02, 1.08], radius: 0.48, aniso: 4.0, angle: -8, gain: 0.38, beta: 2.2, haze: 0.5, vary: 0.6 },
-  { color: SLOT.sky, at: [0.7, 1.06], radius: 0.6, aniso: 4.6, angle: -5, gain: 0.6, beta: 2.0, haze: 0, vary: 0.6 },
+  { color: SLOT.light1, at: [-0.09, 0.88], radius: 0.62, aniso: 4.4, angle: 21, gain: 0.9, beta: 2.2, haze: 1.45, vary: 0.65, bend: 0.12 },
+  { color: SLOT.light1, at: [0.26, 1.08], radius: 0.38, aniso: 4.4, angle: 16, gain: 0.42, beta: 2.2, haze: 0.8, vary: 0.6, bend: 0.1 },
+  { color: SLOT.light2, at: [1.02, 1.08], radius: 0.48, aniso: 4.0, angle: -8, gain: 0.38, beta: 2.2, haze: 0.5, vary: 0.6, bend: 0.1 },
+  { color: SLOT.sky, at: [0.7, 1.06], radius: 0.6, aniso: 4.6, angle: -5, gain: 0.6, beta: 2.0, haze: 0, vary: 0.6, bend: 0.08 },
 ]
 
 function num(key: string, label: string, min: number, max: number, step: number, value: number): NumberParam {
@@ -41,6 +42,7 @@ function glowParams(i: number, glow: GlowSpec): ParamSpec[] {
     num(`glow${n}Beta`, `Glow ${n} falloff`, 1, 5, 0.01, glow.beta),
     num(`glow${n}Haze`, `Glow ${n} haze`, 0, 8, 0.01, glow.haze),
     num(`glow${n}Vary`, `Glow ${n} edge variation`, 0, 1, 0.01, glow.vary),
+    num(`glow${n}Bend`, `Glow ${n} bend`, -0.6, 0.6, 0.005, glow.bend),
   ]
 }
 
@@ -75,6 +77,7 @@ function readLayout(ctx: RecipeContext): BloomsLayout {
       beta: ctx.num(`glow${n}Beta`),
       haze: ctx.num(`glow${n}Haze`),
       vary: ctx.num(`glow${n}Vary`),
+      bend: ctx.num(`glow${n}Bend`),
     }
   })
   const zenithAt = ctx.vec('zenithAt')
@@ -123,6 +126,7 @@ function layoutParams(layout: BloomsLayout): Record<string, ParamValue> {
     out[`glow${n}Beta`] = glow.beta
     out[`glow${n}Haze`] = glow.haze
     out[`glow${n}Vary`] = glow.vary
+    out[`glow${n}Bend`] = glow.bend
   })
   for (const spec of PARAMS) {
     const value = out[spec.key]
@@ -181,13 +185,16 @@ function inFront(haze: number): number {
  * Intensity is daylight. The sky gains more than the glows (twilight skies
  * dim fastest overhead), so more light brightens the whole frame and the top
  * included, while the glows only whiten close to where they come from. At
- * 0.5 both gains are 1, so a flat sky is its exact hex. Below 0.5 warm light
- * also deepens, as the light of a lower sun does.
+ * 0.5 both gains are 1, so a flat sky is its exact hex. Toward 0 the glows
+ * keep most of their brightness but shrink and their warm light deepens, as
+ * the light of a lower sun does; toward 1 they shrink a little, so the
+ * whitened part stays near the source.
  */
 function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity: number, seed: number): UniformMap {
   const skyGain = 2 ** ((intensity - 0.5) * 1.6)
-  const lightGain = 2 ** ((intensity - 0.5) * 0.8)
-  const depth = 1 + 1.2 * Math.max(0, 0.5 - intensity)
+  const lightGain = 2 ** ((intensity - 0.5) * (intensity < 0.5 ? 0.5 : 0.8))
+  const reach = 1 - 0.14 * Math.max(0, 1 - 2 * intensity) - 0.08 * Math.max(0, 2 * intensity - 1)
+  const depth = 1 + 0.8 * Math.max(0, 0.5 - intensity)
   const slot = (index: number) => colors[clamp(Math.round(index), 0, SLOT_COUNT - 1)]
   const sky = colors[SLOT.sky]
   const glowColor: number[] = []
@@ -197,11 +204,13 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
   const glowBridge: number[] = []
   const glowLobes: number[] = []
   const glowLobeFalloff: number[] = []
+  const glowBend: number[] = []
   for (let i = 0; i < GLOW_COUNT; i++) {
     const glow = layout.glows[i]
     const lobe = lobes(glow?.vary ?? 0, seed, i)
     glowLobes.push(...lobe.shape)
     glowLobeFalloff.push(...lobe.falloff)
+    glowBend.push(glow?.bend ?? 0)
     if (!glow) {
       glowColor.push(0, 0, 0)
       glowShape.push(0, 0, 2, 0)
@@ -218,7 +227,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     const gain = skyGain + (lightGain - skyGain) * front
     glowColor.push(...scale(light, gain))
     glowShape.push(glow.at[0], glow.at[1], glow.beta, haze)
-    glowAxis.push(...axis(glow.radius, glow.aniso, glow.angle))
+    glowAxis.push(...axis(glow.radius * reach, glow.aniso, glow.angle))
     glowEdge.push(glow.vary, 1.15, 1.7 * i + 0.3, front)
     const tint = paleTint(light)
     const amount = front * layout.bridge * bridgeAmount(sky, light, tint, haze) * lightGain
@@ -241,22 +250,24 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     uGlowBridge: glowBridge,
     uGlowLobe: glowLobes,
     uGlowLobeFalloff: glowLobeFalloff,
+    uGlowBend: glowBend,
     uWarp: [layout.warp, layout.warpScale],
   }
 }
 
-/** The colors by role: Meta Blue for the sky, the two darkest others to deepen toward (black when none is darker than the sky), the two lightest others as lights. */
+/**
+ * The colors by role: Meta Blue for the sky, and the two lightest other
+ * colors as lights. The sky deepens toward no light (black), so it gets
+ * darker without changing hue; the pack's dark colors are not lights and do
+ * not tint the sky.
+ */
 function rolesFromPack(pack: ColorPack): string[] {
   const [sky, ...rest] = pack.colors.map((c) => c.hex)
   const lightness = (hex: string) => linearToOklab(hexToLinear(hex))[0]
-  const skyL = lightness(sky)
   const byLightness = [...rest].sort((a, b) => lightness(a) - lightness(b))
-  const darker = byLightness.filter((hex) => lightness(hex) < skyL)
-  const deep1 = darker[0] ?? '#000000'
-  const deep2 = darker[1] ?? deep1
   const light1 = byLightness[byLightness.length - 1] ?? sky
   const light2 = byLightness[byLightness.length - 2] ?? light1
-  return [sky, deep1, deep2, light1, light2]
+  return [sky, NO_LIGHT, NO_LIGHT, light1, light2]
 }
 
 /**
@@ -297,6 +308,7 @@ uniform vec4 uGlowEdge[GLOW_COUNT];   // edge variation, its frequency, its phas
 uniform vec3 uGlowBridge[GLOW_COUNT];
 uniform vec4 uGlowLobe[GLOW_COUNT * LOBES];
 uniform float uGlowLobeFalloff[GLOW_COUNT * LOBES];
+uniform float uGlowBend[GLOW_COUNT];
 uniform vec2 uWarp;                   // amount, frequency
 
 // Three smooth 1D noises in -1..1 from one pair of hashed lattice values.
@@ -328,19 +340,35 @@ vec2 noise2x2(vec2 p, int seed) {
   return 1.7 * mix(mix(n00, n10, u.x), mix(n01, n11, u.x), u.y);
 }
 
+// One smooth 2D noise in about -1..1, the same construction with half the hashes.
+float noise2x1(vec2 p, int seed) {
+  vec2 i = floor(p);
+  vec2 f = p - i;
+  vec2 u = quintic(f);
+  ivec2 c = ivec2(i);
+  float n00 = dot(hash3(c, seed).xy * 2.0 - 1.0, f);
+  float n10 = dot(hash3(c + ivec2(1, 0), seed).xy * 2.0 - 1.0, f - vec2(1.0, 0.0));
+  float n01 = dot(hash3(c + ivec2(0, 1), seed).xy * 2.0 - 1.0, f - vec2(0.0, 1.0));
+  float n11 = dot(hash3(c + ivec2(1, 1), seed).xy * 2.0 - 1.0, f - vec2(1.0, 1.0));
+  return 1.7 * mix(mix(n00, n10, u.x), mix(n01, n11, u.x), u.y);
+}
+
 // Light from an extended source: a few lobes spread along a rotated, stretched
 // axis, added up, each a power-law falloff whose tail fades out by about two
 // and a half radii (so the sky beyond keeps its exact color). The reach across
 // the long axis and the falloff exponent drift along the edge, the length
-// along it drifts across it, and the warp grows with distance from the source,
-// so inner and outer edges bend differently and none is an ellipse.
-float bloom(vec2 P, vec2 warp, vec2 center, vec4 axis, vec2 stretch, float beta, vec3 edge, int index, vec4 lobe[LOBES], float falloff[LOBES]) {
+// along it drifts across it, the long axis bows, edges at different distances
+// drift on their own, and the warp grows with distance from the source, so
+// inner and outer edges bend differently and none is an ellipse.
+float bloom(vec2 P, vec2 warp, vec2 center, vec4 axis, vec2 stretch, float beta, vec3 edge, float bend, int index, vec4 lobe[LOBES], float falloff[LOBES]) {
   vec2 scaleAxes = vec2(axis.z * stretch.x, axis.w * stretch.y);
   vec2 d0 = P - center;
   float reach0 = length(vec2(dot(d0, axis.xy), dot(d0, vec2(-axis.y, axis.x))) * scaleAxes);
   vec2 d = d0 + warp * (0.6 + 0.8 * smoothstep(0.0, 2.5, reach0));
   float along = dot(d, axis.xy) * scaleAxes.x;
   float across = dot(d, vec2(-axis.y, axis.x)) * scaleAxes.y;
+  across -= bend * along * along;
+  across += 0.15 * edge.x * noise2x1(vec2(along * 1.1, across * 0.9) + edge.z, uSeed + 401 + 7 * index);
   vec3 alongNoise = noise1x3(along * edge.y + edge.z, uSeed + 101 + 7 * index);
   float acrossNoise = noise1x3(across * 1.3 + edge.z, uSeed + 307 + 7 * index).x;
   float reach = exp(0.4 * edge.x * alongNoise.x);
@@ -374,7 +402,7 @@ vec3 radiance(vec2 uv, vec2 p) {
     lobe[j] = uZenithLobe[j];
     falloff[j] = uZenithLobeFalloff[j];
   }
-  float z = uZenithShape.z * bloom(P, warp, (uZenithShape.xy - 0.5) * frame, uZenithAxis, shortSide, uZenithShape.w, vec3(0.5, 1.1, 2.3), 9, lobe, falloff);
+  float z = uZenithShape.z * bloom(P, warp, (uZenithShape.xy - 0.5) * frame, uZenithAxis, shortSide, uZenithShape.w, vec3(0.5, 1.1, 2.3), 0.0, 9, lobe, falloff);
   vec3 sky = mix(uSky, uDeep, min(z, 1.0));
 
   float k[GLOW_COUNT];
@@ -386,7 +414,7 @@ vec3 radiance(vec2 uv, vec2 p) {
         lobe[j] = uGlowLobe[i * LOBES + j];
         falloff[j] = uGlowLobeFalloff[i * LOBES + j];
       }
-      k[i] = bloom(P, warp, (uGlowShape[i].xy - 0.5) * frame, uGlowAxis[i], stretch, uGlowShape[i].z, uGlowEdge[i].xyz, i, lobe, falloff);
+      k[i] = bloom(P, warp, (uGlowShape[i].xy - 0.5) * frame, uGlowAxis[i], stretch, uGlowShape[i].z, uGlowEdge[i].xyz, uGlowBend[i], i, lobe, falloff);
       ext += uGlowShape[i].w * k[i] * k[i];
     }
   }
@@ -408,7 +436,7 @@ vec3 radiance(vec2 uv, vec2 p) {
   // and overlapping glows share one bridge instead of stacking theirs.
   float t = lit / (lit + T);
   float bell = 4.0 * t * (1.0 - t);
-  front += bridge / max(lit, 1e-4) * bell * bell;
+  front += bridge / max(lit, 1e-4) * bell * sqrt(bell);
   return behind * T + front;
 }
 `,
@@ -426,7 +454,7 @@ vec3 radiance(vec2 uv, vec2 p) {
     return {
       colors,
       params: { intensity: clamp(controls.intensity, 0, 1), ...layoutParams(layout) },
-      lens: { bloom: 0.08 + 0.1 * soft, bloomRadius: 0.68 + 0.17 * soft },
+      lens: { bloom: 0.07 + 0.12 * soft, bloomRadius: 0.66 + 0.2 * soft },
       output: {},
     }
   },
