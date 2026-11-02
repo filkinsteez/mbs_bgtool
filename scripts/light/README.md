@@ -82,9 +82,10 @@ All ΔE values are plain Euclidean Oklab distances (L on 0..1; about 0.02 is one
 ## Speed (Apple M4 Pro)
 
 - Start-up (Vite, Chrome, page): about 1.2 s.
-- One audit at the reference size, 2x supersampled, with metrics and sheet: 1.5 to 3 s. `--all` for 14 references: about 32 s.
+- One audit at the reference size, 2x supersampled, with metrics and sheet: 0.6 to 1.3 s. `--all` for 14 references: about 16 s.
 - One fit evaluation at 256 px: about 12 to 14 ms (render 4.5 ms, loss 7.5 ms, the rest is the page round trip). 500 evaluations take 6 to 10 s.
-- `check.mjs`: about 40 s (most of it the 4K renders and pixel scans).
+- `check.mjs`: about 13 s.
+- Preview cost, 1920x1080 at 1x, GPU finished (`measure: true`): engine passes with a flat field 2.2 ms; the rest is the recipe's own shader (evaluated once per output pixel and 4 times per pixel of the 512 px lens base).
 
 ## Writing recipes and presets
 
