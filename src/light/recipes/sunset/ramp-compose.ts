@@ -55,23 +55,23 @@ function packLook(packId: PackId, pick: number): PackLook {
   switch (packId) {
     case 'bold': {
       const [cyan, yellow] = rest
-      const ground = { landTop: [metaBlue, 0.28] as [string, number], landBottom: [metaBlue, 0.1] as [string, number] }
+      const ground = { landTop: [metaBlue, 0.4] as [string, number], landBottom: [metaBlue, 0.1] as [string, number] }
       if (pick < 0.55) {
-        return { ...sky, lowSky: cyan, lowSkyGain: 0.85, light: yellow, glow: 0.92, path: [0.5, 2.6, 0.45], bridge: 0.6, haze: 0.6, floor: 0.14, sideDeeper: 0.5, ...ground }
+        return { ...sky, lowSky: cyan, lowSkyGain: 0.85, light: yellow, glow: 0.92, path: [0.5, 2, 0.45], bridge: 0.35, haze: 0.5, floor: 0.1, sideDeeper: 0.4, ...ground }
       }
-      return { ...sky, light: yellow, glow: 0.95, path: [0.4, 2.6, 0.45], bridge: 0.9, haze: 1, floor: 0.14, sideDeeper: 0.5, ...ground }
+      return { ...sky, light: yellow, glow: 0.95, path: [0.4, 2, 0.45], bridge: 0.5, haze: 0.75, floor: 0.1, sideDeeper: 0.4, ...ground }
     }
     case 'elemental': {
       const [, forest, tan, plum] = rest
-      const base = { ...sky, light: tan, glow: 1.35, path: [0.45, 1.6, 0.4] as [number, number, number], bridge: 0.7, haze: 1, floor: 0.12, sideDeeper: 0.4 }
-      if (pick < 0.65) return { ...base, landTop: [metaBlue, 0.26], landBottom: [plum, 0.8] }
-      return { ...base, landTop: [metaBlue, 0.26], landBottom: [forest, 0.8] }
+      const base = { ...sky, light: tan, glow: 1.35, path: [0.45, 1.25, 0.4] as [number, number, number], bridge: 0.45, haze: 0.8, floor: 0.1, sideDeeper: 0.3 }
+      if (pick < 0.65) return { ...base, landTop: [metaBlue, 0.38], landBottom: [plum, 0.8] }
+      return { ...base, landTop: [metaBlue, 0.38], landBottom: [forest, 0.8] }
     }
     case 'atmospheric': {
       const [ice, , slate, nearBlack] = rest
-      const base = { ...sky, lowSkyGain: 1.2, horizonGain: 0.82, light: ice, glow: 0.5, path: [0, 0, 0] as [number, number, number], bridge: 0.4, haze: 1, floor: 0.1, sideDeeper: 0 }
-      if (pick < 0.5) return { ...base, landTop: [slate, 1], landBottom: [nearBlack, 0.85] }
-      return { ...base, landTop: [metaBlue, 0.26], landBottom: [nearBlack, 0.95] }
+      const base = { ...sky, lowSkyGain: 1.2, horizonGain: 0.82, light: ice, glow: 0.42, path: [0, 0, 0] as [number, number, number], bridge: 0.3, haze: 0.8, floor: 0.08, sideDeeper: 0 }
+      if (pick < 0.5) return { ...base, landTop: [slate, 0.95], landBottom: [nearBlack, 0.9] }
+      return { ...base, landTop: [metaBlue, 0.38], landBottom: [nearBlack, 0.95] }
     }
     default: {
       const unknown: never = packId
@@ -112,27 +112,27 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const sunRight = random() < 0.5
   const sunIn = lerp(-0.22, 0.38, random())
   const sunX = sunRight ? 1 - sunIn : sunIn
-  const tilt = lerp(-2.5, 2.5, random())
+  const tilt = lerp(-3.5, 3.5, random())
   const glowWidthScale = lerp(0.78, 1.3, random())
   const skyEdgeScale = lerp(0.68, 1, random())
   const hillPhase = lerp(-8, 8, random())
-  const hillAmount = lerp(0.4, 2, random())
+  const hillAmount = lerp(0.7, 2.2, random())
   const hillScale = lerp(0.8, 2.8, random())
-  const hillSlope = lerp(-0.06, 0.06, random())
+  const hillSlope = lerp(-0.08, 0.08, random())
   const dome = lerp(0, 0.025, random())
   const warpPhase = lerp(-8, 8, random())
   const horizonShift = lerp(-0.05, 0.05, random())
   const air = lerp(0.75, 1.45, random())
 
   // Horizon: the height of the light, composed for the frame. Tall frames keep more sky.
-  const horizonY = lerp(lerp(0.95, 0.96, tallShare), lerp(0.62, 0.7, tallShare), mood) + horizonShift
+  const horizonY = lerp(lerp(0.95, 0.96, tallShare), lerp(0.66, 0.72, tallShare), mood) + horizonShift
   const skyHeight = horizonY * tall
 
   // Intensity is daylight: the zenith gains the most, the low sky less and the glow least;
   // the glow rises, widens and pales, and the sun's core whitens near the sun only.
   const zenithGain = stops2(intensity, 1.6)
   const lowGain = look.lowSkyGain * stops2(intensity, look.lowSkyGain < 1 ? 0.8 : 0.7)
-  const glowGain = stops2(intensity, 0.6)
+  const glowGain = stops2(intensity, 0.4)
   const sunGain = stops2(intensity, 2.4)
   const day = stops2(intensity, 0.7)
   const [path, deeper, paler] = look.path
@@ -173,18 +173,19 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     softness: 0,
     sunAt: [sunX, horizonY + 0.03 / tall],
     sunlight: 0.3 * glowGain,
-    sunlightWidth: 0.55 * glowWidthScale * day * narrow,
+    sunlightWidth: 0.55 * glowWidthScale * Math.sqrt(day) * narrow,
     sunlightHeight: 0.6,
     sunlightWarmth: 0,
     falloff: 1.6,
-    widen: 2.4,
+    widen: 1.4,
     lightTop: skyHeight * lerp(0.9, 1.15, intensity),
     glow: look.glow * glowGain,
     glowOffset: -glowRise,
-    glowVary: 0.35,
+    glowVary: 0.15,
     glowVaryScale: 1.3,
+    glowArch: 0.6,
     glowLateral: 1 - look.floor * narrow,
-    glowWidth: 0.45 * glowWidthScale * day * glowHaze * narrow,
+    glowWidth: 0.45 * glowWidthScale * Math.sqrt(day) * glowHaze * narrow,
     shadowHeight: 0.07 * skyScale * glowHaze,
     glow1Weight: 1,
     glow1Up: 0.1 * glowScale,
@@ -192,7 +193,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     glow2Weight: 0.2 * look.haze * lerp(0.6, 1.5, softness),
     glow2Up: 0.17 * glowScale,
     glow2Down: 0.08 * glowHaze,
-    extinction: 2,
+    extinction: 1.2,
     horizonDim: (1 - look.horizonGain) * 5 * stops2(softness, -0.6),
     horizonDimHeight: 0.04 * skyScale * Math.sqrt(haze),
     reddenDown: deeper * stops2(1 - intensity, 1.1) * stops2(1 - softness, 0.6),
@@ -209,10 +210,10 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     occlude: 0.85,
     occludeWidth: 0.04 * glowHaze,
     bridge: look.bridge,
-    bridgeLift: 0.15 + 0.1 * softness,
+    bridgeLift: 0.12 + 0.12 * softness,
     bridgeWarmth: 0.6,
     bridgeFloor: 0.18,
-    land: 1,
+    land: 0.92,
     landAt: horizonY + 0.01 / tall,
     landTilt: hillSlope,
     landDrop: 0,
@@ -220,11 +221,11 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     landWarpScale: hillScale,
     landWarpPhase: hillPhase,
     landOctaves: 3,
-    landSoft: 0.022 + 0.035 * stops2(softness, 1.8),
-    landSoftVary: 0.5,
+    landSoft: 0.03 + 0.04 * stops2(softness, 1.8),
+    landSoftVary: 0.7,
     landTopGain: look.landTop[1] * stops2(intensity, 0.8),
     landBottomGain: look.landBottom[1] * stops2(intensity, 0.8),
-    landDepth: 0.3,
+    landDepth: 0.6,
     landLight: 0,
     landLightWidth: 0.4,
     landLightDepth: 0.06,

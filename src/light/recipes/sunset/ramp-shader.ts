@@ -44,7 +44,8 @@ uniform vec3 uGlowColor[GLOW_LAYERS];
 uniform float uGlowWeight[GLOW_LAYERS];
 uniform vec2 uGlowTau[GLOW_LAYERS];   // decay length above and below the glow line
 uniform float uGlowOffset;
-uniform vec2 uGlowVary;      // how much the glow's upward reach changes along its length, cycles per short side
+uniform vec3 uGlowVary;      // how much the glow's upward reach changes along its length, cycles per short side,
+                             // and how much higher it reaches toward the sun (the twilight arch)
 uniform vec3 uGlowSpread;    // how much the glow falls off sideways, over what width, and the height below
                              // which the light far from the sun fades out (the Earth's shadow; 0: none)
 uniform float uExtinction;
@@ -237,6 +238,7 @@ vec3 radiance(vec2 uv, vec2 p) {
   if (uGlowSpread.z > 0.0) far *= 1.0 - exp(-height / uGlowSpread.z);
   float spread = (far + (1.0 - far) * side) * lightReach;
   float reach = uGlowVary.x != 0.0 ? exp(uGlowVary.x * edgeFbm(across * uGlowVary.y + 31.7, uSeed + 601, 2)) : 1.0;
+  reach *= 1.0 + uGlowVary.z * side;
   for (int k = 0; k < GLOW_LAYERS; k++) {
     if (uGlowWeight[k] <= 0.0) continue;
     vec2 tau = uGlowTau[k] * vec2(reach, 1.0);
