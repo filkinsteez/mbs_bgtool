@@ -244,6 +244,32 @@ vec3 radiance(vec2 uv, vec2 p) {
   uniforms: (ctx) => ({ uGain: ctx.num('gain') }),
 }
 
+/**
+ * A Meta Blue disk, a thin warm-white line and an orange-red dot at `gain` x nominal (gain 1: every max channel
+ * is at most 1) on a neutral background of linear level `background`, for halation checks.
+ */
+export const halationProgram: RecipeProgram = {
+  id: 'test.halation',
+  colorSlots: [],
+  defaultColors: [],
+  params: [
+    { kind: 'number', key: 'gain', label: 'Gain', min: 0, max: 16, step: 0.01, default: 4 },
+    { kind: 'number', key: 'background', label: 'Background', min: 0, max: 1, step: 0.01, default: 0 },
+  ],
+  fragment: /* glsl */ `
+uniform float uGain;
+uniform float uBackground;
+vec3 radiance(vec2 uv, vec2 p) {
+  vec3 light = vec3(0.0, 0.127, 0.745) * (1.0 - smoothstep(0.1, 0.106, length(p - vec2(-0.45, 0.0))));
+  float across = p.x / 0.0025;
+  light += vec3(1.0, 0.92, 0.8) * exp(-0.5 * across * across) * (1.0 - smoothstep(0.3, 0.32, abs(p.y)));
+  light += vec3(1.0, 0.078, 0.0) * exp(-0.5 * dot(p - vec2(0.45, 0.0), p - vec2(0.45, 0.0)) / (0.012 * 0.012));
+  return uBackground * vec3(0.8, 0.82, 0.85) + uGain * light;
+}
+`,
+  uniforms: (ctx) => ({ uGain: ctx.num('gain'), uBackground: ctx.num('background') }),
+}
+
 /** One small gaussian point at the frame center (sigma 0.001 of the short side), for measuring blur widths. */
 export const pointProgram: RecipeProgram = {
   id: 'test.point',
@@ -284,4 +310,5 @@ export const TEST_PROGRAMS: Record<string, RecipeProgram> = {
   [scatterFlatProgram.id]: scatterFlatProgram,
   [postProgram.id]: postProgram,
   [lensProgram.id]: lensProgram,
+  [halationProgram.id]: halationProgram,
 }

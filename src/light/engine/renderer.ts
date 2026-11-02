@@ -3,7 +3,7 @@ import { getRecipe } from '../recipes'
 import type { RecipeProgram, Scene, UniformMap } from '../scene'
 import { CONTEXT_LOST_MESSAGE, Gpu, LightEngineError, type Target } from './gl'
 import { grainUniforms } from './grain'
-import { lensBaseSize, runLens, TEXTURE_COMPOSITE_SHADER } from './lens'
+import { halationStart, lensBaseSize, runLens, TEXTURE_COMPOSITE_SHADER } from './lens'
 import { OUTPUT_SHADER, PRESENT_SHADER, RESOLVE_X_SHADER } from './output'
 import { AREA_RESAMPLE_SHADER, POST_MAX_SHORT_SIDE, runPostPasses } from './passes'
 import { buildRecipeShader } from './recipeShader'
@@ -108,6 +108,7 @@ export class LightRenderer {
       uPixel: pixel,
       uSeed: resolved.seed,
       uSubsamples: subsamples,
+      uHalationStart: halationStart(resolved.lens),
     })
 
     // Scattered light first: blurred copies of the recipe's light that its combine function reads.
@@ -137,7 +138,7 @@ export class LightRenderer {
         textures: scatter.textures,
       })
     }
-    const lens = runLens(gpu, base, resolved.lens)
+    const lens = runLens(gpu, base, resolved.lens, postScene === null)
     gpu.release(base)
 
     const lensUniforms: UniformMap = {

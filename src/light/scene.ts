@@ -73,9 +73,13 @@ export interface LensSettings {
   bloomLevels?: number[]
   /** Optional explicit tint per pyramid level (up to 8 hexes, finest first); replaces bloomTint. */
   bloomLevelTints?: string[]
-  /** Strength of the warm glow added around highlights. 0 turns it off. */
+  /** Strength of the warm glow added around light above nominal, on dark surroundings. 0 turns it off. */
   halation: number
-  /** Scene-linear luminance above which light feeds the halation. */
+  /**
+   * Max channel (in multiples of nominal) where light starts to feed the
+   * halation; it ramps in fully by twice this. Values below 1 act as 1, so
+   * light at or below nominal never makes halation.
+   */
   halationThreshold: number
   /** Halation blur radius as a fraction of the frame's short side. */
   halationRadius: number

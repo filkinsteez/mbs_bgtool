@@ -90,7 +90,12 @@ try {
     for (const hex of hexes) {
       const expected = hexToBytes(hex)
       const plain = await harness.render({ scene: { program: 'test.flat', colors: [hex], lens: noLens, output: { grain: 0 } }, width: 96, height: 64, dither: false })
-      const bloomed = await harness.render({ scene: { program: 'test.flat', colors: [hex], lens: { bloom: 0.5, bloomRadius: 0.6 }, output: { grain: 0 } }, width: 96, height: 64, dither: false })
+      const bloomed = await harness.render({
+        scene: { program: 'test.flat', colors: [hex], lens: { bloom: 0.5, bloomRadius: 0.6, halation: 1 }, output: { grain: 0 } },
+        width: 96,
+        height: 64,
+        dither: false,
+      })
       const dithered = await harness.render({ scene: { program: 'test.flat', colors: [hex], lens: noLens, output: { grain: 0 } }, width: 256, height: 256, dither: true })
       const allEqual = (image) => {
         for (let i = 0; i < image.data.length; i += 4) {
@@ -108,7 +113,7 @@ try {
     }
     await composeRow(path.join(outDir, 'hex-swatches.png'), swatches)
     record('hex exact (dither, grain, lens off)', exact === hexes.length, `${exact}/${hexes.length} pack colors exact`)
-    record('hex exact with bloom 0.5 (energy-conserving)', exactWithBloom === hexes.length, `${exactWithBloom}/${hexes.length} exact`)
+    record('hex exact with bloom 0.5 and halation 1', exactWithBloom === hexes.length, `${exactWithBloom}/${hexes.length} exact`)
     record('hex mean with dither on', worstDitherMean <= 0.5, `worst channel mean off by ${worstDitherMean.toFixed(3)} code values`)
   }
 
@@ -475,6 +480,40 @@ try {
     const before = meanLinear(dimOff)
     const after = meanLinear(dimBloom)
     record('bloom keeps total light on a dim scene', Math.abs(after / before - 1) < 0.02, `mean linear luminance ${before.toFixed(5)} -> ${after.toFixed(5)} (${((after / before - 1) * 100).toFixed(2)} %)`)
+
+    // Halation: only light above nominal feeds it, and bright surroundings suppress it.
+    const halSize = { width: 640, height: 360 }
+    const halLens = { bloom: 0, halation: 1, halationRadius: 0.05 }
+    const halScene = (params, lens) => ({ program: 'test.halation', params, lens })
+    const halRender = (params, lens) => harness.render({ scene: halScene(params, lens), ...halSize, dither: false })
+    const addedLight = (on, off) => {
+      let sum = 0
+      for (let i = 0; i < on.data.length; i += 4) {
+        for (let k = 0; k < 3; k++) sum += SRGB_TO_LINEAR[on.data[i + k]] - SRGB_TO_LINEAR[off.data[i + k]]
+      }
+      return sum / (on.data.length / 4)
+    }
+    const nominalOff = await halRender({ gain: 1 }, noLens)
+    const nominalOn = await halRender({ gain: 1 }, halLens)
+    const hotOff = await halRender({ gain: 4 }, noLens)
+    const hotOn = await halRender({ gain: 4 }, halLens)
+    const brightOff = await halRender({ gain: 4, background: 0.6 }, noLens)
+    const brightOn = await halRender({ gain: 4, background: 0.6 }, halLens)
+    let nominalDiff = 0
+    for (let i = 0; i < nominalOn.data.length; i++) nominalDiff = Math.max(nominalDiff, Math.abs(nominalOn.data[i] - nominalOff.data[i]))
+    const onBlack = addedLight(hotOn, hotOff)
+    const onBright = addedLight(brightOn, brightOff)
+    await composeRow(path.join(outDir, 'lens-halation.png'), [
+      { image: hotOff, caption: '4x nominal on black, halation off' },
+      { image: hotOn, caption: '4x on black, halation 1' },
+      { image: nominalOn, caption: 'nominal (max channel 1) on black, halation 1' },
+      { image: brightOn, caption: '4x on a bright background, halation 1' },
+    ])
+    record(
+      'halation: only from light above nominal, held back on bright surroundings',
+      nominalDiff === 0 && onBlack > 0.002 && onBright < onBlack * 0.3,
+      `nominal light: largest change ${nominalDiff} code values; 4x light adds ${onBlack.toFixed(4)} mean linear light on black, ${onBright.toFixed(4)} (${((onBright / onBlack) * 100).toFixed(0)} %) on a bright background; images in lens-halation.png`,
+    )
     record('lens images written', true, path.relative(ROOT, path.join(outDir, 'lens.png')))
   }
 } finally {

@@ -24,6 +24,9 @@ Engine checks in the browser; prints a pass/fail table and exits 1 on a failure.
 - `export-vs-preview.png`: a 16:9 export through `exportPreset` (offscreen renderer, PNG encode; checks size, format and file name) downsampled next to a 960x540 preview of the same preset.
 - context (no image): loses a context on purpose; `readPixels`, `render` and a new `LightRenderer` on that canvas must throw an error starting "WebGL context lost" (so `exportPreset` throws instead of returning a black PNG). Also prints a 1920x1080 1x render's time with and without `measure: true` (which waits for the GPU with a 1-pixel read).
 - `lens.png`: point lights, a line and a disk with the lens off, bloom, halation, and both. Also checks that bloom keeps the mean light of a dim scene.
+- `lens-halation.png`: a Meta Blue disk, a thin line and an orange-red dot at 4x on black with halation off and on, at nominal (max channel 1) on black with halation on, and at 4x on a bright background with halation on. Checks that nominal light makes no halation at all and that bright surroundings hold it back.
+
+Lens rules: bloom has no threshold; it mixes the scene with its blur (`mix(scene, bloom, amount)`, per-level weights summing to 1 and tints of luminance 1), so flat fields stay exact and a dim scene keeps its mean light. Halation comes only from light above nominal: per sample of the lens base, luminance times a ramp from max channel `halationThreshold` (at least 1) to twice that; it is added in scene-linear light after bloom, weighted by `exp(-4 Y)` of the pixel it lands on, so it shows on dark surroundings and not on bright ones.
 - `report.json`: every result and the run time.
 
 ```sh

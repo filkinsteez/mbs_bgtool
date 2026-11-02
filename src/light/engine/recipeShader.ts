@@ -10,9 +10,12 @@ uniform vec2 uFrameAspect;  // uRenderSize / short side
 uniform float uPixel;       // one sample spacing in short-side units (for antialiasing)
 uniform int uSeed;
 uniform int uSubsamples;    // per axis, radiance modes only
+uniform float uHalationStart; // max channel (x nominal) where light starts to feed halation, >= 1
 `
 
-// Averages uSubsamples^2 samples of SAMPLE(uv, p) per pixel. Used for the lens base, the post-pass input and scatter sources.
+// Averages uSubsamples^2 samples of SAMPLE(uv, p) per pixel. Used for the lens base, the post-pass input and scatter
+// sources. Alpha is the average of the light above nominal that feeds halation, taken per sample so thin bright
+// lines count before they are averaged away.
 function subsampledMain(sample: string, clampNegative: boolean): string {
   return /* glsl */ `
 out vec4 fragColor;
@@ -20,6 +23,7 @@ void main() {
   vec2 corner = gl_FragCoord.xy - 0.5 + uTileOrigin;
   float inv = 1.0 / float(uSubsamples);
   vec3 sum = vec3(0.0);
+  float hot = 0.0;
   for (int j = 0; j < 4; j++) {
     if (j >= uSubsamples) break;
     for (int i = 0; i < 4; i++) {
@@ -27,10 +31,12 @@ void main() {
       vec2 uv = (corner + (vec2(float(i), float(j)) + 0.5) * inv) / uRenderSize;
       vec3 c = ${sample}(uv, (uv - 0.5) * uFrameAspect);
       if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0);
-      sum += ${clampNegative ? 'max(c, vec3(0.0))' : 'c'};
+      ${clampNegative ? 'c = max(c, vec3(0.0));' : ''}
+      sum += c;
+      hot += luminance(max(c, vec3(0.0))) * smoothstep(uHalationStart, 2.0 * uHalationStart, maxComponent(c));
     }
   }
-  fragColor = vec4(sum * inv * inv, 1.0);
+  fragColor = vec4(sum * inv * inv, hot * inv * inv);
 }
 `
 }

@@ -128,23 +128,28 @@ void main() {
 }
 `
 
-const THRESHOLD_SHADER =
+const HOT_SHADER =
   GLSL_HEADER +
   /* glsl */ `
 uniform sampler2D uSrc;
-uniform float uThreshold;
+uniform float uStart;
+uniform bool uHotInAlpha;
 out vec4 fragColor;
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
-// Luminance above the threshold with a soft knee, stored as grey.
+// Light above nominal, stored as grey: the base's alpha when the radiance pass measured it per sample, else
+// luminance times a ramp from max channel uStart to 2 uStart of the averaged color.
 void main() {
-  vec3 c = texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0).rgb;
-  float y = dot(max(c, vec3(0.0)), LUMA);
-  float knee = max(uThreshold * 0.5, 1e-4);
-  float soft = clamp(y - uThreshold + knee, 0.0, 2.0 * knee);
-  soft = soft * soft / (4.0 * knee);
-  fragColor = vec4(vec3(max(soft, y - uThreshold)), 1.0);
+  vec4 t = texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0);
+  vec3 c = max(t.rgb, vec3(0.0));
+  float hot = uHotInAlpha ? t.a : dot(c, LUMA) * smoothstep(uStart, 2.0 * uStart, max(c.r, max(c.g, c.b)));
+  fragColor = vec4(vec3(hot), 1.0);
 }
 `
+
+/** Halation only ever starts above nominal (max channel 1), whatever the setting says. */
+export function halationStart(lens: LensSettings): number {
+  return Math.max(1, lens.halationThreshold)
+}
 
 /** Lens composite: energy-conserving bloom mix, halation against dark areas, exposure, tone curve. Needs CHUNK_LIBRARY. */
 export const LENS_COMPOSITE_GLSL =
@@ -191,15 +196,19 @@ export interface LensOutput {
   halation: Target | null
 }
 
-/** Builds the bloom and halation images from the 512 px base image. Caller releases the returned targets. */
-export function runLens(gpu: Gpu, base: Target, lens: LensSettings): LensOutput {
+/**
+ * Builds the bloom and halation images from the 512 px base image. With
+ * `hotInAlpha` the base's alpha already holds the light above nominal, taken
+ * per sample. Caller releases the returned targets.
+ */
+export function runLens(gpu: Gpu, base: Target, lens: LensSettings, hotInAlpha: boolean): LensOutput {
   const bloom = lens.bloom > 0 ? pyramid(gpu, base, bloomLevelFactors(lens)) : null
   let halation: Target | null = null
   if (lens.halation > 0) {
     const highlights = gpu.acquire(base.width, base.height)
-    gpu.draw(gpu.program(THRESHOLD_SHADER), highlights, {
+    gpu.draw(gpu.program(HOT_SHADER), highlights, {
       textures: { uSrc: base },
-      uniforms: { uThreshold: lens.halationThreshold },
+      uniforms: { uStart: halationStart(lens), uHotInAlpha: hotInAlpha },
     })
     halation = pyramid(gpu, highlights, halationLevelFactors(lens))
     gpu.release(highlights)
