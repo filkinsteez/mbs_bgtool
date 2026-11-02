@@ -11,7 +11,7 @@ import type {
   UniformMap,
   VectorParam,
 } from '../../scene'
-import { composeLayout, GLOW_COUNT, isWarm, SLOT, SLOT_COUNT, type BloomsLayout, type GlowSpec } from './blooms-compose'
+import { composeLayout, GLOW_COUNT, isWarm, random, SLOT, SLOT_COUNT, type BloomsLayout, type GlowSpec } from './blooms-compose'
 import { bridgeAmount, deepen, paleTint } from './blooms-light'
 
 const DEFAULT_GLOWS: readonly GlowSpec[] = [
@@ -54,6 +54,7 @@ const PARAMS: readonly ParamSpec[] = [
   num('zenithAniso', 'Zenith width / height', 1, 8, 0.05, 1.9),
   num('zenithAngle', 'Zenith tilt', -60, 60, 0.5, -16),
   num('zenithAmount', 'Zenith amount', 0, 1, 0.01, 0.6),
+  num('zenithFalloff', 'Zenith falloff', 1, 5, 0.01, 2.6),
   num('warp', 'Warp', 0, 0.3, 0.002, 0.07),
   num('warpScale', 'Warp scale', 0.2, 4, 0.05, 1.1),
   num('bridge', 'Bridge', 0, 3, 0.01, 1),
@@ -86,6 +87,7 @@ function readLayout(ctx: RecipeContext): BloomsLayout {
       aniso: ctx.num('zenithAniso'),
       angle: ctx.num('zenithAngle'),
       amount: ctx.num('zenithAmount'),
+      falloff: ctx.num('zenithFalloff'),
     },
     warp: ctx.num('warp'),
     warpScale: ctx.num('warpScale'),
@@ -105,6 +107,7 @@ function layoutParams(layout: BloomsLayout): Record<string, ParamValue> {
     zenithAniso: layout.zenith.aniso,
     zenithAngle: layout.zenith.angle,
     zenithAmount: layout.zenith.amount,
+    zenithFalloff: layout.zenith.falloff,
     warp: layout.warp,
     warpScale: layout.warpScale,
     bridge: layout.bridge,
@@ -137,6 +140,36 @@ function axis(radius: number, aniso: number, angle: number): number[] {
 }
 
 const scale = (c: Rgb, k: number): Rgb => [c[0] * k, c[1] * k, c[2] * k]
+const luminance = (c: Rgb) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t
+
+const LOBES = 3
+const LOBE_FALLOFF = 2.2
+
+/**
+ * The lobes of one extended source, spread along its long axis at different
+ * heights across it, each with its own size and falloff. Per lobe: offsets in
+ * units of the long and short radius, 1 / size and weight (`shape`), and a
+ * falloff factor (`falloff`). With vary 0 they sit on top of each other and
+ * make one ellipse. The weights are scaled so the brightest point is about 1.
+ */
+function lobes(vary: number, seed: number, index: number): { shape: number[]; falloff: number[] } {
+  const r = random(seed * 7919 + index * 131 + 17)
+  const raw = Array.from({ length: LOBES }, (_, j) => ({
+    along: (j - 1) * 0.55 * vary * lerp(0.7, 1.3, r()),
+    across: (r() - 0.5) * 0.9 * vary,
+    size: 1 - vary * lerp(0, 0.4, r()),
+    weight: j === 1 ? 1 : lerp(0.45, 0.9, r()),
+    falloff: 1 + vary * lerp(-0.25, 0.25, r()),
+  }))
+  const at = (a: number, c: number) =>
+    raw.reduce((sum, l) => sum + l.weight * (1 + ((a - l.along) / l.size) ** 2 + ((c - l.across) / l.size) ** 2) ** (-LOBE_FALLOFF * l.falloff), 0)
+  const peak = Math.max(at(0, 0), ...raw.map((l) => at(l.along, l.across)))
+  return {
+    shape: raw.flatMap((l) => [l.along, l.across, 1 / l.size, l.weight / peak]),
+    falloff: raw.map((l) => l.falloff),
+  }
+}
 
 /** 1 for a glow with its own haze (it sits in front), 0 for a glow without (it sits behind the others' haze). */
 function inFront(haze: number): number {
@@ -151,7 +184,7 @@ function inFront(haze: number): number {
  * 0.5 both gains are 1, so a flat sky is its exact hex. Below 0.5 warm light
  * also deepens, as the light of a lower sun does.
  */
-function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity: number): UniformMap {
+function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity: number, seed: number): UniformMap {
   const skyGain = 2 ** ((intensity - 0.5) * 1.6)
   const lightGain = 2 ** ((intensity - 0.5) * 1.0)
   const depth = 1 + 1.2 * Math.max(0, 0.5 - intensity)
@@ -162,8 +195,13 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
   const glowAxis: number[] = []
   const glowEdge: number[] = []
   const glowBridge: number[] = []
+  const glowLobes: number[] = []
+  const glowLobeFalloff: number[] = []
   for (let i = 0; i < GLOW_COUNT; i++) {
     const glow = layout.glows[i]
+    const lobe = lobes(glow?.vary ?? 0, seed, i)
+    glowLobes.push(...lobe.shape)
+    glowLobeFalloff.push(...lobe.falloff)
     if (!glow) {
       glowColor.push(0, 0, 0)
       glowShape.push(0, 0, 2, 0)
@@ -174,28 +212,35 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     }
     const base = slot(glow.color)
     const light = scale(isWarm(base) ? deepen(base, depth) : base, glow.gain)
+    // A glow's haze may hide at most as much sky light as the glow itself adds, so haze never darkens the frame.
+    const haze = Math.min(glow.haze, luminance(light) / Math.max(luminance(sky), 1e-4))
     const front = inFront(glow.haze)
     const gain = skyGain + (lightGain - skyGain) * front
     glowColor.push(...scale(light, gain))
-    glowShape.push(glow.at[0], glow.at[1], glow.beta, glow.haze)
+    glowShape.push(glow.at[0], glow.at[1], glow.beta, haze)
     glowAxis.push(...axis(glow.radius, glow.aniso, glow.angle))
     glowEdge.push(glow.vary, 1.15, 1.7 * i + 0.3, front)
     const tint = paleTint(light)
-    const amount = front * layout.bridge * bridgeAmount(sky, light, tint, glow.haze) * Math.sqrt(skyGain * lightGain)
+    const amount = front * layout.bridge * bridgeAmount(sky, light, tint, haze) * Math.sqrt(skyGain * lightGain)
     glowBridge.push(...scale(tint, amount))
   }
   const z = layout.zenith
+  const zenithLobes = lobes(0.8, seed, GLOW_COUNT)
   return {
     uSky: scale(sky, skyGain),
     uDeep: scale(slot(z.color), skyGain),
-    uZenithShape: [z.at[0], z.at[1], clamp(z.amount, 0, 1), 2.6],
+    uZenithShape: [z.at[0], z.at[1], clamp(z.amount, 0, 1), z.falloff],
     uZenithAxis: axis(z.radius, z.aniso, z.angle),
+    uZenithLobe: zenithLobes.shape,
+    uZenithLobeFalloff: zenithLobes.falloff,
     uGlowCount: layout.glows.length,
     uGlowColor: glowColor,
     uGlowShape: glowShape,
     uGlowAxis: glowAxis,
     uGlowEdge: glowEdge,
     uGlowBridge: glowBridge,
+    uGlowLobe: glowLobes,
+    uGlowLobeFalloff: glowLobeFalloff,
     uWarp: [layout.warp, layout.warpScale],
   }
 }
@@ -236,33 +281,81 @@ export const sunsetBlooms: RecipeDefinition = {
   params: PARAMS,
   fragment: /* glsl */ `
 #define GLOW_COUNT ${GLOW_COUNT}
+#define LOBES ${LOBES}
 #define TAIL_END 4.5
 uniform vec3 uSky;
 uniform vec3 uDeep;
 uniform vec4 uZenithShape;           // center (frame fractions), amount, falloff exponent
 uniform vec4 uZenithAxis;            // cos, sin, 1 / long radius, 1 / short radius
+uniform vec4 uZenithLobe[LOBES];     // offset along and across (in radii), 1 / size, weight
+uniform float uZenithLobeFalloff[LOBES];
 uniform int uGlowCount;
 uniform vec3 uGlowColor[GLOW_COUNT];
 uniform vec4 uGlowShape[GLOW_COUNT];  // center (frame fractions), falloff exponent, haze
 uniform vec4 uGlowAxis[GLOW_COUNT];   // cos, sin, 1 / long radius, 1 / short radius
 uniform vec4 uGlowEdge[GLOW_COUNT];   // edge variation, its frequency, its phase, in front 0..1
 uniform vec3 uGlowBridge[GLOW_COUNT];
+uniform vec4 uGlowLobe[GLOW_COUNT * LOBES];
+uniform float uGlowLobeFalloff[GLOW_COUNT * LOBES];
 uniform vec2 uWarp;                   // amount, frequency
 
-// Power-law falloff on a rotated, stretched axis, 1 at the center. The reach
-// across the long axis and the exponent drift along the edge, so no two edges
-// share a profile. The tail fades out smoothly by about two and a half radii,
-// so the sky beyond it keeps its exact color.
-float bloom(vec2 q, vec2 center, vec4 axis, vec2 stretch, float beta, vec3 edge, int index) {
-  vec2 d = q - center;
-  float along = dot(d, axis.xy) * axis.z * stretch.x;
-  float across = dot(d, vec2(-axis.y, axis.x)) * axis.w * stretch.y;
-  float s = along * edge.y + edge.z;
-  float reach = exp(0.4 * edge.x * gradientNoise(vec2(s, 0.37), uSeed + 101 + 7 * index));
-  float b = beta * (1.0 + 0.22 * edge.x * gradientNoise(vec2(s + 4.1, 2.71), uSeed + 211 + 7 * index));
+// Three smooth 1D noises in -1..1 from one pair of hashed lattice values.
+vec3 noise1x3(float x, int seed) {
+  float i = floor(x);
+  float f = x - i;
+  float u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  ivec2 c = ivec2(int(i), 0);
+  return mix(hash3(c, seed), hash3(c + ivec2(1, 0), seed), u) * 2.0 - 1.0;
+}
+
+// Two smooth 2D noises in about -1..1: gradient noise with gradients straight from the hash, no trigonometry.
+vec2 noise2x2(vec2 p, int seed) {
+  vec2 i = floor(p);
+  vec2 f = p - i;
+  vec2 u = quintic(f);
+  ivec2 c = ivec2(i);
+  vec4 g00 = vec4(hash3(c, seed).xy, hash3(c, seed + 1).xy) * 2.0 - 1.0;
+  vec4 g10 = vec4(hash3(c + ivec2(1, 0), seed).xy, hash3(c + ivec2(1, 0), seed + 1).xy) * 2.0 - 1.0;
+  vec4 g01 = vec4(hash3(c + ivec2(0, 1), seed).xy, hash3(c + ivec2(0, 1), seed + 1).xy) * 2.0 - 1.0;
+  vec4 g11 = vec4(hash3(c + ivec2(1, 1), seed).xy, hash3(c + ivec2(1, 1), seed + 1).xy) * 2.0 - 1.0;
+  vec2 f10 = f - vec2(1.0, 0.0);
+  vec2 f01 = f - vec2(0.0, 1.0);
+  vec2 f11 = f - vec2(1.0, 1.0);
+  vec2 n00 = vec2(dot(g00.xy, f), dot(g00.zw, f));
+  vec2 n10 = vec2(dot(g10.xy, f10), dot(g10.zw, f10));
+  vec2 n01 = vec2(dot(g01.xy, f01), dot(g01.zw, f01));
+  vec2 n11 = vec2(dot(g11.xy, f11), dot(g11.zw, f11));
+  return 1.7 * mix(mix(n00, n10, u.x), mix(n01, n11, u.x), u.y);
+}
+
+// Light from an extended source: a few lobes spread along a rotated, stretched
+// axis, added up, each a power-law falloff whose tail fades out by about two
+// and a half radii (so the sky beyond keeps its exact color). The reach across
+// the long axis and the falloff exponent drift along the edge, the length
+// along it drifts across it, and the warp grows with distance from the source,
+// so inner and outer edges bend differently and none is an ellipse.
+float bloom(vec2 P, vec2 warp, vec2 center, vec4 axis, vec2 stretch, float beta, vec3 edge, int index, vec4 lobe[LOBES], float falloff[LOBES]) {
+  vec2 scaleAxes = vec2(axis.z * stretch.x, axis.w * stretch.y);
+  vec2 d0 = P - center;
+  float reach0 = length(vec2(dot(d0, axis.xy), dot(d0, vec2(-axis.y, axis.x))) * scaleAxes);
+  vec2 d = d0 + warp * (0.6 + 0.8 * smoothstep(0.0, 2.5, reach0));
+  float along = dot(d, axis.xy) * scaleAxes.x;
+  float across = dot(d, vec2(-axis.y, axis.x)) * scaleAxes.y;
+  vec3 alongNoise = noise1x3(along * edge.y + edge.z, uSeed + 101 + 7 * index);
+  float acrossNoise = noise1x3(across * 1.3 + edge.z, uSeed + 307 + 7 * index).x;
+  float reach = exp(0.4 * edge.x * alongNoise.x);
+  float length = exp(0.3 * edge.x * acrossNoise);
+  float b = beta * (1.0 + 0.22 * edge.x * alongNoise.y);
   across /= reach;
-  float d2 = along * along + across * across;
-  return pow(1.0 + d2, -b) * exp(-d2 * d2 / (TAIL_END * TAIL_END));
+  along /= length;
+  float sum = 0.0;
+  for (int j = 0; j < LOBES; j++) {
+    vec2 q = (vec2(along, across) - lobe[j].xy) * lobe[j].z;
+    float d2 = dot(q, q);
+    // (1 + d2)^(-b) times the tail fade exp(-(d2 / TAIL_END)^2), as one exp2.
+    sum += lobe[j].w * exp2(-b * falloff[j] * log2(1.0 + d2) - d2 * d2 * (1.4426950 / (TAIL_END * TAIL_END)));
+  }
+  return sum;
 }
 
 vec3 radiance(vec2 uv, vec2 p) {
@@ -271,20 +364,29 @@ vec3 radiance(vec2 uv, vec2 p) {
   // Taller frames get taller, less stretched glows (radius x tall, width / height / tall).
   float tall = clamp(pow(uFrameAspect.y / uFrameAspect.x / 0.5625, 0.25), 0.8, 1.5);
   vec2 stretch = vec2(inversesqrt(tall), pow(tall, -1.5));
-  vec2 w = P * uWarp.y;
-  vec2 q = P + uWarp.x * vec2(fbm(w, 2, uSeed + 11), fbm(w + vec2(31.7, 11.3), 2, uSeed + 29));
+  vec2 warp = uWarp.x * noise2x2(P * uWarp.y + vec2(3.7, 1.9), uSeed + 11);
 
   // The darkening is sized by the short side, so it stays in its corner in every format.
   vec2 shortSide = vec2(1.0 / min(frame.x, frame.y));
-  float z = uZenithShape.z * bloom(q, (uZenithShape.xy - 0.5) * frame, uZenithAxis, shortSide, uZenithShape.w, vec3(0.5, 1.1, 2.3), 9);
-  vec3 sky = mix(uSky, uDeep, z);
+  vec4 lobe[LOBES];
+  float falloff[LOBES];
+  for (int j = 0; j < LOBES; j++) {
+    lobe[j] = uZenithLobe[j];
+    falloff[j] = uZenithLobeFalloff[j];
+  }
+  float z = uZenithShape.z * bloom(P, warp, (uZenithShape.xy - 0.5) * frame, uZenithAxis, shortSide, uZenithShape.w, vec3(0.5, 1.1, 2.3), 9, lobe, falloff);
+  vec3 sky = mix(uSky, uDeep, min(z, 1.0));
 
   float k[GLOW_COUNT];
   float ext = 0.0;
   for (int i = 0; i < GLOW_COUNT; i++) {
     k[i] = 0.0;
     if (i < uGlowCount) {
-      k[i] = bloom(q, (uGlowShape[i].xy - 0.5) * frame, uGlowAxis[i], stretch, uGlowShape[i].z, uGlowEdge[i].xyz, i);
+      for (int j = 0; j < LOBES; j++) {
+        lobe[j] = uGlowLobe[i * LOBES + j];
+        falloff[j] = uGlowLobeFalloff[i * LOBES + j];
+      }
+      k[i] = bloom(P, warp, (uGlowShape[i].xy - 0.5) * frame, uGlowAxis[i], stretch, uGlowShape[i].z, uGlowEdge[i].xyz, i, lobe, falloff);
       ext += uGlowShape[i].w * k[i] * k[i];
     }
   }
@@ -310,7 +412,7 @@ vec3 radiance(vec2 uv, vec2 p) {
   return behind * T + front;
 }
 `,
-  uniforms: (ctx) => layoutUniforms(readLayout(ctx), ctx.colors, ctx.num('intensity')),
+  uniforms: (ctx) => layoutUniforms(readLayout(ctx), ctx.colors, ctx.num('intensity'), ctx.seed),
   lens: { bloom: 0.12, bloomRadius: 0.75, bloomWidth: 1.5 },
   fromPack: rolesFromPack,
   compose: ({ pack, controls, seed }): Composition => {

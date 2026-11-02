@@ -34,6 +34,8 @@ export interface ZenithSpec {
   angle: number
   /** Share of the deep color at the center of the darkening, 0..1. */
   amount: number
+  /** Falloff exponent; lower spreads the darkening further. */
+  falloff: number
 }
 
 export interface BloomsLayout {
@@ -90,7 +92,7 @@ function hashSeed(seed: number): number {
 }
 
 /** mulberry32; consecutive seeds are hashed first so their first draws are unrelated. */
-function random(seed: number): () => number {
+export function random(seed: number): () => number {
   let t = hashSeed(seed)
   return () => {
     t = (t + 0x6d2b79f5) >>> 0
@@ -181,10 +183,10 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
       aniso = lerp(3.9, 4.9, r())
       break
     case 'side':
-      at = [0.5 + side * (lerp(0.64, 0.53, rise) + lerp(0, 0.05, r())), lerp(0.94, 0.66, rise) + lerp(-0.1, 0.08, r())]
+      at = [0.5 + side * (lerp(0.7, 0.58, rise) + lerp(0, 0.05, r())), lerp(0.94, 0.66, rise) + lerp(-0.1, 0.08, r())]
       tilt = lerp(-3, 7, r())
-      radius = lerp(0.5, 0.6, r())
-      aniso = lerp(3.4, 4.4, r())
+      radius = lerp(0.52, 0.62, r())
+      aniso = lerp(3.8, 4.8, r())
       break
     case 'pair':
       at = [0.5 + side * lerp(0.16, 0.3, r()), Math.max(1.01, lerp(1.17, 1.0, rise) + lerp(-0.02, 0.02, r()))]
@@ -281,11 +283,12 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const zSide = kind === 'pair' ? (r() < 0.5 ? -1 : 1) : -side
   const zenith: ZenithSpec = {
     color: deep,
-    at: [0.5 + zSide * lerp(0.58, 0.74, r()), lerp(-0.2, -0.06, r())],
-    radius: lerp(0.4, 0.55, r()) * lerp(0.92, 1.12, soft),
-    aniso: lerp(1.5, 2.3, r()),
-    angle: -zSide * lerp(8, 24, r()),
+    at: [0.5 + zSide * lerp(0.5, 0.7, r()), lerp(-0.26, -0.12, r())],
+    radius: lerp(0.5, 0.66, r()) * lerp(0.92, 1.12, soft),
+    aniso: lerp(2.6, 3.6, r()),
+    angle: -zSide * lerp(6, 18, r()),
     amount: lerp(0.45, 0.7, r()),
+    falloff: 2.4,
   }
 
   return {

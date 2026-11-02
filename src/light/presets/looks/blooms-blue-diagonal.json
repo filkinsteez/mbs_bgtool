@@ -1,0 +1,75 @@
+{
+  "id": "look-blooms-blue-diagonal",
+  "referenceId": "sunset-blue-diagonal",
+  "scene": {
+    "recipe": "sunset.blooms",
+    "seed": 1,
+    "colors": [
+      "#5A90F9",
+      "#062C7B",
+      "#FFA040",
+      "#FFC05C",
+      "#B0C6ED"
+    ],
+    "params": {
+      "intensity": 0.5,
+      "glows": 3,
+      "glow1Color": 4,
+      "glow1At": [
+        -0.125,
+        0.407
+      ],
+      "glow1Radius": 0.598,
+      "glow1Aniso": 5.069,
+      "glow1Angle": 25.737,
+      "glow1Gain": 0.585,
+      "glow1Beta": 2.82,
+      "glow1Haze": 1.957,
+      "glow1Vary": 0.4,
+      "glow2Color": 3,
+      "glow2At": [
+        -0.062,
+        0.793
+      ],
+      "glow2Radius": 0.642,
+      "glow2Aniso": 3.746,
+      "glow2Angle": 24.69,
+      "glow2Gain": 1.045,
+      "glow2Beta": 4.537,
+      "glow2Haze": 3.539,
+      "glow2Vary": 0.4,
+      "glow3Color": 2,
+      "glow3At": [
+        0.745,
+        0.923
+      ],
+      "glow3Radius": 0.722,
+      "glow3Aniso": 10.502,
+      "glow3Angle": 12.828,
+      "glow3Gain": 0.206,
+      "glow3Beta": 4.267,
+      "glow3Haze": 3,
+      "glow3Vary": 0.3,
+      "zenithColor": 1,
+      "zenithAt": [
+        1.233,
+        -0.266
+      ],
+      "zenithRadius": 1.994,
+      "zenithAniso": 1.2,
+      "zenithAngle": -40,
+      "zenithAmount": 1,
+      "zenithFalloff": 1.113,
+      "warp": 0.03,
+      "warpScale": 1.1,
+      "bridge": 0.02
+    },
+    "lens": {
+      "bloom": 0.12
+    },
+    "output": {
+      "grain": 0.004,
+      "exposure": 0
+    }
+  }
+}
