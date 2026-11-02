@@ -1,5 +1,6 @@
 import type { ColorPack } from '../../color/packs'
 import { hexToLinear } from '../../color/srgb'
+import { toneCurve } from '../../engine/output'
 
 /** A seeded stream of numbers in [0, 1); the same seed and salt give the same stream. */
 export function seededRandom(seed: number, salt: number): () => number {
@@ -38,6 +39,18 @@ export function luminanceOf(hex: string): number {
 /** The largest linear channel of a color; light clips once this channel passes 1. */
 export function peakChannelOf(hex: string): number {
   return Math.max(...hexToLinear(hex))
+}
+
+/**
+ * The color a light (linear RGB) turns as it overexposes, at unit luminance: the camera
+ * tone curve's own path to white three times past clipping, so Meta Blue goes toward a
+ * pale cyan-white and never toward lavender.
+ */
+export function paleTarget(light: readonly number[]): [number, number, number] {
+  const peak = Math.max(light[0], light[1], light[2], 1e-6)
+  const c = toneCurve(light.map((v) => (3 * v) / peak))
+  const lum = Math.max(0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2], 1e-6)
+  return [c[0] / lum, c[1] / lum, c[2] / lum]
 }
 
 /** One light for a Contour image: the direct light's color, the color the haze scatters, and the base. */

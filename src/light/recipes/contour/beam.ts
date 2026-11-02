@@ -1,6 +1,6 @@
 import type { ColorPack } from '../../color/packs'
 import type { ComposeInput, Composition, RecipeContext, RecipeDefinition } from '../../scene'
-import { contourLights, frameHalf, geo, lerp, luminanceOf, pickContourLight, round4, seededRandom } from './beam-compose'
+import { contourLights, frameHalf, geo, lerp, luminanceOf, paleTarget, pickContourLight, round4, seededRandom } from './beam-compose'
 
 /**
  * A beam of light from a source above the frame, seen through haze, landing
@@ -43,6 +43,8 @@ uniform vec4 uPool;       // level, spill level, spill width (beam radii), edge 
 uniform vec2 uLanes;      // gloss lane contrast, lane width (beam radii)
 uniform vec4 uFloorLook;  // gloss, roughness, texture amount, texture cell
 uniform vec3 uPale;       // pale share, from, to (luminance)
+uniform float uPaleWhite; // how far the pale color goes from the light's color toward white
+uniform vec3 uPaleTarget; // the light's color on the camera's path to white, at unit luminance
 uniform vec3 uAmbient;    // room level, haze share, floor level
 uniform float uVignette;
 
@@ -236,9 +238,11 @@ vec3 radiance(vec2 uv, vec2 p) {
 
   float lum = scatter * lumHaze;
   float pale = saturate(uPale.x * smoothstep(uPale.y, uPale.z, lum + direct * lumLight));
-  vec3 scattered = scatter * mix(uHazeColor, uLightColor * (lumHaze / lumLight), pale);
+  vec3 paleColor = mix(uLightColor / lumLight, uPaleTarget, uPaleWhite) * lumHaze;
+  vec3 scattered = scatter * mix(uHazeColor, paleColor, pale);
+  vec3 directColor = mix(uLightColor, uPaleTarget * lumLight, uPaleWhite * pale);
   vec3 ambient = uBaseColor * mix(uAmbient.x * (1.0 - uAmbient.y + uAmbient.y * hazeHere), uAmbient.z, onFloor);
-  vec3 color = ambient + scattered + uLightColor * direct;
+  vec3 color = ambient + scattered + directColor * direct;
 
   vec2 half_ = 0.5 * uFrameAspect;
   float vig = 1.0 - uVignette * dot(p, p) / dot(half_, half_);
@@ -256,11 +260,16 @@ const HAZE_LUMINANCE = 0.12
 const HALF_SCALE_EDGE = 0.012
 
 /**
- * Pack output. The seed picks the light, where the beam lands (on the stage
- * edge or out on the floor), its width and tilt, the camera height, the haze
- * layers and the floor's gloss lanes. Light (the mood control) moves the beam
- * across the frame; Intensity is the source's power; Softness softens the
- * beam's edge, the haze and the floor.
+ * Pack output. A wide, nearly parallel beam lands on the stage's edge and is seen
+ * from a low camera, so its pool is a bright line as wide as the beam. The glossy
+ * floor mirrors the lit haze above the pool, and its narrow boards, each a little
+ * more or less glossy, split that into rays fanning toward the camera. The haze is
+ * lit only near the beam.
+ *
+ * The seed picks the light, the beam's width, slight lean and hollow, the camera
+ * height, the haze layers and the floor's gloss and lanes. Light (the mood control)
+ * moves the beam across the frame; Intensity is the source's power; Softness softens
+ * the beam's edge, the haze and the floor.
  */
 function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Composition {
   const random = seededRandom(seed, 0xbea)
@@ -269,63 +278,55 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
   const wide = aspect >= 1
   const light = pickContourLight(pack, random)
   const hazeGain = HAZE_LUMINANCE / Math.max(luminanceOf(light.haze), 0.01)
-
-  const edgeAt = wide ? lerp(0.68, 0.82, random()) : lerp(0.74, 0.88, random())
-  const floorY = -halfH + 2 * halfH * edgeAt
-  const drop = lerp(0.12, 0.32, random()) * Math.min(1, 2 * halfH)
-  const focal = lerp(0.9, 1.8, random())
-  const width = (wide ? lerp(0.05, 0.13, random()) : lerp(0.1, 0.2, random())) * Math.min(1, 1.4 * halfW)
-  const offset = lerp(-0.14, 0.14, random())
-  const side = Math.min(0.88, Math.max(0.12, 0.5 + (mood - 0.5) * (wide ? 0.62 : 0.4) + offset))
-  const beamAt = (side - 0.5) * 2 * halfW
-  const onEdge = random() < 0.4
-  const landing = onEdge ? lerp(-0.3, 0.2, random()) : lerp(-3.5, -1.4, random())
-  const lean = random() < 0.5 ? -1 : 1
-  const tilt = [lean * lerp(0.03, 0.22, random()), lerp(-0.1, 0.1, random())]
-  const hollow = random() < 0.3 ? [lerp(0.3, 0.45, random()), lerp(0.15, 0.3, random())] : [0, 0]
-  // The beam may widen toward the floor, but keeps at least 85 % of its floor width at the
-  // frame's top, so it never reads as a cone.
-  const horizon = floorY - drop
-  const landZ = focal / drop / (1 - Math.min(0.9, landing * (width / focal)))
-  const heightInFrame = 1 - ((-halfH - horizon) * landZ) / focal
-  const spread = lerp(0, 0.15 / Math.max(heightInFrame, 1), random())
-
-  const power = geo(intensity, 0.35, 0.8, 1.9) * hazeGain * lerp(0.85, 1.15, random())
-  const pool = geo(intensity, 3.5, 7, 16) * (luminanceOf(light.haze) / Math.max(luminanceOf(light.light), 0.01))
   const soft = (lo: number, hi: number) => lerp(lo, hi, softness)
+
+  const edgeAt = wide ? lerp(0.62, 0.72, random()) : lerp(0.64, 0.74, random())
+  const floorY = -halfH + 2 * halfH * edgeAt
+  const drop = lerp(0.2, 0.3, random())
+  const focal = lerp(1.2, 1.6, random())
+  const width = lerp(0.15, 0.185, random())
+  const offset = lerp(-0.1, 0.1, random())
+  const side = Math.min(0.85, Math.max(0.15, 0.5 + (mood - 0.5) * (wide ? 0.62 : 0.4) + offset))
+  const beamAt = (side - 0.5) * 2 * halfW
+  const lean = random() < 0.5 ? -1 : 1
+  const tilt = [lean * lerp(0, 0.05, random()), lerp(-0.04, 0.04, random())]
+
+  const power = geo(intensity, 0.35, 0.75, 1.6) * hazeGain * lerp(0.9, 1.1, random())
+  const pool = lerp(6, 8.5, random()) * (luminanceOf(light.haze) / Math.max(luminanceOf(light.light), 0.01))
 
   return {
     colors: [light.light, light.haze, light.base],
     params: {
-      horizon: round4(horizon),
+      horizon: round4(floorY - drop),
       focal: round4(focal),
       floorY: round4(floorY),
-      stageRound: round4(lerp(0, 0.4, random())),
+      stageRound: round4(lerp(0.4, 0.9, random())),
       beamAt: round4(beamAt),
-      beamWidth: round4(width * soft(0.9, 1.2)),
-      landing: round4(landing),
+      beamWidth: round4(width * soft(0.95, 1.05)),
+      landing: round4(lerp(-0.15, 0.1, random())),
       tilt: tilt.map(round4),
-      spread: round4(spread),
-      beamEdge: round4(soft(4.5, 2)),
-      hollow: hollow.map(round4),
+      spread: round4(lerp(0, 0.04, random())),
+      beamEdge: round4(soft(3.6, 2.2)),
+      hollow: [round4(lerp(0.42, 0.58, random())), round4(lerp(0.35, 0.6, random()))],
       power: round4(Math.min(20, power)),
-      extinction: round4(lerp(0, 0.6, random())),
-      haze: round4(lerp(0.02, 0.05, random())),
-      ceiling: [round4(lerp(0.2, 1.5, random())), round4(lerp(0.1, 0.25, random()) * 2 * halfH), round4(-halfH - lerp(0, 0.2, random()))],
-      floorHaze: [round4(lerp(0.6, 1.6, random())), round4(width * soft(0.25, 0.5))],
-      forward: round4(lerp(0, 0.6, random())),
-      hazeNoise: [round4(lerp(0.08, 0.18, random())), round4(lerp(2, 3, random())), round4(lerp(0.6, 1.4, random()))],
-      bounce: [round4(lerp(0.4, 0.8, random())), round4(soft(0.15, 0.45) * 2 * halfH * 0.5), 2, 0.08],
-      pool: [round4(Math.min(10, pool)), round4(lerp(0.3, 0.7, random())), round4(soft(1.3, 2.4))],
-      edgeSoftness: round4(soft(HALF_SCALE_EDGE, 0.03)),
-      gloss: [round4(lerp(0.8, 3, random())), round4(soft(0.06, 0.3))],
-      texture: [0.03, 0.004],
-      lanes: [round4(lerp(0.4, 1.8, random())), round4(lerp(0.5, 1.2, random()))],
-      pale: [0, 0.1, 0.6],
-      ambient: [light.baseLevel, 0.3, light.baseLevel],
-      vignette: round4(lerp(0.1, 0.2, random())),
+      extinction: round4(lerp(0, 0.25, random())),
+      haze: round4(lerp(0.03, 0.045, random())),
+      ceiling: [round4(lerp(1, 1.5, random())), round4(lerp(0.12, 0.2, random())), round4(-halfH - lerp(0, 0.1, random()))],
+      floorHaze: [round4(lerp(2.6, 3.8, random())), round4(lerp(0.12, 0.2, random()))],
+      forward: round4(lerp(-0.1, 0.15, random())),
+      hazeNoise: [round4(lerp(0.08, 0.15, random())), round4(lerp(2, 3, random())), round4(lerp(0.6, 1.1, random()))],
+      bounce: [round4(lerp(0.7, 1, random())), round4(soft(0.5, 0.8) * Math.min(1, 0.5 + halfH)), round4(lerp(1, 1.4, random())), round4(lerp(0.12, 0.2, random()))],
+      pool: [round4(Math.min(10, pool)), round4(lerp(1.3, 2, random())), round4(soft(1.4, 1.9))],
+      edgeSoftness: round4(soft(HALF_SCALE_EDGE, 0.024)),
+      gloss: [round4(lerp(2.8, 3.4, random())), round4(soft(0.22, 0.32))],
+      texture: [0.05, 0.006],
+      lanes: [round4(lerp(1.5, 1.9, random())), round4(lerp(0.4, 0.6, random()))],
+      pale: [round4(lerp(0.5, 0.7, random())), 0.075, 0.25],
+      paleWhite: light.light === light.haze ? 0.5 : 0.2,
+      ambient: [light.baseLevel, 0, light.baseLevel],
+      vignette: round4(lerp(0.1, 0.18, random())),
     },
-    lens: { bloom: round4(soft(0.03, 0.07)), bloomLevels: [1, 0.6, 0.3, 0.15, 0, 0, 0, 0], halation: 0 },
+    lens: { bloom: round4(soft(0.04, 0.07)), bloomLevels: [1, 0.6, 0.3, 0.15, 0.1, 0.05, 0, 0], halation: 0 },
     output: { grain: 0 },
   }
 }
@@ -379,6 +380,7 @@ export const contourBeam: RecipeDefinition = {
     { kind: 'vector', key: 'gloss', label: 'Gloss', min: 0, max: 4, step: 0.005, default: [1, 0.1] },
     { kind: 'vector', key: 'texture', label: 'Floor texture', min: 0, max: 0.3, step: 0.0005, default: [0.04, 0.004] },
     { kind: 'vector', key: 'pale', label: 'Pale', min: 0, max: 2, step: 0.005, default: [0, 0.1, 0.6] },
+    { kind: 'number', key: 'paleWhite', label: 'Pale toward white', min: 0, max: 1, step: 0.005, default: 0 },
     { kind: 'vector', key: 'ambient', label: 'Ambient', min: 0, max: 4, step: 0.005, default: [1, 0.3, 1] },
     { kind: 'number', key: 'vignette', label: 'Vignette', min: 0, max: 1, step: 0.005, default: 0.1 },
   ],
@@ -407,6 +409,8 @@ export const contourBeam: RecipeDefinition = {
       uLanes: ctx.vec('lanes'),
       uFloorLook: [...ctx.vec('gloss'), ...ctx.vec('texture')],
       uPale: ctx.vec('pale'),
+      uPaleWhite: ctx.num('paleWhite'),
+      uPaleTarget: paleTarget(ctx.color('light')),
       uAmbient: ctx.vec('ambient'),
       uVignette: ctx.num('vignette'),
     }
