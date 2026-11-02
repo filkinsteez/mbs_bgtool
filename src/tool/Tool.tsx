@@ -12,7 +12,7 @@ import { exportPng } from './exportImage'
 import { panelAccessFor, usePanelAccess } from './panelAccess'
 import { Preview } from './Preview'
 import { EMPTY_SEED_HISTORY, recordShuffle, stepBack, stepForward, type SeedStep } from './seedHistory'
-import { fixLook, isMoodId, SEED_MAX, SEED_MIN, toQuery, type ToolState } from './state'
+import { fixLook, isMoodId, parseQuery, SEED_MAX, SEED_MIN, toQuery, type SearchParams } from './state'
 import { ToolPanel } from './ToolPanel'
 
 const EXPORT_LABEL = 'Export PNG'
@@ -40,8 +40,8 @@ const frameAspect = (format: ExportAspect) => EXPORT_SIZES[format].width / EXPOR
 const isTextField = (target: EventTarget | null) =>
   target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select') !== null)
 
-export function Tool({ initial }: { initial: ToolState }) {
-  const [start] = useState(initial)
+export function Tool({ searchParams }: { searchParams: SearchParams }) {
+  const [start] = useState(() => parseQuery(searchParams))
   const panelMood = useSyncExternalStore(subscribePanel, readPanelMood, readNoMood)
   const mood = isMoodId(panelMood) ? panelMood : start.mood
   const [exportStatus, setExportStatus] = useState<ExportStatus>('idle')

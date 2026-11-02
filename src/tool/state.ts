@@ -64,7 +64,10 @@ export function clampSeed(value: unknown, fallback: number): number {
   return Math.min(SEED_MAX, Math.max(SEED_MIN, Math.round(n)))
 }
 
-type QueryInput = URLSearchParams | Readonly<Record<string, string | string[] | undefined>>
+/** A page's search params as Next.js passes them to the page. */
+export type SearchParams = Readonly<Record<string, string | string[] | undefined>>
+
+type QueryInput = URLSearchParams | SearchParams
 
 function readParam(query: QueryInput, key: string): string | undefined {
   if (query instanceof URLSearchParams) return query.get(key) ?? undefined
