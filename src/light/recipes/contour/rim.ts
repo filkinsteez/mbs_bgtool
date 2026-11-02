@@ -71,6 +71,9 @@ const params: ParamSpec[] = [
     light2At: [-0.06, 0.04],
     light2Radius: 0.16,
   }),
+  { kind: 'number', key: 'facing', label: 'Edges facing the light get more of it', min: 0, max: 1, step: 0.01, default: 0 },
+  { kind: 'number', key: 'facingAngle', label: 'Light comes from (degrees)', min: -360, max: 360, step: 0.1, default: 0 },
+  { kind: 'number', key: 'facingPower', label: 'Facing falloff', min: 0.1, max: 8, step: 0.01, default: 1 },
   { kind: 'vector', key: 'maskShift', label: 'Inside edge shift', min: -2, max: 2, step: 0.0005, default: [0, 0] },
   { kind: 'number', key: 'maskGrow', label: 'Inside edge grow', min: -1, max: 1, step: 0.0001, default: 0 },
   { kind: 'number', key: 'base', label: 'Base color slot (0 black)', min: 0, max: COLORS, step: 1, default: 0 },
@@ -213,11 +216,17 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   const shape = buildShape(layout.shape)
   const [fw, fh] = frameSize(aspect)
   const path = visiblePath(shape, layout.anchor, aspect)
-  const hot = pointAlong(path, lerp(0.06, 0.94, controls.mood)) ?? layout.anchor
+  // The Light control runs the hot spot from where the curve leaves the frame (0) to its middle (1).
+  const fromStart = rand() < 0.5
+  const along = fromStart ? lerp(0, 0.5, controls.mood) : lerp(1, 0.5, controls.mood)
+  const hot = pointAlong(path, along) ?? layout.anchor
   const at: Vec2 = [hot[0] - layout.anchor[0], hot[1] - layout.anchor[1]]
   const gain = geo(controls.intensity, 0.35, 1, 2.8)
   const soften = geo(controls.softness, 0.55, 1, 1.9)
-  const reach = lerp(0.1, 0.22, rand()) * Math.max(fw, fh)
+  const reach = lerp(0.08, 0.16, rand()) * Math.max(fw, fh)
+  const toward = (Math.atan2(at[1], at[0]) * 180) / Math.PI
+  const line = layout.shape.kind === 'line'
+  const logo = layout.shape.kind === 'logo'
   const params: Record<string, ParamValue> = {
     shape: SHAPE_KINDS.indexOf(layout.shape.kind) + 1,
     at: toFrame(layout.anchor, aspect).map(round4),
@@ -228,12 +237,23 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     flip: layout.shape.flip,
     stops: 1,
     stopColor: [2, 2, 2],
-    ...productionParts('', { hex: light.hex, side: layout.oneSided ? 1 : 0, soften, face: layout.oneSided ? 0.012 : 0 }),
+    ...productionParts('', {
+      hex: light.hex,
+      side: layout.oneSided ? 1 : 0,
+      soften,
+      face: layout.oneSided ? 0.012 : 0,
+      glow: line ? 0.006 : 0.005,
+      fan: line ? 4 : 1.8,
+      spread: line ? 0.003 : 0,
+    }),
+    facing: logo ? 0.85 : 0,
+    facingAngle: round4(toward),
+    facingPower: 1.5,
     farWidth: 0.01,
-    light1Kind: 2,
+    light1Kind: 3,
     light1At: at.map(round4),
-    light1Radius: 0.04,
-    light1Length: round4(reach),
+    light1Radius: round4(reach),
+    light1Power: round4(lerp(1.4, 2.2, rand())),
     light2Kind: 1,
     light2At: at.map(round4),
     light2Radius: round4(lerp(0.06, 0.12, rand())),
@@ -307,6 +327,7 @@ vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 b0, vec3 b1, vec3 b2, vec3 b3) { 
           far: [1, 2, 3].map((i) => readFar(ctx, `f${i}`, soften, gain)),
           maskShift: ctx.vec('maskShift'),
           maskGrow: ctx.num('maskGrow'),
+          facing: { strength: ctx.num('facing'), angle: ctx.num('facingAngle'), power: ctx.num('facingPower') },
         },
       ],
       readLights(ctx),

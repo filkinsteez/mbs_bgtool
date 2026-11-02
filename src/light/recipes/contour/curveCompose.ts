@@ -128,6 +128,15 @@ export interface ProductionLight {
   soften: number
   /** Light scattered deep into the face (inside only). */
   face: number
+  /** Glow width (near part 2) and haze width (far part 1), short-side units. */
+  glow?: number
+  haze?: number
+  /** Extra width the glow gains where the light is strongest (it fans out there). */
+  fan?: number
+  /** Colors split across the line: red and blue glow offset to opposite sides by this much. */
+  spread?: number
+  /** Light on the other side of the edge, as a far part (replaces the face). */
+  outer?: number
 }
 
 /**
@@ -141,6 +150,7 @@ export interface ProductionLight {
  */
 export function productionParts(prefix: string, light: ProductionLight): Record<string, number | number[]> {
   const widths = hueWidths(light.hex, 0.35).map(round4)
+  const spread = light.spread ?? 0
   const parts: Record<string, number | number[]> = {
     n1Weight: 1.1,
     n1Width: round6(0.0014 / light.soften ** 0.7),
@@ -149,32 +159,37 @@ export function productionParts(prefix: string, light: ProductionLight): Record<
     n1Light: 1,
     n1LightGamma: 1,
     n2Weight: 0.55,
-    n2Width: 0.005,
+    n2Width: round6(light.glow ?? 0.005),
     n2Shape: 3,
     n2Side: light.side,
     n2Light: 1,
-    n2LightGamma: 1.3,
+    n2LightGamma: 1.2,
     n2ChWidth: widths,
+    n2ChOffset: [round6(spread), 0, round6(-spread)],
     n2Grow: 2,
-    n2GrowBy: [1.8, 2],
-    n3Weight: 4.5,
+    n2GrowBy: [round4(light.fan ?? 1.8), 2],
+    n3Weight: 6,
     n3Width: round6(0.0035 / light.soften ** 0.5),
     n3Shape: 4,
     n3Side: 0,
     n3Light: 2,
     n3LightGamma: 2,
     f1Weight: 0.18,
-    f1Width: 0.024,
+    f1Width: round6(light.haze ?? 0.024),
     f1Side: light.side,
     f1Light: 1,
-    f1LightGamma: 1.2,
+    f1LightGamma: 1,
     f1ChWidth: widths,
-    f2Weight: 0.04,
+    f2Weight: 0.05,
     f2Width: 0.035,
     f2Side: 0,
     f2Light: 2,
     f2LightGamma: 1,
   }
-  Object.assign(parts, { f3Weight: round4(light.face), f3Width: 0.18, f3Side: 1, f3Light: 2, f3LightGamma: 0.6 })
+  if (light.outer !== undefined) {
+    Object.assign(parts, { f3Weight: round4(light.outer), f3Width: 0.07, f3Side: light.side === 1 ? 2 : 1, f3Light: 1, f3LightGamma: 1.5 })
+  } else {
+    Object.assign(parts, { f3Weight: round4(light.face), f3Width: 0.18, f3Side: 1, f3Light: 2, f3LightGamma: 0.6 })
+  }
   return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
 }

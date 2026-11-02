@@ -55,6 +55,9 @@ function ringParams(i: number): ParamSpec[] {
     { kind: 'number', key: `ring${i}Gain`, label: `Ring ${i} gain`, min: 0, max: 20, step: 0.001, default: 1 },
     { kind: 'vector', key: `ring${i}MaskShift`, label: `Ring ${i} inside edge shift`, min: -2, max: 2, step: 0.0005, default: [0, 0] },
     { kind: 'number', key: `ring${i}MaskGrow`, label: `Ring ${i} inside edge grow`, min: -2, max: 2, step: 0.0001, default: 0 },
+    { kind: 'number', key: `ring${i}Facing`, label: `Ring ${i} edges facing the light get more of it`, min: 0, max: 1, step: 0.01, default: 0 },
+    { kind: 'number', key: `ring${i}FacingAngle`, label: `Ring ${i} light comes from (degrees)`, min: -360, max: 360, step: 0.1, default: 0 },
+    { kind: 'number', key: `ring${i}FacingPower`, label: `Ring ${i} facing falloff`, min: 0.1, max: 8, step: 0.01, default: 1 },
     ...near.flatMap((defaults, k) => nearParams(`ring${i}n${k + 1}`, `Ring ${i} near part ${k + 1}`, defaults)),
     ...far.flatMap((defaults, k) => farParams(`ring${i}f${k + 1}`, `Ring ${i} far part ${k + 1}`, defaults)),
   ]
@@ -96,12 +99,15 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   radius = Math.max(radius, edge + 0.1 - gap)
   const center: Vec2 = [unit[0] * (radius + gap), unit[1] * (radius + gap)]
   const path = visiblePath(ring(radius), center, aspect)
-  const hot = pointAlong(path, lerp(0.06, 0.94, controls.mood)) ?? center
+  const fromStart = rand() < 0.5
+  const along = fromStart ? lerp(0, 0.5, controls.mood) : lerp(1, 0.5, controls.mood)
+  const hot = pointAlong(path, along) ?? center
   const at: Vec2 = [hot[0] - center[0], hot[1] - center[1]]
   const gain = geo(controls.intensity, 0.35, 1, 2.8)
   const soften = geo(controls.softness, 0.55, 1, 1.9)
-  const reach = lerp(0.12, 0.26, rand()) * Math.max(fw, fh)
+  const reach = lerp(0.1, 0.2, rand()) * Math.max(fw, fh)
   const side = inward ? 1 : 2
+  const toward = (Math.atan2(at[1], at[0]) * 180) / Math.PI
   const params: Record<string, ParamValue> = {
     ring1On: true,
     ring1At: toFrame(center, aspect).map(round4),
@@ -110,14 +116,17 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     ring1Sweep: 360,
     ring1Color: 2,
     ring1Gain: 1,
-    ...productionParts('ring1', { hex: light.hex, side, soften, face: 0 }),
+    ...productionParts('ring1', { hex: light.hex, side, soften, face: 0, glow: 0.012, haze: 0.06, outer: 0.05 }),
+    ring1Facing: 0.7,
+    ring1FacingAngle: round4(toward),
+    ring1FacingPower: 1.5,
     ring2On: false,
     ring3On: false,
     farWidth: 0.012,
-    light1Kind: 2,
+    light1Kind: 3,
     light1At: at.map(round4),
-    light1Radius: 0.04,
-    light1Length: round4(reach),
+    light1Radius: round4(reach),
+    light1Power: round4(lerp(1.4, 2.2, rand())),
     light2Kind: 1,
     light2At: at.map(round4),
     light2Radius: round4(lerp(0.06, 0.14, rand())),
@@ -182,6 +191,7 @@ vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 b0, vec3 b1, vec3 b2, vec3 b3) { 
         far: Array.from({ length: FAR }, (_, k) => readFar(ctx, `ring${i}f${k + 1}`, soften, gain)),
         maskShift: ctx.vec(`ring${i}MaskShift`),
         maskGrow: ctx.num(`ring${i}MaskGrow`),
+        facing: { strength: ctx.num(`ring${i}Facing`), angle: ctx.num(`ring${i}FacingAngle`), power: ctx.num(`ring${i}FacingPower`) },
       }
     })
     const base = slotColor(ctx, ctx.num('base')).map((v) => v * ctx.num('baseGain'))

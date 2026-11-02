@@ -399,6 +399,8 @@ vec3 clLine(int e, vec2 q, float sigma, bool ownColor) {
   int count = int(uClEmit[e * ${EMIT_VEC4}].z + 0.5);
   vec3 s2p = vec3(16.0 * sigma * sigma);
   float cut = 7.5 * sigma;
+  // One channel per emitter: emission relative to the emitter's own color, so facing and stops still show.
+  float ownLight = max(luminance(uClEmit[e * ${EMIT_VEC4} + 2].rgb), 1e-6);
   vec3 acc = vec3(0.0);
   for (int chunk = 0; chunk < CL_CHUNKS; chunk++) {
     if (chunk * ${CHUNK} >= count) break;
@@ -413,19 +415,21 @@ vec3 clLine(int e, vec2 q, float sigma, bool ownColor) {
     int kind = int(m.x + 0.5);
     if (kind == 3) continue;
     vec2 rel = q - g.xy;
-    vec3 em = ownColor ? vec3(1.0) : uClPrim[base + 2].rgb;
+    vec3 em;
     if (kind == 1) {
       float l = max(m.w, 1e-9);
       vec2 d = (g.zw - g.xy) / l;
       float u = dot(rel, d);
       if (length(rel - d * clamp(u, 0.0, l)) > cut) continue;
-      if (!ownColor) em = mix(em, uClPrim[base + 3].rgb, clamp(u / l, 0.0, 1.0));
+      em = mix(uClPrim[base + 2].rgb, uClPrim[base + 3].rgb, clamp(u / l, 0.0, 1.0));
+      if (ownColor) em = vec3(luminance(em) / ownLight);
       acc += em * clSegment(u, d.x * rel.y - d.y * rel.x, l, vec3(0.0), s2p, 8);
     } else {
       float r = length(rel);
       if (abs(r - g.z) > cut) continue;
       float psiM = clWrap(g.w + 0.5 * m.y - atan(rel.y, rel.x));
-      if (!ownColor) em = mix(em, uClPrim[base + 3].rgb, clamp(0.5 - psiM * sign(m.y) / max(abs(m.y), 1e-6), 0.0, 1.0));
+      em = mix(uClPrim[base + 2].rgb, uClPrim[base + 3].rgb, clamp(0.5 - psiM * sign(m.y) / max(abs(m.y), 1e-6), 0.0, 1.0));
+      if (ownColor) em = vec3(luminance(em) / ownLight);
       acc += em * clArc(r, psiM, 0.5 * abs(m.y), vec3(g.z), s2p, 8, ${literal(kernelLineConstant(8))});
     }
   }
@@ -560,6 +564,14 @@ export interface FarSettings {
   maskSoft: number
 }
 
+/** Edges catch more light where they face it: emission times mix(1, max(0, outward normal . light direction)^power, strength). */
+export interface FacingSettings {
+  strength: number
+  /** Direction the light comes from, degrees (atan2 convention, y down). */
+  angle: number
+  power: number
+}
+
 export interface EmitterSettings {
   shape: Shape | null
   /** Frame position (0..1) of the shape's origin. */
@@ -569,6 +581,7 @@ export interface EmitterSettings {
   far: readonly FarSettings[]
   maskShift: readonly number[]
   maskGrow: number
+  facing?: FacingSettings
 }
 
 export interface LightSettings {
@@ -661,7 +674,17 @@ function filledSide(contour: Contour, maskPrimitives: readonly Primitive[]): num
   return signedArea(contour) === 0 ? 1 : -1
 }
 
-function packShape(shape: Shape, stops: readonly EmissionStop[], capacity: number): PackedPrimitive[] {
+function facingAt(p: Primitive, f: number, inside: number, facing: FacingSettings | undefined): number {
+  if (!facing || facing.strength <= 0) return 1
+  const t = primitiveTangent(p, f)
+  // The inside is on the left when inside = 1; the outward normal points the other way.
+  const outward: Vec2 = [t[1] * inside, -t[0] * inside]
+  const a = (facing.angle * Math.PI) / 180
+  const lit = Math.max(0, outward[0] * Math.cos(a) + outward[1] * Math.sin(a)) ** Math.max(0.1, facing.power)
+  return 1 + (lit - 1) * Math.min(1, facing.strength)
+}
+
+function packShape(shape: Shape, stops: readonly EmissionStop[], capacity: number, facing?: FacingSettings): PackedPrimitive[] {
   const split = splitArcs(shape, ARC_PIECE)
   const out: PackedPrimitive[] = []
   const stopTimes = stops.map((s) => s.t).filter((t) => t > 0 && t < 1)
@@ -683,7 +706,15 @@ function packShape(shape: Shape, stops: readonly EmissionStop[], capacity: numbe
         const a = t0 + (t1 - t0) * f
         f += l > 0 ? pl / l : 1
         const b = t0 + (t1 - t0) * f
-        out.push({ primitive: piece, kind: piece.kind === 'segment' ? 1 : 2, inside, e0: stopAt(stops, a), e1: stopAt(stops, b) })
+        const f0 = facingAt(piece, 0, inside, facing)
+        const f1 = facingAt(piece, 1, inside, facing)
+        out.push({
+          primitive: piece,
+          kind: piece.kind === 'segment' ? 1 : 2,
+          inside,
+          e0: stopAt(stops, a).map((v) => v * f0),
+          e1: stopAt(stops, b).map((v) => v * f1),
+        })
       }
       at += l
     }
@@ -752,7 +783,7 @@ export function curveLightUniforms(
   for (let e = 0; e < layout.emitters; e++) {
     const settings = emitters[e]
     if (!settings || !settings.shape) continue
-    const packed = packShape(settings.shape, settings.stops, layout.primitives)
+    const packed = packShape(settings.shape, settings.stops, layout.primitives, settings.facing)
     packed.forEach((entry, i) => {
       const o = (e * layout.primitives + i) * PRIM_VEC4 * 4
       const p = entry.primitive
