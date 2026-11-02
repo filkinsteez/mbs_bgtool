@@ -435,21 +435,41 @@ try {
       await composeRow(path.join(outDir, `grain-strength-${grain}.png`), panels)
     }
 
-    // The grain filter alone: a flat field of each riso crop's mean color at strength 1, next to the target crop.
+    // Per-pixel grain weight from the recipe, on the direct path and through a post pass: right half at weight 0.25.
+    const fine = (image) => highpassStd(oklabLightness(image, linearToOklab), image.width, image.height, 3)
+    const halves = []
+    for (const program of ['test.grainweight', 'test.grainweight.post']) {
+      const image = await harness.render({ scene: { program, lens: noLens, output: { grain: 0.5 } }, width: 1920, height: 1080, dither: false })
+      const left = fine(await cropRgba(image, 240, 300, 480, 480))
+      const right = fine(await cropRgba(image, 1200, 300, 480, 480))
+      halves.push({ program, left, right })
+    }
+    record(
+      'grain: a recipe weight of 0.25 gives a quarter of the grain, also through post passes',
+      halves.every(({ left, right }) => Math.abs(right / left - 0.25) < 0.04),
+      halves.map(({ program, left, right }) => `${program}: fine L std ${(left * 100).toFixed(2)} % at weight 1, ${(right * 100).toFixed(2)} % at 0.25`).join('; '),
+    )
+
+    // Riso crops: a flat field of each crop's mean color at strength 1, weighted the way a riso recipe can weight its
+    // ink: by how much the ink darkens the paper, saturate((L paper - L ink) / 0.5) with paper at L 0.95.
     const { references } = await loadReferences(harness)
     const riso = references.filter((ref) => ref.id.endsWith('-riso'))
     const rows = []
+    let within = 0
     for (const ref of riso) {
       const target = await loadRgba(ref.file)
       const crop = darkestWindow(target, 160, ref.ignore)
       const targetCrop = await cropRgba(target, crop.left, crop.top, 160, 160)
-      const mean = [0, 1, 2].map((k) => {
+      const meanLinear = [0, 1, 2].map((k) => {
         let sum = 0
-        for (let i = k; i < targetCrop.data.length; i += 4) sum += hexToLinear(`#${targetCrop.data[i].toString(16).padStart(2, '0').repeat(3)}`)[0]
-        return linearToSrgb(sum / (targetCrop.data.length / 4))
+        for (let i = k; i < targetCrop.data.length; i += 4) sum += SRGB_TO_LINEAR[targetCrop.data[i]]
+        return sum / (targetCrop.data.length / 4)
       })
+      const mean = meanLinear.map((v) => linearToSrgb(v))
       const hex = `#${mean.map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('')}`
-      const scene = { program: 'test.flat', colors: [hex], lens: noLens, output: { grain: 1 } }
+      const inkL = linearToOklab(meanLinear)[0]
+      const weight = Math.min(1, Math.max(0, (0.95 - inkL) / 0.5))
+      const scene = { program: 'test.grainweight', colors: [hex], params: { left: weight, right: weight }, lens: noLens, output: { grain: 1 } }
       const render = await harness.render({ scene, width: ref.width, height: ref.height })
       const scale = 3840 / Math.max(ref.width, ref.height)
       const size = Math.round(160 * scale)
@@ -457,15 +477,18 @@ try {
       const bigCrop = await cropRgba(big, Math.round(crop.left * scale), Math.round(crop.top * scale), size, size)
       await composeRow(path.join(outDir, `grain-${ref.id}.png`), [
         { image: await zoom(targetCrop, 3), caption: `${ref.id} 1:1, shown 3x` },
-        { image: await zoom(await cropRgba(render, crop.left, crop.top, 160, 160), 3), caption: `grain 1 on ${hex} at ${ref.width} px, 3x` },
+        { image: await zoom(await cropRgba(render, crop.left, crop.top, 160, 160), 3), caption: `grain 1, weight ${weight.toFixed(2)}, on ${hex} at ${ref.width} px, 3x` },
         { image: await resizeRgba(targetCrop, size, size, 'lanczos3'), caption: 'target enlarged to 4K' },
-        { image: bigCrop, caption: `grain 1 at ${big.width}x${big.height}, 1:1` },
+        { image: bigCrop, caption: `the same at ${big.width}x${big.height}, 1:1` },
       ])
       const renderCrop = await cropRgba(render, crop.left, crop.top, 160, 160)
-      const fine = (image) => (highpassStd(oklabLightness(image, linearToOklab), image.width, image.height, 3) * 100).toFixed(2)
-      rows.push(`${ref.id} on ${hex}: fine Oklab L std target ${fine(targetCrop)} %, render ${fine(renderCrop)} %`)
+      const targetStd = fine(targetCrop)
+      const renderStd = fine(renderCrop)
+      if (Math.abs(renderStd / targetStd - 1) <= 0.2) within++
+      rows.push(`${ref.id} (ink L ${inkL.toFixed(2)}, weight ${weight.toFixed(2)}): fine Oklab L std target ${(targetStd * 100).toFixed(2)} %, render ${(renderStd * 100).toFixed(2)} % (${(((renderStd / targetStd) - 1) * 100).toFixed(0)} %)`)
     }
-    record('grain images written', true, `grain-strength-0.5.png, grain-strength-1.png; ${riso.map((ref) => `grain-${ref.id}.png`).join(', ')}; ${rows.join('; ')}`)
+    record('grain: riso crops within 20 % of their prints with an ink weight', within === riso.length, rows.join('; '))
+    record('grain images written', true, `grain-strength-0.5.png, grain-strength-1.png; ${riso.map((ref) => `grain-${ref.id}.png`).join(', ')}`)
   }
 
   if (wanted('context')) {

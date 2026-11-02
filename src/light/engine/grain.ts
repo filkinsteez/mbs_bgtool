@@ -137,10 +137,10 @@ float grainAmplitude(float L) {
   return uGrainAmp * shadow * highlight * ink;
 }
 
-// Display-linear in, display-linear out: grain moves Oklab L only.
-vec3 applyGrain(vec3 display, ivec2 px) {
+// Display-linear in, display-linear out: grain moves Oklab L only, scaled by the recipe's 0..1 weight at this pixel.
+vec3 applyGrain(vec3 display, ivec2 px, float weight) {
   vec3 lab = linearToOklab(display);
-  lab.x += grainAmplitude(lab.x) * grainField(px);
+  lab.x += grainAmplitude(lab.x) * weight * grainField(px);
   return saturate(oklabToLinear(lab));
 }
 `

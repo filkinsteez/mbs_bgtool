@@ -18,7 +18,7 @@ void main() {
   vec2 uv = gl_FragCoord.xy / size;
   vec2 texel = uDirection / size;
   int radius = int(ceil(3.0 * uSigma));
-  vec3 sum = texture(uSrc, uv).rgb;
+  vec4 sum = texture(uSrc, uv);
   float total = 1.0;
   for (int i = 1; i <= 96; i += 2) {
     if (i > radius) break;
@@ -26,10 +26,10 @@ void main() {
     float b = exp(-0.5 * float((i + 1) * (i + 1)) / (uSigma * uSigma));
     float w = a + b;
     float offset = (float(i) * a + float(i + 1) * b) / w;
-    sum += w * (texture(uSrc, uv + texel * offset).rgb + texture(uSrc, uv - texel * offset).rgb);
+    sum += w * (texture(uSrc, uv + texel * offset) + texture(uSrc, uv - texel * offset));
     total += 2.0 * w;
   }
-  fragColor = vec4(sum / total, 1.0);
+  fragColor = sum / total;
 }
 `
 
@@ -42,9 +42,9 @@ out vec4 fragColor;
 // 16 taps centered on the pixel, uStep apart (uv units). Two passes with steps L/256 and L/16 give 256 even taps.
 void main() {
   vec2 uv = gl_FragCoord.xy / vec2(textureSize(uSrc, 0));
-  vec3 sum = vec3(0.0);
-  for (int k = 0; k < 16; k++) sum += texture(uSrc, uv + uStep * (float(k) - 7.5)).rgb;
-  fragColor = vec4(sum / 16.0, 1.0);
+  vec4 sum = vec4(0.0);
+  for (int k = 0; k < 16; k++) sum += texture(uSrc, uv + uStep * (float(k) - 7.5));
+  fragColor = sum / 16.0;
 }
 `
 
@@ -58,9 +58,9 @@ out vec4 fragColor;
 // 16 taps toward uCenter at scales exp(-k * uLogStep). Two passes give 256 taps evenly spaced in log scale.
 void main() {
   vec2 uv = gl_FragCoord.xy / vec2(textureSize(uSrc, 0));
-  vec3 sum = vec3(0.0);
-  for (int k = 0; k < 16; k++) sum += texture(uSrc, uCenter + (uv - uCenter) * exp(-float(k) * uLogStep)).rgb;
-  fragColor = vec4(sum / 16.0, 1.0);
+  vec4 sum = vec4(0.0);
+  for (int k = 0; k < 16; k++) sum += texture(uSrc, uCenter + (uv - uCenter) * exp(-float(k) * uLogStep));
+  fragColor = sum / 16.0;
 }
 `
 
@@ -73,9 +73,9 @@ out vec4 fragColor;
 void main() {
   vec2 uv = gl_FragCoord.xy / uDstSize;
   vec2 t = 0.5 / vec2(textureSize(uSrc, 0));
-  vec3 sum = texture(uSrc, uv + vec2(-t.x, -t.y)).rgb + texture(uSrc, uv + vec2(t.x, -t.y)).rgb
-           + texture(uSrc, uv + vec2(-t.x, t.y)).rgb + texture(uSrc, uv + vec2(t.x, t.y)).rgb;
-  fragColor = vec4(sum * 0.25, 1.0);
+  vec4 sum = texture(uSrc, uv + vec2(-t.x, -t.y)) + texture(uSrc, uv + vec2(t.x, -t.y))
+           + texture(uSrc, uv + vec2(-t.x, t.y)) + texture(uSrc, uv + vec2(t.x, t.y));
+  fragColor = sum * 0.25;
 }
 `
 
@@ -90,15 +90,15 @@ out vec4 fragColor;
 void main() {
   vec2 corner = gl_FragCoord.xy - 0.5;
   float inv = 1.0 / float(uTaps);
-  vec3 sum = vec3(0.0);
+  vec4 sum = vec4(0.0);
   for (int j = 0; j < 8; j++) {
     if (j >= uTaps) break;
     for (int i = 0; i < 8; i++) {
       if (i >= uTaps) break;
-      sum += texture(uSrc, (corner + (vec2(float(i), float(j)) + 0.5) * inv) / uDstSize).rgb;
+      sum += texture(uSrc, (corner + (vec2(float(i), float(j)) + 0.5) * inv) / uDstSize);
     }
   }
-  fragColor = vec4(sum * inv * inv, 1.0);
+  fragColor = sum * inv * inv;
 }
 `
 
@@ -111,7 +111,7 @@ uniform sampler2D uSrc;
 uniform vec2 uDstSize;
 out vec4 fragColor;
 void main() {
-  fragColor = vec4(sampleSmooth(uSrc, gl_FragCoord.xy / uDstSize), 1.0);
+  fragColor = sampleSmooth4(uSrc, gl_FragCoord.xy / uDstSize);
 }
 `
 

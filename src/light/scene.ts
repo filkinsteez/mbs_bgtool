@@ -248,6 +248,13 @@ export interface RecipeProgram {
    * the rest of the pipeline sees.
    */
   scatter?: readonly ScatterBlur[]
+  /**
+   * Set when the fragment defines `float grainWeight(vec2 uv, vec2 p)`, a
+   * 0..1 multiplier on the grain at each point (for example riso ink: strong
+   * in dense dark ink, weak in thin ink and on paper). Without it every pixel
+   * gets weight 1.
+   */
+  grainWeight?: boolean
   post?: readonly PostPass[]
   lens?: Partial<LensSettings>
   output?: Partial<OutputSettings>

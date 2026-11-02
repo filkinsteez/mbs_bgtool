@@ -15,9 +15,10 @@ uniform float uExposureScale; // 2^exposure
 `
 
 // Averages uSubsamples^2 samples of SAMPLE(uv, p) per pixel. Used for the lens base, the post-pass input and scatter
-// sources. Output 1 (drawn only into the lens base) is each channel's own exposed light above nominal, which feeds
-// halation; it is taken per sample so thin bright lines count before they are averaged away.
-function subsampledMain(sample: string, clampNegative: boolean): string {
+// sources. Alpha is the mean grain weight in radiance mode. Output 1 (drawn only into the lens base) is each
+// channel's own exposed light above nominal, which feeds halation; it is taken per sample so thin bright lines count
+// before they are averaged away.
+function subsampledMain(sample: string, clampNegative: boolean, weighted: boolean): string {
   return /* glsl */ `
 layout(location = 0) out vec4 fragColor;
 layout(location = 1) out vec4 hotColor;
@@ -26,31 +27,35 @@ void main() {
   float inv = 1.0 / float(uSubsamples);
   vec3 sum = vec3(0.0);
   vec3 hot = vec3(0.0);
+  float weight = 0.0;
   for (int j = 0; j < 4; j++) {
     if (j >= uSubsamples) break;
     for (int i = 0; i < 4; i++) {
       if (i >= uSubsamples) break;
       vec2 uv = (corner + (vec2(float(i), float(j)) + 0.5) * inv) / uRenderSize;
-      vec3 c = ${sample}(uv, (uv - 0.5) * uFrameAspect);
+      vec2 p = (uv - 0.5) * uFrameAspect;
+      vec3 c = ${sample}(uv, p);
       if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0);
       ${clampNegative ? 'c = max(c, vec3(0.0));' : ''}
       sum += c;
       vec3 exposed = max(c, vec3(0.0)) * uExposureScale;
       hot += exposed * smoothstep(vec3(uHalationStart), vec3(2.0 * uHalationStart), exposed);
+      weight += ${weighted ? 'sceneGrainWeight(uv, p)' : '1.0'};
     }
   }
-  fragColor = vec4(sum * inv * inv, 1.0);
+  fragColor = vec4(sum * inv * inv, weight * inv * inv);
   hotColor = vec4(hot * inv * inv, 1.0);
 }
 `
 }
 
-// Composite mode: one sample per pixel at render resolution, then lens, exposure and tone curve.
+// Composite mode: one sample per pixel at render resolution, then lens, exposure and tone curve. Alpha is the grain weight.
 const COMPOSITE_MAIN = /* glsl */ `
 out vec4 fragColor;
 void main() {
   vec2 uv = (gl_FragCoord.xy + uTileOrigin) / uRenderSize;
-  fragColor = vec4(lensAndTone(sceneRadiance(uv, (uv - 0.5) * uFrameAspect), uv), 1.0);
+  vec2 p = (uv - 0.5) * uFrameAspect;
+  fragColor = vec4(lensAndTone(sceneRadiance(uv, p), uv), sceneGrainWeight(uv, p));
 }
 `
 
@@ -63,24 +68,30 @@ function sceneRadianceGlsl(program: Pick<RecipeProgram, 'scatter'>): string {
   return `${samplers}\nvec3 sceneRadiance(vec2 uv, vec2 p) { return combine(uv, p, radiance(uv, p), ${args}); }\n`
 }
 
+function grainWeightGlsl(program: Pick<RecipeProgram, 'grainWeight'>): string {
+  return program.grainWeight
+    ? `float sceneGrainWeight(vec2 uv, vec2 p) { return saturate(grainWeight(uv, p)); }\n`
+    : `float sceneGrainWeight(vec2 uv, vec2 p) { return 1.0; }\n`
+}
+
 /**
- * - radiance: the scene radiance (after `combine`), subsampled; for the lens base and post passes.
- * - composite: scene radiance at render resolution, then lens and tone curve.
+ * - radiance: the scene radiance (after `combine`), subsampled, grain weight in alpha; for the lens base and post passes.
+ * - composite: scene radiance at render resolution, then lens and tone curve; grain weight in alpha.
  * - source / aux: the recipe's raw `radiance` / `auxRadiance`, subsampled; the inputs of scatter blurs.
  */
 export type RecipeShaderMode = 'radiance' | 'composite' | 'source' | 'aux'
 
-export function buildRecipeShader(program: Pick<RecipeProgram, 'fragment' | 'scatter'>, mode: RecipeShaderMode): string {
+export function buildRecipeShader(program: Pick<RecipeProgram, 'fragment' | 'scatter' | 'grainWeight'>, mode: RecipeShaderMode): string {
   const head = GLSL_HEADER + ENGINE_UNIFORMS + CHUNK_LIBRARY
   switch (mode) {
     case 'radiance':
-      return head + program.fragment + sceneRadianceGlsl(program) + subsampledMain('sceneRadiance', true)
+      return head + program.fragment + sceneRadianceGlsl(program) + grainWeightGlsl(program) + subsampledMain('sceneRadiance', true, true)
     case 'composite':
-      return head + LENS_COMPOSITE_GLSL + program.fragment + sceneRadianceGlsl(program) + COMPOSITE_MAIN
+      return head + LENS_COMPOSITE_GLSL + program.fragment + sceneRadianceGlsl(program) + grainWeightGlsl(program) + COMPOSITE_MAIN
     case 'source':
-      return head + program.fragment + subsampledMain('radiance', true)
+      return head + program.fragment + subsampledMain('radiance', true, false)
     case 'aux':
-      return head + program.fragment + subsampledMain('auxRadiance', false)
+      return head + program.fragment + subsampledMain('auxRadiance', false, false)
     default: {
       const unknown: never = mode
       throw new Error(`Unknown shader mode: ${String(unknown)}`)

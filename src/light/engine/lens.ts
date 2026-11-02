@@ -229,7 +229,8 @@ uniform vec2 uTileOrigin;
 out vec4 fragColor;
 void main() {
   vec2 uv = (gl_FragCoord.xy + uTileOrigin) / uRenderSize;
-  fragColor = vec4(lensAndTone(sampleSmooth(uRadianceTex, uv), uv), 1.0);
+  vec4 scene = sampleSmooth4(uRadianceTex, uv);
+  fragColor = vec4(lensAndTone(scene.rgb, uv), scene.a);
 }
 `
 

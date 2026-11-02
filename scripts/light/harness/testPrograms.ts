@@ -276,6 +276,32 @@ vec3 radiance(vec2 uv, vec2 p) {
   uniforms: (ctx) => ({ uGains: [ctx.num('blue'), ctx.num('white'), ctx.num('orange')], uBackground: ctx.num('background'), uGlow: ctx.num('glow') }),
 }
 
+/** A flat field whose grain weight is `left` on the left half of the frame and `right` on the right half. */
+export const grainWeightProgram: RecipeProgram = {
+  id: 'test.grainweight',
+  colorSlots: [{ key: 'color', label: 'Color' }],
+  defaultColors: ['#555555'],
+  params: [
+    { kind: 'number', key: 'left', label: 'Left weight', min: 0, max: 1, step: 0.01, default: 1 },
+    { kind: 'number', key: 'right', label: 'Right weight', min: 0, max: 1, step: 0.01, default: 0.25 },
+  ],
+  fragment: /* glsl */ `
+uniform vec3 uColor;
+uniform vec2 uWeights;
+vec3 radiance(vec2 uv, vec2 p) { return uColor; }
+float grainWeight(vec2 uv, vec2 p) { return uv.x < 0.5 ? uWeights.x : uWeights.y; }
+`,
+  uniforms: (ctx) => ({ uColor: ctx.color('color'), uWeights: [ctx.num('left'), ctx.num('right')] }),
+  grainWeight: true,
+}
+
+/** The same through a post pass, so the weight has to survive the post-pass textures. */
+export const grainWeightPostProgram: RecipeProgram = {
+  ...grainWeightProgram,
+  id: 'test.grainweight.post',
+  post: [{ kind: 'gaussianBlur', settings: () => ({ radius: 0.002 }) }],
+}
+
 /** One small gaussian point at the frame center (sigma 0.001 of the short side), for measuring blur widths. */
 export const pointProgram: RecipeProgram = {
   id: 'test.point',
@@ -317,4 +343,6 @@ export const TEST_PROGRAMS: Record<string, RecipeProgram> = {
   [postProgram.id]: postProgram,
   [lensProgram.id]: lensProgram,
   [halationProgram.id]: halationProgram,
+  [grainWeightProgram.id]: grainWeightProgram,
+  [grainWeightPostProgram.id]: grainWeightPostProgram,
 }

@@ -91,14 +91,14 @@ void main() {
   float center = f * (float(px.x) + 0.5) + float(uApron);
   int first = int(ceil(center - 2.0 * f - 0.5));
   int last = int(floor(center + 2.0 * f - 0.5));
-  vec3 sum = vec3(0.0);
+  vec4 sum = vec4(0.0);
   float weights = 0.0;
   for (int i = first; i <= last; i++) {
     float w = mitchell((float(i) + 0.5 - center) / f);
-    sum += w * texelFetch(uSrc, ivec2(i, px.y), 0).rgb;
+    sum += w * texelFetch(uSrc, ivec2(i, px.y), 0);
     weights += w;
   }
-  fragColor = vec4(sum / weights, 1.0);
+  fragColor = sum / weights;
 }
 `
 
@@ -124,17 +124,18 @@ out vec4 fragColor;
   GRAIN_GLSL +
   /* glsl */ `
 
-vec3 resolveColumn(ivec2 local) {
-  if (uFactor == 1) return texelFetch(uSrc, local, 0).rgb;
+// Display-linear color in rgb, grain weight in alpha.
+vec4 resolveColumn(ivec2 local) {
+  if (uFactor == 1) return texelFetch(uSrc, local, 0);
   float f = float(uFactor);
   float center = f * (float(local.y) + 0.5) + float(uApron);
   int first = int(ceil(center - 2.0 * f - 0.5));
   int last = int(floor(center + 2.0 * f - 0.5));
-  vec3 sum = vec3(0.0);
+  vec4 sum = vec4(0.0);
   float weights = 0.0;
   for (int j = first; j <= last; j++) {
     float w = mitchell((float(j) + 0.5 - center) / f);
-    sum += w * texelFetch(uSrc, ivec2(local.x, j), 0).rgb;
+    sum += w * texelFetch(uSrc, ivec2(local.x, j), 0);
     weights += w;
   }
   return sum / weights;
@@ -154,9 +155,11 @@ vec3 dither(vec3 encoded, ivec2 px) {
 
 void main() {
   ivec2 px = ivec2(gl_FragCoord.xy);
-  vec3 display = saturate(resolveColumn(px - uTileOrigin));
+  vec4 resolved = resolveColumn(px - uTileOrigin);
+  vec3 display = saturate(resolved.rgb);
+  float weight = saturate(resolved.a);
   vec3 encoded = linearToSrgb(display);
-  if (uGrainAmp > 0.0) encoded = linearToSrgb(applyGrain(display, px));
+  if (uGrainAmp > 0.0 && weight > 0.0) encoded = linearToSrgb(applyGrain(display, px, weight));
   if (uDither) encoded = dither(saturate(encoded), px);
   fragColor = vec4(floor(saturate(encoded) * 255.0 + 0.5) / 255.0, 1.0);
 }

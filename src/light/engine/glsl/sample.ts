@@ -9,8 +9,8 @@ vec4 bsplineWeights(float v) {
   return vec4(x, y, z, w) * (1.0 / 6.0);
 }
 
-// Cubic B-spline filtered sample from four bilinear taps (smooth, no ringing).
-vec3 sampleSmooth(sampler2D tex, vec2 uv) {
+// Cubic B-spline filtered sample from four bilinear taps (smooth, no ringing), all four channels.
+vec4 sampleSmooth4(sampler2D tex, vec2 uv) {
   vec2 size = vec2(textureSize(tex, 0));
   vec2 st = uv * size - 0.5;
   vec2 fxy = fract(st);
@@ -20,12 +20,14 @@ vec3 sampleSmooth(sampler2D tex, vec2 uv) {
   vec4 c = st.xxyy + vec2(-0.5, 1.5).xyxy;
   vec4 s = vec4(xc.xz + xc.yw, yc.xz + yc.yw);
   vec4 offset = (c + vec4(xc.yw, yc.yw) / s) / size.xxyy;
-  vec3 s0 = texture(tex, offset.xz).rgb;
-  vec3 s1 = texture(tex, offset.yz).rgb;
-  vec3 s2 = texture(tex, offset.xw).rgb;
-  vec3 s3 = texture(tex, offset.yw).rgb;
+  vec4 s0 = texture(tex, offset.xz);
+  vec4 s1 = texture(tex, offset.yz);
+  vec4 s2 = texture(tex, offset.xw);
+  vec4 s3 = texture(tex, offset.yw);
   float sx = s.x / (s.x + s.y);
   float sy = s.z / (s.z + s.w);
   return mix(mix(s3, s2, sx), mix(s1, s0, sx), sy);
 }
+
+vec3 sampleSmooth(sampler2D tex, vec2 uv) { return sampleSmooth4(tex, uv).rgb; }
 `
