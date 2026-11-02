@@ -107,6 +107,14 @@ export interface OutputSettings {
    * those keys are ignored.
    */
   grain: number
+  /**
+   * Paper toe 0..1 below nominal: dim light gets purer, so dim warm light
+   * reads amber and red instead of olive and brown, and dim blue reads navy.
+   * Light at and above nominal is unchanged, and slot colors (ctx.colors) are
+   * pre-inverted so that flat pack colors still print their exact hex.
+   * Colors a recipe converts from ctx.hex itself are not. 0 is off.
+   */
+  toe: number
 }
 
 export const DEFAULT_LENS: LensSettings = {
@@ -124,6 +132,7 @@ export const DEFAULT_LENS: LensSettings = {
 export const DEFAULT_OUTPUT: OutputSettings = {
   exposure: 0,
   grain: 0,
+  toe: 0,
 }
 
 type NumericKeys<T> = { [K in keyof T]-?: T[K] extends number ? K : never }[keyof T]
@@ -155,6 +164,7 @@ export const LENS_COLORS: readonly { key: StringKeys<LensSettings>; label: strin
 export const OUTPUT_NUMBERS: readonly NumericSetting<NumericKeys<OutputSettings>>[] = [
   { key: 'exposure', label: 'Exposure', min: -4, max: 4, step: 0.01 },
   { key: 'grain', label: 'Grain', min: 0, max: 1, step: 0.01 },
+  { key: 'toe', label: 'Paper toe', min: 0, max: 1, step: 0.01 },
 ]
 
 // ---------------------------------------------------------------------------

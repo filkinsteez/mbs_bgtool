@@ -95,6 +95,7 @@ try {
     const swatches = []
     let exact = 0
     let exactWithBloom = 0
+    let exactWithToe = 0
     let worstDitherMean = 0
     for (const hex of hexes) {
       const expected = hexToBytes(hex)
@@ -106,6 +107,7 @@ try {
         dither: false,
       })
       const dithered = await harness.render({ scene: { program: 'test.flat', colors: [hex], lens: noLens, output: { grain: 0 } }, width: 256, height: 256, dither: true })
+      const toed = await harness.render({ scene: { program: 'test.flat', colors: [hex], lens: noLens, output: { grain: 0, toe: 1 } }, width: 96, height: 64, dither: false })
       const allEqual = (image) => {
         for (let i = 0; i < image.data.length; i += 4) {
           if (image.data[i] !== expected[0] || image.data[i + 1] !== expected[1] || image.data[i + 2] !== expected[2]) return false
@@ -114,6 +116,7 @@ try {
       }
       if (allEqual(plain)) exact++
       if (allEqual(bloomed)) exactWithBloom++
+      if (allEqual(toed)) exactWithToe++
       const sums = [0, 0, 0]
       for (let i = 0; i < dithered.data.length; i += 4) for (let k = 0; k < 3; k++) sums[k] += dithered.data[i + k]
       const n = dithered.data.length / 4
@@ -123,6 +126,7 @@ try {
     await composeRow(path.join(outDir, 'hex-swatches.png'), swatches)
     record('hex exact (dither, grain, lens off)', exact === hexes.length, `${exact}/${hexes.length} pack colors exact`)
     record('hex exact with bloom 0.5 and halation 1', exactWithBloom === hexes.length, `${exactWithBloom}/${hexes.length} exact`)
+    record('hex exact with the paper toe at 1 (slot colors pre-inverted)', exactWithToe === hexes.length, `${exactWithToe}/${hexes.length} exact`)
     record('hex mean with dither on', worstDitherMean <= 0.5, `worst channel mean off by ${worstDitherMean.toFixed(3)} code values`)
   }
 

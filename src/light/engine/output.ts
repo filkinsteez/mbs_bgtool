@@ -26,6 +26,12 @@ import { GRAIN_GLSL } from './grain'
  * channels' shares at the band edge, which both sides of the tie give alike.
  * There the luminance slope at m = 1 is no longer exact; farther from a tie
  * nothing changes.
+ *
+ * Paper toe (output.toe, off at 0): below nominal the weaker channels fall
+ * faster than the largest, out = m (c / m)^p with p = 1 + toe n^2 / (n^2 + 4)
+ * at n stops below nominal, so dim light gets purer while the largest
+ * channel, and so the falloff, stays as it was. resolveScene pre-inverts slot
+ * colors (paperToeInverse), so flat pack colors keep their hex.
  */
 export const TONE_CROSSTALK = [
   [0, 0.8, 0.16],
@@ -36,17 +42,26 @@ const TONE_GAP_SOFTNESS = 0.05
 const TONE_LATE_WHITENING = 0.005
 export const TONE_TIE_BAND = 0.05
 const TONE_TIE_SHARE = TONE_TIE_BAND / (TONE_TIE_BAND + TONE_GAP_SOFTNESS)
+/** Stops below nominal where the paper toe reaches half its strength. */
+const TOE_HALF_STOPS = 2
 
 const glslFloat = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v))
 const crosstalkColumns = [0, 1, 2].map((j) => `vec3(${[0, 1, 2].map((i) => glslFloat(TONE_CROSSTALK[i][j])).join(', ')})`).join(', ')
 
 export const TONE_CURVE_GLSL = /* glsl */ `
 const mat3 TONE_CROSSTALK = mat3(${crosstalkColumns});
+uniform float uToe;
+
+vec3 paperToe(vec3 c, float m) {
+  if (uToe <= 0.0 || m <= 0.0) return c;
+  float n = -log2(m);
+  return m * pow(c / m, vec3(1.0 + uToe * n * n / (n * n + ${glslFloat(TOE_HALF_STOPS * TOE_HALF_STOPS)})));
+}
 
 vec3 toneCurve(vec3 c) {
   c = max(c, vec3(0.0));
   float m = maxComponent(c);
-  if (m <= 1.0) return c;
+  if (m <= 1.0) return paperToe(c, m);
   vec3 r = c / m;
   vec3 gap = 1.0 - r;
   vec3 fill = r + TONE_CROSSTALK * r;
@@ -69,11 +84,28 @@ const smoothstep = (edge: number, x: number) => {
   return t * t * (3 - 2 * t)
 }
 
-/** CPU twin of the GLSL tone curve, for tests and checks. */
-export function toneCurve(rgb: readonly number[]): [number, number, number] {
+const toePower = (m: number, toe: number) => {
+  const n = -Math.log2(m)
+  return 1 + (toe * n * n) / (n * n + TOE_HALF_STOPS * TOE_HALF_STOPS)
+}
+
+/** The light color the paper toe prints as `c`: the same largest channel, the others raised by 1 / p. */
+export function paperToeInverse(c: readonly number[], toe: number): [number, number, number] {
+  const m = Math.max(c[0], c[1], c[2])
+  if (toe <= 0 || m <= 0 || m >= 1) return [c[0], c[1], c[2]]
+  const q = 1 / toePower(m, toe)
+  return [m * (c[0] / m) ** q, m * (c[1] / m) ** q, m * (c[2] / m) ** q]
+}
+
+/** CPU twin of the GLSL tone curve, for tests and checks; `toe` is output.toe. */
+export function toneCurve(rgb: readonly number[], toe = 0): [number, number, number] {
   const c = [Math.max(0, rgb[0]), Math.max(0, rgb[1]), Math.max(0, rgb[2])]
   const m = Math.max(c[0], c[1], c[2])
-  if (m <= 1) return [c[0], c[1], c[2]]
+  if (m <= 1) {
+    if (toe <= 0 || m <= 0) return [c[0], c[1], c[2]]
+    const p = toePower(m, toe)
+    return [m * (c[0] / m) ** p, m * (c[1] / m) ** p, m * (c[2] / m) ** p]
+  }
   const r = c.map((v) => v / m)
   const gap = r.map((v) => 1 - v)
   const fill = r.map((v, i) => v + TONE_CROSSTALK[i][0] * r[0] + TONE_CROSSTALK[i][1] * r[1] + TONE_CROSSTALK[i][2] * r[2])

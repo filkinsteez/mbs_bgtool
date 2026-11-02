@@ -1,4 +1,5 @@
 import { hexToLinear, isHex, normalizeHex, type Rgb } from '../color/srgb'
+import { paperToeInverse } from './output'
 import {
   DEFAULT_LENS,
   DEFAULT_OUTPUT,
@@ -109,14 +110,16 @@ export function resolveScene(program: RecipeProgram, scene: SceneInput): Resolve
   for (const spec of program.params) params[spec.key] = coerceParam(spec, scene.params?.[spec.key])
   const hex = resolveColors(program, scene.colors)
   const seed = typeof scene.seed === 'number' && Number.isFinite(scene.seed) ? Math.round(scene.seed) : 1
+  const output = resolveOutput(program, scene.output)
   return {
     program,
     seed,
     hex,
-    colors: hex.map(hexToLinear),
+    // With the paper toe on, each slot color is the light that the toe prints as its hex.
+    colors: hex.map((value) => paperToeInverse(hexToLinear(value), output.toe)),
     params,
     lens: resolveLens(program, scene.lens),
-    output: resolveOutput(program, scene.output),
+    output,
   }
 }
 

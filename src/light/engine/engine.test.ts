@@ -8,7 +8,7 @@ import { exportFileName, exportSize } from './export'
 import { EXPORT_ASPECTS, EXPORT_SIZES, frameAspect, type ExportAspect } from './frame'
 import { grainAmplitude, grainParams, grainUniforms } from './grain'
 import { bloomLevelFactors, halationLevelFactors, lensBaseSize, levelForRadius } from './lens'
-import { TONE_CROSSTALK, TONE_TIE_BAND, toneCurve } from './output'
+import { paperToeInverse, TONE_CROSSTALK, TONE_TIE_BAND, toneCurve } from './output'
 import { radianceScaleFor } from './programRenderer'
 import { coerceParam, recipeContext, resolveScene } from './resolve'
 
@@ -131,6 +131,28 @@ describe('tone curve', () => {
       }
     }
     expect(Math.abs(hueDiff(hueAt('#0064E0', 2)[2], 259))).toBeLessThan(3)
+  })
+
+  it('paper toe: flat pack colors print their hex from pre-inverted light, nothing at or above nominal changes', () => {
+    for (const hex of packHexes) {
+      const c = hexToLinear(hex)
+      toneCurve(paperToeInverse(c, 1), 1).forEach((v, i) => expect(v, hex).toBeCloseTo(c[i], 12))
+      const m = Math.max(...c)
+      for (const scale of [1, 1.5, 4]) {
+        const hot = c.map((v) => (v / m) * scale)
+        expect(toneCurve(hot, 1), `${hex} at ${scale}x`).toEqual(toneCurve(hot))
+      }
+    }
+    const program: RecipeProgram = { id: 'test.toe', colorSlots: [{ key: 'a', label: 'A' }], defaultColors: ['#0F3D33'], params: [], fragment: '', uniforms: () => ({}) }
+    expect(resolveScene(program, { output: { toe: 1 } }).colors[0]).toEqual(paperToeInverse(hexToLinear('#0F3D33'), 1))
+    expect(resolveScene(program, {}).colors[0]).toEqual(hexToLinear('#0F3D33'))
+  })
+
+  it('paper toe: dim Yellow turns amber instead of olive', () => {
+    const yellow = hexToLinear('#FFD61E')
+    const hue = (toe: number) => linearToOklch(toneCurve(yellow.map((v) => v / 8), toe))[2]
+    expect(hue(0) - linearToOklch(yellow)[2]).toBeCloseTo(0, 0)
+    expect(hue(1)).toBeLessThan(linearToOklch(yellow)[2] - 8)
   })
 
   it('moves hue smoothly for every pack color', () => {
@@ -264,7 +286,7 @@ describe('grain', () => {
       uniforms: () => ({}),
     }
     const resolved = resolveScene(program, { output: { grain: 1, grainSize: 1.5, grainChroma: 0.2 } as Record<string, number> })
-    expect(resolved.output).toEqual({ exposure: 0, grain: 1 })
+    expect(resolved.output).toEqual({ exposure: 0, grain: 1, toe: 0 })
   })
 })
 

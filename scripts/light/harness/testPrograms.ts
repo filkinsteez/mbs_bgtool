@@ -170,6 +170,52 @@ vec3 radiance(vec2 uv, vec2 p) {
   }),
 }
 
+/** Rows of the dim-light sheet: a warm pack color as light over a base (a dark pack color, a dim Meta Blue, or black). */
+export const DIM_ROWS = [
+  { light: '#FFD61E', base: '#000000', baseLevel: 0 },
+  { light: '#FFD61E', base: '#0064E0', baseLevel: 0.1 },
+  { light: '#FF4F00', base: '#000000', baseLevel: 0 },
+  { light: '#FF4F00', base: '#0064E0', baseLevel: 0.1 },
+  { light: '#D6F26C', base: '#000000', baseLevel: 0 },
+  { light: '#D6F26C', base: '#0F3D33', baseLevel: 1 },
+  { light: '#D6F26C', base: '#4A0A3C', baseLevel: 1 },
+  { light: '#B8996E', base: '#000000', baseLevel: 0 },
+  { light: '#B8996E', base: '#0F3D33', baseLevel: 1 },
+  { light: '#B8996E', base: '#4A0A3C', baseLevel: 1 },
+] as const
+/** The light runs from DIM_RAMP_LOW x nominal at the left edge to 1x at the right, evenly in stops. */
+export const DIM_RAMP_LOW = 0.05
+
+/**
+ * One row per DIM_ROWS entry: the base plus the light at 0.05x to 1x nominal,
+ * left to right in stops. The colors are slots, so the paper toe pre-inverts
+ * them like a recipe's.
+ */
+export const dimRampsProgram: RecipeProgram = {
+  id: 'test.dimramps',
+  colorSlots: DIM_ROWS.flatMap((_, i) => [
+    { key: `light${i}`, label: `Light ${i + 1}` },
+    { key: `base${i}`, label: `Base ${i + 1}` },
+  ]),
+  defaultColors: DIM_ROWS.flatMap((row) => [row.light, row.base]),
+  params: [],
+  fragment: /* glsl */ `
+#define ROWS ${DIM_ROWS.length}
+uniform vec3 uLight[ROWS];
+uniform vec3 uBase[ROWS];
+
+vec3 radiance(vec2 uv, vec2 p) {
+  int row = clamp(int(floor(uv.y * float(ROWS))), 0, ROWS - 1);
+  float level = ${DIM_RAMP_LOW.toFixed(2)} * pow(${(1 / DIM_RAMP_LOW).toFixed(1)}, uv.x);
+  return uBase[row] + uLight[row] * level;
+}
+`,
+  uniforms: (ctx) => ({
+    uLight: DIM_ROWS.flatMap((_, i) => ctx.color(`light${i}`)),
+    uBase: DIM_ROWS.flatMap((row, i) => ctx.color(`base${i}`).map((v) => v * row.baseLevel)),
+  }),
+}
+
 /**
  * Two overlapping rings on black. auxRadiance carries each ring's light in its
  * own channel (r: ring A, g: ring B); combine puts the blurred light of the
@@ -384,6 +430,7 @@ export const TEST_PROGRAMS: Record<string, RecipeProgram> = {
   [toneProgram.id]: toneProgram,
   [glowsProgram.id]: glowsProgram,
   [toneTiesProgram.id]: toneTiesProgram,
+  [dimRampsProgram.id]: dimRampsProgram,
   [scatterProgram.id]: scatterProgram,
   [scatterFlatProgram.id]: scatterFlatProgram,
   [postProgram.id]: postProgram,

@@ -205,6 +205,7 @@ export class ProgramRenderer {
       uHalation: lens.halation ? resolved.lens.halation : 0,
       uHalationTint: hexToLinear(resolved.lens.halationTint),
       uExposure: resolved.output.exposure,
+      uToe: resolved.output.toe,
     }
     const lensTextures: Record<string, Target> = {
       uBloomTex: lens.bloom ?? this.black,

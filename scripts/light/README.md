@@ -127,6 +127,14 @@ Lower-resolution radiance (`radianceScale: 0.5` or `0.25`, or a function of the 
 
 Per-pixel grain weight (`grainWeight: true`, and the fragment defines `float grainWeight(vec2 uv, vec2 p)` returning 0..1): it multiplies the grain at each point, so a riso recipe can put strong grain in dense dark ink and less in thin ink and on paper. It travels in the alpha channel to the output pass, also through post passes. A rule that lands the three riso crops within 20 % of their prints at grain 1 (`check.mjs`): weight = ink coverage x saturate((L paper - L ink) / 0.5) in Oklab L, paper at about 0.95.
 
+`output.toe` is the paper toe from `docs/light/research/light-photography.md`, 0 (off, the default) to 1: below nominal the weaker channels fall faster than the largest, so dim Yellow reads amber instead of olive, dim Lime a purer green, dim Orange-red deep red and dim blue navy. Light at and above nominal is unchanged. With the toe on, the engine pre-inverts every slot color (`ctx.colors`, `ctx.color`), so flat pack colors still print their exact hex (`check.mjs`, 12 of 12); a color a recipe builds from `ctx.hex` itself is not pre-inverted. The Lab shows it as Paper toe under the output settings.
+
+```sh
+node scripts/light/dim-study.mjs [--out dir]
+```
+
+Each warm pack color (Yellow and Orange-red over black and a dim Meta Blue, Lime and Tan over black, Forest and Plum) from 0.05x to 1x nominal, evenly in stops, with the toe off and at 1, plus the hex and Oklch at whole stops; then the contour.beam Elemental scenes whose light is Lime or Tan, toe off and at 1. Writes `artifacts/dim-study/dim-ramps-before-after.png` and `beam-<hex>-before-after.png`.
+
 `output.grain` is one strength 0..1 (`src/light/engine/grain.ts`, ported from `prototypes/grain-study`): mono grain on Oklab L at output size, after the tone curve and before dither, with clump sizes as fractions of the short side so a preview and an export carry the same grain relative to the picture. 0 is off; 0.5 is fine film grain (about 1.25 % Oklab L at mid-tones in a 4K export); 1 matches the riso prints. It fades to 0 at black and eases off toward white. Reference presets use 1 for the three riso prints and 0 for every other reference. Older presets' `grainSize` (px) and `grainChroma` are ignored.
 
 `compose` (optional on a `RecipeDefinition`): `({ pack, controls: { intensity, softness, mood }, seed, aspect }) => { colors, params, lens, output }`, with each control 0..1 and `aspect` = width / height. The tool uses it instead of its fallback mapping in `src/tool/controls.ts`. Colors must be exact hexes of `pack` (or `#000000`); `compositionProblems(recipe, pack, composition)` in `src/light/compose.ts` lists anything wrong, and `src/light/recipes/compose.test.ts` runs it for every recipe with `compose` over 3 packs x 5 seeds x 4 aspects x 27 control settings.
