@@ -131,10 +131,11 @@ function curvesSvg(rows, width, height) {
 
 /**
  * target | render | heatmap, then optional note lines (e.g. the falloff
- * ratios), row-mean color strips of target and render (x = row index) and the
- * row-mean Oklab L and chroma curves.
+ * ratios), row-mean color strips of target and render (x = row index), the
+ * row-mean Oklab L and chroma curves, and optionally target and render with
+ * isolines drawn over them.
  */
-export async function composeCompare(file, { target, render, heatmap, rows, heatmapMax, notes = [] }) {
+export async function composeCompare(file, { target, render, heatmap, rows, heatmapMax, notes = [], isolines = null }) {
   const { width, height } = target
   const panelsWidth = width * 3 + GAP * 2
   const labelHeight = 20
@@ -142,11 +143,24 @@ export async function composeCompare(file, { target, render, heatmap, rows, heat
   const stripHeight = 34
   const curvesHeight = 240
   const notesBlock = notes.length * noteHeight
-  const totalHeight = labelHeight + height + GAP + notesBlock + labelHeight + stripHeight * 2 + 4 + GAP + curvesHeight
+  const isolineBlock = isolines ? GAP + labelHeight + height : 0
+  const totalHeight = labelHeight + height + GAP + notesBlock + labelHeight + stripHeight * 2 + 4 + GAP + curvesHeight + isolineBlock
   const y0 = labelHeight
   const yNotes = y0 + height + GAP
   const yStrips = yNotes + notesBlock + labelHeight
+  const yIsolines = yStrips + stripHeight * 2 + 4 + GAP + curvesHeight + GAP + labelHeight
+  const isolineInputs = isolines
+    ? [
+        { ...rawInput(isolines.target), left: 0, top: yIsolines },
+        { ...rawInput(isolines.render), left: width + GAP, top: yIsolines },
+        ...labels([
+          { x: 4, y: yIsolines - 6, text: `target, Oklab lightness isolines ${isolines.caption}` },
+          { x: width + GAP + 4, y: yIsolines - 6, text: 'render, the same levels' },
+        ]),
+      ]
+    : []
   const composites = [
+    ...isolineInputs,
     { ...rawInput(target), left: 0, top: y0 },
     { ...rawInput(render), left: width + GAP, top: y0 },
     { ...rawInput(heatmap), left: (width + GAP) * 2, top: y0 },

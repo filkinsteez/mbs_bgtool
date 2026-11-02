@@ -49,6 +49,7 @@ node scripts/light/audit.mjs --ref <id>[,<id>...] | --all
   [--preset <path>]   # with one --ref: audit this preset file instead
   [--size WxH ...]    # extra renders at these sizes
   [--export4k]        # also render at the 3840 px long edge with 1:1 crops
+  [--isolines [6..10]] # draw Oklab lightness isolines over target and render (default 8)
   [--ss 1|2]          # supersample, default 2
   [--out <dir>]       # default artifacts/light-audit
 ```
@@ -58,6 +59,7 @@ For each reference, `artifacts/light-audit/<id>/`:
 - `render.png`: the preset at the target's size.
 - `compare.png`: target | render | Oklab ΔE heatmap (black 0, white 0.15). Below: row-mean color strips of target (top) and render (bottom), with x = row index, and row-mean Oklab L (solid) and chroma (dashed) for target (white) and render (orange).
 - `metrics.json`: see below, plus timings.
+- With `--isolines`: `isolines.png` (target | render with the same 6–10 Oklab lightness isolines) and the same pair as a last row of `compare.png`. Levels are evenly spaced between the target's 2nd and 98th lightness percentile; both images are blurred by 0.8 % of the short side first so grain and JPEG blocks do not draw their own loops. It shows whether the render's boundaries curve, drift and change spacing like the target's, or run straight and parallel.
 - With `--size`: `render-WxH.png`. With `--export4k`: `export-4k.png`, `crop-smooth.png` (the gentlest ramp), `crop-bright.png`, `crop-dark.png`, each also as `*-contrast4x.png`.
 
 `artifacts/light-audit/contact-sheet.png` shows target and render for every reference that has a `render.png` in the out dir.

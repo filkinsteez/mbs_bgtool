@@ -1,18 +1,20 @@
 // Renders reference presets at the target size and writes compare sheets and metrics.
 // Usage: node scripts/light/audit.mjs --ref <id>[,<id>...] | --all
-//          [--preset <path>] [--size WxH ...] [--export4k] [--ss 1|2] [--out <dir>]
+//          [--preset <path>] [--size WxH ...] [--export4k] [--isolines [6..10]] [--ss 1|2] [--out <dir>]
 import { existsSync } from 'node:fs'
 import { readdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { list, parseArgs, parseSize } from './lib/args.mjs'
 import { ROOT, startHarness } from './lib/harness.mjs'
-import { composeCompare, composeSheet, cropRgba, loadRgba, resizeRgba, savePng, zoom } from './lib/images.mjs'
+import { composeCompare, composeRow, composeSheet, cropRgba, loadRgba, resizeRgba, savePng, zoom } from './lib/images.mjs'
+import { isolinePair } from './lib/isolines.mjs'
 import { loadReferences, presetPathFor, readPreset } from './lib/references.mjs'
 
 const args = parseArgs()
 const outDir = path.resolve(ROOT, typeof args.out === 'string' ? args.out : 'artifacts/light-audit')
 const sizes = list(args.size).map(parseSize)
 const supersample = args.ss ? Number(args.ss) : 2
+const isolineCount = args.isolines ? Math.min(10, Math.max(6, args.isolines === true ? 8 : Number(args.isolines) || 8)) : 0
 const requested = list(args.ref)
 if (!args.all && requested.length === 0) {
   console.error('Give --ref <id>[,<id>...] or --all')
@@ -144,6 +146,15 @@ try {
     const dir = path.join(outDir, id)
     await savePng(path.join(dir, 'render.png'), render)
     const falloffLine = result.falloff ? formatFalloff(result.falloff) : null
+    let isolines = null
+    if (isolineCount) {
+      const pair = await isolinePair(target, render, isolineCount)
+      isolines = { ...pair, caption: `at L ${pair.levels.map((level) => level.toFixed(2)).join(', ')}` }
+      await composeRow(path.join(dir, 'isolines.png'), [
+        { image: pair.target, caption: `target, ${isolineCount} Oklab lightness isolines` },
+        { image: pair.render, caption: 'render, the same levels' },
+      ])
+    }
     await composeCompare(path.join(dir, 'compare.png'), {
       target,
       render,
@@ -151,6 +162,7 @@ try {
       rows: result.rows,
       heatmapMax: HEATMAP_MAX,
       notes: falloffLine ? [`${falloffLine} (distances from the brightest light, short-side units)`] : [],
+      isolines,
     })
 
     const extra = []
