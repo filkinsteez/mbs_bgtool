@@ -83,6 +83,7 @@ All ΔE values are plain Euclidean Oklab distances (L on 0..1; about 0.02 is one
 - `banding`: share of pixels on monotonic 8-bit steps at least 24 px long (0 none, 1 fully banded), target and render.
 - `clipped`: share of pixels with a channel at 255 (`high`) or all channels at 0 (`low`).
 - `grain`: robust standard deviation of luma minus its gaussian blur (sigma 2 px), in 8-bit code values.
+- `falloff` (Contour references only; also printed under each audit line and on `compare.png`): how the glow falls off outward from the brightest light. The light is where the target, lightly blurred, is at least half its peak. At 0.01, 0.02, 0.04 and 0.07 of the short side from it, a thin ring is read in target and render on the same pixels (the ring's darker half by target luminance, i.e. the outer side of a rim or line), and the far ring at 0.15 is subtracted as the background. `ratio` is render glow / target glow per distance (above 1: the render's glow is too bright there); `target` and `render` are the glows as shares of each image's light level; `length` is the fitted exponential falloff length of each. A ratio that rises with distance means the render's glow reaches too far; one that falls means it ends too soon.
 
 ## Speed (Apple M4 Pro)
 

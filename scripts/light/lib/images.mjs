@@ -130,18 +130,22 @@ function curvesSvg(rows, width, height) {
 }
 
 /**
- * target | render | heatmap, then row-mean color strips of target and render
- * (x = row index) and the row-mean Oklab L and chroma curves.
+ * target | render | heatmap, then optional note lines (e.g. the falloff
+ * ratios), row-mean color strips of target and render (x = row index) and the
+ * row-mean Oklab L and chroma curves.
  */
-export async function composeCompare(file, { target, render, heatmap, rows, heatmapMax }) {
+export async function composeCompare(file, { target, render, heatmap, rows, heatmapMax, notes = [] }) {
   const { width, height } = target
   const panelsWidth = width * 3 + GAP * 2
   const labelHeight = 20
+  const noteHeight = 20
   const stripHeight = 34
   const curvesHeight = 240
-  const totalHeight = labelHeight + height + GAP + labelHeight + stripHeight * 2 + 4 + GAP + curvesHeight
+  const notesBlock = notes.length * noteHeight
+  const totalHeight = labelHeight + height + GAP + notesBlock + labelHeight + stripHeight * 2 + 4 + GAP + curvesHeight
   const y0 = labelHeight
-  const yStrips = y0 + height + GAP + labelHeight
+  const yNotes = y0 + height + GAP
+  const yStrips = yNotes + notesBlock + labelHeight
   const composites = [
     { ...rawInput(target), left: 0, top: y0 },
     { ...rawInput(render), left: width + GAP, top: y0 },
@@ -153,6 +157,7 @@ export async function composeCompare(file, { target, render, heatmap, rows, heat
       { x: 4, y: 14, text: 'target' },
       { x: width + GAP + 4, y: 14, text: 'render' },
       { x: (width + GAP) * 2 + 4, y: 14, text: `Oklab deltaE, black 0 .. white ${heatmapMax}` },
+      ...notes.map((text, i) => ({ x: 4, y: yNotes + 15 + i * noteHeight, text, size: 14, color: '#d8d8d8' })),
       { x: 4, y: yStrips - 6, text: 'row means: target (top), render (bottom)' },
     ]),
   ]

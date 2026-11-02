@@ -95,6 +95,7 @@ const harness = await startHarness()
 try {
   const { source, references, presetDir } = await loadReferences(harness)
   const { HEATMAP_MAX } = await harness.ssr('/src/light/audit/metrics.ts')
+  const { formatFalloff } = await harness.ssr('/src/light/audit/falloff.ts')
   const ids = args.all ? references.map((r) => r.id) : requested
   console.log(`references from ${source}; auditing ${ids.length}`)
   const { recipeErrors } = await harness.info()
@@ -131,6 +132,7 @@ try {
         cornerRadius: ref.cornerRadius,
         upload: 'render',
         heatmapUpload: 'heatmap',
+        falloff: ref.mood === 'contour',
       })
     } catch (error) {
       failures.push(id)
@@ -141,7 +143,15 @@ try {
     const heatmap = { width: target.width, height: target.height, data: harness.takeUpload('heatmap') }
     const dir = path.join(outDir, id)
     await savePng(path.join(dir, 'render.png'), render)
-    await composeCompare(path.join(dir, 'compare.png'), { target, render, heatmap, rows: result.rows, heatmapMax: HEATMAP_MAX })
+    const falloffLine = result.falloff ? formatFalloff(result.falloff) : null
+    await composeCompare(path.join(dir, 'compare.png'), {
+      target,
+      render,
+      heatmap,
+      rows: result.rows,
+      heatmapMax: HEATMAP_MAX,
+      notes: falloffLine ? [`${falloffLine} (distances from the brightest light, short-side units)`] : [],
+    })
 
     const extra = []
     for (const size of sizes) {
@@ -182,6 +192,7 @@ try {
           recipe: preset.scene.recipe,
           supersample,
           metrics,
+          falloff: result.falloff,
           timing: { renderMs: Math.round(result.renderMs), metricsMs: Math.round(result.metricsMs), totalSeconds: seconds },
           extraRenders: extra,
           export4k,
@@ -194,6 +205,7 @@ try {
       `${id.padEnd(28)} dE mean ${metrics.deltaE.mean.toFixed(4)} p95 ${metrics.deltaE.p95.toFixed(4)}  rows ${metrics.rowProfileDeltaE.mean.toFixed(4)}  cols ${metrics.columnProfileDeltaE.mean.toFixed(4)}  ` +
         `grain ${metrics.grain.target.toFixed(2)}/${metrics.grain.render.toFixed(2)}  ${seconds.toFixed(1)} s`,
     )
+    if (falloffLine) console.log(`${''.padEnd(28)} ${falloffLine}`)
   }
   const sheet = await writeContactSheet(references)
   if (sheet) console.log(`contact sheet: ${path.relative(ROOT, sheet)}`)

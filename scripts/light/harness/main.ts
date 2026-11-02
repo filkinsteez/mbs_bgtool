@@ -3,9 +3,11 @@ import {
   buildMask,
   compareImages,
   DEFAULT_FIT_WEIGHTS,
+  falloffProfile,
   fitLoss,
   prepareFitTarget,
   type AuditMetrics,
+  type FalloffProfile,
   type FitLossParts,
   type FitTarget,
   type FitWeights,
@@ -71,6 +73,8 @@ export interface AuditRequest extends RenderRequest {
   ignore: IgnoreRect[]
   cornerRadius: number
   heatmapUpload: string
+  /** Also measure how the glow falls off outward from the brightest light (Contour references). */
+  falloff?: boolean
 }
 
 export interface FitSetupRequest {
@@ -158,9 +162,15 @@ const api = {
     return { ms, uploadMs: performance.now() - start }
   },
 
-  async audit(
-    request: AuditRequest,
-  ): Promise<{ metrics: AuditMetrics; rows: RowProfiles; renderMs: number; metricsMs: number; downloadMs: number; uploadMs: number }> {
+  async audit(request: AuditRequest): Promise<{
+    metrics: AuditMetrics
+    rows: RowProfiles
+    falloff: FalloffProfile | null
+    renderMs: number
+    metricsMs: number
+    downloadMs: number
+    uploadMs: number
+  }> {
     const downloadStart = performance.now()
     const target = await download(request.targetKey)
     const downloadMs = performance.now() - downloadStart
@@ -171,6 +181,7 @@ const api = {
     const start = performance.now()
     const mask = buildMask(request.width, request.height, request.ignore, request.cornerRadius)
     const comparison = compareImages(target, image, mask)
+    const falloff = request.falloff ? falloffProfile(target, image, mask) : null
     const metricsMs = performance.now() - start
     const uploadStart = performance.now()
     await Promise.all([
@@ -178,7 +189,14 @@ const api = {
       upload(request.heatmapUpload, comparison.heatmap.data),
     ])
     const uploadMs = performance.now() - uploadStart
-    return { metrics: comparison.metrics, rows: comparison.rows, renderMs: ms, metricsMs, downloadMs, uploadMs }
+    return { metrics: comparison.metrics, rows: comparison.rows, falloff, renderMs: ms, metricsMs, downloadMs, uploadMs }
+  },
+
+  /** Falloff profiles of a target and a render at chosen distances (for studies). */
+  async falloff(request: RenderRequest & { targetKey: string; ignore: IgnoreRect[]; cornerRadius: number; distances: number[] }): Promise<FalloffProfile> {
+    const target = await download(request.targetKey)
+    const { image } = renderImage(request)
+    return falloffProfile(target, image, buildMask(request.width, request.height, request.ignore, request.cornerRadius), request.distances)
   },
 
   /** Runs the real export path (own offscreen renderer, PNG encode) and uploads the PNG bytes. */

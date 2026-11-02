@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { linearToSrgb } from '../color/srgb'
+import { falloffProfile } from './falloff'
 import { blur } from './image'
 import { buildMask } from './mask'
 import { bandingScore, compareImages } from './metrics'
@@ -21,6 +22,35 @@ function ramp(width: number, height: number, dither: boolean) {
   }
   return { width, height, data }
 }
+
+/** A bright vertical line on black with an exponential glow of the given length (short-side units). */
+function glowLine(size: number, length: number, gain = 1) {
+  const data = new Uint8Array(size * size * 4)
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const d = Math.abs(x + 0.5 - size / 2) / size
+      const value = d < 0.004 ? 0.9 : gain * 0.05 * Math.exp(-d / length)
+      const byte = Math.round(linearToSrgb(Math.min(1, value)) * 255)
+      data.set([byte, byte, byte, 255], (y * size + x) * 4)
+    }
+  }
+  return { width: size, height: size, data }
+}
+
+describe('falloff profile', () => {
+  it('measures the glow length and the render/target ratio outward from the light', () => {
+    const target = glowLine(800, 0.02)
+    const same = falloffProfile(target, target, null)
+    for (const ratio of same.ratio) expect(ratio).toBeCloseTo(1, 6)
+    expect(same.length.target).toBeGreaterThan(0.016)
+    expect(same.length.target).toBeLessThan(0.024)
+    const longer = falloffProfile(target, glowLine(800, 0.03), null)
+    expect(longer.length.render as number).toBeGreaterThan(longer.length.target as number)
+    expect(longer.ratio[3] as number).toBeGreaterThan(longer.ratio[0] as number)
+    const brighter = falloffProfile(target, glowLine(800, 0.02, 2), null)
+    expect(brighter.ratio[1] as number).toBeGreaterThan(1.7)
+  })
+})
 
 describe('banding score', () => {
   it('is near 1 for an undithered slow ramp and near 0 with TPDF dither', () => {
