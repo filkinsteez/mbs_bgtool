@@ -63,32 +63,6 @@ const RIM_LIGHT_PATH = [
 
 /** Fallback mappings for recipes without `compose`. A recipe owner deletes the entry once the recipe defines compose. */
 export const CONTROL_MAPPINGS: Readonly<Partial<Record<RecipeId, RecipeMapping>>> = {
-  'sunset.blooms': {
-    params: ({ intensity, softness, mood }) => {
-      const gain = geo(intensity, 0.22, 0.5, 1.5)
-      const size = geo(softness, 0.7, 1, 1.45)
-      const shift = lin(mood, -0.25, 0, 0.25)
-      return {
-        glows: 3,
-        glow1At: [0.25, 0.3 + shift],
-        glow1Radius: 0.42 * size,
-        glow1Gain: 0.45 * gain,
-        glow1Stretch: 1.6,
-        glow2At: [0.75, 0.55 + shift],
-        glow2Radius: 0.32 * size,
-        glow2Gain: 0.3 * gain,
-        glow2Stretch: 1.3,
-        glow3At: [0.45, 0.95 + shift],
-        glow3Radius: 0.46 * size,
-        glow3Gain: 0.35 * gain,
-        glow3Stretch: 2,
-        haze: lin(softness, 0.1, 0.25, 0.5),
-        warp: 0.05,
-        intensity: 1,
-      }
-    },
-    lens: ({ softness }) => ({ bloom: lin(softness, 0.03, 0.08, 0.16), bloomRadius: lin(softness, 0.7, 0.8, 0.9) }),
-  },
   'contour.rim': {
     params: ({ intensity, softness, mood }) => ({
       line: false,
