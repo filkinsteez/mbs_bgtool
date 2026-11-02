@@ -5,34 +5,431 @@
     "recipe": "sunset.bands",
     "seed": 1,
     "colors": [
-      "#7A1E14",
-      "#17110F",
-      "#4F7299",
-      "#514C46",
-      "#E4453A",
-      "#E4453A"
+      "#0E1010",
+      "#962417",
+      "#48739F",
+      "#444E4F",
+      "#E63732",
+      "#BB3310",
+      "#0E0E0E",
+      "#491412",
+      "#907B3C",
+      "#CF816B",
+      "#F0AD86"
     ],
     "params": {
       "bands": 5,
-      "edge1": 0.05,
-      "edge2": 0.25,
-      "edge3": 0.47,
-      "edge4": 0.64,
-      "edge5": 1,
-      "softness": 0.04,
-      "softVary": 0.4,
-      "angle": 0,
-      "warp": 0.02,
-      "warpScale": 1.4,
-      "bandLight": 0.06,
-      "intensity": 1
+      "patches": 4,
+      "intensity": 1,
+      "sun": [
+        0.7,
+        0.3
+      ],
+      "bridge": 0,
+      "deepen": 0,
+      "rounding": 0,
+      "shade": [
+        0,
+        0
+      ],
+      "ink": 0,
+      "band1Edges": [
+        -0.4646,
+        0.0377
+      ],
+      "band1Soft": [
+        0.0568,
+        0.0503
+      ],
+      "band1Opacity": 1,
+      "band1Light": 1,
+      "band1Mode": 0,
+      "band1Line": false,
+      "band1Warp": [
+        0,
+        0
+      ],
+      "band1Waves": 1.1896,
+      "band1Vary": [
+        0,
+        0
+      ],
+      "band1Tilt": [
+        0,
+        0,
+        0
+      ],
+      "band1Sun": [
+        0,
+        0
+      ],
+      "band1Haze": 0,
+      "band1Pale": 0,
+      "band1Noise": 0,
+      "band1BumpAt": [
+        0.4624,
+        0.4483,
+        0.5,
+        0.5
+      ],
+      "band1BumpWidth": [
+        0.1541,
+        0.1401,
+        0,
+        0
+      ],
+      "band1BumpTop": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "band1BumpBottom": [
+        -0.0188,
+        0,
+        0,
+        0
+      ],
+      "band1BumpCover": [
+        0,
+        -0.15,
+        0,
+        0
+      ],
+      "band1BumpLight": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "band2Edges": [
+        0.2918,
+        0.5039
+      ],
+      "band2Soft": [
+        0.0863,
+        0.0994
+      ],
+      "band2Opacity": 1,
+      "band2Light": 1.0239,
+      "band2Mode": 0,
+      "band2Line": false,
+      "band2Warp": [
+        0,
+        0
+      ],
+      "band2Waves": 1.1896,
+      "band2Vary": [
+        0,
+        0
+      ],
+      "band2Tilt": [
+        0,
+        0,
+        0
+      ],
+      "band2Sun": [
+        0,
+        0
+      ],
+      "band2Haze": 0,
+      "band2Pale": 0,
+      "band2Noise": 1,
+      "band2BumpAt": [
+        0,
+        0.6025,
+        0.3783,
+        0.7005
+      ],
+      "band2BumpWidth": [
+        0.2522,
+        0.1681,
+        0.1121,
+        0.1121
+      ],
+      "band2BumpTop": [
+        -0.0586,
+        0.0143,
+        0,
+        0
+      ],
+      "band2BumpBottom": [
+        -0.02,
+        0,
+        -0.0111,
+        -0.0203
+      ],
+      "band2BumpCover": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "band2BumpLight": [
+        0.0335,
+        0.4556,
+        -0.113,
+        -0.0448
+      ],
+      "band3Edges": [
+        0.6398,
+        0.7745
+      ],
+      "band3Soft": [
+        0.1883,
+        0.0278
+      ],
+      "band3Opacity": 1,
+      "band3Light": 1.0562,
+      "band3Mode": 0,
+      "band3Line": false,
+      "band3Warp": [
+        0,
+        0
+      ],
+      "band3Waves": 1.1896,
+      "band3Vary": [
+        0,
+        0
+      ],
+      "band3Tilt": [
+        0,
+        0,
+        0
+      ],
+      "band3Sun": [
+        0,
+        0
+      ],
+      "band3Haze": 0,
+      "band3Pale": 0,
+      "band3Noise": 2,
+      "band3BumpAt": [
+        0,
+        0.6305,
+        0.9527,
+        0.5
+      ],
+      "band3BumpWidth": [
+        0.2102,
+        0.1401,
+        0.1401,
+        0
+      ],
+      "band3BumpTop": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "band3BumpBottom": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "band3BumpCover": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "band3BumpLight": [
+        -0.0296,
+        0.3495,
+        0.513,
+        0.0558
+      ],
+      "band4Edges": [
+        0.6716,
+        1.8266
+      ],
+      "band4Soft": [
+        0.0217,
+        0.0563
+      ],
+      "band4Opacity": 1,
+      "band4Light": 1,
+      "band4Mode": 0,
+      "band4Line": false,
+      "band4Warp": [
+        0,
+        0
+      ],
+      "band4Waves": 1.1896,
+      "band4Vary": [
+        0,
+        0
+      ],
+      "band4Tilt": [
+        0,
+        0,
+        0
+      ],
+      "band4Sun": [
+        0,
+        0
+      ],
+      "band4Haze": 0,
+      "band4Pale": 0,
+      "band4Noise": 3,
+      "band4BumpAt": [
+        0.2662,
+        0.6725,
+        0.5,
+        0.5
+      ],
+      "band4BumpWidth": [
+        0.1401,
+        0.1401,
+        0,
+        0
+      ],
+      "band4BumpTop": [
+        0.0105,
+        0.0235,
+        0,
+        0
+      ],
+      "band4BumpBottom": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "band4BumpCover": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "band4BumpLight": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "band5Edges": [
+        0.9795,
+        1.9407
+      ],
+      "band5Soft": [
+        0.0436,
+        0.0456
+      ],
+      "band5Opacity": 1,
+      "band5Light": 1,
+      "band5Mode": 0,
+      "band5Line": false,
+      "band5Warp": [
+        0,
+        0
+      ],
+      "band5Waves": 1.1896,
+      "band5Vary": [
+        0,
+        0
+      ],
+      "band5Tilt": [
+        0,
+        0,
+        0
+      ],
+      "band5Sun": [
+        0,
+        0
+      ],
+      "band5Haze": 0,
+      "band5Pale": 0,
+      "band5Noise": 4,
+      "band5BumpAt": [
+        0.5,
+        0.5,
+        0.5,
+        0.5
+      ],
+      "band5BumpWidth": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "band5BumpTop": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "band5BumpBottom": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "band5BumpCover": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "band5BumpLight": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "patch1Shape": [
+        0.5941,
+        0.2554,
+        0.1855,
+        0.0496
+      ],
+      "patch1Look": [
+        0.6998,
+        1.1015,
+        0.0455
+      ],
+      "patch2Shape": [
+        0.6782,
+        0.4939,
+        0.3274,
+        0.0602
+      ],
+      "patch2Look": [
+        0.4414,
+        1.0232,
+        0.0467
+      ],
+      "patch3Shape": [
+        0.6044,
+        0.6778,
+        0.4329,
+        0.0364
+      ],
+      "patch3Look": [
+        0.5338,
+        1.0605,
+        0.0402
+      ],
+      "patch4Shape": [
+        0.0198,
+        0.7483,
+        0.075,
+        0.0581
+      ],
+      "patch4Look": [
+        0.5005,
+        0.9561,
+        0.0067
+      ]
     },
     "lens": {
-      "bloom": 0.03
+      "bloom": 0,
+      "halation": 0
     },
     "output": {
-      "grain": 0,
-      "exposure": 0
+      "exposure": 0,
+      "grain": 0
     }
   }
 }
