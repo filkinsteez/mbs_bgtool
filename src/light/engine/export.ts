@@ -1,16 +1,8 @@
 import type { Preset, Scene } from '../scene'
+import { EXPORT_SIZES, type ExportAspect } from './frame'
 import { LightRenderer, type RenderOptions } from './renderer'
 
-export const EXPORT_SIZES = {
-  '16:9': { width: 3840, height: 2160 },
-  '9:16': { width: 2160, height: 3840 },
-  '1:1': { width: 3840, height: 3840 },
-  '4:5': { width: 3072, height: 3840 },
-} as const
-
-export type ExportAspect = keyof typeof EXPORT_SIZES
-
-export const EXPORT_ASPECTS = Object.keys(EXPORT_SIZES) as ExportAspect[]
+export { EXPORT_ASPECTS, EXPORT_SIZES, type ExportAspect } from './frame'
 
 export interface ExportRequest {
   /** A preset size, or give width and height. */

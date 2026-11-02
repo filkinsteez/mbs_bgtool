@@ -1,5 +1,6 @@
 import { hexToLinear } from '../color/srgb'
 import type { RecipeContext, RecipeProgram, UniformMap } from '../scene'
+import { frameAspect } from './frame'
 import { CONTEXT_LOST_MESSAGE, Gpu, LightEngineError, type Target } from './gl'
 import { grainUniforms } from './grain'
 import {
@@ -114,17 +115,17 @@ export class ProgramRenderer {
     const tileSize = Math.max(64, Math.round(options.tileSize ?? Math.floor(RENDER_TILE_SIDE / factor)))
 
     const resolved = resolveScene(program, scene)
-    const ctx = recipeContext(resolved)
+    const ctx = recipeContext(resolved, frameAspect(width, height))
     const recipeUniforms = program.uniforms(ctx)
     const renderWidth = width * factor
     const renderHeight = height * factor
     const short = Math.min(width, height)
-    const frameAspect = [width / short, height / short]
+    const frameInShorts = [width / short, height / short]
     const engine = (w: number, h: number, origin: number[], pixel: number, subsamples: number): UniformMap => ({
       ...recipeUniforms,
       uRenderSize: [w, h],
       uTileOrigin: origin,
-      uFrameAspect: frameAspect,
+      uFrameAspect: frameInShorts,
       uPixel: pixel,
       uSeed: resolved.seed,
       uSubsamples: subsamples,

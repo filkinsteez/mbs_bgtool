@@ -120,7 +120,8 @@ export function resolveScene(program: RecipeProgram, scene: SceneInput): Resolve
   }
 }
 
-export function recipeContext(resolved: ResolvedScene): RecipeContext {
+/** The context a recipe's functions get; `aspect` is the frame's width / height from `frameAspect`. */
+export function recipeContext(resolved: ResolvedScene, aspect: number): RecipeContext {
   const { params, colors, hex, seed, program } = resolved
   const get = (key: string): ParamValue => {
     if (!(key in params)) throw new Error(`${program.id} has no param "${key}"`)
@@ -131,6 +132,7 @@ export function recipeContext(resolved: ResolvedScene): RecipeContext {
     colors,
     hex,
     seed,
+    aspect,
     num: (key) => {
       const v = get(key)
       if (typeof v !== 'number') throw new Error(`${program.id} param "${key}" is not a number`)

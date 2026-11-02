@@ -5,6 +5,7 @@ import { hexToLinear } from '../color/srgb'
 import { getRecipe, RECIPE_LIST } from '../recipes'
 import { DEFAULT_LENS, RECIPE_IDS, type RecipeContext, type RecipeProgram } from '../scene'
 import { exportFileName, exportSize } from './export'
+import { EXPORT_ASPECTS, EXPORT_SIZES, frameAspect, type ExportAspect } from './frame'
 import { grainAmplitude, grainParams, grainUniforms } from './grain'
 import { bloomLevelFactors, halationLevelFactors, lensBaseSize, levelForRadius } from './lens'
 import { toneCurve } from './output'
@@ -220,7 +221,7 @@ describe('radiance scale', () => {
     fragment: 'vec3 radiance(vec2 uv, vec2 p) { return vec3(0.0); }',
     uniforms: () => ({}),
   }
-  const ctx = (program: RecipeProgram) => recipeContext(resolveScene(program, {}))
+  const ctx = (program: RecipeProgram) => recipeContext(resolveScene(program, {}), 16 / 9)
 
   it('snaps to 1, 0.5 or 0.25 and can depend on the scene', () => {
     expect(radianceScaleFor(base, ctx(base))).toBe(1)
@@ -230,6 +231,42 @@ describe('radiance scale', () => {
     }
     const bySoftness = { ...base, radianceScale: (c: RecipeContext) => (c.num('soft') > 0.5 ? 0.5 : 1) }
     expect(radianceScaleFor(bySoftness, ctx(bySoftness))).toBe(0.5)
+  })
+})
+
+describe('frame aspect', () => {
+  // The tool's preview size: the format fitted into the stage in whole CSS pixels, times the device pixel ratio,
+  // capped at 2560 px and rounded, as in src/tool/Preview.tsx.
+  const previewSize = (aspect: ExportAspect, stageWidth: number, stageHeight: number, pixelRatio: number) => {
+    const frame = EXPORT_SIZES[aspect]
+    const fit = Math.min((stageWidth - 64) / frame.width, (stageHeight - 64) / frame.height)
+    const box = { width: Math.floor(frame.width * fit), height: Math.floor(frame.height * fit) }
+    const cap = Math.min(1, 2560 / Math.max(box.width, box.height) / pixelRatio)
+    return { width: Math.round(box.width * pixelRatio * cap), height: Math.round(box.height * pixelRatio * cap) }
+  }
+
+  it('gives a preview and the export of one format the same value, the one compose gets', () => {
+    for (const aspect of EXPORT_ASPECTS) {
+      const size = EXPORT_SIZES[aspect]
+      const composed = size.width / size.height
+      expect(frameAspect(size.width, size.height)).toBe(composed)
+      for (const [stageWidth, stageHeight] of [[1280, 720], [1440, 900], [1600, 1000], [911, 1187], [2560, 1440], [390, 844]]) {
+        for (const pixelRatio of [1, 1.5, 2, 3]) {
+          const preview = previewSize(aspect, stageWidth, stageHeight, pixelRatio)
+          expect(frameAspect(preview.width, preview.height), `${aspect} at ${preview.width}x${preview.height}`).toBe(composed)
+        }
+      }
+    }
+  })
+
+  it('keeps the ratio of frames that are not a format', () => {
+    expect(frameAspect(925, 1002)).toBe(925 / 1002)
+    expect(frameAspect(2000, 1000)).toBe(2)
+  })
+
+  it('reaches recipe functions through the context', () => {
+    const program: RecipeProgram = { id: 'test.aspect', colorSlots: [], defaultColors: [], params: [], fragment: '', uniforms: () => ({}) }
+    expect(recipeContext(resolveScene(program, {}), frameAspect(1597, 898)).aspect).toBe(16 / 9)
   })
 })
 

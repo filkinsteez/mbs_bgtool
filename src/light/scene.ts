@@ -193,6 +193,13 @@ export interface RecipeContext {
   colors: readonly Rgb[]
   hex: readonly string[]
   seed: number
+  /**
+   * The frame's width / height. A preview and an export of the same format
+   * get the same value (frames within 2 % of a format's aspect get exactly
+   * the number compose gets), so the same scene gives the same picture at
+   * every size.
+   */
+  aspect: number
   num(key: string): number
   bool(key: string): boolean
   vec(key: string): number[]

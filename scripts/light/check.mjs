@@ -1,5 +1,5 @@
 // Engine checks in the real browser. Writes images to artifacts/light-check/ and prints a pass/fail table.
-// Usage: node scripts/light/check.mjs [--only hex,determinism,resolution,banding,tone,grain,scatter,speed,context,export,lens] [--out dir]
+// Usage: node scripts/light/check.mjs [--only hex,determinism,resolution,banding,tone,grain,scatter,speed,context,export,aspect,lens] [--out dir]
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
@@ -544,6 +544,31 @@ try {
       'measure: render waits for the GPU when asked',
       timing.measuredFlag && timing.measured >= timing.issued * 0.5,
       `1920x1080 at 1x: ${timing.issued.toFixed(2)} ms to issue, ${timing.measured.toFixed(2)} ms with measure`,
+    )
+  }
+
+  if (wanted('aspect')) {
+    // Preview sizes as the tool makes them (the format fitted in whole pixels) next to export sizes, and a reference
+    // frame that is no format.
+    const frames = [
+      { name: '16:9 export', width: 3840, height: 2160, expected: 3840 / 2160 },
+      { name: '16:9 preview', width: 1597, height: 898, expected: 3840 / 2160 },
+      { name: '9:16 preview', width: 506, height: 899, expected: 2160 / 3840 },
+      { name: '1:1 preview', width: 897, height: 898, expected: 1 },
+      { name: '4:5 export', width: 3072, height: 3840, expected: 3072 / 3840 },
+      { name: '4:5 preview', width: 717, height: 897, expected: 3072 / 3840 },
+      { name: 'reference', width: 925, height: 1002, expected: 925 / 1002 },
+    ]
+    const seen = await harness.call('aspectProbe', frames.map(({ width, height }) => ({ width, height })))
+    const rows = frames.map((frame, i) => {
+      const values = Object.values(seen[i]).flat()
+      const ok = values.length === 4 && values.every((value) => value === frame.expected)
+      return { ok, text: `${frame.name} ${frame.width}x${frame.height}: ${[...new Set(values)].map((v) => v.toFixed(6)).join(', ')}${ok ? '' : ` (want ${frame.expected.toFixed(6)} in all 4)`}` }
+    })
+    record(
+      "frame aspect: uniforms, radianceScale, post passes and scatter radii get the format's exact aspect at preview and export sizes",
+      rows.every((row) => row.ok),
+      rows.map((row) => row.text).join('; '),
     )
   }
 

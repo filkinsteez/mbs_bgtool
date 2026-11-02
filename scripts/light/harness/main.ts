@@ -304,6 +304,35 @@ const api = {
     return { ...measure(program), stub: measure(stubProgram(program)) }
   },
 
+  /** What a program's uniforms, radianceScale, post pass settings and scatter radius get as ctx.aspect, per frame size. */
+  aspectProbe(sizes: { width: number; height: number }[]): Record<string, number[]>[] {
+    return sizes.map(({ width, height }) => {
+      const seen: Record<string, number[]> = { uniforms: [], radianceScale: [], post: [], scatter: [] }
+      const program: RecipeProgram = {
+        id: 'test.aspect',
+        colorSlots: [],
+        defaultColors: [],
+        params: [],
+        fragment: `
+vec3 radiance(vec2 uv, vec2 p) { return vec3(0.1); }
+vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 blurred0) { return light; }
+`,
+        uniforms: (ctx) => {
+          seen.uniforms.push(ctx.aspect)
+          return {}
+        },
+        radianceScale: (ctx) => {
+          seen.radianceScale.push(ctx.aspect)
+          return 1
+        },
+        post: [{ kind: 'gaussianBlur', settings: (ctx) => (seen.post.push(ctx.aspect), { radius: 0 }) }],
+        scatter: [{ source: 'radiance', radius: (ctx) => (seen.scatter.push(ctx.aspect), 0.01) }],
+      }
+      renderer.renderProgram(program, {}, { width, height, supersample: 1 })
+      return seen
+    })
+  },
+
   /** The scene a recipe's compose makes for a pack, controls, seed and aspect. */
   compose(recipeId: RecipeId, packId: PackId, controls: ControlValues, seed: number, aspect: number): Scene {
     const recipe = recipes.get(recipeId)
