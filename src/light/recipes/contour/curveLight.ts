@@ -196,6 +196,7 @@ export function curveLightGlsl(layout: CurveLightLayout): string {
 #define CL_N ${layout.near}
 #define CL_F ${layout.far}
 #define CL_CHUNKS ${Math.ceil(layout.primitives / CHUNK)}
+#define CL_FLOOR 5e-5
 
 // Per primitive: (ax, ay, bx, by) or (cx, cy, radius, start); (kind, sweep, inside side, length);
 // emission at the start (rgb); emission at the end (rgb). Kind 1 segment, 2 arc, 3 mask-only segment.
@@ -203,7 +204,7 @@ uniform vec4 uClPrim[CL_E * CL_P * ${PRIM_VEC4}];
 // Bounding circle (x, y, radius) of each run of ${CHUNK} primitives.
 uniform vec4 uClChunk[CL_E * CL_CHUNKS];
 // Per near part: (weight, sigma, p, side); (tint, offset); (channel widths, light); (channel offsets, light gamma);
-// (grow light, grow gain, grow gamma, B_p); (mask inset, mask softness, cutoff factor, 0).
+// (grow light, grow gain, grow gamma, B_p); (mask inset, mask softness, 0, brightest emission channel).
 uniform vec4 uClNear[CL_E * CL_N * ${NEAR_VEC4}];
 // Per far part: (weight, sigma, side, light); (tint, light gamma); (channel widths, grow light);
 // (grow gain, grow gamma, mask inset, mask softness).
@@ -386,8 +387,11 @@ void clNearSetup(int cb, float sd, float light1, float light2,
   s2p = 2.0 * float(p) * sigmaEff * sigmaEff;
   offs = c1.w + c3.rgb;
   amp = mask * lit * c0.x * c1.rgb * (sigma / sigmaEff);
-  bool on = c0.x > 0.0 && mask > 1e-5 && lit > 1e-6;
-  cut = on ? sqrt(max(s2p.x, max(s2p.y, s2p.z)) * c5.z) + max(abs(offs.x), max(abs(offs.y), abs(offs.z))) : -1.0;
+  // Reach: where this part's light falls below CL_FLOOR (a small fraction of one 8-bit step at black).
+  float peak = maxComponent(amp) * c5.w;
+  bool on = c0.x > 0.0 && peak > CL_FLOOR;
+  float factor = on ? pow(CL_FLOOR / peak, -1.0 / float(p)) - 1.0 : 0.0;
+  cut = on ? sqrt(max(s2p.x, max(s2p.y, s2p.z)) * factor) + max(abs(offs.x), max(abs(offs.y), abs(offs.z))) : -1.0;
 }
 ${nearGlsl(layout)}
 // Thin emitter line with unit light per unit length (times its emission), for the scatter source.
@@ -763,6 +767,7 @@ export function curveLightUniforms(
     emit.set([settings.anchor[0], settings.anchor[1], packed.length, masked ? 1 : 0], e * EMIT_VEC4 * 4)
     emit.set([settings.maskShift[0] ?? 0, settings.maskShift[1] ?? 0, settings.maskGrow, 0], e * EMIT_VEC4 * 4 + 4)
     emit.set([own[0], own[1], own[2], 0], e * EMIT_VEC4 * 4 + 8)
+    const brightest = Math.max(1e-6, ...packed.flatMap((entry) => [...entry.e0, ...entry.e1]))
     settings.near.slice(0, layout.near).forEach((c, k) => {
       const o = (e * layout.near + k) * NEAR_VEC4 * 4
       const p = Math.min(MAX_KERNEL_POWER, Math.max(1, Math.round(c.p)))
@@ -771,7 +776,7 @@ export function curveLightUniforms(
       near.set([c.channelWidth[0], c.channelWidth[1], c.channelWidth[2], Math.round(c.light)], o + 8)
       near.set([c.channelOffset[0], c.channelOffset[1], c.channelOffset[2], c.lightGamma], o + 12)
       near.set([Math.round(c.grow), c.growGain, c.growGamma, kernelLineConstant(p)], o + 16)
-      near.set([c.maskInset, c.maskSoft, Math.pow(1e-5, -1 / p) - 1, 0], o + 20)
+      near.set([c.maskInset, c.maskSoft, 0, brightest], o + 20)
     })
     settings.far.slice(0, layout.far).forEach((c, k) => {
       const o = (e * layout.far + k) * FAR_VEC4 * 4

@@ -175,8 +175,6 @@ export function productionParts(prefix: string, light: ProductionLight): Record<
     f2Light: 2,
     f2LightGamma: 1,
   }
-  if (light.face > 0) {
-    Object.assign(parts, { f3Weight: round4(light.face), f3Width: 0.18, f3Side: 1, f3Light: 2, f3LightGamma: 0.6 })
-  }
+  Object.assign(parts, { f3Weight: round4(light.face), f3Width: 0.18, f3Side: 1, f3Light: 2, f3LightGamma: 0.6 })
   return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
 }

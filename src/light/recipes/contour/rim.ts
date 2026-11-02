@@ -79,15 +79,16 @@ const params: ParamSpec[] = [
   { kind: 'number', key: 'soften', label: 'Overall width', min: 0.05, max: 8, step: 0.001, default: 1 },
 ]
 
-/** Logo outline points (logo units, viewBox 1000 1000 1504.8 1000) a crop can center on: loop edges and tops, notches. */
+/** Logo outline points (logo units, viewBox 1000 1000 1504.8 1000) a crop can center on: the notch where the loops meet, hole tips, loop ends. */
 const LOGO_FEATURES: readonly (readonly [Vec2, number])[] = [
-  [[1000, 1655.86], 3],
-  [[2504.83, 1649.66], 3],
-  [[1432.41, 1000], 2],
-  [[2080, 1000], 2],
-  [[1273.1, 2000], 1],
-  [[2245.5, 2000], 1],
-  [[1772.84, 1210.99], 1],
+  [[1772.84, 1210.99], 3],
+  [[1752.79, 1471.26], 2],
+  [[1675.9, 1353.3], 2],
+  [[1915.37, 1420.09], 2],
+  [[1100, 1655.86], 2],
+  [[2400, 1649.66], 2],
+  [[1432.41, 1080], 1],
+  [[2080, 1080], 1],
 ]
 const LOGO_CENTER: Vec2 = [1752.4136, 1500]
 
@@ -168,13 +169,13 @@ function rimLayout(kind: ShapeKind, rand: () => number, aspect: number): RimLayo
     }
     case 'logo': {
       const feature = pickWeighted(rand, LOGO_FEATURES)
-      const size = lerp(2.4, 4.2, rand())
+      const size = lerp(1.6, 2.8, rand())
       const turn = pickWeighted(rand, [[0, 3], [180, 1], [90, 1], [-90, 1]] as const) + lerp(-12, 12, rand())
       const local = rotate([((feature[0] - LOGO_CENTER[0]) / 1000) * size, ((feature[1] - LOGO_CENTER[1]) / 1000) * size], turn)
       // Put the feature toward the side where the logo's body lies, so the body runs off the frame.
       const toBody: Vec2 = [-local[0], -local[1]]
       const norm = Math.hypot(toBody[0], toBody[1]) || 1
-      const reachOut = lerp(0.18, 0.34, rand())
+      const reachOut = lerp(0.04, 0.2, rand())
       const target: Vec2 = [(toBody[0] / norm) * fw * reachOut, (toBody[1] / norm) * fh * reachOut]
       return {
         shape: { kind, size, angle: 90, aspect: 1, rotate: turn, flip: false },
@@ -206,7 +207,7 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     ['line', 2],
     ['arc', 2],
     ['sCurve', 2],
-    ['logo', 3],
+    ['logo', 2],
   ])
   const layout = rimLayout(kind, rand, aspect)
   const shape = buildShape(layout.shape)
