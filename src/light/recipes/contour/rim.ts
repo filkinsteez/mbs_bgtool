@@ -1,121 +1,322 @@
-import { packHexesByLightness, type ColorPack } from '../../color/packs'
-import type { RecipeDefinition } from '../../scene'
+import type { ColorPack } from '../../color/packs'
+import type { ComposeInput, Composition, ParamSpec, ParamValue, RecipeContext, RecipeDefinition } from '../../scene'
+import {
+  frameSize,
+  geo,
+  lerp,
+  pickBase,
+  pickLight,
+  pickWeighted,
+  pointAlong,
+  productionParts,
+  round4,
+  seededRandom,
+  toFrame,
+  visiblePath,
+} from './curveCompose'
+import {
+  buildShape,
+  curveLightGlsl,
+  curveLightUniforms,
+  farParams,
+  farScatter,
+  lightParams,
+  nearParams,
+  readFar,
+  readLights,
+  readNear,
+  SHAPE_KINDS,
+  shapeKindAt,
+  slotColor,
+  type CurveLightLayout,
+  type EmissionStop,
+  type ShapeKind,
+  type ShapeSettings,
+} from './curveLight'
+import type { Vec2 } from './shapes'
+
+const COLORS = 8
+const STOPS = 6
+const LAYOUT: CurveLightLayout = { emitters: 1, primitives: 96, near: 3, far: 3 }
+
+const params: ParamSpec[] = [
+  { kind: 'number', key: 'shape', label: 'Shape (1 line, 2 corner, 3 arc, 4 S-curve, 5 logo, 6 ring)', min: 1, max: 6, step: 1, default: 2 },
+  { kind: 'vector', key: 'at', label: 'Shape origin', min: -8, max: 9, step: 0.0005, default: [0.8, 0.22] },
+  { kind: 'number', key: 'size', label: 'Size (line length, corner radius, arc radius, logo height)', min: 0, max: 12, step: 0.0005, default: 0.08 },
+  { kind: 'number', key: 'angle', label: 'Angle (corner inside angle, arc or S sweep)', min: 1, max: 360, step: 0.01, default: 64 },
+  { kind: 'number', key: 'aspect', label: 'Ring aspect', min: 0.2, max: 5, step: 0.001, default: 1 },
+  { kind: 'number', key: 'rotate', label: 'Rotation', min: -360, max: 360, step: 0.01, default: 148 },
+  { kind: 'boolean', key: 'flip', label: 'Mirror', default: false },
+  { kind: 'number', key: 'stops', label: 'Emission stops', min: 1, max: STOPS, step: 1, default: 1 },
+  { kind: 'vector', key: 'stopAt', label: 'Stops 1-3 along the curve', min: 0, max: 1, step: 0.0005, default: [0, 0.5, 1] },
+  { kind: 'vector', key: 'stopAt2', label: 'Stops 4-6 along the curve', min: 0, max: 1, step: 0.0005, default: [1, 1, 1] },
+  { kind: 'vector', key: 'stopColor', label: 'Stops 1-3 color slot', min: 1, max: COLORS, step: 1, default: [2, 2, 2] },
+  { kind: 'vector', key: 'stopColor2', label: 'Stops 4-6 color slot', min: 1, max: COLORS, step: 1, default: [2, 2, 2] },
+  { kind: 'vector', key: 'stopGain', label: 'Stops 1-3 gain', min: 0, max: 20, step: 0.001, default: [1, 1, 1] },
+  { kind: 'vector', key: 'stopGain2', label: 'Stops 4-6 gain', min: 0, max: 20, step: 0.001, default: [1, 1, 1] },
+  ...nearParams('n1', 'Core', { Weight: 2.5, Width: 0.0008, Shape: 8, Light: 2 }),
+  ...nearParams('n2', 'Glow', { Weight: 0.7, Width: 0.004, Shape: 3, Side: 1, Light: 1, Grow: 2, GrowBy: [1.5, 2] }),
+  ...nearParams('n3', 'Near part 3'),
+  ...farParams('f1', 'Haze', { Weight: 0.2, Width: 0.016, Side: 1, Light: 1 }),
+  ...farParams('f2', 'Halo', { Weight: 0.03, Width: 0.02, Light: 1 }),
+  ...farParams('f3', 'Face', { Weight: 0.025, Width: 0.22, Side: 1, Light: 1, LightGamma: 0.5 }),
+  { kind: 'number', key: 'farWidth', label: 'Narrowest scatter blur', min: 0.002, max: 0.2, step: 0.0005, default: 0.008 },
+  ...lightParams({
+    light1Kind: 2,
+    light1At: [-0.05, 0.05],
+    light1Radius: 0.1,
+    light1Length: 0.35,
+    light2Kind: 1,
+    light2At: [-0.06, 0.04],
+    light2Radius: 0.16,
+  }),
+  { kind: 'vector', key: 'maskShift', label: 'Inside edge shift', min: -2, max: 2, step: 0.0005, default: [0, 0] },
+  { kind: 'number', key: 'maskGrow', label: 'Inside edge grow', min: -1, max: 1, step: 0.0001, default: 0 },
+  { kind: 'number', key: 'base', label: 'Base color slot (0 black)', min: 0, max: COLORS, step: 1, default: 0 },
+  { kind: 'number', key: 'baseGain', label: 'Base gain', min: 0, max: 2, step: 0.0005, default: 0 },
+  { kind: 'number', key: 'gain', label: 'Overall gain', min: 0, max: 20, step: 0.001, default: 1 },
+  { kind: 'number', key: 'soften', label: 'Overall width', min: 0.05, max: 8, step: 0.001, default: 1 },
+]
+
+/** Logo outline points (logo units, viewBox 1000 1000 1504.8 1000) a crop can center on: loop edges and tops, notches. */
+const LOGO_FEATURES: readonly (readonly [Vec2, number])[] = [
+  [[1000, 1655.86], 3],
+  [[2504.83, 1649.66], 3],
+  [[1432.41, 1000], 2],
+  [[2080, 1000], 2],
+  [[1273.1, 2000], 1],
+  [[2245.5, 2000], 1],
+  [[1772.84, 1210.99], 1],
+]
+const LOGO_CENTER: Vec2 = [1752.4136, 1500]
+
+const rotate = (v: Vec2, degrees: number): Vec2 => {
+  const a = (degrees * Math.PI) / 180
+  return [v[0] * Math.cos(a) - v[1] * Math.sin(a), v[0] * Math.sin(a) + v[1] * Math.cos(a)]
+}
+
+interface RimLayout {
+  shape: ShapeSettings
+  /** Shape origin, short-side units from the frame center. */
+  anchor: Vec2
+  /** Glow on the inside only (an edge) or on both sides (a line of light). */
+  oneSided: boolean
+}
+
+/** Where the shape goes for this seed and frame; the light keeps to one part of the frame so the rest stays dark. */
+function rimLayout(kind: ShapeKind, rand: () => number, aspect: number): RimLayout {
+  const [fw, fh] = frameSize(aspect)
+  const right = rand() < 0.5
+  const top = rand() < 0.65
+  const sx = right ? 1 : -1
+  const sy = top ? -1 : 1
+  const long = Math.max(fw, fh)
+  switch (kind) {
+    case 'corner': {
+      const angle = lerp(48, 100, rand())
+      const along = lerp(-8, 8, rand())
+      const first = (right ? 180 : 0) + along
+      const turn = (right ? -1 : 1) * (top ? 1 : -1)
+      const second = first + turn * angle
+      const vertex: Vec2 = [sx * fw * lerp(0.14, 0.32, rand()), sy * fh * lerp(0.18, 0.36, rand())]
+      return {
+        shape: { kind, size: lerp(0.03, 0.14, rand()), angle, aspect: 1, rotate: (first + second) / 2, flip: false },
+        anchor: vertex,
+        oneSided: true,
+      }
+    }
+    case 'line': {
+      const vertical = aspect >= 1 ? rand() < 0.75 : rand() < 0.35
+      const offset = lerp(0.18, 0.34, rand())
+      return {
+        shape: { kind, size: 4 * long, angle: 90, aspect: 1, rotate: (vertical ? 90 : 0) + lerp(-10, 10, rand()), flip: false },
+        anchor: vertical ? [sx * fw * (0.5 - offset), 0] : [0, sy * fh * (0.5 - offset)],
+        oneSided: false,
+      }
+    }
+    case 'arc': {
+      // A large circle whose arc crosses the frame near one edge; the glow faces its center.
+      const radius = lerp(0.9, 2.2, rand()) * long
+      const side = Math.floor(rand() * 4)
+      const reach = lerp(0.22, 0.4, rand())
+      const normals: readonly Vec2[] = [
+        [0, 1],
+        [0, -1],
+        [1, 0],
+        [-1, 0],
+      ]
+      const normal = normals[side]
+      const extent = normal[0] !== 0 ? fw : fh
+      const crossing = (0.5 - reach) * extent
+      const center: Vec2 = [normal[0] * (radius + crossing), normal[1] * (radius + crossing)]
+      const outward = (Math.atan2(-normal[1], -normal[0]) * 180) / Math.PI
+      return {
+        shape: { kind, size: radius, angle: 160, aspect: 1, rotate: outward + lerp(-10, 10, rand()), flip: false },
+        anchor: center,
+        oneSided: true,
+      }
+    }
+    case 'sCurve': {
+      const vertical = aspect < 1 ? rand() < 0.3 : rand() < 0.2
+      const at: Vec2 = vertical ? [sx * fw * lerp(0.12, 0.26, rand()), 0] : [fw * lerp(-0.12, 0.12, rand()), sy * fh * lerp(0.14, 0.28, rand())]
+      return {
+        shape: { kind, size: lerp(0.35, 0.9, rand()), angle: lerp(28, 58, rand()), aspect: 1, rotate: (vertical ? 90 : 0) + lerp(-18, 18, rand()), flip: rand() < 0.5 },
+        anchor: at,
+        oneSided: true,
+      }
+    }
+    case 'logo': {
+      const feature = pickWeighted(rand, LOGO_FEATURES)
+      const size = lerp(2.4, 4.2, rand())
+      const turn = pickWeighted(rand, [[0, 3], [180, 1], [90, 1], [-90, 1]] as const) + lerp(-12, 12, rand())
+      const local = rotate([((feature[0] - LOGO_CENTER[0]) / 1000) * size, ((feature[1] - LOGO_CENTER[1]) / 1000) * size], turn)
+      // Put the feature toward the side where the logo's body lies, so the body runs off the frame.
+      const toBody: Vec2 = [-local[0], -local[1]]
+      const norm = Math.hypot(toBody[0], toBody[1]) || 1
+      const reachOut = lerp(0.18, 0.34, rand())
+      const target: Vec2 = [(toBody[0] / norm) * fw * reachOut, (toBody[1] / norm) * fh * reachOut]
+      return {
+        shape: { kind, size, angle: 90, aspect: 1, rotate: turn, flip: false },
+        anchor: [target[0] - local[0], target[1] - local[1]],
+        oneSided: true,
+      }
+    }
+    case 'ring': {
+      const radius = lerp(0.7, 1.4, rand())
+      return {
+        shape: { kind, size: radius, angle: 360, aspect: 1, rotate: 0, flip: false },
+        anchor: [sx * (fw / 2 + radius * 0.6), sy * (fh / 2 + radius * 0.5)],
+        oneSided: true,
+      }
+    }
+    default: {
+      const unknown: never = kind
+      throw new Error(`Unknown shape kind: ${String(unknown)}`)
+    }
+  }
+}
+
+function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition {
+  const rand = seededRandom(seed, 7)
+  const light = pickLight(pack, rand)
+  const base = pickBase(pack, rand)
+  const kind = pickWeighted<ShapeKind>(rand, [
+    ['corner', 4],
+    ['line', 2],
+    ['arc', 2],
+    ['sCurve', 2],
+    ['logo', 3],
+  ])
+  const layout = rimLayout(kind, rand, aspect)
+  const shape = buildShape(layout.shape)
+  const [fw, fh] = frameSize(aspect)
+  const path = visiblePath(shape, layout.anchor, aspect)
+  const hot = pointAlong(path, lerp(0.06, 0.94, controls.mood)) ?? layout.anchor
+  const at: Vec2 = [hot[0] - layout.anchor[0], hot[1] - layout.anchor[1]]
+  const gain = geo(controls.intensity, 0.35, 1, 2.8)
+  const soften = geo(controls.softness, 0.55, 1, 1.9)
+  const reach = lerp(0.1, 0.22, rand()) * Math.max(fw, fh)
+  const params: Record<string, ParamValue> = {
+    shape: SHAPE_KINDS.indexOf(layout.shape.kind) + 1,
+    at: toFrame(layout.anchor, aspect).map(round4),
+    size: round4(layout.shape.size),
+    angle: round4(layout.shape.angle),
+    aspect: 1,
+    rotate: round4(layout.shape.rotate),
+    flip: layout.shape.flip,
+    stops: 1,
+    stopColor: [2, 2, 2],
+    ...productionParts('', { hex: light.hex, side: layout.oneSided ? 1 : 0, soften, face: layout.oneSided ? 0.012 : 0 }),
+    farWidth: 0.01,
+    light1Kind: 2,
+    light1At: at.map(round4),
+    light1Radius: 0.04,
+    light1Length: round4(reach),
+    light2Kind: 1,
+    light2At: at.map(round4),
+    light2Radius: round4(lerp(0.06, 0.12, rand())),
+    base: base.gain > 0 ? 3 : 0,
+    baseGain: base.gain,
+    gain: round4(gain),
+    soften: round4(soften),
+  }
+  const colors = ['#000000', light.hex, base.gain > 0 ? base.hex : '#000000', '#000000', '#000000', '#000000', '#000000', '#000000']
+  return {
+    colors,
+    params,
+    lens: {
+      bloom: 0,
+      halation: round4(lerp(0.04, 0.2, controls.intensity)),
+      halationRadius: round4(0.035 * soften),
+      halationTint: light.hex,
+    },
+    output: { grain: 0 },
+  }
+}
+
+function readStops(ctx: RecipeContext): EmissionStop[] {
+  const count = Math.round(ctx.num('stops'))
+  const at = [...ctx.vec('stopAt'), ...ctx.vec('stopAt2')]
+  const slots = [...ctx.vec('stopColor'), ...ctx.vec('stopColor2')]
+  const gains = [...ctx.vec('stopGain'), ...ctx.vec('stopGain2')]
+  return Array.from({ length: count }, (_, i) => ({ t: at[i], color: slotColor(ctx, slots[i]), gain: gains[i] }))
+}
 
 /**
- * Light caught by one edge: a sharp gaussian core plus an inverse-square tail
- * along the boundary of a rounded triangle (or along a single line), lit from
- * one direction, with a faint glow filling the inside of the shape.
+ * Light along one edge: a straight line, a rounded corner, an arc, a gentle S
+ * or a crop of the Meta logo outline. The edge is a thin emitter seen through
+ * a point-spread function: three near parts (core and glows) integrated along
+ * the edge, and three far parts (haze, halo, light scattered into the face)
+ * from blurred copies of the emitter.
  */
 export const contourRim: RecipeDefinition = {
   id: 'contour.rim',
   mood: 'contour',
   label: 'Rim',
-  colorSlots: [
-    { key: 'background', label: 'Background' },
-    { key: 'interior', label: 'Interior' },
-    { key: 'core', label: 'Core' },
-    { key: 'tail', label: 'Tail' },
-  ],
-  defaultColors: ['#000000', '#06142E', '#DCE8FF', '#2F6BD8'],
-  params: [
-    { kind: 'boolean', key: 'line', label: 'Line', default: false },
-    { kind: 'vector', key: 'a', label: 'Point A', min: -1, max: 2, step: 0.005, default: [-0.4, 0.13] },
-    { kind: 'vector', key: 'b', label: 'Point B', min: -1, max: 2, step: 0.005, default: [0.72, 0.13] },
-    { kind: 'vector', key: 'c', label: 'Point C', min: -1, max: 2, step: 0.005, default: [-0.05, 1.15] },
-    { kind: 'number', key: 'corner', label: 'Corner', min: 0, max: 0.4, step: 0.002, default: 0.06 },
-    { kind: 'number', key: 'coreWidth', label: 'Core width', min: 0.0005, max: 0.05, step: 0.0005, default: 0.004 },
-    { kind: 'number', key: 'tailWidth', label: 'Tail width', min: 0.002, max: 0.4, step: 0.001, default: 0.03 },
-    { kind: 'number', key: 'tailWeight', label: 'Tail weight', min: 0, max: 2, step: 0.01, default: 0.35 },
-    { kind: 'number', key: 'intensity', label: 'Intensity', min: 0, max: 12, step: 0.05, default: 2.5 },
-    { kind: 'vector', key: 'lightAt', label: 'Light at', min: -1, max: 2, step: 0.005, default: [0.75, 0.1] },
-    { kind: 'number', key: 'lightReach', label: 'Light reach', min: 0.05, max: 4, step: 0.01, default: 0.9 },
-    { kind: 'number', key: 'ambient', label: 'Ambient', min: 0, max: 1, step: 0.01, default: 0.1 },
-    { kind: 'number', key: 'fill', label: 'Fill', min: 0, max: 2, step: 0.01, default: 0.6 },
-    { kind: 'number', key: 'fillDepth', label: 'Fill depth', min: 0.01, max: 1.5, step: 0.01, default: 0.35 },
-    { kind: 'number', key: 'fade', label: 'Line fade', min: 0, max: 1, step: 0.01, default: 1 },
-    { kind: 'number', key: 'taper', label: 'Line taper', min: 0, max: 1, step: 0.01, default: 0.6 },
-  ],
+  colorSlots: Array.from({ length: COLORS }, (_, i) => ({ key: `c${i + 1}`, label: `Color ${i + 1}` })),
+  defaultColors: ['#000000', '#0064E0', '#1FCDF0', '#FFD61E', '#FF4F00', '#FFFFFF', '#000000', '#000000'],
+  params,
   fragment: /* glsl */ `
-uniform vec3 uBackground;
-uniform vec3 uInterior;
-uniform vec3 uCore;
-uniform vec3 uTail;
-uniform bool uLine;
-uniform vec2 uA;
-uniform vec2 uB;
-uniform vec2 uC;
-uniform float uCorner;
-uniform float uCoreWidth;
-uniform float uTailWidth;
-uniform float uTailWeight;
-uniform float uIntensity;
-uniform vec2 uLightAt;
-uniform float uLightReach;
-uniform float uAmbient;
-uniform float uFill;
-uniform float uFillDepth;
-uniform float uFade;
-uniform float uTaper;
-
-float shapeDistance(vec2 p, vec2 a, vec2 b, vec2 c) {
-  return sdRoundedTriangle(p, a, b, c, uCorner);
-}
-
-vec3 radiance(vec2 uv, vec2 p) {
-  vec2 a = (uA - 0.5) * uFrameAspect;
-  vec2 b = (uB - 0.5) * uFrameAspect;
-  vec2 c = (uC - 0.5) * uFrameAspect;
-  // Keep the core at least about one sample wide so thin rims do not alias.
-  float core = max(uCoreWidth, 0.7 * uPixel);
-  vec3 color = uBackground;
-
-  if (uLine) {
-    float d = sdSegment(p, a, b);
-    float along = segmentParam(p, a, b);
-    float tail = uTailWidth * mix(1.0 - uTaper, 1.0, along);
-    float gain = uIntensity * mix(uFade, 1.0, along);
-    color += gain * (uCore * gaussian(d, core) * (uCoreWidth / core) + uTail * uTailWeight * softInverseSquare(d, tail));
-    return color;
-  }
-
-  float d = shapeDistance(p, a, b, c);
-  // Brightness falls off with distance from one light position; smooth everywhere, unlike SDF normals.
-  vec2 lightAt = (uLightAt - 0.5) * uFrameAspect;
-  float lit = mix(uAmbient, 1.0, gaussian(length(p - lightAt), uLightReach));
-
-  float inside = 1.0 - softStep(d, core);
-  color += inside * uInterior * uFill * expHaze(-d, uFillDepth) * lit;
-  float rim = gaussian(d, core) * (uCoreWidth / core);
-  float glow = uTailWeight * softInverseSquare(d, uTailWidth);
-  color += uIntensity * lit * (uCore * rim + uTail * glow);
-  return color;
-}
+${curveLightGlsl(LAYOUT)}
+vec3 radiance(vec2 uv, vec2 p) { return vec3(0.0); }
+vec3 auxRadiance(vec2 uv, vec2 p) { return clAux(p, false); }
+vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 b0, vec3 b1, vec3 b2, vec3 b3) { return light + curveLight(p, b0, b1, b2, b3, false); }
 `,
-  uniforms: (ctx) => ({
-    uBackground: ctx.color('background'),
-    uInterior: ctx.color('interior'),
-    uCore: ctx.color('core'),
-    uTail: ctx.color('tail'),
-    uLine: ctx.bool('line'),
-    uA: ctx.vec('a'),
-    uB: ctx.vec('b'),
-    uC: ctx.vec('c'),
-    uCorner: ctx.num('corner'),
-    uCoreWidth: ctx.num('coreWidth'),
-    uTailWidth: ctx.num('tailWidth'),
-    uTailWeight: ctx.num('tailWeight'),
-    uIntensity: ctx.num('intensity'),
-    uLightAt: ctx.vec('lightAt'),
-    uLightReach: ctx.num('lightReach'),
-    uAmbient: ctx.num('ambient'),
-    uFill: ctx.num('fill'),
-    uFillDepth: ctx.num('fillDepth'),
-    uFade: ctx.num('fade'),
-    uTaper: ctx.num('taper'),
-  }),
-  lens: { bloom: 0.06, bloomRadius: 0.45, bloomWidth: 1.5, halation: 0.15, halationThreshold: 0.8, halationRadius: 0.04 },
-  fromPack: (pack: ColorPack) => {
-    const byLightness = packHexesByLightness(pack)
-    return ['#000000', byLightness[0], byLightness.at(-1) ?? byLightness[0], pack.colors[0].hex]
+  uniforms: (ctx) => {
+    const gain = ctx.num('gain')
+    const soften = ctx.num('soften')
+    const shape = buildShape({
+      kind: shapeKindAt(ctx.num('shape')),
+      size: ctx.num('size'),
+      angle: ctx.num('angle'),
+      aspect: ctx.num('aspect'),
+      rotate: ctx.num('rotate'),
+      flip: ctx.bool('flip'),
+    })
+    const base = slotColor(ctx, ctx.num('base')).map((v) => v * ctx.num('baseGain'))
+    return curveLightUniforms(
+      LAYOUT,
+      [
+        {
+          shape,
+          anchor: ctx.vec('at'),
+          stops: readStops(ctx),
+          near: [1, 2, 3].map((i) => readNear(ctx, `n${i}`, soften, gain)),
+          far: [1, 2, 3].map((i) => readFar(ctx, `f${i}`, soften, gain)),
+          maskShift: ctx.vec('maskShift'),
+          maskGrow: ctx.num('maskGrow'),
+        },
+      ],
+      readLights(ctx),
+      base,
+      ctx.num('farWidth') * soften,
+    )
   },
+  scatter: farScatter((ctx) => ctx.num('farWidth') * ctx.num('soften')),
+  lens: { bloom: 0 },
+  fromPack: (pack: ColorPack) => {
+    const hexes = pack.colors.map((c) => c.hex)
+    return Array.from({ length: COLORS }, (_, i) => (i === 0 ? '#000000' : (hexes[i - 1] ?? hexes[0])))
+  },
+  compose: composeRim,
 }

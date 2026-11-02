@@ -1,108 +1,196 @@
-import { packHexesByLightness, type ColorPack } from '../../color/packs'
-import type { RecipeDefinition } from '../../scene'
+import type { ColorPack } from '../../color/packs'
+import type { ComposeInput, Composition, ParamSpec, ParamValue, RecipeDefinition } from '../../scene'
+import {
+  frameSize,
+  geo,
+  lerp,
+  pickBase,
+  pickLight,
+  pointAlong,
+  productionParts,
+  round4,
+  seededRandom,
+  toFrame,
+  visiblePath,
+} from './curveCompose'
+import {
+  buildShape,
+  curveLightGlsl,
+  curveLightUniforms,
+  farParams,
+  farScatter,
+  lightParams,
+  nearParams,
+  readFar,
+  readLights,
+  readNear,
+  slotColor,
+  type CurveLightLayout,
+  type EmitterSettings,
+} from './curveLight'
+import { ring, type Vec2 } from './shapes'
 
-const RING_COUNT = 3
+const COLORS = 8
+const RINGS = 3
+const NEAR = 3
+const FAR = 2
+const LAYOUT: CurveLightLayout = { emitters: RINGS, primitives: 40, near: NEAR, far: FAR }
+
+function ringParams(i: number): ParamSpec[] {
+  const first = i === 1
+  const near = [
+    first ? { Weight: 2.2, Width: 0.0008, Shape: 8, Light: 1 } : {},
+    first ? { Weight: 0.6, Width: 0.008, Shape: 3, Side: 1, Light: 1, Grow: 1, GrowBy: [1.5, 2] } : {},
+    {},
+  ]
+  const far = [first ? { Weight: 0.1, Width: 0.04, Side: 1, Light: 1 } : {}, first ? { Weight: 0.02, Width: 0.02, Light: 1 } : {}]
+  return [
+    { kind: 'boolean', key: `ring${i}On`, label: `Ring ${i}`, default: first },
+    { kind: 'vector', key: `ring${i}At`, label: `Ring ${i} center`, min: -8, max: 9, step: 0.0005, default: [1.05, 1.1] },
+    { kind: 'number', key: `ring${i}Radius`, label: `Ring ${i} radius`, min: 0.01, max: 8, step: 0.0005, default: 1.1 },
+    { kind: 'number', key: `ring${i}Aspect`, label: `Ring ${i} aspect`, min: 0.2, max: 5, step: 0.001, default: 1 },
+    { kind: 'number', key: `ring${i}Sweep`, label: `Ring ${i} sweep (360 closed)`, min: 1, max: 360, step: 0.01, default: 360 },
+    { kind: 'number', key: `ring${i}Rotate`, label: `Ring ${i} rotation`, min: -360, max: 360, step: 0.01, default: 0 },
+    { kind: 'number', key: `ring${i}Color`, label: `Ring ${i} color slot`, min: 1, max: COLORS, step: 1, default: 2 },
+    { kind: 'number', key: `ring${i}Gain`, label: `Ring ${i} gain`, min: 0, max: 20, step: 0.001, default: 1 },
+    { kind: 'vector', key: `ring${i}MaskShift`, label: `Ring ${i} inside edge shift`, min: -2, max: 2, step: 0.0005, default: [0, 0] },
+    { kind: 'number', key: `ring${i}MaskGrow`, label: `Ring ${i} inside edge grow`, min: -2, max: 2, step: 0.0001, default: 0 },
+    ...near.flatMap((defaults, k) => nearParams(`ring${i}n${k + 1}`, `Ring ${i} near part ${k + 1}`, defaults)),
+    ...far.flatMap((defaults, k) => farParams(`ring${i}f${k + 1}`, `Ring ${i} far part ${k + 1}`, defaults)),
+  ]
+}
+
+const params: ParamSpec[] = [
+  ...Array.from({ length: RINGS }, (_, i) => ringParams(i + 1)).flat(),
+  { kind: 'number', key: 'farWidth', label: 'Narrowest scatter blur', min: 0.002, max: 0.2, step: 0.0005, default: 0.008 },
+  ...lightParams({ light1Kind: 1, light1At: [-0.75, -0.75], light1Radius: 0.45 }),
+  { kind: 'number', key: 'base', label: 'Base color slot (0 black)', min: 0, max: COLORS, step: 1, default: 0 },
+  { kind: 'number', key: 'baseGain', label: 'Base gain', min: 0, max: 2, step: 0.0005, default: 0 },
+  { kind: 'number', key: 'gain', label: 'Overall gain', min: 0, max: 20, step: 0.001, default: 1 },
+  { kind: 'number', key: 'soften', label: 'Overall width', min: 0.05, max: 8, step: 0.001, default: 1 },
+]
+
+/** One ring with its center off the frame, so only an arc shows; the glow spreads into the disc or out from behind it. */
+function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Composition {
+  const rand = seededRandom(seed, 13)
+  const light = pickLight(pack, rand)
+  const base = pickBase(pack, rand)
+  const [fw, fh] = frameSize(aspect)
+  const inward = rand() < 0.6
+  const corner = rand() < 0.6
+  const sx = rand() < 0.5 ? 1 : -1
+  const sy = rand() < 0.6 ? -1 : 1
+  // Direction of the ring's center from the frame center: past a corner or past an edge.
+  const direction: Vec2 = corner
+    ? [sx * fw * lerp(0.4, 0.6, rand()), sy * fh * lerp(0.4, 0.6, rand())]
+    : rand() < (aspect >= 1 ? 0.6 : 0.3)
+      ? [sx * fw * 0.5, fh * lerp(-0.15, 0.15, rand())]
+      : [fw * lerp(-0.2, 0.2, rand()), sy * fh * 0.5]
+  const length = Math.hypot(direction[0], direction[1])
+  const unit: Vec2 = [direction[0] / length, direction[1] / length]
+  let radius = lerp(0.6, 1.5, rand()) * Math.min(fw, fh)
+  const gap = lerp(0.06, 0.28, rand()) * Math.min(fw, fh)
+  // Keep the center off the frame so the ring never shows whole.
+  const edge = Math.min(Math.abs(fw / 2 / (unit[0] || 1e-9)), Math.abs(fh / 2 / (unit[1] || 1e-9)))
+  radius = Math.max(radius, edge + 0.1 - gap)
+  const center: Vec2 = [unit[0] * (radius + gap), unit[1] * (radius + gap)]
+  const path = visiblePath(ring(radius), center, aspect)
+  const hot = pointAlong(path, lerp(0.06, 0.94, controls.mood)) ?? center
+  const at: Vec2 = [hot[0] - center[0], hot[1] - center[1]]
+  const gain = geo(controls.intensity, 0.35, 1, 2.8)
+  const soften = geo(controls.softness, 0.55, 1, 1.9)
+  const reach = lerp(0.12, 0.26, rand()) * Math.max(fw, fh)
+  const side = inward ? 1 : 2
+  const params: Record<string, ParamValue> = {
+    ring1On: true,
+    ring1At: toFrame(center, aspect).map(round4),
+    ring1Radius: round4(radius),
+    ring1Aspect: 1,
+    ring1Sweep: 360,
+    ring1Color: 2,
+    ring1Gain: 1,
+    ...productionParts('ring1', { hex: light.hex, side, soften, face: 0 }),
+    ring2On: false,
+    ring3On: false,
+    farWidth: 0.012,
+    light1Kind: 2,
+    light1At: at.map(round4),
+    light1Radius: 0.04,
+    light1Length: round4(reach),
+    light2Kind: 1,
+    light2At: at.map(round4),
+    light2Radius: round4(lerp(0.06, 0.14, rand())),
+    base: base.gain > 0 ? 3 : 0,
+    baseGain: base.gain,
+    gain: round4(gain),
+    soften: round4(soften),
+  }
+  return {
+    colors: ['#000000', light.hex, base.gain > 0 ? base.hex : '#000000', '#000000', '#000000', '#000000', '#000000', '#000000'],
+    params,
+    lens: {
+      bloom: 0,
+      halation: round4(lerp(0.04, 0.2, controls.intensity)),
+      halationRadius: round4(0.035 * soften),
+      halationTint: light.hex,
+    },
+    output: { grain: 0 },
+  }
+}
 
 /**
- * Up to three ring glows, usually centered off-frame so the frame crops them.
- * Each ring has a sharp core and separate inner and outer tails; the first
- * ring also splits the background into an outside and an inside color.
+ * Up to three rings or arcs of light, usually cropped by the frame. Each ring
+ * is a thin emitter with its own point-spread function: near parts integrated
+ * along the ring and far parts from blurred copies of that ring's light alone.
+ * Where rings come close or cross, their light adds.
  */
 export const contourHalo: RecipeDefinition = {
   id: 'contour.halo',
   mood: 'contour',
   label: 'Halo',
-  colorSlots: [
-    { key: 'outside', label: 'Outside' },
-    { key: 'inside', label: 'Inside' },
-    { key: 'ring1', label: 'Ring 1' },
-    { key: 'ring2', label: 'Ring 2' },
-    { key: 'ring3', label: 'Ring 3' },
-  ],
-  defaultColors: ['#9CC8E6', '#0A62E8', '#FFF29A', '#1FCDF0', '#FF8A6A'],
-  params: [
-    { kind: 'number', key: 'rings', label: 'Rings', min: 1, max: RING_COUNT, step: 1, default: 1 },
-    ...Array.from({ length: RING_COUNT }, (_, i) => [
-      {
-        kind: 'vector' as const,
-        key: `ring${i + 1}At`,
-        label: `Ring ${i + 1} at`,
-        min: -1.5,
-        max: 2.5,
-        step: 0.005,
-        default: [[1.15, 1.05], [0.5, 0.25], [0.4, 0.85]][i],
-      },
-      { kind: 'number' as const, key: `ring${i + 1}Radius`, label: `Ring ${i + 1} radius`, min: 0.02, max: 3, step: 0.005, default: [1.05, 0.2, 0.3][i] },
-      { kind: 'number' as const, key: `ring${i + 1}Gain`, label: `Ring ${i + 1} gain`, min: 0, max: 8, step: 0.01, default: [0.5, 0.8, 0.8][i] },
-    ]).flat(),
-    { kind: 'number', key: 'coreWidth', label: 'Core width', min: 0.001, max: 0.3, step: 0.001, default: 0.06 },
-    { kind: 'number', key: 'tailIn', label: 'Inner tail', min: 0.002, max: 1, step: 0.002, default: 0.12 },
-    { kind: 'number', key: 'tailOut', label: 'Outer tail', min: 0.002, max: 1, step: 0.002, default: 0.2 },
-    { kind: 'number', key: 'tailWeight', label: 'Tail weight', min: 0, max: 2, step: 0.01, default: 0.3 },
-    { kind: 'number', key: 'insideMix', label: 'Inside', min: 0, max: 1, step: 0.01, default: 1 },
-    { kind: 'number', key: 'edgeSoftness', label: 'Edge softness', min: 0.002, max: 1, step: 0.002, default: 0.25 },
-    { kind: 'number', key: 'warp', label: 'Warp', min: 0, max: 0.2, step: 0.002, default: 0.01 },
-    { kind: 'number', key: 'intensity', label: 'Intensity', min: 0, max: 4, step: 0.01, default: 1 },
-  ],
+  colorSlots: Array.from({ length: COLORS }, (_, i) => ({ key: `c${i + 1}`, label: `Color ${i + 1}` })),
+  defaultColors: ['#000000', '#0064E0', '#1FCDF0', '#FFD61E', '#FF4F00', '#FFFFFF', '#000000', '#000000'],
+  params,
   fragment: /* glsl */ `
-#define RING_COUNT ${RING_COUNT}
-uniform vec3 uOutside;
-uniform vec3 uInside;
-uniform vec3 uRingColor[RING_COUNT];
-uniform vec2 uRingAt[RING_COUNT];
-uniform float uRingRadius[RING_COUNT];
-uniform float uRingGain[RING_COUNT];
-uniform int uRings;
-uniform float uCoreWidth;
-uniform float uTailIn;
-uniform float uTailOut;
-uniform float uTailWeight;
-uniform float uInsideMix;
-uniform float uEdgeSoftness;
-uniform float uWarp;
-uniform float uIntensity;
-
-float ringProfile(float d) {
-  float core = max(uCoreWidth, 0.7 * uPixel);
-  float tail = softInverseSquare(d, d < 0.0 ? uTailIn : uTailOut);
-  return gaussian(d, core) * (uCoreWidth / core) + uTailWeight * tail;
-}
-
-vec3 radiance(vec2 uv, vec2 p) {
-  vec2 q = domainWarp(p, uWarp, 1.5, 2, uSeed);
-  vec2 c0 = (uRingAt[0] - 0.5) * uFrameAspect;
-  float d0 = length(q - c0) - uRingRadius[0];
-  vec3 color = mix(uOutside, uInside, uInsideMix * softStep(-d0, uEdgeSoftness));
-  for (int i = 0; i < RING_COUNT; i++) {
-    if (i >= uRings) break;
-    vec2 c = (uRingAt[i] - 0.5) * uFrameAspect;
-    float d = length(q - c) - uRingRadius[i];
-    color += uRingColor[i] * uRingGain[i] * ringProfile(d);
-  }
-  return uIntensity * color;
-}
+${curveLightGlsl(LAYOUT)}
+vec3 radiance(vec2 uv, vec2 p) { return vec3(0.0); }
+vec3 auxRadiance(vec2 uv, vec2 p) { return clAux(p, true); }
+vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 b0, vec3 b1, vec3 b2, vec3 b3) { return light + curveLight(p, b0, b1, b2, b3, true); }
 `,
-  uniforms: (ctx) => ({
-    uOutside: ctx.color('outside'),
-    uInside: ctx.color('inside'),
-    uRingColor: [0, 1, 2].flatMap((i) => ctx.color(`ring${i + 1}`)),
-    uRingAt: [0, 1, 2].flatMap((i) => ctx.vec(`ring${i + 1}At`)),
-    uRingRadius: [0, 1, 2].map((i) => ctx.num(`ring${i + 1}Radius`)),
-    uRingGain: [0, 1, 2].map((i) => ctx.num(`ring${i + 1}Gain`)),
-    uRings: Math.round(ctx.num('rings')),
-    uCoreWidth: ctx.num('coreWidth'),
-    uTailIn: ctx.num('tailIn'),
-    uTailOut: ctx.num('tailOut'),
-    uTailWeight: ctx.num('tailWeight'),
-    uInsideMix: ctx.num('insideMix'),
-    uEdgeSoftness: ctx.num('edgeSoftness'),
-    uWarp: ctx.num('warp'),
-    uIntensity: ctx.num('intensity'),
-  }),
-  lens: { bloom: 0.06, bloomRadius: 0.6, bloomWidth: 1.5 },
+  uniforms: (ctx) => {
+    const gain = ctx.num('gain')
+    const soften = ctx.num('soften')
+    const emitters: EmitterSettings[] = Array.from({ length: RINGS }, (_, index) => {
+      const i = index + 1
+      const sweep = ctx.num(`ring${i}Sweep`)
+      const shape = ctx.bool(`ring${i}On`)
+        ? buildShape({
+            kind: sweep >= 359.99 ? 'ring' : 'arc',
+            size: ctx.num(`ring${i}Radius`),
+            angle: sweep,
+            aspect: ctx.num(`ring${i}Aspect`),
+            rotate: ctx.num(`ring${i}Rotate`),
+            flip: false,
+          })
+        : null
+      return {
+        shape,
+        anchor: ctx.vec(`ring${i}At`),
+        stops: [{ t: 0, color: slotColor(ctx, ctx.num(`ring${i}Color`)), gain: ctx.num(`ring${i}Gain`) }],
+        near: Array.from({ length: NEAR }, (_, k) => readNear(ctx, `ring${i}n${k + 1}`, soften, gain)),
+        far: Array.from({ length: FAR }, (_, k) => readFar(ctx, `ring${i}f${k + 1}`, soften, gain)),
+        maskShift: ctx.vec(`ring${i}MaskShift`),
+        maskGrow: ctx.num(`ring${i}MaskGrow`),
+      }
+    })
+    const base = slotColor(ctx, ctx.num('base')).map((v) => v * ctx.num('baseGain'))
+    return curveLightUniforms(LAYOUT, emitters, readLights(ctx), base, ctx.num('farWidth') * soften)
+  },
+  scatter: farScatter((ctx) => ctx.num('farWidth') * ctx.num('soften')),
+  lens: { bloom: 0 },
   fromPack: (pack: ColorPack) => {
     const hexes = pack.colors.map((c) => c.hex)
-    const lightest = packHexesByLightness(pack).at(-1) ?? hexes[0]
-    return ['#000000', hexes[0], lightest, hexes[1 % hexes.length], hexes[2 % hexes.length]]
+    return Array.from({ length: COLORS }, (_, i) => (i === 0 ? '#000000' : (hexes[i - 1] ?? hexes[0])))
   },
+  compose: composeHalo,
 }
