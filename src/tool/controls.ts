@@ -84,31 +84,6 @@ export const CONTROL_MAPPINGS: Readonly<Partial<Record<RecipeId, RecipeMapping>>
       halationRadius: lin(softness, 0.025, 0.04, 0.07),
     }),
   },
-  'contour.beam': {
-    params: ({ intensity, softness, mood }) => {
-      const gain = geo(intensity, 0.45, 1, 2.2)
-      return {
-        source: [lin(mood, 0.22, 0.5, 0.78), -0.15],
-        floorY: 0.72,
-        spread: lin(softness, 6, 9, 14),
-        beamWidth: geo(softness, 0.06, 0.12, 0.22),
-        beamGain: 0.45 * gain,
-        haze: 1.2,
-        poolGain: 2 * gain,
-        poolWidth: geo(softness, 0.16, 0.22, 0.32),
-        poolHeight: geo(softness, 0.012, 0.02, 0.04),
-        floorGain: 0.8 * gain,
-        floorReach: geo(softness, 0.25, 0.35, 0.5),
-        streaks: 0.6,
-        intensity: 1,
-      }
-    },
-    lens: ({ intensity, softness }) => ({
-      bloom: lin(softness, 0.06, 0.1, 0.16),
-      bloomRadius: lin(softness, 0.4, 0.5, 0.65),
-      halation: lin(intensity, 0.04, 0.1, 0.25),
-    }),
-  },
   'contour.halo': {
     params: ({ intensity, softness, mood }) => ({
       rings: 1,
