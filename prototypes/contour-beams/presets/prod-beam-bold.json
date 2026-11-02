@@ -1,0 +1,81 @@
+{
+  "id": "prod-beam-bold",
+  "scene": {
+    "recipe": "contour.beam",
+    "seed": 1,
+    "colors": [
+      "#1FCDF0",
+      "#0064E0",
+      "#0064E0"
+    ],
+    "params": {
+      "jitter": 1,
+      "hazeLuminance": 0.12,
+      "base": {
+        "level": 0.025
+      },
+      "floor": {
+        "vanishX": "pool"
+      },
+      "sideStreaks": [
+        {
+          "c": 1.05,
+          "width": 0.15,
+          "intensity": 2.4,
+          "start": 0.1,
+          "reach": 0.12
+        },
+        {
+          "c": 0.42,
+          "width": 0.2,
+          "intensity": 1,
+          "start": 0.12,
+          "reach": 0.15
+        }
+      ],
+      "lightLuminance": 0.73
+    },
+    "lens": {
+      "bloom": {
+        "strength": 0.05,
+        "weights": [
+          1,
+          0.6,
+          0.3,
+          0.15,
+          0.1,
+          0.05
+        ]
+      },
+      "vignette": {
+        "strength": 0.15,
+        "radius": 1,
+        "power": 2
+      }
+    },
+    "output": {
+      "grain": 0,
+      "exposure": 0
+    }
+  },
+  "aspects": {
+    "16:9": {
+      "beam": {
+        "x": -0.45
+      },
+      "floor": {
+        "y": 0.74,
+        "horizonY": 0.63
+      }
+    },
+    "9:16": {
+      "beam": {
+        "x": -0.07
+      },
+      "floor": {
+        "y": 0.76,
+        "horizonY": 0.65
+      }
+    }
+  }
+}

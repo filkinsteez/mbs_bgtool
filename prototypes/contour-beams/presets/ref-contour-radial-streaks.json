@@ -1,0 +1,23 @@
+{
+  "id": "ref-contour-radial-streaks",
+  "referenceId": "contour-radial-streaks",
+  "scene": {
+    "recipe": "contour.streaks",
+    "seed": 11,
+    "colors": ["#B4D4F2", "#3A6699", "#02050B"],
+    "params": {},
+    "lens": {
+      "bloom": { "strength": 0.04, "weights": [1, 0.5, 0.25, 0.1] },
+      "vignette": { "strength": 0.1, "radius": 1, "power": 2 }
+    },
+    "output": { "grain": 0, "exposure": 0 }
+  },
+  "audit": {
+    "grid": [16, 10],
+    "zooms": [
+      { "rect": [460, 370, 465, 160], "scale": 2 },
+      { "rect": [200, 330, 360, 220], "scale": 2 },
+      { "rect": [0, 0, 460, 300], "scale": 1 }
+    ]
+  }
+}

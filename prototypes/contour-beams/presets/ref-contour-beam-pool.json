@@ -1,0 +1,23 @@
+{
+  "id": "ref-contour-beam-pool",
+  "referenceId": "contour-beam-pool",
+  "scene": {
+    "recipe": "contour.beam",
+    "seed": 1,
+    "colors": ["#C6E4F8", "#366685", "#00040B"],
+    "params": { "floorBalance": 0.1 },
+    "lens": {
+      "bloom": { "strength": 0.05, "weights": [1, 0.6, 0.3, 0.15, 0.1, 0.05] },
+      "vignette": { "strength": 0.15, "radius": 1, "power": 2 }
+    },
+    "output": { "grain": 0, "exposure": 0 }
+  },
+  "audit": {
+    "grid": [10, 28],
+    "zooms": [
+      { "rect": [200, 1200, 525, 320], "scale": 2 },
+      { "rect": [0, 1250, 462, 600], "scale": 1 },
+      { "rect": [250, 0, 425, 300], "scale": 1 }
+    ]
+  }
+}

@@ -1,0 +1,172 @@
+{
+  "id": "prod-streaks-elemental",
+  "scene": {
+    "recipe": "contour.streaks",
+    "seed": 1,
+    "colors": [
+      "#D6F26C",
+      "#0F3D33",
+      "#0F3D33"
+    ],
+    "params": {
+      "jitter": 1,
+      "hazeLuminance": 0.12,
+      "baseLevel": 0.1,
+      "glow": {
+        "intensity": 0.9,
+        "streaks": 0.6
+      },
+      "line": {
+        "up": 1.6
+      },
+      "floor": {
+        "reflect": 0.08,
+        "pool": 0.45,
+        "fans": [
+          {
+            "from": -0.3,
+            "to": 0.3,
+            "soft": 0.15,
+            "level": 1.8,
+            "pale": 0.25,
+            "reach": 0.4
+          },
+          {
+            "from": 1.6,
+            "to": 3.4,
+            "soft": 0.3,
+            "level": 1,
+            "pale": 0.4,
+            "reach": 0.6
+          }
+        ],
+        "lobes": [
+          {
+            "angle": 0.85,
+            "width": 0.5,
+            "level": 3.5,
+            "pale": 0.35,
+            "reach": 0.18
+          }
+        ]
+      },
+      "lightLuminance": 0.62
+    },
+    "lens": {
+      "bloom": {
+        "strength": 0.04,
+        "weights": [
+          1,
+          0.5,
+          0.25,
+          0.1
+        ]
+      },
+      "vignette": {
+        "strength": 0.12,
+        "radius": 1,
+        "power": 2
+      }
+    },
+    "output": {
+      "grain": 0,
+      "exposure": 0
+    }
+  },
+  "aspects": {
+    "16:9": {
+      "center": {
+        "x": -0.35,
+        "y": 0.7
+      },
+      "glow": {
+        "x": -0.51,
+        "y": 0.7
+      },
+      "floor": {
+        "poolX": -0.51,
+        "poolY": 0.78
+      },
+      "sky": {
+        "fans": [
+          {
+            "from": -3.2,
+            "to": -1.15,
+            "soft": 0.22,
+            "level": [
+              3.4,
+              3.2,
+              2.5,
+              1.7,
+              1.1,
+              0.65,
+              0.42,
+              0.3,
+              0.22,
+              0.18
+            ],
+            "pale": [
+              0.6,
+              0.55,
+              0.45,
+              0.35,
+              0.25,
+              0.2,
+              0.15,
+              0.12,
+              0.1,
+              0.1
+            ]
+          }
+        ]
+      }
+    },
+    "9:16": {
+      "center": {
+        "x": -0.06,
+        "y": 0.72
+      },
+      "glow": {
+        "x": -0.22,
+        "y": 0.72
+      },
+      "floor": {
+        "poolX": -0.22,
+        "poolY": 0.8
+      },
+      "sky": {
+        "fans": [
+          {
+            "from": -3.2,
+            "to": -1.45,
+            "soft": 0.22,
+            "level": [
+              3.4,
+              3.2,
+              2.5,
+              1.7,
+              1.1,
+              0.65,
+              0.42,
+              0.3,
+              0.22,
+              0.18
+            ],
+            "pale": [
+              0.6,
+              0.55,
+              0.45,
+              0.35,
+              0.25,
+              0.2,
+              0.15,
+              0.12,
+              0.1,
+              0.1
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
