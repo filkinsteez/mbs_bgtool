@@ -1,0 +1,24 @@
+{
+  "id": "ref-sunset-green-riso",
+  "referenceId": "sunset-green-riso",
+  "scene": {
+    "recipe": "sunset.bands",
+    "seed": 1,
+    "colors": ["#E4E3DF", "#60A024", "#D1BC22"],
+    "params": {
+      "mode": "multiply",
+      "mixN": 3.72,
+      "base": 0,
+      "kernel": { "shape": "box", "soft": 0.15 },
+      "light": { "x": -0.05 },
+      "bands": [
+        { "color": 1, "top": 0.1918, "bottom": 0.7981, "softUp": 0.172, "softDown": 0.2038, "tilt": -0.04, "tiltDown": 0.08, "opacity": 0.97, "gainTilt": 0.1, "grain": 0.053 },
+        { "color": 2, "top": 0.8063, "bottom": 1.8, "softUp": 0.2155, "softDown": 0.2018, "opacity": 0.97, "gainTilt": 0.1 }
+      ],
+      "grainSize": 1.3
+    },
+    "lens": {},
+    "output": { "exposure": 0, "grain": { "type": "riso", "tooth": 0.03, "size": 1.9, "paper": "#E4E3DF" } }
+  },
+  "review": { "zoom": [350, 300, 200, 250], "zoomScale": 3, "grainRects": [[60, 10, 800, 80], [60, 560, 800, 150], [60, 1340, 800, 100]] }
+}

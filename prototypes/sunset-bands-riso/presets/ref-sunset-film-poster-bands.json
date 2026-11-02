@@ -1,0 +1,97 @@
+{
+  "id": "ref-sunset-film-poster-bands",
+  "referenceId": "sunset-film-poster-bands",
+  "scene": {
+    "recipe": "sunset.bands",
+    "seed": 1,
+    "colors": ["#0E0E0E", "#96261A", "#4873A1", "#524E46", "#E43E35", "#4E1A20", "#9A7B49", "#E6BC91", "#D6856F", "#C22A1F"],
+    "params": {
+      "mode": "over",
+      "mixN": 1.9906,
+      "base": 0,
+      "kernel": {"shape": "disk", "soft": 0},
+      "bands": [
+        {
+          "color": 1,
+          "top": -0.5,
+          "bottom": 0.052,
+          "softUp": 0.05,
+          "softDown": 0.052,
+          "lumps": [
+            {"u": 0.33, "width": 0.11, "shiftDown": -0.0188},
+            {"u": 0.32, "width": 0.1, "gain": -0.15}
+          ]
+        },
+        {
+          "color": 2,
+          "top": 0.269,
+          "bottom": 0.5315,
+          "softUp": 0.0835,
+          "softDown": 0.0996,
+          "lumps": [
+            {"u": 0, "width": 0.18, "shift": -0.0586, "shiftDown": -0.02},
+            {"u": 0.43, "width": 0.12, "shift": 0.0143, "bright": 0.4469},
+            {"u": 0.27, "width": 0.08, "shiftDown": -0.0111},
+            {"u": 0.5, "width": 0.08, "shiftDown": -0.0203}
+          ]
+        },
+        {
+          "color": 3,
+          "top": 0.5689,
+          "bottom": 0.8145,
+          "softUp": 0.18,
+          "softDown": 0.041,
+          "lumps": [
+            {"u": 0, "width": 0.15, "bright": 0},
+            {"u": 0.45, "width": 0.1, "bright": 0.2484},
+            {"u": 0.68, "width": 0.1, "bright": 0.5375}
+          ]
+        },
+        {
+          "color": 4,
+          "top": 0.6666,
+          "bottom": 2,
+          "softUp": 0.03,
+          "softDown": 0.05,
+          "lumps": [
+            {"u": 0.19, "width": 0.1, "shift": 0.0105},
+            {"u": 0.48, "width": 0.1, "shift": 0.0235}
+          ]
+        },
+        {"color": 9, "top": 0.9763, "bottom": 2, "softUp": 0.0305, "softDown": 0.05}
+      ],
+      "blooms": [
+        {"color": 5, "u": 0.43, "v": 0.25, "rx": 0.133, "ry": 0.059, "opacity": 0.6244},
+        {"color": 6, "u": 0.49, "v": 0.4993, "rx": 0.21, "ry": 0.074, "opacity": 0.4303},
+        {"color": 8, "u": 0.36, "v": 0.6754, "rx": 0.3, "ry": 0.035, "opacity": 0.5906},
+        {"color": 7, "u": 0.02, "v": 0.75, "rx": 0.0619, "ry": 0.05, "opacity": 0.477}
+      ]
+    },
+    "lens": {},
+    "output": {
+      "exposure": 0,
+      "grain": {
+        "type": "screen",
+        "noise": 2.8,
+        "noiseSize": 0.5,
+        "noiseDrive": "mid",
+        "wobbleScale": 8,
+        "gratings": [
+          {"period": 4.55, "angle": 49.4, "amp": 4.5, "drive": "neutral", "wobble": 1.5},
+          {"period": 4, "angle": 90, "amp": 1.7, "drive": "mid", "wobble": 1.2},
+          {"period": 4, "angle": 0, "amp": 0.9, "drive": "mid", "wobble": 1.2}
+        ]
+      }
+    }
+  },
+  "review": {
+    "zoom": [250, 180, 300, 260],
+    "zoomScale": 2,
+    "rangeAB": [-0.2, 0.25],
+    "grainRects": [
+      [100, 120, 700, 90],
+      [60, 450, 800, 90],
+      [100, 950, 700, 120]
+    ]
+  }
+}

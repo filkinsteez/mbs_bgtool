@@ -1,0 +1,26 @@
+{
+  "id": "ref-sunset-blue-riso",
+  "referenceId": "sunset-blue-riso",
+  "scene": {
+    "recipe": "sunset.bands",
+    "seed": 1,
+    "colors": ["#F3EFEB", "#449AD7", "#3C5274"],
+    "params": {
+      "mode": "multiply",
+      "mixN": 1.58,
+      "base": 0,
+      "kernel": { "shape": "disk", "soft": 0 },
+      "light": { "x": 0.06 },
+      "bands": [
+        { "color": 1, "top": 0.174, "bottom": 0.428, "softUp": 0.1244, "softDown": 0.0364, "opacity": 0.97, "gainTilt": -0.12, "grain": 0.042 },
+        { "color": 2, "top": 0.428, "bottom": 0.781, "softUp": 0.0448, "softDown": 0.1998, "opacity": 0.97, "gainTilt": -0.12, "grain": 0.03 },
+        { "color": 1, "top": 0.7977, "bottom": 2.01, "softUp": 0.1839, "softDown": 0.18, "opacity": 0.97, "gainTilt": -0.12, "grain": 0.052 }
+      ],
+      "grainSize": 1.3,
+      "grainMid": 0.8
+    },
+    "lens": {},
+    "output": { "exposure": 0, "grain": { "type": "riso", "tooth": 0.03, "size": 1.9, "paper": "#F3EFEB" } }
+  },
+  "review": { "zoom": [300, 530, 250, 200], "zoomScale": 3, "grainRects": [[60, 10, 800, 60], [60, 430, 800, 100], [60, 740, 800, 90], [60, 1360, 800, 80]] }
+}

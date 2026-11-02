@@ -1,0 +1,32 @@
+{
+  "id": "ref-sunset-pink-riso",
+  "referenceId": "sunset-pink-riso",
+  "scene": {
+    "recipe": "sunset.bands",
+    "seed": 1,
+    "colors": ["#F4EDE8", "#DA6AA2", "#E25F4D", "#4E506A", "#D15E95", "#F37E85", "#A57AD0"],
+    "params": {
+      "mode": "multiply",
+      "mixN": 4.31,
+      "base": 0,
+      "kernel": { "shape": "disk", "soft": 0 },
+      "bands": [
+        { "color": 1, "top": 0.2488, "bottom": 0.5548, "softUp": 0.2216, "softDown": 0.0511, "grain": 0.015 },
+        { "color": 2, "top": 0.564, "bottom": 0.6185, "softUp": 0.0449, "softDown": 0.0018, "grain": 0.022 },
+        { "color": 4, "top": 0.6185, "bottom": 0.8007, "softUp": 0.0018, "softDown": 0.1202, "grain": 0.02 },
+        { "color": 3, "top": 0.7979, "bottom": 2, "softUp": 0.1518, "softDown": 0.2, "grain": 0.055 },
+        {
+          "color": 5, "op": "over", "profile": "line", "center": 0.6189, "height": 0,
+          "softUp": 0.0016, "softDown": 0.0017, "opacity": 0.77,
+          "kernel": { "shape": "gauss", "radii": [0.6, 1.2, 3], "weights": [0.55, 0.35, 0.1] }
+        },
+        { "color": 6, "op": "over", "top": 0.7723, "bottom": 0.9233, "softUp": 0.1809, "softDown": 0.1044, "opacity": 0.477 }
+      ],
+      "grainSize": 1.1,
+      "grainMid": 0.4
+    },
+    "lens": {},
+    "output": { "exposure": 0, "grain": { "type": "riso", "tooth": 0.03, "size": 1.9, "paper": "#F4EDE8" } }
+  },
+  "review": { "zoom": [300, 720, 250, 220], "zoomScale": 3, "grainRects": [[60, 10, 800, 60], [60, 620, 800, 70], [60, 1360, 800, 80]] }
+}
