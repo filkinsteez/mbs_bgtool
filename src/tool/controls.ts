@@ -70,25 +70,6 @@ const RIM_LIGHT_PATH = [
 
 /** Fallback mappings for recipes without `compose`. A recipe owner deletes the entry once the recipe defines compose. */
 export const CONTROL_MAPPINGS: Readonly<Partial<Record<RecipeId, RecipeMapping>>> = {
-  'sunset.ramp': {
-    params: ({ intensity, softness, mood }) => {
-      const horizon = lin(mood, 0.4, 0.64, 0.86)
-      return {
-        stops: 3,
-        pos1: 0,
-        pos2: horizon,
-        pos3: 1,
-        horizon,
-        softness: lin(softness, 0.02, 0.1, 0.28),
-        warp: 0.04,
-        warpScale: 1.2,
-        glow: lin(intensity, 0.05, 0.35, 1.1),
-        glowWidth: geo(softness, 0.05, 0.11, 0.24),
-        intensity: lin(intensity, 0.8, 1, 1.35),
-      }
-    },
-    lens: ({ softness }) => ({ bloom: lin(softness, 0.01, 0.05, 0.14), bloomRadius: lin(softness, 0.6, 0.75, 0.88) }),
-  },
   'sunset.bands': {
     params: ({ intensity, softness, mood }, pack) => {
       const bands = Math.min(5, Math.max(3, pack.colors.length))
