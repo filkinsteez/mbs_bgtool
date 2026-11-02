@@ -12,6 +12,9 @@ This version has breaking changes — APIs, conventions, and file structure may 
   seamlessly without mud: the bridge between two hues is lighter, never
   darker than both sides; every edge is soft; bright light goes smoothly
   to white.
+- Boundaries between colors are organic. They curve, drift and change
+  softness along their length, and neighbouring boundaries are not
+  parallel. No straight, ruler-like or evenly spaced boundaries.
 - Use the exact pack hexes from Figma slide 33:200, in pack order. Packs
   never mix.
   - Bold: Meta Blue `#0064E0`, Cyan `#1FCDF0`, Yellow `#FFD61E`,
