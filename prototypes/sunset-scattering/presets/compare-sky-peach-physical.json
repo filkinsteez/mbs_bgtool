@@ -1,0 +1,35 @@
+{
+  "id": "compare-sunset-sky-peach-physical",
+  "referenceId": "sunset-sky-peach",
+  "scene": {
+    "recipe": "sunset.scatter",
+    "seed": 1,
+    "colors": [
+      "#408AF9",
+      "#C97A3B",
+      "#FFFFFF"
+    ],
+    "params": {
+      "mode": "spectra",
+      "sunElevation": -0.96,
+      "sunAzimuth": 34.2,
+      "fov": 26.5,
+      "horizon": 1.0045,
+      "air": 1.043,
+      "redden": 2.467,
+      "haze": 11.66,
+      "hazeHeight": 1.01,
+      "mieG": 0.605,
+      "ozone": 1.17,
+      "wbTemp": 0.231,
+      "wbTint": -0.005,
+      "msScale": 0.97,
+      "airModel": "physical"
+    },
+    "lens": {},
+    "output": {
+      "grain": 0,
+      "exposure": 3.686
+    }
+  }
+}

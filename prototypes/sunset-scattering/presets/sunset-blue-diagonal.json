@@ -1,0 +1,39 @@
+{
+  "id": "ref-sunset-blue-diagonal",
+  "referenceId": "sunset-blue-diagonal",
+  "scene": {
+    "recipe": "sunset.scatter",
+    "seed": 1,
+    "colors": [
+      "#0652DB",
+      "#DAB602",
+      "#FFFFFF"
+    ],
+    "params": {
+      "mode": "twolight",
+      "sunElevation": 1.0879,
+      "sunAzimuth": -22.9705,
+      "fov": 66.2306,
+      "horizon": 1.0573,
+      "tilt": 3.7852,
+      "air": 0.5061,
+      "airWarmth": 0.2008,
+      "haze": 10.9885,
+      "hazeHeight": 2.1052,
+      "redden": 2.8249,
+      "mieG": 0.4993,
+      "msScale": 0.4565,
+      "skySat": 1.1375,
+      "hazeChain": 1.0984,
+      "wbTemp": 0.5261,
+      "wbTint": -0.1659,
+      "softness": 0.011,
+      "softnessVar": 0.5
+    },
+    "lens": {},
+    "output": {
+      "grain": 0.0035,
+      "exposure": 2.112
+    }
+  }
+}

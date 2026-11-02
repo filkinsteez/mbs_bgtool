@@ -1,0 +1,38 @@
+{
+  "id": "ref-sunset-red-yellow-arcs",
+  "referenceId": "sunset-red-yellow-arcs",
+  "scene": {
+    "recipe": "sunset.scatter",
+    "seed": 1,
+    "colors": [
+      "#92CFFF",
+      "#FE9C14",
+      "#FFFFFF"
+    ],
+    "params": {
+      "mode": "twolight",
+      "sunElevation": 1.0032,
+      "sunAzimuth": 0,
+      "fov": 45.7262,
+      "horizon": 1.2001,
+      "tilt": 0,
+      "air": 0.0224,
+      "airWarmth": 0.116,
+      "haze": 11.2056,
+      "hazeHeight": 1.9825,
+      "redden": 3.6891,
+      "mieG": 0.7964,
+      "mieGSpread": 0.1903,
+      "msScale": 0.614,
+      "skySat": 1.1063,
+      "hazeChain": 1.1344,
+      "wbTemp": 0,
+      "wbTint": 0
+    },
+    "lens": {},
+    "output": {
+      "grain": 0,
+      "exposure": 1.078
+    }
+  }
+}

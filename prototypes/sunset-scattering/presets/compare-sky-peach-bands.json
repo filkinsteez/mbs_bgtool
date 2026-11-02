@@ -1,0 +1,29 @@
+{
+  "id": "compare-sunset-sky-peach-bands",
+  "referenceId": "sunset-sky-peach",
+  "scene": {
+    "recipe": "sunset.scatter",
+    "seed": 1,
+    "colors": [
+      "#7BFFFD",
+      "#FE0000",
+      "#000000",
+      "#000000",
+      "#000000"
+    ],
+    "params": {
+      "sunElevation": -1,
+      "sunAzimuth": 15,
+      "fov": 30,
+      "horizon": 1.02,
+      "haze": 3,
+      "mode": "bands",
+      "ozone": 1
+    },
+    "lens": {},
+    "output": {
+      "grain": 0,
+      "exposure": 1.856
+    }
+  }
+}

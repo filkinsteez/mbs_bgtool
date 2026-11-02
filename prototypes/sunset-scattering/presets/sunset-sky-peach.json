@@ -1,0 +1,38 @@
+{
+  "id": "ref-sunset-sky-peach",
+  "referenceId": "sunset-sky-peach",
+  "scene": {
+    "recipe": "sunset.scatter",
+    "seed": 1,
+    "colors": [
+      "#317AFE",
+      "#F88817",
+      "#FFFFFF"
+    ],
+    "params": {
+      "mode": "twolight",
+      "sunElevation": -1.083,
+      "sunAzimuth": 26.5116,
+      "fov": 29.2365,
+      "horizon": 0.9946,
+      "air": 1.3735,
+      "airWarmth": 0.3093,
+      "haze": 14.242,
+      "hazeHeight": 1.006,
+      "redden": 2.2852,
+      "mieG": 0.5768,
+      "msScale": 0.6032,
+      "skySat": 1.2707,
+      "hazeChain": 1.0757,
+      "wbTemp": -0.2479,
+      "wbTint": -0.0131,
+      "softness": 0.0775,
+      "softnessVar": 0.5
+    },
+    "lens": {},
+    "output": {
+      "grain": 0,
+      "exposure": 3.052
+    }
+  }
+}

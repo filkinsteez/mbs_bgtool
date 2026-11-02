@@ -1,0 +1,46 @@
+{
+  "id": "ref-sunset-violet-wave",
+  "referenceId": "sunset-violet-wave",
+  "scene": {
+    "recipe": "sunset.scatter",
+    "seed": 30,
+    "colors": [
+      "#529CED",
+      "#8957FA",
+      "#FFFFFF",
+      "#11201F"
+    ],
+    "params": {
+      "mode": "twolight",
+      "sunElevation": 0.2391,
+      "sunAzimuth": 27.5034,
+      "fov": 30.8005,
+      "horizon": 0.4017,
+      "tilt": 0,
+      "air": 1.0844,
+      "airWarmth": 0.2673,
+      "haze": 4.2616,
+      "hazeHeight": 1.7802,
+      "redden": 1.1034,
+      "mieG": 0.7683,
+      "msScale": 1.0748,
+      "skySat": 1.3072,
+      "hazeChain": 1.09,
+      "observer": 1.1559,
+      "groundAlbedo": 0.3139,
+      "wbTemp": -0.0609,
+      "wbTint": -0.0423,
+      "warp": 0.1727,
+      "warpScale": 1.6,
+      "warpPhase": -2.45,
+      "warpOctaves": 1,
+      "softness": 0.1475,
+      "softnessVar": 0.5
+    },
+    "lens": {},
+    "output": {
+      "grain": 0,
+      "exposure": 1.758
+    }
+  }
+}

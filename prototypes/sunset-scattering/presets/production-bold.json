@@ -1,0 +1,44 @@
+{
+  "id": "prod-sunset-scatter-bold",
+  "scene": {
+    "recipe": "sunset.scatter",
+    "seed": 1,
+    "colors": [
+      "#0064E0",
+      "#1FCDF0",
+      "#FFD61E",
+      "#FF4F00"
+    ],
+    "params": {
+      "mode": "twolight",
+      "roles": {
+        "sky": 0,
+        "warm": 2,
+        "haze": -1,
+        "ground": -1
+      },
+      "sunElevation": 0.3,
+      "sunAzimuth": 25,
+      "fov": 30,
+      "horizon": 1.03,
+      "air": 1.1,
+      "airWarmth": 0.05,
+      "haze": 10,
+      "hazeHeight": 1,
+      "redden": 2.2,
+      "mieG": 0.8,
+      "msScale": 0.8,
+      "skySat": 0.3,
+      "hazeChain": 1.1,
+      "warp": 0.05,
+      "warpScale": 1.3,
+      "softness": 0.03
+    },
+    "lens": {},
+    "output": {
+      "grain": 0,
+      "exposure": -0.5,
+      "exposureMode": "sky"
+    }
+  }
+}

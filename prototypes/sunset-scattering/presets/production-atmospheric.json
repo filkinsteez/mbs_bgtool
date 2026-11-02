@@ -1,0 +1,47 @@
+{
+  "id": "prod-sunset-scatter-atmospheric",
+  "scene": {
+    "recipe": "sunset.scatter",
+    "seed": 1,
+    "colors": [
+      "#0064E0",
+      "#F2F4F7",
+      "#6A7788",
+      "#384753",
+      "#1C2B33"
+    ],
+    "params": {
+      "mode": "twolight",
+      "roles": {
+        "sky": 0,
+        "warm": 1,
+        "haze": -1,
+        "ground": 3
+      },
+      "sunElevation": -2.5,
+      "sunAzimuth": 10,
+      "fov": 40,
+      "horizon": 0.95,
+      "air": 1,
+      "airWarmth": 0.08,
+      "haze": 14,
+      "hazeHeight": 1.8,
+      "redden": 1,
+      "mieG": 0.6,
+      "msScale": 1,
+      "skySat": 0.2,
+      "hazeChain": 1,
+      "observer": 0.3,
+      "groundAlbedo": 0.5,
+      "warp": 0.06,
+      "warpScale": 1,
+      "softness": 0.08
+    },
+    "lens": {},
+    "output": {
+      "grain": 0,
+      "exposure": 0,
+      "exposureMode": "sky"
+    }
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "id": "prod-sunset-scatter-elemental",
+  "scene": {
+    "recipe": "sunset.scatter",
+    "seed": 1,
+    "colors": [
+      "#0064E0",
+      "#D6F26C",
+      "#0F3D33",
+      "#B8996E",
+      "#4A0A3C"
+    ],
+    "params": {
+      "mode": "twolight",
+      "roles": {
+        "sky": 0,
+        "warm": 3,
+        "haze": -1,
+        "ground": 4
+      },
+      "sunElevation": -1,
+      "sunAzimuth": -15,
+      "fov": 30,
+      "horizon": 0.95,
+      "air": 1.1,
+      "airWarmth": 0.05,
+      "haze": 16,
+      "hazeHeight": 1,
+      "redden": 4,
+      "mieG": 0.75,
+      "msScale": 0.8,
+      "skySat": 0.3,
+      "hazeChain": 1,
+      "observer": 3,
+      "groundAlbedo": 1.5,
+      "warp": 0.08,
+      "warpScale": 1.2,
+      "softness": 0.08
+    },
+    "lens": {},
+    "output": {
+      "grain": 0,
+      "exposure": -0.6,
+      "exposureMode": "sky"
+    }
+  }
+}
