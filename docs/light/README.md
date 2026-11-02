@@ -14,6 +14,7 @@
 | File | What it is |
 | --- | --- |
 | [`twilight-sky-color.md`](research/twilight-sky-color.md) | Measured twilight skies: where the brightest band sits, how color follows brightness, how wide transitions are at each height, the sideways falloff around the sun, color tables for sun +2° to −6° |
+| [`products.md`](research/products.md) | Gradient and light products (Paper, Stripe, ShaderGradient, Unicorn Studio, Deep Glow, the Windows 10 hero image and more): technique, light or paint, controls, panel patterns, what we take |
 | [`perception-additive-light.md`](research/perception-additive-light.md) | How added light looks: hue shifts on the way to white, within-pack mixes that go grey, the bridge term, warm glow tails, recipe rules for bright and dark pack colors |
 
 ## `docs/references/awe/`
