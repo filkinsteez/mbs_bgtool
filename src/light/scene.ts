@@ -114,8 +114,8 @@ export const DEFAULT_OUTPUT: OutputSettings = {
   grainChroma: 0,
 }
 
-type NumericKeys<T> = { [K in keyof T]: T[K] extends number ? K : never }[keyof T]
-type StringKeys<T> = { [K in keyof T]: T[K] extends string ? K : never }[keyof T]
+type NumericKeys<T> = { [K in keyof T]-?: T[K] extends number ? K : never }[keyof T]
+type StringKeys<T> = { [K in keyof T]-?: T[K] extends string ? K : never }[keyof T]
 
 export interface NumericSetting<K extends string> {
   key: K
