@@ -8,6 +8,8 @@ References come from `public/references/awe/manifest.json` when it exists (only 
 
 ## Commands
 
+The same scripts run as `npm run light:check`, `npm run light:audit -- --all` and `npm run light:fit -- --ref <id>` (arguments after `--`).
+
 ```sh
 node scripts/light/check.mjs [--only hex,determinism,resolution,banding,tone,scatter,context,export,lens] [--out dir]
 ```
