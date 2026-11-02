@@ -50,8 +50,8 @@
       "softVary": 0,
       "softScale": 0.6752,
       "softReach": 0.2962,
-      "drift": 0,
-      "vary": 0,
+      "drift": 0.012,
+      "vary": 0.06,
       "softness": 0,
       "hazeScale": 1.3504,
       "hazeStretch": 3,
@@ -76,7 +76,8 @@
       "reddenSide": 0,
       "sunGlow": 0,
       "bridge": 0,
-      "land": 0
+      "land": 0,
+      "driftScale": 1.6
     },
     "lens": {},
     "output": {
