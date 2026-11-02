@@ -1,25 +1,5 @@
-# Reference Assets
+# Reference files
 
-This folder contains source artifacts used to build the forked MBS Background Generator:
-
-- `MBS Transform— Replacing the Gradient.pdf`
-- `primary-palette-reference.png`
-- `bold-palette-reference.png`
-- `harmonious-palette-reference.png`
-- `atmospheric-palette-reference.png`
-- `neutral-palette-reference.png`
-- `extended-palette-reference.png`
-- `approved-looks-reference.png`
-
-`extended-palette-reference.png` is sampled at each swatch center into
-`src/features/background-generator/palette/extended.ts`: 336 core colors,
-24 neutral greys, 24 product blues, and 7 deep blues (391 total).
-The picker exposes a curated 49-color subset grouped into seven useful
-color families; the full sample remains here as source reference data.
-
-`public/icon-fill.svg` uses the Symbol path copied verbatim from Meta's
-[official company-brand download](https://www.meta.com/brand/resources/meta/company-brand/):
-`Meta_Company-Lockup.zip` →
-`Meta_Company Lockup/3 Mono Black/RGB/Meta_lockup_mono_black_RGB.svg`.
-The symbol's natural bounds are `1504.8272 × 1000`; consumers must preserve
-that aspect ratio with uniform scaling.
+- `awe/`: notes, color profiles and contact sheets for the Sunset, Contour and Warp Speed references from the Figma moodboards. Start with `awe/README.md`. The target images themselves are in `public/references/awe/`, listed in `public/references/awe/manifest.json`.
+- `MBS Transform— Replacing the Gradient.pdf`: the stakeholders' feedback notes (aspect ratios, "up to 4K", older hex values).
+- `*-palette-reference.png` and `approved-looks-reference.png`: brand cards and looks from the app before the 2026-11-02 rebuild, kept for history. Their hexes are not the pack hexes. Use the slide 33:200 hexes in `docs/light/BRIEF.md`.
