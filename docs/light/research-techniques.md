@@ -19,6 +19,8 @@ How this was checked:
 
 ## 1. Tone curve
 
+> Measured further in [`research/perception-additive-light.md`](research/perception-additive-light.md). Its §4 tables measure an earlier curve that moved toward white in linear RGB. The engine now holds the Oklab hue, as its §7.1 proposes. §7.1 also adds a small warm shift (reds through yellow-greens) so Orange-red whitens through peach instead of salmon.
+
 ### What we need
 
 A flat pack color at nominal must come out as its exact hex, so the curve must leave every color with max(R, G, B) ≤ 1 unchanged. Above 1, light must move toward white like overexposed film: no clipping to a flat saturated color, no hue swing (blue must not turn purple or cyan), and no visible ring where the roll-off starts.
@@ -230,6 +232,11 @@ float bandWeight(float t, float e0, float e1, float sigma) {
 ---
 
 ## 3. Skies and twilight
+
+> Corrected by measurement in [`research/twilight-sky-color.md`](research/twilight-sky-color.md):
+> - The glow peaks a few degrees above the horizon, not at it.
+> - The Earth's shadow edge sits near 2.5× the sun's depression, not at the depression, and the shadow keeps the sky's hue.
+> - The sideways falloff has a long tail, about 1/(1 + (φ/29°)^1.6), not a gaussian.
 
 ### Basics
 

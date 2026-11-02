@@ -9,6 +9,13 @@
 | [`research-artists.md`](research-artists.md) | Artists and products that make similar light (Lieberman, Turrell, Eliasson, McCall, Rothko, Sugimoto, Blake, and graphics tools): what they made, how, what we take |
 | [`research-techniques.md`](research-techniques.md) | Technical research: the rendering methods and math behind the light engine |
 
+## `docs/light/research/`
+
+| File | What it is |
+| --- | --- |
+| [`twilight-sky-color.md`](research/twilight-sky-color.md) | Measured twilight skies: where the brightest band sits, how color follows brightness, how wide transitions are at each height, the sideways falloff around the sun, color tables for sun +2° to −6° |
+| [`perception-additive-light.md`](research/perception-additive-light.md) | How added light looks: hue shifts on the way to white, within-pack mixes that go grey, the bridge term, warm glow tails, recipe rules for bright and dark pack colors |
+
 ## `docs/references/awe/`
 
 One notes file per reference, named after its ID in [`public/references/awe/manifest.json`](../../public/references/awe/manifest.json). The target images are in `public/references/awe/<mood>/<id>.png`.
