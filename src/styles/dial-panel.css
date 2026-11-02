@@ -69,21 +69,3 @@
   cursor: progress;
   pointer-events: none;
 }
-
-.dial-column .dialkit-select-option[data-swatches] {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.dial-column .dialkit-select-trigger[data-swatches] .dialkit-select-right::before,
-.dial-column .dialkit-select-option[data-swatches]::after {
-  content: '';
-  flex: none;
-  width: 52px;
-  height: 10px;
-  border-radius: 2px;
-  background: var(--swatches);
-  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.14);
-}

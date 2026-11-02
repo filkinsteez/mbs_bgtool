@@ -13,17 +13,6 @@ const MOOD_OPTIONS = [
 
 const PACK_OPTIONS = PACKS.map((pack) => ({ value: pack.id, label: pack.name }))
 
-function swatchBackground(hexes: readonly string[]): string {
-  const share = 100 / hexes.length
-  const stops = hexes.map((hex, i) => `${hex} ${(i * share).toFixed(2)}% ${((i + 1) * share).toFixed(2)}%`)
-  return `linear-gradient(90deg, ${stops.join(', ')})`
-}
-
-/** Pack name to the CSS background of its swatch row, in pack order. */
-export const PACK_SWATCHES: Readonly<Record<string, string>> = Object.fromEntries(
-  PACKS.map((pack) => [pack.name, swatchBackground(pack.colors.map((color) => color.hex))]),
-)
-
 /**
  * The panel config for the current mood. Defaults come from the state the page
  * loaded with (the URL), so DialKit's first values already match the link.

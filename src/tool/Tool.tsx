@@ -7,7 +7,7 @@ import { DialStore, useDialKitController } from 'dialkit'
 import { useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { EXPORT_SIZES, getPack, type ExportAspect } from '@/light'
 import { buildScene } from './controls'
-import { buildDialConfig, PACK_SWATCHES, PANEL_ID, PANEL_NAME, readToolState } from './dialConfig'
+import { buildDialConfig, PANEL_ID, PANEL_NAME, readToolState } from './dialConfig'
 import { exportPng } from './exportImage'
 import { panelAccessFor, usePanelAccess } from './panelAccess'
 import { Preview } from './Preview'
@@ -62,7 +62,7 @@ export function Tool({ initial }: { initial: ToolState }) {
   )
 
   const access = useMemo(
-    () => panelAccessFor(PANEL_ID, PANEL_NAME, config, { busy: exportStatus === 'busy' ? [EXPORTING_LABEL] : [], swatches: PACK_SWATCHES }),
+    () => panelAccessFor(PANEL_ID, PANEL_NAME, config, { busy: exportStatus === 'busy' ? [EXPORTING_LABEL] : [] }),
     [config, exportStatus],
   )
   usePanelAccess(panelRef, access)

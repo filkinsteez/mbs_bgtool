@@ -33,11 +33,9 @@ export interface PanelAccess {
   selects: readonly SelectAccess[]
   /** Labels of action buttons that are busy: shown dimmed and ignored. */
   busy: readonly string[]
-  /** Option label to the CSS background of its swatch row. */
-  swatches: Readonly<Record<string, string>>
 }
 
-export const NO_ACCESS: PanelAccess = { sliders: [], selects: [], busy: [], swatches: {} }
+export const NO_ACCESS: PanelAccess = { sliders: [], selects: [], busy: [] }
 
 /** DialKit labels controls and folders from their keys; this is the same rule. */
 export function dialLabel(key: string): string {
@@ -62,7 +60,6 @@ function isFolder(control: DialConfig[string]): control is DialConfig {
 
 export interface AccessOptions {
   busy?: readonly string[]
-  swatches?: Readonly<Record<string, string>>
   /** Arrow-key steps by dot path, for sliders whose DialKit step is finer than a useful key step. */
   keySteps?: Readonly<Record<string, number>>
 }
@@ -88,7 +85,7 @@ export function panelAccessFor(panelId: string, panelName: string, config: DialC
     }
   }
   walk(config, '', '')
-  return { sliders, selects, busy: options.busy ?? [], swatches: options.swatches ?? {} }
+  return { sliders, selects, busy: options.busy ?? [] }
 }
 
 export function mergeAccess(...parts: readonly PanelAccess[]): PanelAccess {
@@ -96,7 +93,6 @@ export function mergeAccess(...parts: readonly PanelAccess[]): PanelAccess {
     sliders: parts.flatMap((part) => part.sliders),
     selects: parts.flatMap((part) => part.selects),
     busy: parts.flatMap((part) => part.busy),
-    swatches: Object.assign({}, ...parts.map((part) => part.swatches)),
   }
 }
 
@@ -106,12 +102,6 @@ function setAttribute(element: Element, name: string, value: string | null): voi
   } else if (element.getAttribute(name) !== value) {
     element.setAttribute(name, value)
   }
-}
-
-function setSwatches(element: HTMLElement, background: string | undefined): void {
-  setAttribute(element, 'data-swatches', background ? '' : null)
-  if (background) element.style.setProperty('--swatches', background)
-  else element.style.removeProperty('--swatches')
 }
 
 const textOf = (element: Element | null) => element?.textContent?.trim() ?? ''
@@ -173,11 +163,6 @@ export function applyPanelAccess(root: HTMLElement, access: PanelAccess): void {
     setAttribute(trigger, 'data-dial-path', select.path)
     setAttribute(trigger, 'aria-haspopup', 'listbox')
     setAttribute(trigger, 'aria-expanded', trigger.dataset.open === 'true' ? 'true' : 'false')
-    const selected = select.options.find((option) => option.value === DialStore.getValue(select.panelId, select.path))
-    setSwatches(trigger, selected ? access.swatches[selected.label] : undefined)
-  }
-  for (const option of root.querySelectorAll<HTMLElement>('.dialkit-select-option')) {
-    setSwatches(option, access.swatches[textOf(option)])
   }
 
   for (const control of root.querySelectorAll<HTMLElement>('.dialkit-labeled-control')) {
@@ -210,16 +195,11 @@ export function applyPanelAccess(root: HTMLElement, access: PanelAccess): void {
   }
 }
 
-/** Busy labels and swatches of every mounted usePanelAccess, so one hook does not undo another's. */
-const shared = new Map<string, Pick<PanelAccess, 'busy' | 'swatches'>>()
+/** Busy labels of every mounted usePanelAccess, so one hook does not undo another's. */
+const shared = new Map<string, readonly string[]>()
 
 function withShared(access: PanelAccess): PanelAccess {
-  const parts = [...shared.values()]
-  return {
-    ...access,
-    busy: parts.flatMap((part) => part.busy),
-    swatches: Object.assign({}, ...parts.map((part) => part.swatches)),
-  }
+  return { ...access, busy: [...shared.values()].flat() }
 }
 
 function roundToStep(value: number, step: number): number {
@@ -315,7 +295,7 @@ export function usePanelAccess(rootRef: RefObject<HTMLElement | null>, access: P
 
   useEffect(() => {
     latest.current = access
-    shared.set(key, { busy: access.busy, swatches: access.swatches })
+    shared.set(key, access.busy)
     if (rootRef.current) applyPanelAccess(rootRef.current, withShared(access))
   })
 
