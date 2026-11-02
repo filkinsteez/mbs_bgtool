@@ -192,8 +192,9 @@ export function switchRecipe(base: Scene, recipeId: RecipeId): Scene {
   }
 }
 
+/** Within half a slider step counts as the same value: DialKit's own rounding is not an edit. */
 function sameValue(a: unknown, b: unknown): boolean {
-  if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) < 1e-9
+  if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) <= VALUE_STEP / 2 + 1e-12
   if (typeof a === 'string' && typeof b === 'string' && isHex(a) && isHex(b)) return normalizeHex(a) === normalizeHex(b)
   if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((value, i) => sameValue(value, b[i]))
   return a === b

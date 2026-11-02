@@ -31,6 +31,20 @@ function roundLikeDialKit(config: DialConfig, flat: Record<string, unknown>, pre
   return out
 }
 
+/** Paths where `a` and `b` differ: numbers by more than `tolerance`, anything else at all, including missing keys. */
+function differences(a: unknown, b: unknown, tolerance: number, path = ''): string[] {
+  if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) <= tolerance + 1e-12 ? [] : [`${path}: ${a} vs ${b}`]
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return [`${path}: length ${a.length} vs ${b.length}`]
+    return a.flatMap((item, i) => differences(item, b[i], tolerance, `${path}[${i}]`))
+  }
+  if (a && b && typeof a === 'object' && typeof b === 'object') {
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)])
+    return [...keys].flatMap((key) => differences((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key], tolerance, `${path}.${key}`))
+  }
+  return a === b ? [] : [`${path}: ${JSON.stringify(a)} vs ${JSON.stringify(b)}`]
+}
+
 describe('lab scene config', () => {
   for (const recipe of RECIPE_LIST) {
     it(`${recipe.id}: one control per param, color slot, lens and output setting`, () => {
@@ -73,20 +87,26 @@ describe('lab scene config', () => {
   const files = readdirSync(PRESET_DIR).filter((name) => name.endsWith('.json'))
   it('finds preset files', () => expect(files.length).toBeGreaterThan(0))
   for (const name of files) {
-    it(`${name}: saves back unchanged, also after DialKit rounds the sliders`, () => {
-      const file = JSON.parse(readFileSync(`${PRESET_DIR}${name}`, 'utf8')) as Preset
-      const config = sceneDialConfig(file.scene, { colors: true })
-      const values = nestValues(roundLikeDialKit(config, configDefaults(config)))
-      // Values outside a param's range render clamped, and are saved clamped.
-      const specs = getRecipe(file.scene.recipe).params
-      const params = Object.fromEntries(
-        Object.entries(file.scene.params).map(([key, value]) => {
-          const spec = specs.find((candidate) => candidate.key === key)
-          return [key, spec ? coerceParam(spec, value) : value]
-        }),
-      )
-      const expected = { ...file, scene: { ...file.scene, params } }
+    const file = JSON.parse(readFileSync(`${PRESET_DIR}${name}`, 'utf8')) as Preset
+    const config = sceneDialConfig(file.scene, { colors: true })
+    // Values outside a param's range render clamped, and are saved clamped.
+    const specs = getRecipe(file.scene.recipe).params
+    const params = Object.fromEntries(
+      Object.entries(file.scene.params).map(([key, value]) => {
+        const spec = specs.find((candidate) => candidate.key === key)
+        return [key, spec ? coerceParam(spec, value) : value]
+      }),
+    )
+    const expected = { ...file, scene: { ...file.scene, params } }
+
+    it(`${name}: saves back unchanged`, () => {
+      const values = nestValues(configDefaults(config))
       expect(presetToSave(file, sceneFromValues(file.scene.recipe, values, file.scene))).toEqual(expected)
+    })
+
+    it(`${name}: after DialKit rounds the sliders, saves no value further off than half a slider step`, () => {
+      const values = nestValues(roundLikeDialKit(config, configDefaults(config)))
+      expect(differences(presetToSave(file, sceneFromValues(file.scene.recipe, values, file.scene)), expected, VALUE_STEP / 2)).toEqual([])
     })
   }
 })
