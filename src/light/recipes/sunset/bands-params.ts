@@ -94,6 +94,8 @@ export const BANDS_PARAMS: readonly ParamSpec[] = [
   { kind: 'number', key: 'rounding', label: 'Edge rounding', min: 0, max: 0.5, step: 0.005, default: 0 },
   { kind: 'vector', key: 'shade', label: 'Light change across, down', min: -1, max: 1, step: 0.0005, default: [0, 0] },
   { kind: 'number', key: 'ink', label: 'Ink mixing', min: 0, max: 5, step: 0.01, default: 0 },
+  // Grain that follows ink: 0 is even grain; 1 scales it by how much the layers darken the base, down to the floor on bare base.
+  { kind: 'vector', key: 'grainInk', label: 'Grain follows ink, floor', min: 0, max: 1, step: 0.01, default: [0, 0.3] },
   ...Array.from({ length: BAND_MAX }, (_, i) => bandSpecs(i)).flat(),
   ...Array.from({ length: PATCH_MAX }, (_, i) => patchSpecs(i)).flat(),
 ]

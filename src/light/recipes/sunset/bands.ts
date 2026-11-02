@@ -117,6 +117,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     uShade: ctx.vec('shade'),
     uDeepen: ctx.num('deepen'),
     uIntensity: ctx.num('intensity'),
+    uGrainInk: ctx.vec('grainInk'),
   }
 }
 
@@ -171,6 +172,10 @@ uniform float uInk;
 uniform vec2 uShade;
 uniform float uDeepen;
 uniform float uIntensity;
+uniform vec2 uGrainInk;              // how much grain follows ink, grain on bare base
+
+// Set by radiance() for grainWeight(), which the engine calls right after it for the same point.
+float gGrainWeight = 1.0;
 
 float edgeHash(int i, int seed) {
   uint h = pcgHash(uint(i + 65536) ^ (uint(seed) * 2654435769u));
@@ -347,10 +352,28 @@ vec3 radiance(vec2 uv, vec2 p) {
 
   vec3 lit = uInk > 0.0 ? pow(max(acc, vec3(0.0)), vec3(1.0 + uInk)) : acc;
   float shade = max(0.0, 1.0 + uShade.x * dx + uShade.y * (v - 0.5));
+  if (uGrainInk.x > 0.0) {
+    float darkness = saturate(1.0 - luminance(lit) / max(luminance(deepen(uBase, uIntensity)), 1e-4));
+    gGrainWeight = mix(1.0, mix(uGrainInk.y, 1.0, darkness), uGrainInk.x);
+  }
   return lit * shade * uIntensity;
 }
+
+float grainWeight(vec2 uv, vec2 p) { return gGrainWeight; }
 `,
   uniforms: bandUniforms,
+  grainWeight: true,
+  // Half-resolution radiance when every edge is wider than about 0.6% of the frame height.
+  radianceScale: (ctx) => {
+    const count = Math.min(Math.round(ctx.num('bands')), BAND_MAX)
+    let thinnest = Infinity
+    for (let i = 0; i < count; i++) {
+      const [above, below] = ctx.vec(bandKey(i, 'Soft'))
+      const [top, bottom] = ctx.vec(bandKey(i, 'Edges'))
+      thinnest = Math.min(thinnest, top > -0.5 ? above : Infinity, bottom < 1.5 ? below : Infinity)
+    }
+    return thinnest >= 0.006 ? 0.5 : 1
+  },
   fromPack: (pack: ColorPack) => composeBands({ pack, seed: 1, aspect: 16 / 9 }).colors,
   compose: ({ pack, controls, seed, aspect }) =>
     composeBands({ pack, seed, aspect, intensity: controls.intensity, softness: controls.softness, horizon: controls.mood }),
