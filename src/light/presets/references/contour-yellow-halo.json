@@ -5,26 +5,26 @@
     "recipe": "contour.halo",
     "seed": 1,
     "colors": [
-      "#CFE3D2",
-      "#1A7AF2",
-      "#FFF0A0",
+      "#D2E8C0",
+      "#0083F5",
+      "#DCD704",
       "#FFF0A0",
       "#FFF0A0"
     ],
     "params": {
       "rings": 1,
       "ring1At": [
-        2,
-        2.2
+        2.2277,
+        1.955
       ],
-      "ring1Radius": 3,
-      "ring1Gain": 0.35,
-      "coreWidth": 0.05,
-      "tailIn": 0.08,
-      "tailOut": 0.25,
-      "tailWeight": 0.2,
+      "ring1Radius": 2.8854,
+      "ring1Gain": 0.3653,
+      "coreWidth": 0.1217,
+      "tailIn": 0.1086,
+      "tailOut": 0.118,
+      "tailWeight": 0.631,
       "insideMix": 1,
-      "edgeSoftness": 0.3,
+      "edgeSoftness": 0.3712,
       "warp": 0.005,
       "intensity": 1
     },

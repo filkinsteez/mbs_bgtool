@@ -4,7 +4,14 @@
   "scene": {
     "recipe": "sunset.bands",
     "seed": 1,
-    "colors": ["#E0E1D6", "#64A328", "#93B03A", "#CBB927", "#CBB927", "#CBB927"],
+    "colors": [
+      "#E0E1D6",
+      "#64A328",
+      "#93B03A",
+      "#CBB927",
+      "#CBB927",
+      "#CBB927"
+    ],
     "params": {
       "bands": 4,
       "edge1": 0.18,
@@ -20,7 +27,13 @@
       "bandLight": 0.03,
       "intensity": 1
     },
-    "lens": { "bloom": 0 },
-    "output": { "grain": 0.03, "grainSize": 1.5, "exposure": 0 }
+    "lens": {
+      "bloom": 0
+    },
+    "output": {
+      "grain": 0.009,
+      "grainSize": 1.5,
+      "exposure": 0
+    }
   }
 }
