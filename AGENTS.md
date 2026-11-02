@@ -5,6 +5,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 <!-- END:nextjs-agent-rules -->
 
 3D mode and the Meta symbol were removed on 2026-11-02 by owner decision. Do not bring them back unless the owner asks.
+Later on 2026-11-02 the owner asked for crops of the Meta logo outline as Contour light shapes. Use the official path from git history (`git show 5efa956^:public/icon-fill.svg`). Never show the whole logo, and no 3D.
 
 ## Backgrounds are light (owner directive, 2026-11-02)
 
@@ -23,6 +24,14 @@ This version has breaking changes — APIs, conventions, and file structure may 
     Tan `#B8996E`, Plum `#4A0A3C`
   - Atmospheric: Meta Blue `#0064E0`, Ice `#F2F4F7`, Steel `#6A7788`,
     Slate `#384753`, Near-black `#1C2B33`
+- Build systems, not copies. Shapes, light and packs combine with the
+  seed into endless backgrounds. The moodboard references test whether
+  the system reaches the needed quality; matching them is not the goal,
+  so no special cases that only serve one reference.
+- Light behaves like real light, or close to it. Light from every point
+  of a source adds up, seen through haze and a lens. No glow computed
+  from the distance to the nearest edge: it makes creases at corners
+  and pinch points that real light never has.
 - Reference images are visual targets only. Never feed reference pixels
   to the renderer.
 - Every visual change gets a visual audit: render it, put it next to the
