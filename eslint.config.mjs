@@ -15,6 +15,8 @@ const eslintConfig = defineConfig([
     // Gitignored scratch space for dev harnesses and their generated
     // bundles — never part of the shipped source.
     ".devshots/**",
+    "artifacts/**",
+    "prototypes/*/out/**",
   ]),
 ]);
 

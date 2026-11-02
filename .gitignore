@@ -42,3 +42,7 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .devshots/
+
+# generated audit output, prototype renders and downloaded sources
+/artifacts/
+prototypes/*/out/
