@@ -227,7 +227,7 @@ export function composeBands(input: BandsComposeInput): BandsComposition {
   ground.forEach((color, k) => {
     const crisp = k === crispGround
     const r = k === 0 ? horizonRadius : crisp ? crispRadius : radius * place.between(1, 2.2)
-    const lightBumps: Bump[] = [[place.between(0.1, 0.9), place.between(0.3, 0.7), place.between(-0.2, 0.2)]]
+    const lightBumps: Bump[] = [[place.between(0.1, 0.9), place.between(0.3, 0.7), place.between(-0.1, 0.1)]]
     // Light the glow reflects onto the first ground band, strongest under the sun; nominal far from it.
     const lit = k === 0 ? place.between(1.1, 1.3) : 1
     const litSun = k === 0 ? clamp((1 - 1 / lit) / (1 - sunFar), 0, 1) : 0
@@ -246,7 +246,7 @@ export function composeBands(input: BandsComposeInput): BandsComposition {
     })
   }
   if (groundPatch && groundSpan > 0.08) {
-    const factor = groundShadow ? place.between(0.75, 0.88) : place.between(1.12, 1.25)
+    const factor = groundShadow ? place.between(0.8, 0.9) : place.between(1.1, 1.2)
     patches.push({
       color: ground[0],
       shape: [place.between(0.15, 0.85), horizon + groundSpan * place.between(0.4, 0.6), place.between(0.4, 0.9) / W, groundSpan * place.between(0.12, 0.22)],
