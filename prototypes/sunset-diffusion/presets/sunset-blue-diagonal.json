@@ -1,0 +1,187 @@
+{
+  "id": "ref-sunset-blue-diagonal",
+  "referenceId": "sunset-blue-diagonal",
+  "scene": {
+    "recipe": "sunset.diffusion",
+    "seed": 1,
+    "params": {
+      "solver": "harmonic",
+      "pad": 0.15,
+      "seeds": [
+        {
+          "kind": "line",
+          "y": 0,
+          "width": 0.004,
+          "soft": 0.006,
+          "color": "#365FA7",
+          "colorR": "#0A337D"
+        },
+        {
+          "kind": "stroke",
+          "points": [
+            [
+              0.7,
+              -0.12
+            ],
+            [
+              1.15,
+              0.25
+            ]
+          ],
+          "width": 0.004,
+          "soft": 0.006,
+          "color": "#0A337D"
+        },
+        {
+          "kind": "line",
+          "y": 0.272,
+          "slope": 0.557,
+          "bend": -0.393,
+          "width": 0.002,
+          "soft": 0.006,
+          "stops": [
+            [
+              0.12,
+              "#3059A5"
+            ],
+            [
+              0.5,
+              "#3C62AD"
+            ],
+            [
+              0.98,
+              "#2A60B1"
+            ]
+          ]
+        },
+        {
+          "kind": "line",
+          "y": 0.479,
+          "slope": 0.5,
+          "width": 0.002,
+          "soft": 0.006,
+          "stops": [
+            [
+              0,
+              "#6086D1"
+            ],
+            [
+              0.5,
+              "#6A83C5"
+            ],
+            [
+              1,
+              "#6087BC"
+            ]
+          ]
+        },
+        {
+          "kind": "line",
+          "y": 0.688,
+          "slope": 0.53,
+          "width": 0.002,
+          "soft": 0.006,
+          "stops": [
+            [
+              0,
+              "#8FA8DB"
+            ],
+            [
+              0.7,
+              "#9DA3B1"
+            ],
+            [
+              1,
+              "#9D7B5C"
+            ]
+          ]
+        },
+        {
+          "kind": "line",
+          "y": 0.86,
+          "slope": 0.05,
+          "bend": -0.125,
+          "width": 0.002,
+          "soft": 0.006,
+          "stops": [
+            [
+              0,
+              "#FFDDA1"
+            ],
+            [
+              0.5,
+              "#DCB48F"
+            ],
+            [
+              0.8,
+              "#A59C8B"
+            ],
+            [
+              1,
+              "#7F8F88"
+            ]
+          ]
+        },
+        {
+          "kind": "line",
+          "y": 0.96,
+          "slope": 0.12,
+          "width": 0.002,
+          "soft": 0.006,
+          "stops": [
+            [
+              0,
+              "#FFCD62"
+            ],
+            [
+              0.5,
+              "#EA944F"
+            ],
+            [
+              0.75,
+              "#C47548"
+            ],
+            [
+              1,
+              "#A05A40"
+            ]
+          ]
+        },
+        {
+          "kind": "line",
+          "y": 0.998,
+          "width": 0.004,
+          "soft": 0.006,
+          "stops": [
+            [
+              0,
+              "#FE7836"
+            ],
+            [
+              0.5,
+              "#DB7345"
+            ],
+            [
+              1,
+              "#7E5542"
+            ]
+          ]
+        }
+      ],
+      "blur": 0.03
+    },
+    "lens": {},
+    "output": {
+      "grain": 0,
+      "exposure": 0
+    }
+  },
+  "audit": {
+    "zoom": [
+      180,
+      760,
+      220,
+      180
+    ]
+  }
+}

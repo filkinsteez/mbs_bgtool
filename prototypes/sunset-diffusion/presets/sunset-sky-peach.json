@@ -1,0 +1,28 @@
+{
+  "id": "ref-sunset-sky-peach",
+  "referenceId": "sunset-sky-peach",
+  "scene": {
+    "recipe": "sunset.diffusion",
+    "seed": 1,
+    "colors": ["#6A92C7", "#B2B2B0", "#D2B89C", "#D3A87C", "#CC8B5F", "#B35637", "#741E23", "#8DA3C1"],
+    "params": {
+      "solver": "harmonic",
+      "seeds": [
+        { "kind": "line", "y": 0.0, "width": 0.006, "soft": 0.006, "color": 0 },
+        { "kind": "line", "y": 0.23, "width": 0.002, "soft": 0.006, "color": 7 },
+        { "kind": "line", "y": 0.41, "width": 0.002, "soft": 0.006, "color": 1 },
+        { "kind": "line", "y": 0.565, "width": 0.002, "soft": 0.006, "color": 2 },
+        { "kind": "line", "y": 0.69, "width": 0.002, "soft": 0.006, "color": 3 },
+        { "kind": "line", "y": 0.78, "width": 0.002, "soft": 0.006, "color": 4 },
+        { "kind": "line", "y": 0.905, "width": 0.002, "soft": 0.006, "color": 5 },
+        { "kind": "line", "y": 1.005, "width": 0.008, "soft": 0.006, "color": 6 }
+      ],
+      "light": { "angle": 0, "stops": 0.62, "tint": [1.2, 0.95, 0.75] },
+      "warp": { "ampX": 0.0, "ampY": 0.012, "freqX": 1.2, "freqY": 2.0, "octaves": 3, "seed": 3 },
+      "blur": 0.012
+    },
+    "lens": {},
+    "output": { "grain": 0, "exposure": 0 }
+  },
+  "audit": { "zoom": [300, 300, 200, 160] }
+}

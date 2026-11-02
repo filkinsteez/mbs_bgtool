@@ -1,0 +1,147 @@
+{
+  "id": "ref-sunset-red-yellow-arcs",
+  "referenceId": "sunset-red-yellow-arcs",
+  "scene": {
+    "recipe": "sunset.diffusion",
+    "seed": 1,
+    "colors": [
+      "#7B2116",
+      "#862117",
+      "#9B2018",
+      "#D12116",
+      "#E42E18",
+      "#E96314",
+      "#F39A0B",
+      "#FDC61A",
+      "#F4DB58",
+      "#E8E083",
+      "#CEE1B3",
+      "#B0D9D9",
+      "#94D4EF"
+    ],
+    "params": {
+      "solver": "harmonic",
+      "pad": 0.15,
+      "seeds": [
+        {
+          "kind": "line",
+          "y": 0,
+          "bend": 0.27,
+          "width": 0.002,
+          "soft": 0.006,
+          "color": 0
+        },
+        {
+          "kind": "line",
+          "y": 0.085,
+          "bend": 0.27,
+          "width": 0.002,
+          "soft": 0.006,
+          "color": 1
+        },
+        {
+          "kind": "line",
+          "y": 0.17,
+          "bend": 0.27,
+          "width": 0.002,
+          "soft": 0.006,
+          "color": 2
+        },
+        {
+          "kind": "line",
+          "y": 0.33,
+          "bend": 0.27,
+          "width": 0.002,
+          "soft": 0.006,
+          "color": 3
+        },
+        {
+          "kind": "line",
+          "y": 0.42,
+          "bend": 0.27,
+          "width": 0.002,
+          "soft": 0.006,
+          "color": 4
+        },
+        {
+          "kind": "line",
+          "y": 0.52,
+          "bend": 0.27,
+          "width": 0.002,
+          "soft": 0.006,
+          "color": 5
+        },
+        {
+          "kind": "line",
+          "y": 0.62,
+          "bend": 0.27,
+          "width": 0.002,
+          "soft": 0.006,
+          "color": 6
+        },
+        {
+          "kind": "line",
+          "y": 0.71,
+          "bend": 0.27,
+          "width": 0.002,
+          "soft": 0.006,
+          "color": 7
+        },
+        {
+          "kind": "line",
+          "y": 0.78,
+          "bend": 0.27,
+          "width": 0.002,
+          "soft": 0.006,
+          "color": 8
+        },
+        {
+          "kind": "line",
+          "y": 0.82,
+          "bend": 0.27,
+          "width": 0.002,
+          "soft": 0.006,
+          "color": 9
+        },
+        {
+          "kind": "line",
+          "y": 0.87,
+          "bend": 0.27,
+          "width": 0.002,
+          "soft": 0.006,
+          "color": 10
+        },
+        {
+          "kind": "line",
+          "y": 0.925,
+          "bend": 0.27,
+          "width": 0.002,
+          "soft": 0.006,
+          "color": 11
+        },
+        {
+          "kind": "line",
+          "y": 0.995,
+          "bend": 0.27,
+          "width": 0.002,
+          "soft": 0.006,
+          "color": 12
+        }
+      ],
+      "blur": 0.01
+    },
+    "lens": {},
+    "output": {
+      "grain": 0,
+      "exposure": 0
+    }
+  },
+  "audit": {
+    "zoom": [
+      360,
+      500,
+      200,
+      170
+    ]
+  }
+}
