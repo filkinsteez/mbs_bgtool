@@ -257,7 +257,7 @@
       "file": "contour/contour-radial-streaks.png",
       "width": 925,
       "height": 617,
-      "recipe": "contour.beam",
+      "recipe": "contour.streaks",
       "ignore": [],
       "cornerRadius": 0,
       "notes": "docs/references/awe/contour-radial-streaks.md"

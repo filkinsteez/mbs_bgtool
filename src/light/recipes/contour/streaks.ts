@@ -261,7 +261,7 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
   }
 }
 
-export const contourStreaks = {
+export const contourStreaks: RecipeDefinition = {
   id: 'contour.streaks',
   mood: 'contour',
   label: 'Streaks',
@@ -315,4 +315,4 @@ export const contourStreaks = {
     return [light, haze, base]
   },
   compose: composeStreaks,
-} satisfies Omit<RecipeDefinition, 'id'> & { id: string }
+}

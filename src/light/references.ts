@@ -105,7 +105,7 @@ export const FALLBACK_REFERENCES: readonly FallbackReference[] = [
     ignore: [{ kind: 'text', rect: [280, 1020, 365, 262] }],
   },
   { id: 'contour-iridescent-rings', mood: 'contour', figmaNodeId: '41:30', title: 'Overlapping cropped rings', recipe: 'contour.halo', file: 'contour/c48-rings.png', ignore: [] },
-  { id: 'contour-radial-streaks', mood: 'contour', figmaNodeId: '41:19', title: 'Radial streaks to a bright horizon', recipe: 'contour.beam', file: 'contour/c62-streaks.png', ignore: [] },
+  { id: 'contour-radial-streaks', mood: 'contour', figmaNodeId: '41:19', title: 'Radial streaks to a bright horizon', recipe: 'contour.streaks', file: 'contour/c62-streaks.png', ignore: [] },
   { id: 'contour-beam-pool', mood: 'contour', figmaNodeId: '41:18', title: 'Beam through haze onto a floor pool', recipe: 'contour.beam', file: 'contour/c49-beam-floor.png', ignore: [] },
   { id: 'contour-light-line', mood: 'contour', figmaNodeId: '41:20', title: 'Thin line with a warm widening halo', recipe: 'contour.rim', file: 'contour/c51-line-flame.png', ignore: [] },
 ]

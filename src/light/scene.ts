@@ -10,6 +10,7 @@ export const RECIPE_IDS = [
   'contour.rim',
   'contour.beam',
   'contour.halo',
+  'contour.streaks',
 ] as const
 
 export type RecipeId = (typeof RECIPE_IDS)[number]
