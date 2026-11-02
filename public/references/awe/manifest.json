@@ -1,0 +1,351 @@
+{
+  "version": 1,
+  "references": [
+    {
+      "id": "sunset-sky-peach",
+      "mood": "sunset",
+      "figmaNodeId": "41:14",
+      "figmaName": "image 39",
+      "title": "Blue sky to grey-beige, peach, orange and deep red",
+      "file": "sunset/sunset-sky-peach.png",
+      "width": 925,
+      "height": 1001,
+      "recipe": "sunset.ramp",
+      "ignore": [],
+      "cornerRadius": 0,
+      "notes": "docs/references/awe/sunset-sky-peach.md"
+    },
+    {
+      "id": "sunset-violet-wave",
+      "mood": "sunset",
+      "figmaNodeId": "41:31",
+      "figmaName": "image 58",
+      "title": "Light blue sky, white-pink glow, wavy violet horizon, indigo below",
+      "file": "sunset/sunset-violet-wave.png",
+      "fullFile": "sunset/sunset-violet-wave-full.png",
+      "width": 925,
+      "height": 617,
+      "recipe": "sunset.ramp",
+      "ignore": [],
+      "cornerRadius": 0,
+      "notes": "docs/references/awe/sunset-violet-wave.md"
+    },
+    {
+      "id": "sunset-red-yellow-arcs",
+      "mood": "sunset",
+      "figmaNodeId": "41:15",
+      "figmaName": "image 40",
+      "title": "Maroon to red, orange, yellow, cream and light blue in wide arcs",
+      "file": "sunset/sunset-red-yellow-arcs.png",
+      "width": 925,
+      "height": 1370,
+      "recipe": "sunset.ramp",
+      "ignore": [],
+      "cornerRadius": 0,
+      "notes": "docs/references/awe/sunset-red-yellow-arcs.md"
+    },
+    {
+      "id": "sunset-blue-diagonal",
+      "mood": "sunset",
+      "figmaNodeId": "41:22",
+      "figmaName": "image 41",
+      "title": "Deep blue top right to lavender and peach-orange bottom left",
+      "file": "sunset/sunset-blue-diagonal.png",
+      "fullFile": "sunset/sunset-blue-diagonal-full.png",
+      "width": 925,
+      "height": 1214,
+      "recipe": "sunset.ramp",
+      "ignore": [],
+      "cornerRadius": 0,
+      "notes": "docs/references/awe/sunset-blue-diagonal.md"
+    },
+    {
+      "id": "sunset-film-poster-bands",
+      "mood": "sunset",
+      "figmaNodeId": "41:25",
+      "figmaName": "image 42",
+      "title": "Film poster: blurred red, black, blue, grey and red bands",
+      "file": "sunset/sunset-film-poster-bands.png",
+      "fullFile": "sunset/sunset-film-poster-bands-full.png",
+      "width": 925,
+      "height": 1296,
+      "recipe": "sunset.bands",
+      "ignore": [
+        {
+          "kind": "text",
+          "rect": [
+            139,
+            1086,
+            668,
+            75
+          ]
+        },
+        {
+          "kind": "text",
+          "rect": [
+            20,
+            1160,
+            885,
+            124
+          ]
+        }
+      ],
+      "cornerRadius": 0,
+      "notes": "docs/references/awe/sunset-film-poster-bands.md"
+    },
+    {
+      "id": "sunset-green-riso",
+      "mood": "sunset",
+      "figmaNodeId": "41:26",
+      "figmaName": "image 50",
+      "title": "Riso print: white to green to mustard",
+      "file": "sunset/sunset-green-riso.png",
+      "width": 925,
+      "height": 1447,
+      "recipe": "sunset.bands",
+      "ignore": [
+        {
+          "kind": "fold",
+          "rect": [
+            0,
+            728,
+            925,
+            34
+          ]
+        }
+      ],
+      "cornerRadius": 0,
+      "notes": "docs/references/awe/sunset-green-riso.md"
+    },
+    {
+      "id": "sunset-blue-riso",
+      "mood": "sunset",
+      "figmaNodeId": "41:27",
+      "figmaName": "image 63",
+      "title": "Riso print: white to cyan blue, slate navy band, light blue",
+      "file": "sunset/sunset-blue-riso.png",
+      "width": 925,
+      "height": 1447,
+      "recipe": "sunset.bands",
+      "ignore": [
+        {
+          "kind": "fold",
+          "rect": [
+            0,
+            700,
+            925,
+            34
+          ]
+        }
+      ],
+      "cornerRadius": 0,
+      "notes": "docs/references/awe/sunset-blue-riso.md"
+    },
+    {
+      "id": "sunset-pink-riso",
+      "mood": "sunset",
+      "figmaNodeId": "41:28",
+      "figmaName": "image 64",
+      "title": "Riso print: cream to pink, magenta, orange band, magenta, slate purple",
+      "file": "sunset/sunset-pink-riso.png",
+      "width": 925,
+      "height": 1447,
+      "recipe": "sunset.bands",
+      "ignore": [
+        {
+          "kind": "fold",
+          "rect": [
+            0,
+            700,
+            925,
+            34
+          ]
+        }
+      ],
+      "cornerRadius": 0,
+      "notes": "docs/references/awe/sunset-pink-riso.md"
+    },
+    {
+      "id": "contour-rim-edge",
+      "mood": "contour",
+      "figmaNodeId": "41:21",
+      "figmaName": "image 47",
+      "title": "Blue-white rim glow along a rounded edge on black",
+      "file": "contour/contour-rim-edge.png",
+      "fullFile": "contour/contour-rim-edge-full.png",
+      "width": 925,
+      "height": 1644,
+      "recipe": "contour.rim",
+      "ignore": [],
+      "cornerRadius": 0,
+      "notes": "docs/references/awe/contour-rim-edge.md"
+    },
+    {
+      "id": "contour-yellow-halo",
+      "mood": "contour",
+      "figmaNodeId": "41:23",
+      "figmaName": "image 57",
+      "title": "Pale yellow cropped halo arc on light to saturated blue",
+      "file": "contour/contour-yellow-halo.png",
+      "width": 925,
+      "height": 1309,
+      "recipe": "contour.halo",
+      "ignore": [
+        {
+          "kind": "text",
+          "rect": [
+            290,
+            1027,
+            346,
+            244
+          ]
+        }
+      ],
+      "cornerRadius": 0,
+      "notes": "docs/references/awe/contour-yellow-halo.md"
+    },
+    {
+      "id": "contour-iridescent-rings",
+      "mood": "contour",
+      "figmaNodeId": "41:30",
+      "figmaName": "image 48",
+      "title": "Overlapping cropped rings with iridescent rims on near-black",
+      "file": "contour/contour-iridescent-rings.png",
+      "fullFile": "contour/contour-iridescent-rings-full.png",
+      "width": 925,
+      "height": 1233,
+      "recipe": "contour.halo",
+      "ignore": [
+        {
+          "kind": "other",
+          "rect": [
+            265,
+            1070,
+            350,
+            163
+          ]
+        }
+      ],
+      "cornerRadius": 0,
+      "notes": "docs/references/awe/contour-iridescent-rings.md"
+    },
+    {
+      "id": "contour-radial-streaks",
+      "mood": "contour",
+      "figmaNodeId": "41:19",
+      "figmaName": "image 62",
+      "title": "Radial blue streaks converging on a bright horizon",
+      "file": "contour/contour-radial-streaks.png",
+      "width": 925,
+      "height": 617,
+      "recipe": "contour.beam",
+      "ignore": [],
+      "cornerRadius": 0,
+      "notes": "docs/references/awe/contour-radial-streaks.md"
+    },
+    {
+      "id": "contour-beam-pool",
+      "mood": "contour",
+      "figmaNodeId": "41:18",
+      "figmaName": "image 49",
+      "title": "Vertical beam through haze onto a bright floor pool",
+      "file": "contour/contour-beam-pool.png",
+      "width": 925,
+      "height": 1850,
+      "recipe": "contour.beam",
+      "ignore": [],
+      "cornerRadius": 0,
+      "notes": "docs/references/awe/contour-beam-pool.md"
+    },
+    {
+      "id": "contour-light-line",
+      "mood": "contour",
+      "figmaNodeId": "41:20",
+      "figmaName": "image 51",
+      "title": "Thin vertical line with a white-yellow core and a warm halo on black",
+      "file": "contour/contour-light-line.png",
+      "width": 925,
+      "height": 1644,
+      "recipe": "contour.rim",
+      "ignore": [],
+      "cornerRadius": 0,
+      "notes": "docs/references/awe/contour-light-line.md"
+    },
+    {
+      "id": "warp-long-exposure-streaks",
+      "mood": "warp",
+      "figmaNodeId": "41:29",
+      "figmaName": "image 52",
+      "title": "Long-exposure light streaks with white cores",
+      "file": "warp/warp-long-exposure-streaks.png",
+      "fullFile": "warp/warp-long-exposure-streaks-full.png",
+      "width": 925,
+      "height": 1645,
+      "recipe": "warp",
+      "ignore": [],
+      "cornerRadius": 0,
+      "notes": "docs/references/awe/warp-long-exposure-streaks.md"
+    },
+    {
+      "id": "warp-refracted-column",
+      "mood": "warp",
+      "figmaNodeId": "41:9",
+      "figmaName": "image 53",
+      "title": "Refracted column of light with flame-like edges",
+      "file": "warp/warp-refracted-column.png",
+      "width": 925,
+      "height": 1805,
+      "recipe": "warp",
+      "ignore": [],
+      "cornerRadius": 0,
+      "notes": "docs/references/awe/warp-refracted-column.md"
+    },
+    {
+      "id": "warp-curved-spectral-bands",
+      "mood": "warp",
+      "figmaNodeId": "41:8",
+      "figmaName": "image 55",
+      "title": "Wide curved spectral bands",
+      "file": "warp/warp-curved-spectral-bands.png",
+      "width": 925,
+      "height": 1156,
+      "recipe": "warp",
+      "ignore": [],
+      "cornerRadius": 0,
+      "notes": "docs/references/awe/warp-curved-spectral-bands.md"
+    },
+    {
+      "id": "warp-film-poster-columns",
+      "mood": "warp",
+      "figmaNodeId": "26:486",
+      "figmaName": "image 28",
+      "title": "Film poster: soft vertical color columns",
+      "file": "warp/warp-film-poster-columns.png",
+      "width": 925,
+      "height": 1295,
+      "recipe": "warp",
+      "ignore": [
+        {
+          "kind": "text",
+          "rect": [
+            135,
+            1085,
+            667,
+            74
+          ]
+        },
+        {
+          "kind": "text",
+          "rect": [
+            0,
+            1159,
+            925,
+            124
+          ]
+        }
+      ],
+      "cornerRadius": 0,
+      "notes": "docs/references/awe/warp-film-poster-columns.md"
+    }
+  ]
+}
