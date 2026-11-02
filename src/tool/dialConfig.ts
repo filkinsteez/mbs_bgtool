@@ -1,7 +1,6 @@
-import type { DialConfig, SelectConfig } from 'dialkit'
+import type { DialConfig } from 'dialkit'
 import { EXPORT_ASPECTS, isPackId, PACKS, recipesForMood, type MoodId } from '@/light'
 import { DEFAULT_CONTROLS, MOOD_CONTROL } from './controls'
-import type { PanelAccess, SelectAccess, SliderAccess } from './panelAccess'
 import { clampSeed, clampUnit, DEFAULT_STATE, fixLook, isExportAspect, SEED_MAX, SEED_MIN, type ToolState } from './state'
 
 export const PANEL_ID = 'tool'
@@ -14,10 +13,16 @@ const MOOD_OPTIONS = [
 
 const PACK_OPTIONS = PACKS.map((pack) => ({ value: pack.id, label: pack.name }))
 
-/** DialKit labels controls from their keys; this mirrors its rule so code can find a control by label. */
-export function dialLabel(key: string): string {
-  return key.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase()).trim()
+function swatchBackground(hexes: readonly string[]): string {
+  const share = 100 / hexes.length
+  const stops = hexes.map((hex, i) => `${hex} ${(i * share).toFixed(2)}% ${((i + 1) * share).toFixed(2)}%`)
+  return `linear-gradient(90deg, ${stops.join(', ')})`
 }
+
+/** Pack name to the CSS background of its swatch row, in pack order. */
+export const PACK_SWATCHES: Readonly<Record<string, string>> = Object.fromEntries(
+  PACKS.map((pack) => [pack.name, swatchBackground(pack.colors.map((color) => color.hex))]),
+)
 
 /**
  * The panel config for the current mood. Defaults come from the state the page
@@ -44,45 +49,6 @@ export function buildDialConfig(mood: MoodId, initial: ToolState, exportLabel: s
     format: { type: 'select', options: [...EXPORT_ASPECTS], default: initial.format },
     export: { type: 'action', label: exportLabel },
   }
-}
-
-const titleCase = (text: string) => text.replace(/\b\w/g, (c) => c.toUpperCase())
-
-function swatchBackground(hexes: readonly string[]): string {
-  const share = 100 / hexes.length
-  const stops = hexes.map((hex, i) => `${hex} ${(i * share).toFixed(2)}% ${((i + 1) * share).toFixed(2)}%`)
-  return `linear-gradient(90deg, ${stops.join(', ')})`
-}
-
-const PACK_SWATCHES: Readonly<Record<string, string>> = Object.fromEntries(
-  PACKS.map((pack) => [pack.name, swatchBackground(pack.colors.map((color) => color.hex))]),
-)
-
-type SliderConfig = [number, number, number, number?]
-
-function isSlider(control: DialConfig[string]): control is SliderConfig {
-  return Array.isArray(control) && control.length >= 3 && control.every((n) => typeof n === 'number' || n === undefined)
-}
-
-function isSelect(control: DialConfig[string]): control is SelectConfig {
-  return typeof control === 'object' && !Array.isArray(control) && control.type === 'select' && 'options' in control
-}
-
-/** The sliders and selects in a panel config, for the keyboard layer, plus the busy action labels. */
-export function panelAccessFor(config: DialConfig, busy: readonly string[]): PanelAccess {
-  const sliders: SliderAccess[] = []
-  const selects: SelectAccess[] = []
-  for (const [key, control] of Object.entries(config)) {
-    const label = dialLabel(key)
-    if (isSlider(control)) {
-      const [, min, max, step] = control
-      sliders.push({ path: key, label, min, max, step: step ?? 0.01 })
-    } else if (isSelect(control)) {
-      const options = control.options.map((option) => (typeof option === 'string' ? { value: option, label: titleCase(option) } : option))
-      selects.push({ path: key, label, options })
-    }
-  }
-  return { sliders, selects, busy, swatches: PACK_SWATCHES }
 }
 
 /** Tool state from the panel's live values; anything missing or out of place falls back to a valid value. */

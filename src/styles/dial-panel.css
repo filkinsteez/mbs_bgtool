@@ -1,0 +1,89 @@
+/* A DialKit inline panel in a full-height column (`.dial-column`), shared by the tool and the lab. */
+
+.dial-column {
+  overflow: hidden;
+}
+
+/* DialKit's inline panel only scrolls when every level has a set height. */
+.dial-column .dialkit-root {
+  height: 100%;
+  --dial-glass-bg: var(--chrome-1);
+  --dial-dropdown-bg: var(--chrome-2);
+  font-family: var(--font-optimistic), system-ui, sans-serif;
+}
+
+.dial-column .dialkit-panel,
+.dial-column .dialkit-panel-wrapper,
+.dial-column .dialkit-panel-inline {
+  height: 100%;
+  max-height: 100%;
+}
+
+.dial-column .dialkit-panel-inline {
+  padding-top: 14px;
+}
+
+.dial-column .dialkit-select-trigger {
+  gap: 12px;
+}
+
+.dial-column .dialkit-select-right,
+.dial-column .dialkit-select-value {
+  min-width: 0;
+}
+
+.dial-column .dialkit-slider-value,
+.dial-column .dialkit-slider-input,
+.dial-column .dialkit-color-hex,
+.dial-column .dialkit-color-hex-input {
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.dial-column :is(
+    .dialkit-slider,
+    .dialkit-select-trigger,
+    .dialkit-select-option,
+    .dialkit-segmented-button,
+    .dialkit-color-hex,
+    .dialkit-color-swatch,
+    .dialkit-folder-header,
+    .dialkit-button,
+    .dialkit-toolbar-add,
+    .dialkit-preset-trigger
+  ):focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.dial-column .dialkit-folder-header:focus-visible {
+  border-radius: 4px;
+}
+
+.dial-column .dialkit-slider:focus-visible .dialkit-slider-fill {
+  background: var(--dial-border-hover);
+}
+
+.dial-column .dialkit-button[data-busy] {
+  opacity: 0.5;
+  cursor: progress;
+  pointer-events: none;
+}
+
+.dial-column .dialkit-select-option[data-swatches] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dial-column .dialkit-select-trigger[data-swatches] .dialkit-select-right::before,
+.dial-column .dialkit-select-option[data-swatches]::after {
+  content: '';
+  flex: none;
+  width: 52px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--swatches);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.14);
+}

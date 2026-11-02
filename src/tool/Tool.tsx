@@ -1,14 +1,15 @@
 'use client'
 
-import 'dialkit/styles.css'
+import '@/styles/dialkit.css'
+import '@/styles/dial-panel.css'
 import '@/styles/tool.css'
 import { DialRoot, DialStore, useDialKitController } from 'dialkit'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { getPack } from '@/light'
 import { buildScene } from './controls'
-import { buildDialConfig, PANEL_ID, PANEL_NAME, panelAccessFor, readToolState } from './dialConfig'
+import { buildDialConfig, PACK_SWATCHES, PANEL_ID, PANEL_NAME, readToolState } from './dialConfig'
 import { exportPng } from './exportImage'
-import { usePanelAccess, type PanelValues } from './panelAccess'
+import { panelAccessFor, usePanelAccess } from './panelAccess'
 import { Preview } from './Preview'
 import { fixLook, isMoodId, SEED_MAX, SEED_MIN, toQuery, type ToolState } from './state'
 
@@ -51,9 +52,11 @@ export function Tool({ initial }: { initial: ToolState }) {
     [look, pack, seed, intensity, softness, moodControl],
   )
 
-  const access = useMemo(() => panelAccessFor(config, exportStatus === 'busy' ? [EXPORTING_LABEL] : []), [config, exportStatus])
-  const panelValues = useMemo<PanelValues>(() => ({ getValue: (path) => getValues()[path], setValue }), [getValues, setValue])
-  usePanelAccess(panelRef, access, panelValues)
+  const access = useMemo(
+    () => panelAccessFor(PANEL_ID, PANEL_NAME, config, { busy: exportStatus === 'busy' ? [EXPORTING_LABEL] : [], swatches: PACK_SWATCHES }),
+    [config, exportStatus],
+  )
+  usePanelAccess(panelRef, access)
 
   useEffect(() => {
     const current = getValues().look
@@ -102,7 +105,7 @@ export function Tool({ initial }: { initial: ToolState }) {
   return (
     <main className="tool">
       <Preview scene={scene} aspect={format} paused={exportStatus === 'busy'} />
-      <aside ref={panelRef} className="tool-panel">
+      <aside ref={panelRef} className="tool-panel dial-column">
         <DialRoot mode="inline" theme="dark" productionEnabled />
       </aside>
     </main>
