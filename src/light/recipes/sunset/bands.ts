@@ -2,7 +2,7 @@ import type { ColorPack } from '../../color/packs'
 import type { Rgb } from '../../color/srgb'
 import type { RecipeContext, RecipeDefinition, UniformMap } from '../../scene'
 import { composeBands } from './bands-compose'
-import { bridgeLight, isWarm, paleTint } from './bands-light'
+import { bridgeEnds } from './bands-light'
 import {
   BAND_MAX,
   BANDS_COLOR_SLOTS,
@@ -13,8 +13,6 @@ import {
   PATCH_MAX,
   patchKey,
 } from './bands-params'
-
-const luma = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 
 /** Frame heights added to every band's reach; covers the one-pixel floor on edge radii at sizes down to about 100 px. */
 const REACH_MARGIN = 0.01
@@ -36,12 +34,9 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
   const bumpCover: number[] = []
   const bumpLight: number[] = []
   const pale: number[] = []
-  const bridge: number[] = []
+  const bridgeUnder: number[] = []
+  const bridgeOwn: number[] = []
 
-  const used = Array.from({ length: Math.min(count, BAND_MAX) }, (_, i) => bandColor(i))
-  const warm = used.find(isWarm)
-  const lightest = [base, ...used].reduce((a, b) => (luma(b) > luma(a) ? b : a), base)
-  const haze = paleTint(warm ?? lightest)
   const bridgeScale = ctx.num('bridge')
 
   for (let i = 0; i < BAND_MAX; i++) {
@@ -79,8 +74,9 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
 
     const under = i === 0 ? base : scaled(bandColor(i - 1), Math.min(1, ctx.num(bandKey(i - 1, 'Light'))))
     const own = scaled(bandColor(i), Math.min(1, light))
-    const added = i < count && mode === MODE_OVER && !line ? bridgeLight(under, own, haze, bridgeScale) : [0, 0, 0]
-    bridge.push(...added)
+    const [atUnder, atOwn] = i < count && mode === MODE_OVER && !line ? bridgeEnds(under, own, bridgeScale) : [[0, 0, 0], [0, 0, 0]]
+    bridgeUnder.push(...atUnder)
+    bridgeOwn.push(...atOwn)
   }
 
   const patchShape: number[] = []
@@ -111,7 +107,8 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     uBumpCover: bumpCover,
     uBumpLight: bumpLight,
     uBandPale: pale,
-    uBridge: bridge,
+    uBridgeUnder: bridgeUnder,
+    uBridgeOwn: bridgeOwn,
     uPatchShape: patchShape,
     uPatchLook: patchLook,
     uSun: [sunX, sunWidth],
@@ -164,7 +161,8 @@ uniform vec4 uBumpBottom[BAND_MAX];
 uniform vec4 uBumpCover[BAND_MAX];
 uniform vec4 uBumpLight[BAND_MAX];
 uniform float uBandPale[BAND_MAX];
-uniform vec3 uBridge[BAND_MAX];
+uniform vec3 uBridgeUnder[BAND_MAX]; // pale light added where a band blends with what is under it, at the under end
+uniform vec3 uBridgeOwn[BAND_MAX];   // the same at the band's own end
 uniform vec4 uPatchShape[PATCH_MAX]; // x, y, radius x, radius y
 uniform vec4 uPatchLook[PATCH_MAX];  // opacity, light, mode
 uniform vec2 uSun;                   // x, width of the sideways falloff (frame widths)
@@ -342,7 +340,8 @@ vec3 radiance(vec2 uv, vec2 p) {
     float paleShare = uBandPale[i] * (1.0 - min(a, 1.0));
     if (paleShare > 0.0) color = paleOf(color, paleShare);
     vec3 emit = toMix(color * light);
-    layer(acc, pass, emit, uBridge[i] * (4.0 * a * (1.0 - a) * min(light, 1.0)), a, mode, base);
+    vec3 bridge = mix(uBridgeUnder[i], uBridgeOwn[i], a) * (4.0 * a * (1.0 - a) * min(light, 1.0));
+    layer(acc, pass, emit, bridge, a, mode, base);
   }
   acc += pass * base;
 

@@ -59,9 +59,22 @@ export function bridgeStrength(a: Rgb, b: Rgb, haze: Rgb): number {
   return gate * ((lo + hi) / 2)
 }
 
-/** Pale light (linear RGB) for bridgeLight(): haze * strength * level, where level is the geometric mean luminance of the two ends. */
-export function bridgeLight(a: Rgb, b: Rgb, haze: Rgb, scale: number): Rgb {
-  if (scale <= 0) return [0, 0, 0]
-  const amount = scale * bridgeStrength(a, b, haze) * Math.sqrt(luma(a) * luma(b))
-  return [haze[0] * amount, haze[1] * amount, haze[2] * amount]
+/**
+ * Pale light for the blend from `under` to `own`: at each end it is the pale
+ * member of that end's own light family, so a blend from Meta Blue to a warm
+ * glow passes through pale cyan-white and then cream, not lavender. Returns the
+ * light at the `under` end and at the `own` end (linear RGB, already scaled by
+ * the solved strength and the pair's light level); the shader mixes the two by
+ * the blend weight.
+ */
+export function bridgeEnds(under: Rgb, own: Rgb, scale: number): [Rgb, Rgb] {
+  if (scale <= 0) return [[0, 0, 0], [0, 0, 0]]
+  const lo = paleTint(under)
+  const hi = paleTint(own)
+  const mid = [0, 1, 2].map((i) => (lo[i] + hi[i]) / 2)
+  const y = luma(mid)
+  const haze: Rgb = [mid[0] / y, mid[1] / y, mid[2] / y]
+  const amount = scale * bridgeStrength(under, own, haze) * Math.sqrt(luma(under) * luma(own))
+  const end = (t: Rgb): Rgb => [(t[0] / y) * amount, (t[1] / y) * amount, (t[2] / y) * amount]
+  return [end(lo), end(hi)]
 }
