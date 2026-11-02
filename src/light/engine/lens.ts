@@ -1,0 +1,217 @@
+import { hexToLinear, type Rgb } from '../color/srgb'
+import type { LensSettings } from '../scene'
+import type { Gpu, Target } from './gl'
+import { CHUNK_LIBRARY, GLSL_HEADER } from './glsl'
+import { TONE_CURVE_GLSL } from './output'
+
+/**
+ * The lens works on a copy of the scene whose short side is always 512 px, so
+ * every pyramid level covers the same fraction of the frame at any output
+ * size. Level i has a texel of 2^i / 512 of the short side; 8 levels reach
+ * about half the frame.
+ */
+export const LENS_BASE_SHORT_SIDE = 512
+export const LENS_LEVELS = 8
+const LUMA: Rgb = [0.2126, 0.7152, 0.0722]
+
+/** Approximate gaussian sigma of pyramid level i, in short-side units. Measured with a point source. */
+export function levelSigma(level: number): number {
+  return (0.9 * 2 ** level) / LENS_BASE_SHORT_SIDE
+}
+
+export function lensBaseSize(width: number, height: number): { width: number; height: number } {
+  const scale = LENS_BASE_SHORT_SIDE / Math.min(width, height)
+  return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) }
+}
+
+function normalizeLuminance(rgb: Rgb): Rgb {
+  const y = rgb[0] * LUMA[0] + rgb[1] * LUMA[1] + rgb[2] * LUMA[2]
+  return y > 1e-6 ? [rgb[0] / y, rgb[1] / y, rgb[2] / y] : [1, 1, 1]
+}
+
+/** Per-level bloom weights times tints. Weights sum to 1 and tints have luminance 1, so bloom keeps total luminance. */
+export function bloomLevelFactors(lens: LensSettings): Rgb[] {
+  const center = lens.bloomRadius * (LENS_LEVELS - 1)
+  const width = Math.max(0.05, lens.bloomWidth)
+  const weights = Array.from({ length: LENS_LEVELS }, (_, i) => Math.exp(-0.5 * ((i - center) / width) ** 2))
+  const total = weights.reduce((a, b) => a + b, 0)
+  const tint = hexToLinear(lens.bloomTint)
+  return weights.map((w, i) => {
+    const t = i / (LENS_LEVELS - 1)
+    const mixed = normalizeLuminance([1 + (tint[0] - 1) * t, 1 + (tint[1] - 1) * t, 1 + (tint[2] - 1) * t])
+    return [(mixed[0] * w) / total, (mixed[1] * w) / total, (mixed[2] * w) / total]
+  })
+}
+
+/** Per-level, per-channel halation weights; each channel sums to 1. Red sits wider than blue by the spread. */
+export function halationLevelFactors(lens: LensSettings): Rgb[] {
+  const center = Math.log2(Math.max(lens.halationRadius, 1e-4) / levelSigma(0))
+  const spread = lens.halationSpread * 1.5
+  const centers = [center + spread, center, center - spread]
+  const columns = centers.map((c) => {
+    const clamped = Math.min(LENS_LEVELS - 1, Math.max(0, c))
+    const weights = Array.from({ length: LENS_LEVELS }, (_, i) => Math.exp(-0.5 * ((i - clamped) / 0.8) ** 2))
+    const total = weights.reduce((a, b) => a + b, 0)
+    return weights.map((w) => w / total)
+  })
+  return Array.from({ length: LENS_LEVELS }, (_, i) => [columns[0][i], columns[1][i], columns[2][i]] as Rgb)
+}
+
+const DOWNSAMPLE_SHADER =
+  GLSL_HEADER +
+  /* glsl */ `
+uniform sampler2D uSrc;
+uniform vec2 uDstSize;
+out vec4 fragColor;
+// Jimenez 2014: 13 bilinear taps, weights sum to 1.
+void main() {
+  vec2 uv = gl_FragCoord.xy / uDstSize;
+  vec2 t = 1.0 / vec2(textureSize(uSrc, 0));
+  vec3 a = texture(uSrc, uv + t * vec2(-2.0, 2.0)).rgb;
+  vec3 b = texture(uSrc, uv + t * vec2(0.0, 2.0)).rgb;
+  vec3 c = texture(uSrc, uv + t * vec2(2.0, 2.0)).rgb;
+  vec3 d = texture(uSrc, uv + t * vec2(-2.0, 0.0)).rgb;
+  vec3 e = texture(uSrc, uv).rgb;
+  vec3 f = texture(uSrc, uv + t * vec2(2.0, 0.0)).rgb;
+  vec3 g = texture(uSrc, uv + t * vec2(-2.0, -2.0)).rgb;
+  vec3 h = texture(uSrc, uv + t * vec2(0.0, -2.0)).rgb;
+  vec3 i = texture(uSrc, uv + t * vec2(2.0, -2.0)).rgb;
+  vec3 j = texture(uSrc, uv + t * vec2(-1.0, 1.0)).rgb;
+  vec3 k = texture(uSrc, uv + t * vec2(1.0, 1.0)).rgb;
+  vec3 l = texture(uSrc, uv + t * vec2(-1.0, -1.0)).rgb;
+  vec3 m = texture(uSrc, uv + t * vec2(1.0, -1.0)).rgb;
+  vec3 result = e * 0.125 + (a + c + g + i) * 0.03125 + (b + d + f + h) * 0.0625 + (j + k + l + m) * 0.125;
+  fragColor = vec4(result, 1.0);
+}
+`
+
+const UPSAMPLE_SHADER =
+  GLSL_HEADER +
+  /* glsl */ `
+uniform sampler2D uCoarse;
+uniform sampler2D uFine;
+uniform vec3 uFineWeight;
+uniform bool uHasCoarse;
+uniform vec2 uDstSize;
+out vec4 fragColor;
+// 3x3 tent over the coarser level (offsets of one coarse texel) plus this level times its weight.
+void main() {
+  vec2 uv = gl_FragCoord.xy / uDstSize;
+  vec3 result = uFineWeight * texture(uFine, uv).rgb;
+  if (uHasCoarse) {
+    vec2 t = 1.0 / vec2(textureSize(uCoarse, 0));
+    vec3 tent = texture(uCoarse, uv).rgb * 4.0;
+    tent += (texture(uCoarse, uv + vec2(t.x, 0.0)).rgb + texture(uCoarse, uv - vec2(t.x, 0.0)).rgb
+           + texture(uCoarse, uv + vec2(0.0, t.y)).rgb + texture(uCoarse, uv - vec2(0.0, t.y)).rgb) * 2.0;
+    tent += texture(uCoarse, uv + t).rgb + texture(uCoarse, uv - t).rgb
+          + texture(uCoarse, uv + vec2(t.x, -t.y)).rgb + texture(uCoarse, uv + vec2(-t.x, t.y)).rgb;
+    result += tent / 16.0;
+  }
+  fragColor = vec4(result, 1.0);
+}
+`
+
+const THRESHOLD_SHADER =
+  GLSL_HEADER +
+  /* glsl */ `
+uniform sampler2D uSrc;
+uniform float uThreshold;
+out vec4 fragColor;
+const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+// Luminance above the threshold with a soft knee, stored as grey.
+void main() {
+  vec3 c = texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0).rgb;
+  float y = dot(max(c, vec3(0.0)), LUMA);
+  float knee = max(uThreshold * 0.5, 1e-4);
+  float soft = clamp(y - uThreshold + knee, 0.0, 2.0 * knee);
+  soft = soft * soft / (4.0 * knee);
+  fragColor = vec4(vec3(max(soft, y - uThreshold)), 1.0);
+}
+`
+
+/** Lens composite: energy-conserving bloom mix, halation against dark areas, exposure, tone curve. Needs CHUNK_LIBRARY. */
+export const LENS_COMPOSITE_GLSL =
+  TONE_CURVE_GLSL +
+  /* glsl */ `
+uniform sampler2D uBloomTex;
+uniform sampler2D uHalationTex;
+uniform float uBloomMix;
+uniform float uHalation;
+uniform vec3 uHalationTint;
+uniform float uExposure;
+
+vec3 lensAndTone(vec3 radiance, vec2 uv) {
+  vec3 c = radiance;
+  if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0);
+  c = max(c, vec3(0.0));
+  if (uBloomMix > 0.0) c = mix(c, sampleSmooth(uBloomTex, uv), uBloomMix);
+  if (uHalation > 0.0) {
+    float dark = exp(-4.0 * luminance(c));
+    c += uHalation * uHalationTint * sampleSmooth(uHalationTex, uv) * dark;
+  }
+  return toneCurve(c * exp2(uExposure));
+}
+`
+
+/** Composite for recipes with post passes: reads the post-processed radiance instead of evaluating it. */
+export const TEXTURE_COMPOSITE_SHADER =
+  GLSL_HEADER +
+  CHUNK_LIBRARY +
+  LENS_COMPOSITE_GLSL +
+  /* glsl */ `
+uniform sampler2D uRadianceTex;
+uniform vec2 uRenderSize;
+uniform vec2 uTileOrigin;
+out vec4 fragColor;
+void main() {
+  vec2 uv = (gl_FragCoord.xy + uTileOrigin) / uRenderSize;
+  fragColor = vec4(lensAndTone(sampleSmooth(uRadianceTex, uv), uv), 1.0);
+}
+`
+
+export interface LensOutput {
+  bloom: Target | null
+  halation: Target | null
+}
+
+/** Builds the bloom and halation images from the 512 px base image. Caller releases the returned targets. */
+export function runLens(gpu: Gpu, base: Target, lens: LensSettings): LensOutput {
+  const bloom = lens.bloom > 0 ? pyramid(gpu, base, bloomLevelFactors(lens)) : null
+  let halation: Target | null = null
+  if (lens.halation > 0) {
+    const highlights = gpu.acquire(base.width, base.height)
+    gpu.draw(gpu.program(THRESHOLD_SHADER), highlights, {
+      textures: { uSrc: base },
+      uniforms: { uThreshold: lens.halationThreshold },
+    })
+    halation = pyramid(gpu, highlights, halationLevelFactors(lens))
+    gpu.release(highlights)
+  }
+  return { bloom, halation }
+}
+
+function pyramid(gpu: Gpu, base: Target, factors: Rgb[]): Target {
+  const down = gpu.program(DOWNSAMPLE_SHADER)
+  const up = gpu.program(UPSAMPLE_SHADER)
+  const levels: Target[] = [base]
+  for (let i = 1; i < factors.length; i++) {
+    const src = levels[i - 1]
+    const level = gpu.acquire(Math.max(1, Math.round(src.width / 2)), Math.max(1, Math.round(src.height / 2)))
+    gpu.draw(down, level, { textures: { uSrc: src }, uniforms: { uDstSize: [level.width, level.height] } })
+    levels.push(level)
+  }
+  let coarse: Target | null = null
+  for (let i = factors.length - 1; i >= 0; i--) {
+    const fine = levels[i]
+    const out = gpu.acquire(fine.width, fine.height)
+    gpu.draw(up, out, {
+      textures: coarse ? { uFine: fine, uCoarse: coarse } : { uFine: fine },
+      uniforms: { uFineWeight: factors[i], uHasCoarse: coarse !== null, uDstSize: [fine.width, fine.height] },
+    })
+    gpu.release(coarse)
+    coarse = out
+  }
+  for (let i = 1; i < levels.length; i++) gpu.release(levels[i])
+  if (!coarse) throw new Error('Lens pyramid has no levels.')
+  return coarse
+}
