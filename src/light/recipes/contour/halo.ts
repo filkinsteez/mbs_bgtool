@@ -104,7 +104,7 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   const hot = pointAlong(path, along) ?? center
   const at: Vec2 = [hot[0] - center[0], hot[1] - center[1]]
   const gain = geo(controls.intensity, 0.35, 1, 2.8)
-  const soften = geo(controls.softness, 0.55, 1, 1.9)
+  const soften = geo(controls.softness, 0.45, 1, 2.4)
   const reach = lerp(0.1, 0.2, rand()) * Math.max(fw, fh)
   const side = inward ? 1 : 2
   const toward = (Math.atan2(at[1], at[0]) * 180) / Math.PI

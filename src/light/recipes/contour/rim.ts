@@ -222,7 +222,7 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   const hot = pointAlong(path, along) ?? layout.anchor
   const at: Vec2 = [hot[0] - layout.anchor[0], hot[1] - layout.anchor[1]]
   const gain = geo(controls.intensity, 0.35, 1, 2.8)
-  const soften = geo(controls.softness, 0.55, 1, 1.9)
+  const soften = geo(controls.softness, 0.45, 1, 2.4)
   const reach = lerp(0.08, 0.16, rand()) * Math.max(fw, fh)
   const toward = (Math.atan2(at[1], at[0]) * 180) / Math.PI
   const line = layout.shape.kind === 'line'
