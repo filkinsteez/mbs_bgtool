@@ -43,6 +43,7 @@ uniform vec3 uGlowColor[GLOW_LAYERS];
 uniform float uGlowWeight[GLOW_LAYERS];
 uniform vec2 uGlowTau[GLOW_LAYERS];   // decay length above and below the glow line
 uniform float uGlowOffset;
+uniform vec2 uGlowVary;      // how much the glow's upward reach changes along its length, cycles per short side
 uniform vec2 uGlowSpread;    // how much the glow falls off sideways, and over what width
 uniform float uExtinction;
 uniform vec2 uHorizonDim;    // how much skylight dims toward the horizon, and over what height
@@ -158,7 +159,7 @@ float hazeFbm(vec2 p, int seed) {
   return sum / norm;
 }
 
-// Spread of the hues of the lights that add up at a pixel, weighted by their channel sums.
+// Spread of the hues of the lights that add up at a pixel (the sky as one light, each glow layer), weighted by their channel sums.
 struct LightMix {
   vec3 sum;
   float total;
@@ -209,7 +210,7 @@ vec3 radiance(vec2 uv, vec2 p) {
     float m = uEdgeAt[j] + uWarp.x * warpNoise * uEdgeWarp[j];
     float w = uEdgeWidth[j] * exp(uSoftVary.x * softNoise * uEdgeSoft[j]);
     if (drifting) {
-      vec2 q = vec2(across * uDrift.y, uEdgeAt[j] * uDrift.y * 2.0);
+      vec2 q = vec2(across * uDrift.y, uEdgeAt[j] * uDrift.y);
       m += uDrift.x * uEdgeWidth[j] * fbm(q + vec2(5.2, 1.7), 2, uSeed + 503);
       w *= exp(uDrift.z * fbm(q * vec2(0.8, 1.0) + vec2(-3.1, 8.4), 2, uSeed + 509));
     }
@@ -230,9 +231,10 @@ vec3 radiance(vec2 uv, vec2 p) {
   float dh = s - horizon - uGlowOffset;
   float side = sideFalloff(across - sunAcross, uGlowSpread.y * widen, uLateral.x);
   float spread = 1.0 - uGlowSpread.x + uGlowSpread.x * side;
+  float reach = uGlowVary.x != 0.0 ? exp(uGlowVary.x * edgeFbm(across * uGlowVary.y + 31.7, uSeed + 601, 2)) : 1.0;
   for (int k = 0; k < GLOW_LAYERS; k++) {
     if (uGlowWeight[k] <= 0.0) continue;
-    vec2 tau = uGlowTau[k];
+    vec2 tau = uGlowTau[k] * vec2(reach, 1.0);
     float f = spread * uGlowWeight[k] * softExp(dh, dh < 0.0 ? tau.x : tau.y);
     float path = dh > 0.0
       ? uRedden.x * (1.0 - exp(-dh / max(tau.y, 1e-5)))
@@ -263,10 +265,11 @@ vec3 radiance(vec2 uv, vec2 p) {
     if (k > uEdges) break;
     float w = (k == 0 ? 1.0 : level[k - 1]) - (k < uEdges ? level[k] : 0.0);
     sky += w * uStop[k];
-    gather(mixed, max(w, 0.0) * uStop[k] * skyGain);
   }
+  sky = max(sky, vec3(0.0)) * skyGain;
+  gather(mixed, sky);
 
-  vec3 light = sky * skyGain + glow + sunGlow;
+  vec3 light = sky + glow + sunGlow;
 
   if (uBridge.x > 0.0) {
     float y = luminance(light);

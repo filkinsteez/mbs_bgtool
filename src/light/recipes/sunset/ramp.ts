@@ -61,6 +61,8 @@ const PARAMS: ParamSpec[] = [
   num('widen', 'Sideways widening with height', 0, 12, 0.01, 1),
   num('glow', 'Glow', 0, 8, 0.005, 0.6),
   num('glowOffset', 'Glow line offset', -1.5, 1, 0.001, -0.04),
+  num('glowVary', 'Glow reach change along the horizon', 0, 1.5, 0.005, 0),
+  num('glowVaryScale', 'Glow reach change scale', 0.1, 8, 0.01, 1.2),
   num('glowLateral', 'Glow sideways falloff', 0, 1, 0.005, 0.7),
   num('glowWidth', 'Glow sideways width', 0.02, 6, 0.005, 0.7),
   ...[1, 2].flatMap((i) => [
@@ -165,6 +167,7 @@ function uniforms(ctx: RecipeContext): UniformMap {
     uGlowWeight: [ctx.num('glow1Weight'), ctx.num('glow2Weight')].slice(0, GLOW_LAYERS),
     uGlowTau: [ctx.num('glow1Up'), ctx.num('glow1Down'), ctx.num('glow2Up'), ctx.num('glow2Down')],
     uGlowOffset: ctx.num('glowOffset'),
+    uGlowVary: [ctx.num('glowVary'), ctx.num('glowVaryScale')],
     uGlowSpread: [ctx.num('glowLateral'), ctx.num('glowWidth')],
     uExtinction: ctx.num('extinction'),
     uHorizonDim: [ctx.num('horizonDim'), ctx.num('horizonDimHeight')],
