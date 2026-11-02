@@ -90,9 +90,14 @@ function buildLobe(lobe, palette, unit) {
     sigOut: (lobe.sigmaOut ?? sig) * unit,
     offset: (lobe.offset ?? 0) * unit,
     plateau: (lobe.plateau ?? 0) * unit,
+    chPlateau: lobe.chPlateau ?? [1, 1, 1],
     chSigma: lobe.chSigma ?? [1, 1, 1],
+    chSigmaIn: lobe.chSigmaIn ?? [1, 1, 1],
     chOffset: (lobe.chOffset ?? [0, 0, 0]).map((v) => v * unit),
-    power: lobe.shape === 'power' ? (lobe.power ?? 2) : 0,
+    powerIn: lobe.shape === 'power' ? (lobe.powerIn ?? lobe.power ?? 2) : 0,
+    powerOut: lobe.shape === 'power' ? (lobe.powerOut ?? lobe.power ?? 2) : 0,
+    aWIn: makeCurve(al.t, al.widthIn, 1),
+    aWOut: makeCurve(al.t, al.widthOut, 1),
     source: lobe.source ?? 0,
     sourceGamma: lobe.sourceGamma ?? 1,
     widthSource: lobe.widthSource ?? -1,
@@ -175,11 +180,18 @@ export function renderScene(scene, W, H) {
           source: e.inside.source ?? 0,
           sourceGamma: e.inside.sourceGamma ?? 1,
           floor: e.inside.floor ?? 0,
+          // density 'inside': the whole shape scatters. 'rim': the shape's own
+          // rim light (luminance / rimNorm) sets how much it scatters.
           scatter: e.inside.scatter
             ? {
                 strength: e.inside.scatter.strength ?? 0,
                 sigma: (e.inside.scatter.sigma ?? 50) * unit,
                 tint: resolveColor(e.inside.scatter.tint ?? [1, 1, 1], palette),
+                rim: e.inside.scatter.density === 'rim',
+                rimNorm: e.inside.scatter.rimNorm ?? 0.3,
+                spread: (e.inside.scatter.spread ?? 0) * unit,
+                others: e.inside.scatter.from === 'others',
+                clip: e.inside.scatter.clip ?? false,
               }
             : null,
         }
@@ -194,14 +206,18 @@ export function renderScene(scene, W, H) {
     edge: (f.edge ?? 0) * unit,
     soft: (f.soft ?? 50) * unit,
     intensity: f.intensity ?? 1,
+    edgeAlong: makeCurve(f.along?.t, f.along?.edge, 1),
   }));
   const base = resolveColor(P.background ?? [0, 0, 0], palette);
   const baseI = P.backgroundIntensity ?? 1;
 
   const emission = new Img(W, H);
   const insideMask = emitters.map((e) => (e.inside ? new Float32Array(W * H) : null));
+  const rimY = emitters.map((e) => (e.inside?.scatter?.rim ? new Float32Array(W * H) : null));
+  const own = emitters.map((e) => (e.inside?.scatter?.others ? new Img(W, H) : null));
   const geo = { d: 0, t: 0 };
   const ds = new Float32Array(emitters.length);
+  const tsv = new Float32Array(emitters.length);
   const srcV = new Float32Array(8);
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
@@ -215,7 +231,11 @@ export function renderScene(scene, W, H) {
         const e = emitters[k];
         e.shape(px, py, geo);
         ds[k] = geo.d;
+        tsv[k] = geo.t;
         for (let s = 0; s < e.sources.length; s++) srcV[s] = e.sources[s](px, py);
+        const r0 = r;
+        const g0 = g;
+        const b0 = b;
         for (const L of e.lobes) {
           const aw = L.aW(geo.t);
           // Brighter light reads wider (overexposure): widens sigma and the
@@ -232,17 +252,25 @@ export function renderScene(scene, W, H) {
           // The flat top only shows where the light is strong, when requested.
           const pk = L.plateauSource >= 0 ? Math.pow(srcV[L.plateauSource], L.plateauGamma) : 1;
           const ao = L.aO(geo.t);
+          const wIn = L.aWIn(geo.t);
+          const wOut = L.aWOut(geo.t);
           for (let c = 0; c < 3; c++) {
             let xc = geo.d - ao - (L.offset + L.chOffset[c]) * aw;
             // Flat top from -plateau to 0 (measured inward from the lobe center).
-            const pl = L.plateau * aw * gw * pk;
+            const pl = L.plateau * L.chPlateau[c] * aw * gw * pk;
             if (pl > 0) xc = xc < -pl ? xc + pl : xc > 0 ? xc : 0;
-            const s = (xc < 0 ? L.sigIn * gw : L.sigOut) * L.chSigma[c] * aw;
-            const v = ai * cols[c] * profile(xc, s, L.power);
+            const s = (xc < 0 ? L.sigIn * gw * wIn * L.chSigmaIn[c] : L.sigOut * wOut) * L.chSigma[c] * aw;
+            const v = ai * cols[c] * profile(xc, s, xc < 0 ? L.powerIn : L.powerOut);
             if (c === 0) r += v;
             else if (c === 1) g += v;
             else b += v;
           }
+        }
+        if (rimY[k]) rimY[k][y * W + x] = 0.2126 * (r - r0) + 0.7152 * (g - g0) + 0.0722 * (b - b0);
+        if (own[k]) {
+          own[k].data[i] = r - r0;
+          own[k].data[i + 1] = g - g0;
+          own[k].data[i + 2] = b - b0;
         }
         if (e.inside) {
           const m = 1 - smoothStepCdf(geo.d / e.inside.soft);
@@ -256,12 +284,13 @@ export function renderScene(scene, W, H) {
       }
       for (const f of fields) {
         const d = f.side === 'in' ? -ds[f.emitter] : ds[f.emitter];
-        const wgt = smoothStepCdf((d - f.edge) / f.soft) * f.intensity;
+        const edge = f.edge * f.edgeAlong(tsv[f.emitter]);
+        const wgt = smoothStepCdf((d - edge) / f.soft) * f.intensity;
         let cr = f.color[0];
         let cg = f.color[1];
         let cb = f.color[2];
         if (f.colorFar) {
-          const q = Math.min(1, Math.max(0, (d - f.edge) / f.far));
+          const q = Math.min(1, Math.max(0, (d - edge) / f.far));
           cr += (f.colorFar[0] - cr) * q;
           cg += (f.colorFar[1] - cg) * q;
           cb += (f.colorFar[2] - cb) * q;
@@ -286,15 +315,29 @@ export function renderScene(scene, W, H) {
       const sc = e.inside.scatter;
       const key = sc.sigma.toFixed(3);
       if (!cache.has(key)) cache.set(key, gaussianBlur(emission, sc.sigma));
-      const blurred = cache.get(key);
-      const mask = insideMask[k];
-      for (let p = 0; p < W * H; p++) {
-        const m = mask[p] * sc.strength;
-        if (m <= 0) continue;
-        out.data[p * 3] += m * sc.tint[0] * blurred.data[p * 3];
-        out.data[p * 3 + 1] += m * sc.tint[1] * blurred.data[p * 3 + 1];
-        out.data[p * 3 + 2] += m * sc.tint[2] * blurred.data[p * 3 + 2];
+      let blurred = cache.get(key);
+      if (sc.others) {
+        // Light from the other emitters only: blur(total) - blur(own).
+        const ownB = gaussianBlur(own[k], sc.sigma);
+        const diff = new Img(W, H);
+        for (let p = 0; p < W * H * 3; p++) diff.data[p] = Math.max(0, blurred.data[p] - ownB.data[p]);
+        blurred = diff;
       }
+      const mask = insideMask[k];
+      const rim = rimY[k];
+      // Scattered light, optionally spread again (it acts as a new soft source).
+      let sct = new Img(W, H);
+      for (let p = 0; p < W * H; p++) {
+        const m = (rim ? rim[p] / sc.rimNorm : mask[p]) * sc.strength;
+        if (m <= 0) continue;
+        sct.data[p * 3] = m * sc.tint[0] * blurred.data[p * 3];
+        sct.data[p * 3 + 1] = m * sc.tint[1] * blurred.data[p * 3 + 1];
+        sct.data[p * 3 + 2] = m * sc.tint[2] * blurred.data[p * 3 + 2];
+      }
+      if (sc.spread > 0) sct = gaussianBlur(sct, sc.spread);
+      // Light spread inside a translucent shape stays inside it.
+      if (sc.clip) for (let p = 0; p < W * H * 3; p++) sct.data[p] *= mask[(p / 3) | 0];
+      for (let p = 0; p < W * H * 3; p++) out.data[p] += sct.data[p];
     }
   }
   return out;

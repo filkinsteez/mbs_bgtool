@@ -1,0 +1,347 @@
+{
+  "id": "ref-contour-iridescent-rings",
+  "referenceId": "contour-iridescent-rings",
+  "scene": {
+    "recipe": "contour.halo",
+    "seed": 1,
+    "colors": [
+      "#FF8355",
+      "#B0F7FF",
+      "#71AAFF",
+      "#7EC5FF",
+      "#EAFFD0",
+      "#C9B6FF",
+      "#A7A7FF",
+      "#EFFFDC",
+      "#FF7C86",
+      "#FFD5EB",
+      "#06090E"
+    ],
+    "params": {
+      "background": 10,
+      "emitters": [
+        {
+          "shape": {
+            "kind": "ellipse",
+            "center": [
+              0.63708,
+              0.19384
+            ],
+            "radii": [
+              763.9,
+              763.9
+            ]
+          },
+          "lobes": [
+            {
+              "color": 0,
+              "intensity": 0.22,
+              "offset": -2.7,
+              "sigmaIn": 5.4,
+              "sigmaOut": 1.3,
+              "along": {
+                "t": [
+                  0.1,
+                  0.21,
+                  0.39,
+                  0.414,
+                  0.44,
+                  0.472,
+                  0.527,
+                  0.56,
+                  0.62
+                ],
+                "width": [
+                  1,
+                  1,
+                  1,
+                  1.05,
+                  1.5,
+                  1.8,
+                  2.6,
+                  2.8,
+                  2.8
+                ],
+                "intensity": [
+                  0.87,
+                  0.87,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1
+                ]
+              }
+            },
+            {
+              "color": 1,
+              "intensity": 0.44,
+              "offset": -2.2,
+              "plateau": 32.4,
+              "chPlateau": [
+                0.6,
+                0.93,
+                1.08
+              ],
+              "sigmaIn": 15.1,
+              "sigmaOut": 1.3,
+              "along": {
+                "t": [
+                  0.1,
+                  0.21,
+                  0.39,
+                  0.414,
+                  0.44,
+                  0.472,
+                  0.527,
+                  0.56,
+                  0.62
+                ],
+                "width": [
+                  1,
+                  1,
+                  1,
+                  1.05,
+                  1.5,
+                  1.8,
+                  2.6,
+                  2.8,
+                  2.8
+                ],
+                "intensity": [
+                  0.87,
+                  0.87,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "chSigmaIn": [
+                1,
+                0.93,
+                1.08
+              ]
+            },
+            {
+              "color": 2,
+              "intensity": 0.03,
+              "offset": -43,
+              "sigmaIn": 43,
+              "sigmaOut": 20,
+              "along": {
+                "t": [
+                  0.1,
+                  0.21,
+                  0.39,
+                  0.414,
+                  0.44,
+                  0.472,
+                  0.527,
+                  0.56,
+                  0.62
+                ],
+                "width": [
+                  1,
+                  1,
+                  1,
+                  1.05,
+                  1.5,
+                  1.8,
+                  2.6,
+                  2.8,
+                  2.8
+                ],
+                "intensity": [
+                  0.87,
+                  0.87,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1
+                ]
+              }
+            },
+            {
+              "color": 3,
+              "intensity": 0.043,
+              "shape": "power",
+              "power": 2.1,
+              "sigmaIn": 1,
+              "sigmaOut": 14.7
+            }
+          ],
+          "inside": {
+            "color": [
+              0,
+              0,
+              0
+            ],
+            "intensity": 0,
+            "soft": 1.5,
+            "floor": 1,
+            "sourceGamma": 0,
+            "scatter": {
+              "density": "rim",
+              "from": "others",
+              "clip": true,
+              "rimNorm": 0.3,
+              "strength": 1.2,
+              "sigma": 30,
+              "spread": 45,
+              "tint": [
+                0.7,
+                0.85,
+                1
+              ]
+            }
+          }
+        },
+        {
+          "shape": {
+            "kind": "ellipse",
+            "center": [
+              0.54595,
+              0.26148
+            ],
+            "radii": [
+              251.1,
+              235.5
+            ]
+          },
+          "lobes": [
+            {
+              "color": 4,
+              "intensity": 0.255,
+              "offset": -1.6,
+              "sigmaIn": 3.7,
+              "sigmaOut": 1.3,
+              "chSigmaIn": [
+                1,
+                1.35,
+                3.5
+              ]
+            },
+            {
+              "color": 5,
+              "intensity": 0.29,
+              "offset": -1.6,
+              "sigmaIn": 24.9,
+              "sigmaOut": 1.3
+            },
+            {
+              "color": 6,
+              "intensity": 0.0078,
+              "shape": "power",
+              "power": 4,
+              "sigmaIn": 1,
+              "sigmaOut": 15
+            }
+          ]
+        },
+        {
+          "shape": {
+            "kind": "ellipse",
+            "center": [
+              0.42746,
+              0.89246
+            ],
+            "radii": [
+              385.5,
+              423.4
+            ]
+          },
+          "lobes": [
+            {
+              "color": 7,
+              "intensity": 0.221,
+              "offset": -0.5,
+              "sigmaIn": 4.4,
+              "sigmaOut": 0.75,
+              "chSigmaIn": [
+                1.74,
+                1,
+                0.88
+              ]
+            },
+            {
+              "color": 8,
+              "intensity": 0.226,
+              "offset": -0.5,
+              "sigmaIn": 25,
+              "sigmaOut": 1
+            },
+            {
+              "color": 9,
+              "intensity": 0.006,
+              "shape": "power",
+              "power": 3,
+              "sigmaIn": 1,
+              "sigmaOut": 11
+            }
+          ],
+          "inside": {
+            "color": [
+              0,
+              0,
+              0
+            ],
+            "intensity": 0,
+            "soft": 3,
+            "floor": 1,
+            "sourceGamma": 0,
+            "scatter": {
+              "density": "rim",
+              "from": "others",
+              "clip": true,
+              "rimNorm": 0.3,
+              "strength": 10,
+              "sigma": 30,
+              "spread": 45,
+              "tint": [
+                1,
+                0.6,
+                0.85
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "lens": {
+      "bloom": [
+        {
+          "sigma": 12,
+          "weight": 0.06,
+          "tint": [
+            1,
+            1,
+            1
+          ]
+        },
+        {
+          "sigma": 40,
+          "weight": 0.05,
+          "tint": [
+            1,
+            0.9,
+            1
+          ]
+        }
+      ]
+    },
+    "output": {
+      "grain": 1,
+      "exposure": 0,
+      "white": 0.5
+    }
+  }
+}
