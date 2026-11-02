@@ -13,10 +13,19 @@ import { GRAIN_GLSL } from './grain'
  * toward cyan, not violet.
  *
  * For r = c / m and x = m - 1: out_i = 1 - (1 - r_i) exp(-k x w_i - late x^2)
- * with w_i = (r_i + sum_j X_ij r_j) / (1 - r_i + 0.05). One overall rate k
- * keeps linear luminance continuous in value and slope at m = 1; the late
- * term has zero slope there and only closes the slowest channel far above
- * it, so every color ends at white.
+ * with w_i = f_i / (1 - r_i + 0.05) and f_i = r_i + sum_j X_ij r_j. One
+ * overall rate k = lum(r) / sum_i lum_i (1 - r_i) w_i keeps linear luminance
+ * continuous in value and slope at m = 1; the late term has zero slope there
+ * and only closes the slowest channel far above it, so every color ends at
+ * white.
+ *
+ * Near a tie for the largest channel the second channel's share of that sum
+ * falls to 0, so k would shoot up and whiten the third channel in a thin
+ * ridge where the two cross. Within TONE_TIE_BAND of the largest, each lower
+ * channel's share blends (smoothstep in its gap) toward the mean of the two
+ * channels' shares at the band edge, which both sides of the tie give alike.
+ * There the luminance slope at m = 1 is no longer exact; farther from a tie
+ * nothing changes.
  */
 export const TONE_CROSSTALK = [
   [0, 0.8, 0.16],
@@ -25,6 +34,8 @@ export const TONE_CROSSTALK = [
 ] as const
 const TONE_GAP_SOFTNESS = 0.05
 const TONE_LATE_WHITENING = 0.005
+export const TONE_TIE_BAND = 0.05
+const TONE_TIE_SHARE = TONE_TIE_BAND / (TONE_TIE_BAND + TONE_GAP_SOFTNESS)
 
 const glslFloat = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v))
 const crosstalkColumns = [0, 1, 2].map((j) => `vec3(${[0, 1, 2].map((i) => glslFloat(TONE_CROSSTALK[i][j])).join(', ')})`).join(', ')
@@ -38,14 +49,25 @@ vec3 toneCurve(vec3 c) {
   if (m <= 1.0) return c;
   vec3 r = c / m;
   vec3 gap = 1.0 - r;
-  vec3 w = (r + TONE_CROSSTALK * r) / (gap + ${glslFloat(TONE_GAP_SOFTNESS)});
-  float k = luminance(r) / max(dot(LUMA, gap * w), 1e-6);
+  vec3 fill = r + TONE_CROSSTALK * r;
+  vec3 w = fill / (gap + ${glslFloat(TONE_GAP_SOFTNESS)});
+  // The largest channel is the one with the smallest gap; its own blended share is taken back out of the sum.
+  float topFill = gap.x <= gap.y && gap.x <= gap.z ? LUMA.x * fill.x : (gap.y <= gap.z ? LUMA.y * fill.y : LUMA.z * fill.z);
+  vec3 near = 1.0 - smoothstep(0.0, ${glslFloat(TONE_TIE_BAND)}, gap);
+  vec3 pair = 0.5 * (LUMA * fill + topFill) * ${glslFloat(TONE_TIE_SHARE)};
+  float slope = dot((1.0 - near) * LUMA * gap * w + near * pair, vec3(1.0)) - topFill * ${glslFloat(TONE_TIE_SHARE)};
+  float k = luminance(r) / max(slope, 1e-6);
   float x = m - 1.0;
   return saturate(1.0 - gap * exp(-k * x * w - ${glslFloat(TONE_LATE_WHITENING)} * x * x));
 }
 `
 
 const LUMA = [0.2126, 0.7152, 0.0722] as const
+
+const smoothstep = (edge: number, x: number) => {
+  const t = Math.min(1, Math.max(0, x / edge))
+  return t * t * (3 - 2 * t)
+}
 
 /** CPU twin of the GLSL tone curve, for tests and checks. */
 export function toneCurve(rgb: readonly number[]): [number, number, number] {
@@ -54,8 +76,17 @@ export function toneCurve(rgb: readonly number[]): [number, number, number] {
   if (m <= 1) return [c[0], c[1], c[2]]
   const r = c.map((v) => v / m)
   const gap = r.map((v) => 1 - v)
-  const w = r.map((v, i) => (v + TONE_CROSSTALK[i][0] * r[0] + TONE_CROSSTALK[i][1] * r[1] + TONE_CROSSTALK[i][2] * r[2]) / (gap[i] + TONE_GAP_SOFTNESS))
-  const slope = LUMA[0] * gap[0] * w[0] + LUMA[1] * gap[1] * w[1] + LUMA[2] * gap[2] * w[2]
+  const fill = r.map((v, i) => v + TONE_CROSSTALK[i][0] * r[0] + TONE_CROSSTALK[i][1] * r[1] + TONE_CROSSTALK[i][2] * r[2])
+  const w = fill.map((f, i) => f / (gap[i] + TONE_GAP_SOFTNESS))
+  let top = 0
+  for (let i = 1; i < 3; i++) if (gap[i] < gap[top]) top = i
+  let slope = 0
+  for (let i = 0; i < 3; i++) {
+    if (i === top) continue
+    const near = 1 - smoothstep(TONE_TIE_BAND, gap[i])
+    const pair = 0.5 * (LUMA[i] * fill[i] + LUMA[top] * fill[top]) * TONE_TIE_SHARE
+    slope += (1 - near) * LUMA[i] * gap[i] * w[i] + near * pair
+  }
   const k = (LUMA[0] * r[0] + LUMA[1] * r[1] + LUMA[2] * r[2]) / Math.max(slope, 1e-6)
   const x = m - 1
   const out = gap.map((g, i) => Math.min(1, Math.max(0, 1 - g * Math.exp(-k * x * w[i] - TONE_LATE_WHITENING * x * x))))

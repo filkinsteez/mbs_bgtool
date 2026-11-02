@@ -13,6 +13,10 @@ const outDir = path.resolve(ROOT, typeof args.out === 'string' ? args.out : 'art
 
 const LUMA = [0.2126, 0.7152, 0.0722]
 const lum = (c) => LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2]
+const smoothstep = (edge, x) => {
+  const t = Math.min(1, Math.max(0, x / edge))
+  return t * t * (3 - 2 * t)
+}
 const toLinear = (v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)
 const toSrgb = (v) => (v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055)
 const hexToLinear = (hex) => [1, 3, 5].map((i) => toLinear(parseInt(hex.slice(i, i + 2), 16) / 255))
@@ -90,7 +94,7 @@ const powShoulder = (n) => (x, k) => 1 - (1 + (x * k) / n) ** -n
  * channel i's light channel j sees). One overall rate keeps the luminance slope continuous at m = 1.
  * `approach` turns the path parameter into per-channel closing: 'exp' (fast) or a power law (slower tail).
  */
-function cameraCurve({ x, delta = 0.05, approach = 'exp', n = 2, whiten = 0 }) {
+function cameraCurve({ x, delta = 0.05, approach = 'exp', n = 2, whiten = 0, tie = 0 }) {
   return (c) => {
     c = c.map((v) => Math.max(0, v))
     const m = Math.max(...c)
@@ -98,7 +102,11 @@ function cameraCurve({ x, delta = 0.05, approach = 'exp', n = 2, whiten = 0 }) {
     const r = c.map((v) => v / m)
     const base = [0, 1, 2].map((j) => r[j] + [0, 1, 2].reduce((sum, i) => sum + (i === j ? 0 : x[j][i] * r[i]), 0))
     const w = base.map((b, j) => b / (1 - r[j] + delta))
-    const slope = [0, 1, 2].reduce((sum, j) => sum + LUMA[j] * (1 - r[j]) * w[j], 0)
+    // `tie`: within this gap of the largest, a channel's share blends toward the pair's mean share at the band edge.
+    const top = r.indexOf(1)
+    const near = (j) => (tie > 0 && j !== top ? 1 - smoothstep(tie, 1 - r[j]) : 0)
+    const pair = (j) => 0.5 * (LUMA[j] * base[j] + LUMA[top] * base[top]) * (tie / (tie + delta))
+    const slope = [0, 1, 2].reduce((sum, j) => (j === top ? sum : sum + (1 - near(j)) * LUMA[j] * (1 - r[j]) * w[j] + near(j) * pair(j)), 0)
     const k = lum(r) / Math.max(slope, 1e-6)
     const t = approach === 'exp' ? k * (m - 1) : n * Math.log(1 + (k * (m - 1)) / n)
     // The whiten term has zero slope at m = 1, so it leaves the knee alone and only closes the slow channels far above it.
@@ -156,7 +164,7 @@ const CURVES = {
   'camera-w': { label: 'camera, late whitening 0.005', fn: cameraCurve({ x: X_CAMERA, whiten: 0.005 }) },
   'camera-bw': { label: 'camera, blue held, late whitening 0.005', fn: cameraCurve({ x: X_BLUE_HOLD, whiten: 0.005 }) },
   'camera-bw2': { label: 'camera, blue held, late whitening 0.01', fn: cameraCurve({ x: X_BLUE_HOLD, whiten: 0.01 }) },
-  engine: { label: 'engine: camera, red sees green, late whitening 0.005', fn: cameraCurve({ x: X_RED_SEES_GREEN, whiten: 0.005 }) },
+  engine: { label: 'engine: camera, red sees green, late whitening 0.005', fn: cameraCurve({ x: X_RED_SEES_GREEN, whiten: 0.005, tie: 0.05 }) },
   lottes2: { label: 'Lottes s=2', fn: lottesCurve(2) },
   lottes3: { label: 'Lottes s=3', fn: lottesCurve(3) },
 }

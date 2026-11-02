@@ -125,6 +125,51 @@ vec3 radiance(vec2 uv, vec2 p) {
   uniforms: () => ({ uGlowColors: PACK_COLORS.flatMap(hexToLinear) }),
 }
 
+/** Rows of the tie glow sheet: a warm Bold color alone, then overlapping a cool one, which mixes through channel ties. */
+export const TIE_GLOW_ROWS = [
+  ['#FFD61E', null],
+  ['#FFD61E', '#1FCDF0'],
+  ['#FFD61E', '#0064E0'],
+  ['#FF4F00', null],
+  ['#FF4F00', '#1FCDF0'],
+  ['#FF4F00', '#0064E0'],
+] as const
+export const TIE_GLOW_GRID = { columns: GLOW_GAINS.length, rows: TIE_GLOW_ROWS.length }
+
+/**
+ * Hot glows that cross channel ties: per row a warm glow on the left and, in
+ * the mixed rows, a cool glow on the right overlapping it, so the light in the
+ * overlap runs through every mix of the two. Columns are 1.5x, 3x and 8x
+ * nominal at each glow's peak.
+ */
+export const toneTiesProgram: RecipeProgram = {
+  id: 'test.toneties',
+  colorSlots: [],
+  defaultColors: [],
+  params: [],
+  fragment: /* glsl */ `
+#define ROWS ${TIE_GLOW_ROWS.length}
+uniform vec3 uWarm[ROWS];
+uniform vec3 uCool[ROWS];
+const float GAINS[3] = float[3](${GLOW_GAINS.map((g) => g.toFixed(1)).join(', ')});
+
+vec3 radiance(vec2 uv, vec2 p) {
+  vec2 grid = uv * vec2(${TIE_GLOW_GRID.columns.toFixed(1)}, float(ROWS));
+  int column = clamp(int(floor(grid.x)), 0, ${TIE_GLOW_GRID.columns - 1});
+  int row = clamp(int(floor(grid.y)), 0, ROWS - 1);
+  vec2 q = fract(grid) - 0.5;
+  vec2 a = q - vec2(-0.13, 0.0);
+  vec2 b = q - vec2(0.13, 0.0);
+  float s = 2.0 * 0.12 * 0.12;
+  return GAINS[column] * (uWarm[row] * exp(-dot(a, a) / s) + uCool[row] * exp(-dot(b, b) / s));
+}
+`,
+  uniforms: () => ({
+    uWarm: TIE_GLOW_ROWS.flatMap(([warm]) => hexToLinear(warm)),
+    uCool: TIE_GLOW_ROWS.flatMap(([, cool]) => (cool ? hexToLinear(cool) : [0, 0, 0])),
+  }),
+}
+
 /**
  * Two overlapping rings on black. auxRadiance carries each ring's light in its
  * own channel (r: ring A, g: ring B); combine puts the blurred light of the
@@ -338,6 +383,7 @@ export const TEST_PROGRAMS: Record<string, RecipeProgram> = {
   [rampProgram.id]: rampProgram,
   [toneProgram.id]: toneProgram,
   [glowsProgram.id]: glowsProgram,
+  [toneTiesProgram.id]: toneTiesProgram,
   [scatterProgram.id]: scatterProgram,
   [scatterFlatProgram.id]: scatterFlatProgram,
   [postProgram.id]: postProgram,

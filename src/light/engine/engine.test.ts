@@ -8,7 +8,7 @@ import { exportFileName, exportSize } from './export'
 import { EXPORT_ASPECTS, EXPORT_SIZES, frameAspect, type ExportAspect } from './frame'
 import { grainAmplitude, grainParams, grainUniforms } from './grain'
 import { bloomLevelFactors, halationLevelFactors, lensBaseSize, levelForRadius } from './lens'
-import { toneCurve } from './output'
+import { TONE_CROSSTALK, TONE_TIE_BAND, toneCurve } from './output'
 import { radianceScaleFor } from './programRenderer'
 import { coerceParam, recipeContext, resolveScene } from './resolve'
 
@@ -24,6 +24,62 @@ describe('tone curve', () => {
     }
   })
 
+  // The curve before ties were smoothed, which must still hold away from ties.
+  const untiedCurve = (rgb: readonly number[]) => {
+    const m = Math.max(...rgb)
+    if (m <= 1) return [...rgb]
+    const r = rgb.map((v) => v / m)
+    const gap = r.map((v) => 1 - v)
+    const w = r.map((v, i) => (v + TONE_CROSSTALK[i][0] * r[0] + TONE_CROSSTALK[i][1] * r[1] + TONE_CROSSTALK[i][2] * r[2]) / (gap[i] + 0.05))
+    const k = luminance(r) / (0.2126 * gap[0] * w[0] + 0.7152 * gap[1] * w[1] + 0.0722 * gap[2] * w[2])
+    return gap.map((g, i) => Math.min(1, Math.max(0, 1 - g * Math.exp(-k * (m - 1) * w[i] - 0.005 * (m - 1) ** 2))))
+  }
+  /** The second channel's gap to the largest (0 at a tie). */
+  const nearestTie = (c: readonly number[]) => {
+    const m = Math.max(...c)
+    return c.map((v) => 1 - v / m).sort((x, y) => x - y)[1]
+  }
+
+  it('is unchanged where every lower channel is at least TONE_TIE_BAND below the largest', () => {
+    let compared = 0
+    for (const m of [1.01, 1.3, 2, 5, 16]) {
+      for (let second = 0; second <= 0.95; second += 0.05) {
+        for (let third = 0; third <= second; third += 0.05) {
+          for (const order of [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]]) {
+            const c = [0, 0, 0]
+            c[order[0]] = m
+            c[order[1]] = m * second
+            c[order[2]] = m * third
+            if (nearestTie(c) < TONE_TIE_BAND) continue
+            expect(toneCurve(c), c.join(', ')).toEqual(untiedCurve(c))
+            compared++
+          }
+        }
+      }
+    }
+    expect(compared).toBeGreaterThan(5000)
+  })
+
+  it('has no jump where two channels tie for the largest', () => {
+    for (const [a, b] of [[0, 1], [1, 2], [0, 2]]) {
+      for (const level of [0, 0.43, 0.95]) {
+        for (const m of [1.1, 1.25, 2, 5]) {
+          let previous: number[] | null = null
+          for (let step = -65; step <= 65; step++) {
+            const q = Math.exp(step * 0.0025)
+            const c = [m * level, m * level, m * level]
+            c[a] = m * Math.min(1, 1 / q)
+            c[b] = m * Math.min(1, q)
+            const out = toneCurve(c)
+            // The ridge moved a channel by up to 0.3 in one step; near ties the curve itself moves up to about 0.011.
+            if (previous) expect(Math.max(...out.map((v, i) => Math.abs(v - (previous as number[])[i]))), `${c.map((v) => v.toFixed(3))}`).toBeLessThan(0.02)
+            previous = out
+          }
+        }
+      }
+    }
+  })
+
   it('keeps the luminance slope at the start of compression and rises toward white', () => {
     for (const hex of [...packHexes, '#FF0000', '#00FF00', '#0000FF']) {
       const c = hexToLinear(hex)
@@ -32,7 +88,7 @@ describe('tone curve', () => {
       const d = 1e-4
       const below = (at(1) - at(1 - d)) / d
       const above = (at(1 + d) - at(1)) / d
-      expect(Math.abs(above / below - 1)).toBeLessThan(0.01)
+      if (nearestTie(c) >= TONE_TIE_BAND) expect(Math.abs(above / below - 1), hex).toBeLessThan(0.01)
       let previous = at(1)
       for (let scale = 1.05; scale < 64; scale *= 1.1) {
         const value = at(scale)

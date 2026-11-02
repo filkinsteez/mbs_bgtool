@@ -81,7 +81,7 @@ try {
   await mkdir(outDir, { recursive: true })
   const { PACKS } = await harness.ssr('/src/light/color/packs.ts')
   const { hexToBytes, hexToLinear, linearToSrgb } = await harness.ssr('/src/light/color/srgb.ts')
-  const { toneCurve } = await harness.ssr('/src/light/engine/output.ts')
+  const { toneCurve, TONE_TIE_BAND } = await harness.ssr('/src/light/engine/output.ts')
   const { compareImages, bandingScore, buildMask } = await harness.ssr('/src/light/audit/index.ts')
   const { linearToOklch, linearToOklab } = await harness.ssr('/src/light/color/oklab.ts')
   const noLens = { bloom: 0, halation: 0 }
@@ -269,7 +269,7 @@ try {
     await savePng(path.join(outDir, 'tone-curve.png'), image)
     // 1x so each pixel is one sample of the curve (at 2x the resolve filter averages across the knee).
     const plain = await harness.render({ scene: { program: 'test.tone', lens: noLens }, ...size, dither: false, supersample: 1 })
-    const { TONE_COLOR_LIST, TONE_RAMP_MAX, GLOW_GRID } = await harness.ssr('/scripts/light/harness/testPrograms.ts')
+    const { TONE_COLOR_LIST, TONE_RAMP_MAX, GLOW_GRID, TIE_GLOW_GRID } = await harness.ssr('/scripts/light/harness/testPrograms.ts')
     const hueDiff = (a, b) => ((a - b + 540) % 360) - 180
     const warm = new Set(['#FF4F00', '#FFD61E', '#B8996E', '#FF0000'])
     const blue = new Set(['#0064E0', '#6A7788', '#384753', '#1C2B33', '#0000FF'])
@@ -280,6 +280,7 @@ try {
     let warmEnd = Infinity
     let blueTowardViolet = -Infinity
     let worstSlopeRatio = 0
+    const nearTies = []
     const rampsEnd = 0.72
     TONE_COLOR_LIST.forEach((hex, index) => {
       const linear = hexToLinear(hex)
@@ -319,11 +320,17 @@ try {
       const h = 1e-4
       const below = (lumAt(1) - lumAt(1 - h)) / h
       const above = (lumAt(1 + h) - lumAt(1)) / h
-      if (below > 1e-6) worstSlopeRatio = Math.max(worstSlopeRatio, Math.abs(above / below - 1))
+      const nearestTie = linear.map((v) => 1 - v / m).sort((a, b) => a - b)[1]
+      if (nearestTie < TONE_TIE_BAND) nearTies.push(hex)
+      else if (below > 1e-6) worstSlopeRatio = Math.max(worstSlopeRatio, Math.abs(above / below - 1))
     })
     record('tone curve: luminance never falls along a ramp', monotonic, 'all ramps 0 -> 16x checked on the 8-bit output')
     record('tone curve: GPU output matches the CPU curve', worstGpu <= 2, `worst channel difference ${worstGpu} code values`)
-    record('tone curve: luminance slope continuous where compression starts', worstSlopeRatio < 0.01, `worst slope mismatch ${(worstSlopeRatio * 100).toFixed(2)} %`)
+    record(
+      'tone curve: luminance slope continuous where compression starts',
+      worstSlopeRatio < 0.01,
+      `worst slope mismatch ${(worstSlopeRatio * 100).toFixed(2)} %; not held within ${TONE_TIE_BAND * 100} % of a tie for the largest channel: ${nearTies.join(', ')}`,
+    )
     record(
       'tone curve: warm light whitens through yellow, blue through cyan-white, hue moves smoothly',
       worstHueStep < 1 && warmBackward < 0.5 && warmEnd > 85 && blueTowardViolet < 8,
@@ -335,6 +342,44 @@ try {
     const glows = await harness.render({ scene: { program: 'test.glows', lens: noLens }, width: GLOW_GRID.columns * 64, height: GLOW_GRID.rows * 64 })
     await savePng(path.join(outDir, 'tone-glows.png'), await zoom(glows, 2))
     record('tone glows written', true, `${path.relative(ROOT, path.join(outDir, 'tone-glows.png'))}: gaussian dots and lines at 1.5x, 3x, 8x per pack color, 2x zoom`)
+
+    // Through every tie of two channels for the largest: the second passes the first (ratio 0.85 to 1 / 0.85 in
+    // 0.25 % steps, the largest held at m) at several intensities and third-channel levels. A ridge is a jump.
+    const names = ['R', 'G', 'B']
+    let worstTieStep = 0
+    let worstTieAt = ''
+    for (const [a, b] of [[0, 1], [1, 2], [0, 2]]) {
+      const third = 3 - a - b
+      for (const level of [0, 0.2, 0.43, 0.7, 0.95]) {
+        for (const m of [1.02, 1.1, 1.25, 1.5, 2, 3, 5, 8]) {
+          let previous = null
+          for (let step = -65; step <= 65; step++) {
+            const q = Math.exp(step * 0.0025)
+            const c = [0, 0, 0]
+            c[a] = m * Math.min(1, 1 / q)
+            c[b] = m * Math.min(1, q)
+            c[third] = m * level
+            const bytes = toneCurve(c).map((v) => Math.round(Math.min(1, Math.max(0, linearToSrgb(v))) * 255))
+            if (previous) {
+              const jump = Math.max(...bytes.map((v, k) => Math.abs(v - previous[k])))
+              if (jump > worstTieStep) {
+                worstTieStep = jump
+                worstTieAt = `${names[a]}/${names[b]} tie, ${names[third]} at ${level} of the largest, ${m}x: ${previous.join(',')} -> ${bytes.join(',')}`
+              }
+            }
+            previous = bytes
+          }
+        }
+      }
+    }
+    record('tone curve: no jump where two channels tie for the largest', worstTieStep <= 3, `largest change between 0.25 % steps ${worstTieStep} code values (${worstTieAt})`)
+    const ties = await harness.render({ scene: { program: 'test.toneties', lens: noLens }, width: TIE_GLOW_GRID.columns * 200, height: TIE_GLOW_GRID.rows * 200 })
+    await savePng(path.join(outDir, 'tone-ties.png'), ties)
+    record(
+      'tone tie glows written',
+      true,
+      `${path.relative(ROOT, path.join(outDir, 'tone-ties.png'))}: Yellow, then Yellow over Cyan and over Meta Blue, then the same for Orange-red, at 1.5x, 3x, 8x`,
+    )
   }
 
   if (wanted('scatter')) {
