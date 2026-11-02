@@ -112,7 +112,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const sunX = sunRight ? 1 - sunIn : sunIn
   const tilt = lerp(-2.5, 2.5, random())
   const glowWidthScale = lerp(0.78, 1.3, random())
-  const skyEdgeScale = lerp(0.75, 1.25, random())
+  const skyEdgeScale = lerp(0.68, 1, random())
   const hillPhase = lerp(-8, 8, random())
   const hillAmount = lerp(0.4, 2, random())
   const hillScale = lerp(0.8, 2.8, random())
@@ -143,8 +143,8 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
 
   const glowScale = glowHaze * day * skyScale * air
   const glowRise = 0.09 * day * skyScale * air * stops2(softness, 0.5)
-  const skyEdgeAt = -0.55 * skyHeight * skyEdgeScale
-  const skyEdgeWidth = 0.85 * Math.abs(skyEdgeAt) * Math.sqrt(haze)
+  const skyEdgeAt = -(look.lowSkyGain < 1 ? 0.42 : 0.55) * skyHeight * skyEdgeScale
+  const skyEdgeWidth = 0.75 * Math.abs(skyEdgeAt) * Math.sqrt(haze)
   const narrow = 0.65 + 0.35 * Math.min(1, frameWidth / 1.78)
 
   const params: Record<string, ParamValue> = {
@@ -175,21 +175,23 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     sunlightHeight: 0.6,
     sunlightWarmth: 0,
     falloff: 1.6,
-    widen: 1.2,
+    widen: 2.4,
+    lightTop: skyHeight * lerp(0.9, 1.15, intensity),
     glow: look.glow * glowGain,
     glowOffset: -glowRise,
     glowVary: 0.35,
     glowVaryScale: 1.3,
     glowLateral: 1 - look.floor * narrow,
-    glowWidth: 0.6 * glowWidthScale * day * glowHaze * narrow,
+    glowWidth: 0.45 * glowWidthScale * day * glowHaze * narrow,
+    shadowHeight: 0.07 * skyScale * glowHaze,
     glow1Weight: 1,
     glow1Up: 0.1 * glowScale,
-    glow1Down: 0.06 * glowHaze * skyScale,
+    glow1Down: (0.03 + 0.03 * glowHaze) * skyScale,
     glow2Weight: 0.2 * lerp(0.6, 1.5, softness),
     glow2Up: 0.17 * glowScale,
     glow2Down: 0.08 * glowHaze,
     extinction: 2,
-    horizonDim: (1 - look.horizonGain) * 7 * stops2(softness, -0.6),
+    horizonDim: (1 - look.horizonGain) * 5 * stops2(softness, -0.6),
     horizonDimHeight: 0.04 * skyScale * Math.sqrt(haze),
     reddenDown: deeper * stops2(1 - intensity, 1.1) * stops2(1 - softness, 0.6),
     reddenUp: paler > 0 ? clamp01(paler + (intensity - 0.5) * 0.35) * 0.9 : 0,
@@ -216,11 +218,11 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     landWarpScale: hillScale,
     landWarpPhase: hillPhase,
     landOctaves: 3,
-    landSoft: 0.05 * stops2(softness, 1.6),
+    landSoft: 0.022 + 0.035 * stops2(softness, 1.8),
     landSoftVary: 0.5,
     landTopGain: look.landTop[1] * stops2(intensity, 0.8),
     landBottomGain: look.landBottom[1] * stops2(intensity, 0.8),
-    landDepth: 0.14,
+    landDepth: 0.3,
     landLight: 0,
     landLightWidth: 0.4,
     landLightDepth: 0.06,

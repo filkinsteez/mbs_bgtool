@@ -38,13 +38,15 @@ uniform vec2 uSunAt;
 uniform vec3 uSunlight;      // tint times gain
 uniform vec2 uSunlightShape; // sideways width, decay length with height (0: none)
 uniform vec2 uLateral;       // sideways falloff exponent, widening per short side of height
+uniform float uLightTop;     // height above the horizon where the sun's added light and gain have faded out (0: no limit)
 
 uniform vec3 uGlowColor[GLOW_LAYERS];
 uniform float uGlowWeight[GLOW_LAYERS];
 uniform vec2 uGlowTau[GLOW_LAYERS];   // decay length above and below the glow line
 uniform float uGlowOffset;
 uniform vec2 uGlowVary;      // how much the glow's upward reach changes along its length, cycles per short side
-uniform vec2 uGlowSpread;    // how much the glow falls off sideways, and over what width
+uniform vec3 uGlowSpread;    // how much the glow falls off sideways, over what width, and the height below
+                             // which the light far from the sun fades out (the Earth's shadow; 0: none)
 uniform float uExtinction;
 uniform vec2 uHorizonDim;    // how much skylight dims toward the horizon, and over what height
 uniform vec4 uRedden;        // deeper below the glow line, paler above it, deeper away from the sun, path at the line
@@ -220,17 +222,20 @@ vec3 radiance(vec2 uv, vec2 p) {
 
   float height = max(0.0, horizon - s);
   float widen = 1.0 + uLateral.y * height;
+  float lightReach = uLightTop > 0.0 ? 1.0 - smoothstep(0.45 * uLightTop, uLightTop, height) : 1.0;
 
   float sunlit = sideFalloff(across - sunAcross, uSunlightShape.x * widen, uLateral.x);
   if (uSunlightShape.y > 0.0) sunlit *= exp(-height / uSunlightShape.y);
-  vec3 gain = vec3(1.0) + uSunlight * sunlit;
+  vec3 gain = vec3(1.0) + uSunlight * (sunlit * lightReach);
 
   LightMix mixed = LightMix(vec3(0.0), 0.0, 0.0);
   vec3 glow = vec3(0.0);
   float glowDepth = 0.0;
   float dh = s - horizon - uGlowOffset;
   float side = sideFalloff(across - sunAcross, uGlowSpread.y * widen, uLateral.x);
-  float spread = 1.0 - uGlowSpread.x + uGlowSpread.x * side;
+  float far = 1.0 - uGlowSpread.x;
+  if (uGlowSpread.z > 0.0) far *= 1.0 - exp(-height / uGlowSpread.z);
+  float spread = (far + (1.0 - far) * side) * lightReach;
   float reach = uGlowVary.x != 0.0 ? exp(uGlowVary.x * edgeFbm(across * uGlowVary.y + 31.7, uSeed + 601, 2)) : 1.0;
   for (int k = 0; k < GLOW_LAYERS; k++) {
     if (uGlowWeight[k] <= 0.0) continue;
@@ -249,7 +254,7 @@ vec3 radiance(vec2 uv, vec2 p) {
   float da = along - sunAlong;
   float de = (across - sunAcross) / uSunGlowShape.x;
   float rr = da * da + de * de;
-  float visible = 1.0 - uOcclude.x * rise(s - horizon, uOcclude.y);
+  float visible = (1.0 - uOcclude.x * rise(s - horizon, uOcclude.y)) * lightReach;
   for (int k = 0; k < SUN_LAYERS; k++) {
     if (uSunGlowRadius[k] <= 0.0 || maxComponent(uSunGlowColor[k]) <= 0.0) continue;
     float r = uSunGlowRadius[k];
