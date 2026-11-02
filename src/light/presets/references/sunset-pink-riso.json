@@ -46,12 +46,12 @@
       "band1Mode": 1,
       "band1Line": false,
       "band1Warp": [
-        0,
+        0.0061,
         0
       ],
-      "band1Waves": 1.065422713660447,
+      "band1Waves": 2.5,
       "band1Vary": [
-        0,
+        0.08,
         0
       ],
       "band1Tilt": [
@@ -118,7 +118,7 @@
         0,
         0
       ],
-      "band2Waves": 1.065422713660447,
+      "band2Waves": 2.5,
       "band2Vary": [
         0,
         0
@@ -187,7 +187,7 @@
         0,
         0
       ],
-      "band3Waves": 1.065422713660447,
+      "band3Waves": 2.5,
       "band3Vary": [
         0,
         0
@@ -253,12 +253,12 @@
       "band4Mode": 1,
       "band4Line": false,
       "band4Warp": [
-        0,
+        0.012,
         0
       ],
-      "band4Waves": 1.065422713660447,
+      "band4Waves": 2.5,
       "band4Vary": [
-        0,
+        0.08,
         0
       ],
       "band4Tilt": [
@@ -391,12 +391,12 @@
       "band6Mode": 0,
       "band6Line": false,
       "band6Warp": [
-        0,
+        0.012,
         0
       ],
-      "band6Waves": 1.065422713660447,
+      "band6Waves": 2.5,
       "band6Vary": [
-        0,
+        0.08,
         0
       ],
       "band6Tilt": [

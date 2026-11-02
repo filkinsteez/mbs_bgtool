@@ -157,7 +157,7 @@ export function composeBands(input: BandsComposeInput): BandsComposition {
   // Placement: seed and controls.
   const radius = geo(softness, 0.03, 0.07, 0.16) * H ** -0.3
   const crispRadius = place.between(0.012, 0.022) * geo(softness, 0.7, 1, 1.6)
-  const horizon = clamp(lerp(0.85, 0.35, horizonControl) + place.between(-0.05, 0.05), 0.2, 0.9)
+  const horizon = clamp(lerp(0.85, 0.35, horizonControl) + place.between(-0.08, 0.08), 0.2, 0.9)
   // The glow is thickest under the sun and thins to a line far from it.
   const glowFar = place.between(0.008, 0.025) / H
   const glowNear = (place.between(0.05, 0.11) * geo(softness, 0.8, 1, 1.35)) / H
@@ -168,11 +168,11 @@ export function composeBands(input: BandsComposeInput): BandsComposition {
 
   // Intensity is daylight: every band gets the same gain, except that the glow
   // gains less above the default so only the part near the sun goes white.
-  const daylight = geo(intensity, 0.55, 1, 1.9)
-  const glowGain = geo(intensity, 0.55, 1, 1.4) / daylight
+  const daylight = geo(intensity, 0.62, 1, 1.9)
+  const glowGain = geo(intensity, 0.62, 1, 1.4) / daylight
   const glowColor = hexToLinear(roles.glow)
   const room = headroom(glowColor)
-  const peak = clamp(1.3 * room, 1.1, 2.2)
+  const peak = clamp(1.15 * room, 1.05, 2.2)
   const far = clamp((0.9 * room) / 1.4, 0.45, 0.95)
   const sunCover = place.between(0.3, 0.55)
   const farthest = Math.max(Math.abs(sunX), Math.abs(1 - sunX))
@@ -203,7 +203,7 @@ export function composeBands(input: BandsComposeInput): BandsComposition {
     topRadius: radius * place.between(1.1, 1.8),
     edge: 'soft',
     light: peak * glowGain,
-    haze: lerp(0.05, 0.2, softness),
+    haze: lerp(0.15, 0.4, softness),
     pale: 0.7,
     sunLight,
     sunCover,
@@ -224,7 +224,10 @@ export function composeBands(input: BandsComposeInput): BandsComposition {
     at += ((1.04 - horizon) * spans[k]) / total
   })
   if (ground.length === 0) {
-    plans.push({ color: roles.sky, top: horizon, topRadius: horizonRadius, edge: crispHorizon ? 'crisp' : 'soft', light: place.between(0.45, 0.65) })
+    // No later pack color: the ground is the sky's own light, dimmer, and dimmer again lower down.
+    const lower = lerp(horizon, 1, place.between(0.35, 0.65))
+    plans.push({ color: roles.sky, top: horizon, topRadius: horizonRadius, edge: crispHorizon ? 'crisp' : 'soft', light: place.between(0.5, 0.65) })
+    plans.push({ color: roles.sky, top: lower, topRadius: radius * place.between(1.2, 2.4), edge: 'soft', light: place.between(0.28, 0.4) })
   }
   if (rimLine && plans.length < BAND_MAX) {
     plans.push({
