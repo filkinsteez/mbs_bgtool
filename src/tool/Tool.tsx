@@ -3,15 +3,17 @@
 import '@/styles/dialkit.css'
 import '@/styles/dial-panel.css'
 import '@/styles/tool.css'
-import { DialRoot, DialStore, useDialKitController } from 'dialkit'
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { DialStore, useDialKitController } from 'dialkit'
+import { useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { getPack } from '@/light'
 import { buildScene } from './controls'
 import { buildDialConfig, PACK_SWATCHES, PANEL_ID, PANEL_NAME, readToolState } from './dialConfig'
 import { exportPng } from './exportImage'
 import { panelAccessFor, usePanelAccess } from './panelAccess'
 import { Preview } from './Preview'
+import { EMPTY_SEED_HISTORY, recordShuffle, stepBack, stepForward, type SeedStep } from './seedHistory'
 import { fixLook, isMoodId, SEED_MAX, SEED_MIN, toQuery, type ToolState } from './state'
+import { ToolPanel } from './ToolPanel'
 
 const EXPORT_LABEL = 'Export PNG'
 const EXPORTING_LABEL = 'Exporting…'
@@ -32,11 +34,15 @@ function randomSeed(current: number): number {
   return next
 }
 
+const isTextField = (target: EventTarget | null) =>
+  target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select') !== null)
+
 export function Tool({ initial }: { initial: ToolState }) {
   const [start] = useState(initial)
   const panelMood = useSyncExternalStore(subscribePanel, readPanelMood, readNoMood)
   const mood = isMoodId(panelMood) ? panelMood : start.mood
   const [exportStatus, setExportStatus] = useState<ExportStatus>('idle')
+  const [seedHistory, setSeedHistory] = useState(EMPTY_SEED_HISTORY)
   const exportingRef = useRef(false)
   const panelRef = useRef<HTMLElement>(null)
 
@@ -71,17 +77,32 @@ export function Tool({ initial }: { initial: ToolState }) {
     return () => clearTimeout(timer)
   }, [query])
 
+  function shuffle() {
+    setSeedHistory(recordShuffle(seedHistory, seed))
+    setValue('seed', randomSeed(seed))
+  }
+
+  function travel(step: SeedStep | null): boolean {
+    if (!step) return false
+    setSeedHistory(step.history)
+    setValue('seed', step.seed)
+    return true
+  }
+
+  const onUndoKey = useEffectEvent((event: KeyboardEvent) => {
+    if (!(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== 'z' || isTextField(event.target)) return
+    const step = event.shiftKey ? stepForward(seedHistory, seed) : stepBack(seedHistory, seed)
+    if (travel(step)) event.preventDefault()
+  })
+
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => onUndoKey(event)
+    window.addEventListener('keydown', listener)
+    return () => window.removeEventListener('keydown', listener)
+  }, [])
+
   function handleAction(action: string) {
-    switch (action) {
-      case 'shuffle':
-        setValue('seed', randomSeed(seed))
-        return
-      case 'export':
-        void startExport()
-        return
-      default:
-        return
-    }
+    if (action === 'export') void startExport()
   }
 
   async function startExport() {
@@ -102,11 +123,28 @@ export function Tool({ initial }: { initial: ToolState }) {
     }
   }
 
+  const seedActions = (
+    <div className="tool-seed-actions">
+      <button
+        type="button"
+        className="dialkit-button"
+        disabled={seedHistory.back.length === 0}
+        aria-keyshortcuts="Meta+Z Control+Z"
+        onClick={() => travel(stepBack(seedHistory, seed))}
+      >
+        Back
+      </button>
+      <button type="button" className="dialkit-button" onClick={shuffle}>
+        Shuffle
+      </button>
+    </div>
+  )
+
   return (
     <main className="tool">
       <Preview scene={scene} aspect={format} paused={exportStatus === 'busy'} />
       <aside ref={panelRef} className="tool-panel dial-column">
-        <DialRoot mode="inline" theme="dark" productionEnabled />
+        <ToolPanel panelId={PANEL_ID} afterPath="seed" after={seedActions} />
       </aside>
     </main>
   )

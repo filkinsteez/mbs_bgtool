@@ -45,7 +45,6 @@ export function buildDialConfig(mood: MoodId, initial: ToolState, exportLabel: s
     softness: [initial.softness, 0, 1, 0.01],
     [MOOD_CONTROL[mood]]: [sameMood ? initial.moodControl : DEFAULT_CONTROLS.mood, 0, 1, 0.01],
     seed: [initial.seed, SEED_MIN, SEED_MAX, 1],
-    shuffle: { type: 'action' },
     format: { type: 'select', options: [...EXPORT_ASPECTS], default: initial.format },
     export: { type: 'action', label: exportLabel },
   }

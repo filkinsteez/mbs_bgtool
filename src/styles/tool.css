@@ -31,3 +31,15 @@
   background: var(--chrome-1);
   border-left: 1px solid var(--chrome-2);
 }
+
+.tool-seed-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.tool-seed-actions .dialkit-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+  background: var(--dial-surface);
+  color: var(--dial-text-secondary);
+}
