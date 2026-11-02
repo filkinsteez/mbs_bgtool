@@ -38,6 +38,8 @@ interface PackLook {
   path: [number, number, number]
   /** Bridge light amount; higher for pairs that otherwise mix through a hue the pack doesn't have. */
   bridge: number
+  /** Strength of the glow's long, pale haze tail relative to the default. */
+  haze: number
   /** Share of the glow that stays far from the sun, and how much deeper the light gets there. */
   floor: number
   sideDeeper: number
@@ -55,19 +57,19 @@ function packLook(packId: PackId, pick: number): PackLook {
       const [cyan, yellow] = rest
       const ground = { landTop: [metaBlue, 0.28] as [string, number], landBottom: [metaBlue, 0.1] as [string, number] }
       if (pick < 0.55) {
-        return { ...sky, lowSky: cyan, lowSkyGain: 0.88, light: yellow, glow: 0.92, path: [0.5, 2.6, 0.45], bridge: 1, floor: 0.14, sideDeeper: 0.5, ...ground }
+        return { ...sky, lowSky: cyan, lowSkyGain: 0.85, light: yellow, glow: 0.92, path: [0.5, 2.6, 0.45], bridge: 0.6, haze: 0.6, floor: 0.14, sideDeeper: 0.5, ...ground }
       }
-      return { ...sky, light: yellow, glow: 0.95, path: [0.4, 2.6, 0.45], bridge: 0.9, floor: 0.14, sideDeeper: 0.5, ...ground }
+      return { ...sky, light: yellow, glow: 0.95, path: [0.4, 2.6, 0.45], bridge: 0.9, haze: 1, floor: 0.14, sideDeeper: 0.5, ...ground }
     }
     case 'elemental': {
       const [, forest, tan, plum] = rest
-      const base = { ...sky, light: tan, glow: 1.35, path: [0.45, 1.6, 0.4] as [number, number, number], bridge: 0.7, floor: 0.12, sideDeeper: 0.4 }
+      const base = { ...sky, light: tan, glow: 1.35, path: [0.45, 1.6, 0.4] as [number, number, number], bridge: 0.7, haze: 1, floor: 0.12, sideDeeper: 0.4 }
       if (pick < 0.65) return { ...base, landTop: [metaBlue, 0.26], landBottom: [plum, 0.8] }
       return { ...base, landTop: [metaBlue, 0.26], landBottom: [forest, 0.8] }
     }
     case 'atmospheric': {
       const [ice, , slate, nearBlack] = rest
-      const base = { ...sky, lowSkyGain: 1.2, horizonGain: 0.82, light: ice, glow: 0.5, path: [0, 0, 0] as [number, number, number], bridge: 0.4, floor: 0.1, sideDeeper: 0 }
+      const base = { ...sky, lowSkyGain: 1.2, horizonGain: 0.82, light: ice, glow: 0.5, path: [0, 0, 0] as [number, number, number], bridge: 0.4, haze: 1, floor: 0.1, sideDeeper: 0 }
       if (pick < 0.5) return { ...base, landTop: [slate, 1], landBottom: [nearBlack, 0.85] }
       return { ...base, landTop: [metaBlue, 0.26], landBottom: [nearBlack, 0.95] }
     }
@@ -129,7 +131,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // Intensity is daylight: the zenith gains the most, the low sky less and the glow least;
   // the glow rises, widens and pales, and the sun's core whitens near the sun only.
   const zenithGain = stops2(intensity, 1.6)
-  const lowGain = look.lowSkyGain * stops2(intensity, look.lowSkyGain < 1 ? 0.3 : 0.7)
+  const lowGain = look.lowSkyGain * stops2(intensity, look.lowSkyGain < 1 ? 0.8 : 0.7)
   const glowGain = stops2(intensity, 0.6)
   const sunGain = stops2(intensity, 2.4)
   const day = stops2(intensity, 0.7)
@@ -144,7 +146,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const glowScale = glowHaze * day * skyScale * air
   const glowRise = 0.09 * day * skyScale * air * stops2(softness, 0.5)
   const skyEdgeAt = -(look.lowSkyGain < 1 ? 0.42 : 0.55) * skyHeight * skyEdgeScale
-  const skyEdgeWidth = 0.75 * Math.abs(skyEdgeAt) * Math.sqrt(haze)
+  const skyEdgeWidth = 1.1 * Math.abs(skyEdgeAt) * Math.sqrt(haze)
   const narrow = 0.65 + 0.35 * Math.min(1, frameWidth / 1.78)
 
   const params: Record<string, ParamValue> = {
@@ -187,7 +189,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     glow1Weight: 1,
     glow1Up: 0.1 * glowScale,
     glow1Down: (0.03 + 0.03 * glowHaze) * skyScale,
-    glow2Weight: 0.2 * lerp(0.6, 1.5, softness),
+    glow2Weight: 0.2 * look.haze * lerp(0.6, 1.5, softness),
     glow2Up: 0.17 * glowScale,
     glow2Down: 0.08 * glowHaze,
     extinction: 2,
