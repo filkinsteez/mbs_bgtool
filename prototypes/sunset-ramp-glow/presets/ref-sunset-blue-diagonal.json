@@ -1,0 +1,43 @@
+{
+  "id": "ref-sunset-blue-diagonal",
+  "referenceId": "sunset-blue-diagonal",
+  "zoom": [0, 800, 300, 300],
+  "scene": {
+    "recipe": "sunset.ramp",
+    "seed": 1,
+    "colors": ["#00205C", "#002D8F", "#0F96D8", "#008B8B", "#440F0F"],
+    "params": {
+      "axis": {
+        "anchor": [0.5, 0.735],
+        "tilt": -12.9435,
+        "bend": -0.5113
+      },
+      "stops": [-0.6282, -0.1522, 0.0237, 0.1478],
+      "widths": [0.7914, 0.8, 0.271, 0.1194],
+      "horizon": {
+        "index": 3,
+        "warp": 0,
+        "reach": 0.2
+      },
+      "horizonGlow": {
+        "intensity": 1.992,
+        "offset": 0.0594,
+        "lateral": 1,
+        "lateralWidth": 0.4594,
+        "layers": [[0.5635, 0.1734, 0.3772, "#EC7816"], [0.3064, 0.1943, 0.077, "#FAE0A0"]],
+        "extinction": 0.7383
+      },
+      "sunlight": {
+        "pos": [-0.0829, 0.83],
+        "gain": 0.7872,
+        "width": 0.3444
+      }
+    },
+    "lens": {},
+    "output": {
+      "grain": 0.0045,
+      "exposure": 0,
+      "spill": 2
+    }
+  }
+}

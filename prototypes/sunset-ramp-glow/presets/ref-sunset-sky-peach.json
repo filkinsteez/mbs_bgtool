@@ -1,0 +1,53 @@
+{
+  "id": "ref-sunset-sky-peach",
+  "referenceId": "sunset-sky-peach",
+  "zoom": [300, 300, 300, 300],
+  "scene": {
+    "recipe": "sunset.ramp",
+    "seed": 1,
+    "colors": ["#467DBA", "#B6B17B", "#AB6E17", "#9A3F16", "#850A05", "#200002"],
+    "params": {
+      "axis": {
+        "anchor": [0.5, 0],
+        "tilt": 0.6677,
+        "bend": 0
+      },
+      "stops": [0.4046, 0.6988, 0.8504, 0.903, 0.9928],
+      "widths": [0.6962, 0.36, 0.212, 0.1273, 0.1636],
+      "horizon": {
+        "index": 4,
+        "warp": 0.02,
+        "scale": 1.4,
+        "reach": 0.15,
+        "soft": 0.4
+      },
+      "haze": {
+        "scale": 2.5,
+        "stretch": 2.5,
+        "octaves": 3,
+        "warp": 0.025,
+        "light": 0.06
+      },
+      "sunlight": {
+        "pos": [1.2237, 0.6],
+        "gain": 1.5,
+        "width": 0.7117,
+        "tint": "#EFBDA5"
+      },
+      "horizonGlow": {
+        "color": "#F7C7BD",
+        "intensity": 0.0893,
+        "offset": -0.4167,
+        "lateral": 0,
+        "layers": [[0.6365, 0.063, 0.0983]]
+      }
+    },
+    "lens": {
+      "vignette": 2.826
+    },
+    "output": {
+      "grain": 0,
+      "exposure": 0
+    }
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "id": "prod-atmospheric-sunset",
+  "pack": "atmospheric",
+  "scene": {
+    "recipe": "sunset.ramp",
+    "seed": 1,
+    "colors": ["#0064E0", "#6A7788", "#384753", "#1C2B33"],
+    "params": {
+      "axis": {
+        "anchor": [0.5, 0],
+        "tilt": 0,
+        "bend": 0.05
+      },
+      "stops": [0.62, 0.76, 0.9],
+      "widths": [0.5, 0.1, 0.22],
+      "horizon": {
+        "index": 1,
+        "warp": 0.03,
+        "scale": 1.1,
+        "octaves": 3,
+        "reach": 0.15,
+        "soft": 0.7
+      },
+      "haze": {
+        "scale": 2,
+        "stretch": 3,
+        "warp": 0.012,
+        "light": 0.03
+      },
+      "horizonGlow": {
+        "color": "#F2F4F7",
+        "intensity": 0.22,
+        "offset": -0.03,
+        "lateral": 0.5,
+        "lateralWidth": 0.8,
+        "layers": [[1, 0.09, 0.05], [0.6, 0.3, 0.08]]
+      },
+      "sunGlow": {
+        "pos": [0.55, 0.8],
+        "color": "#F2F4F7",
+        "intensity": 0.2,
+        "aspect": 3,
+        "beta": 1.2,
+        "layers": [[1, 0.1], [0.4, 0.4]],
+        "occlude": 0.8,
+        "occludeWidth": 0.05
+      },
+      "sunlight": {
+        "pos": [0.55, 0.8],
+        "gain": 0.2,
+        "width": 0.8
+      }
+    },
+    "lens": {},
+    "output": {
+      "grain": 0,
+      "exposure": 0,
+      "spill": 0
+    }
+  }
+}

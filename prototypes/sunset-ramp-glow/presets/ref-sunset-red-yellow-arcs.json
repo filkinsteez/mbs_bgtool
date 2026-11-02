@@ -1,0 +1,29 @@
+{
+  "id": "ref-sunset-red-yellow-arcs",
+  "referenceId": "sunset-red-yellow-arcs",
+  "zoom": [250, 980, 300, 330],
+  "scene": {
+    "recipe": "sunset.ramp",
+    "seed": 1,
+    "colors": ["#622115", "#A8211A", "#E81719", "#F0760B", "#FFE008", "#E5E889", "#94D5EF"],
+    "params": {
+      "axis": {
+        "anchor": [0.5, 0],
+        "tilt": 0,
+        "bend": 1.1052
+      },
+      "stops": [0.1364, 0.285, 0.5196, 0.67, 0.8067, 0.8921],
+      "widths": [0.4805, 0.237, 0.1966, 0.227, 0.1038, 0.1547],
+      "horizon": {
+        "index": 5,
+        "warp": 0,
+        "reach": 0.2
+      }
+    },
+    "lens": {},
+    "output": {
+      "grain": 0,
+      "exposure": 0
+    }
+  }
+}

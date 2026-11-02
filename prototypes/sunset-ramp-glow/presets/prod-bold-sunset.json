@@ -1,0 +1,62 @@
+{
+  "id": "prod-bold-sunset",
+  "pack": "bold",
+  "scene": {
+    "recipe": "sunset.ramp",
+    "seed": 1,
+    "colors": ["#0064E0", "#1FCDF0", "#FFD61E", "#0064E0"],
+    "params": {
+      "axis": {
+        "anchor": [0.5, 0],
+        "tilt": 0,
+        "bend": 0.08
+      },
+      "gains": [1, 1, 1, 0.4],
+      "stops": [0.52, 0.76, 0.86],
+      "widths": [0.6, 0.12, 0.08],
+      "horizon": {
+        "index": 2,
+        "warp": 0.025,
+        "scale": 1.6,
+        "octaves": 3,
+        "reach": 0.15,
+        "soft": 0.6
+      },
+      "haze": {
+        "scale": 2.2,
+        "stretch": 3,
+        "warp": 0.01,
+        "light": 0.03
+      },
+      "horizonGlow": {
+        "color": "#FFD61E",
+        "intensity": 0.25,
+        "offset": -0.03,
+        "lateral": 0.5,
+        "lateralWidth": 0.7,
+        "layers": [[1, 0.1, 0.05], [0.5, 0.3, 0.08]]
+      },
+      "sunGlow": {
+        "pos": [0.66, 0.86],
+        "color": "#FFD61E",
+        "intensity": 0.3,
+        "aspect": 2.5,
+        "beta": 1.2,
+        "layers": [[1, 0.1], [0.35, 0.4]],
+        "occlude": 0.7,
+        "occludeWidth": 0.05
+      },
+      "sunlight": {
+        "pos": [0.66, 0.86],
+        "gain": 0.2,
+        "width": 0.7
+      }
+    },
+    "lens": {},
+    "output": {
+      "grain": 0,
+      "exposure": 0,
+      "spill": 1
+    }
+  }
+}
