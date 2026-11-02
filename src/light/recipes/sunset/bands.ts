@@ -74,7 +74,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
 
     const under = i === 0 ? base : scaled(bandColor(i - 1), Math.min(1, ctx.num(bandKey(i - 1, 'Light'))))
     const own = scaled(bandColor(i), Math.min(1, light))
-    const [atUnder, atOwn] = i < count && mode === MODE_OVER && !line ? bridgeEnds(under, own, bridgeScale) : [[0, 0, 0], [0, 0, 0]]
+    const [atUnder, atOwn] = i < count && mode === MODE_OVER && !line ? bridgeEnds(under, own, bridgeScale, ctx.num('intensity')) : [[0, 0, 0], [0, 0, 0]]
     bridgeUnder.push(...atUnder)
     bridgeOwn.push(...atOwn)
   }
