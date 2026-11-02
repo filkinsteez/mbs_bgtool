@@ -14,11 +14,22 @@ import {
   type RgbaImage,
   type RowProfiles,
 } from '../../../src/light/audit'
+import { getPack, type PackId } from '../../../src/light/color/packs'
+import { composeScene } from '../../../src/light/compose'
 import type * as ExportModule from '../../../src/light/engine/export'
 import { ProgramRenderer } from '../../../src/light/engine/programRenderer'
 import type { SceneInput } from '../../../src/light/engine/resolve'
 import type { IgnoreRect } from '../../../src/light/references'
-import { isRecipeId, RECIPE_IDS, type Preset, type RecipeDefinition, type RecipeId, type RecipeProgram } from '../../../src/light/scene'
+import {
+  isRecipeId,
+  RECIPE_IDS,
+  type ControlValues,
+  type Preset,
+  type RecipeDefinition,
+  type RecipeId,
+  type RecipeProgram,
+  type Scene,
+} from '../../../src/light/scene'
 import { TEST_PROGRAMS } from './testPrograms'
 
 // Each recipe file loads on its own, so a recipe that is broken mid-edit only fails the scenes that use it.
@@ -70,6 +81,15 @@ export interface RenderRequest {
   radianceScale?: number
 }
 
+export interface ProfileResult {
+  /** Median ms of single renders that wait for the GPU. */
+  total: number
+  /** Median ms per frame over 10 renders drawn back to back. */
+  burst: number
+  /** Median ms per stage of renders that wait for the GPU after every stage. */
+  stages: Record<string, number>
+}
+
 export interface AuditRequest extends RenderRequest {
   targetKey: string
   ignore: IgnoreRect[]
@@ -101,6 +121,18 @@ function programFor(scene: HarnessScene): RecipeProgram {
   const recipe = recipes.get(scene.recipe)
   if (!recipe) throw new Error(recipeErrors.get(scene.recipe) ?? `${scene.recipe} is not loaded`)
   return recipe
+}
+
+/** The same program with every shader function returning a constant: what the engine alone costs for it. */
+function stubProgram(program: RecipeProgram): RecipeProgram {
+  const blurred = (program.scatter ?? []).map((_, i) => `, vec3 blurred${i}`).join('')
+  const fragment = `
+vec3 radiance(vec2 uv, vec2 p) { return vec3(0.05, 0.06, 0.08); }
+vec3 auxRadiance(vec2 uv, vec2 p) { return vec3(0.05); }
+${program.scatter?.length ? `vec3 combine(vec2 uv, vec2 p, vec3 light${blurred}) { return light + 0.1 * blurred0; }` : ''}
+${program.grainWeight ? 'float grainWeight(vec2 uv, vec2 p) { return 1.0; }' : ''}
+`
+  return { ...program, id: `${program.id} stub`, fragment, uniforms: () => ({}) }
 }
 
 function requestProgram(request: Pick<RenderRequest, 'scene' | 'radianceScale'>): RecipeProgram {
@@ -235,6 +267,50 @@ const api = {
       render: outcome(() => lostRenderer.renderProgram(programFor(scene), scene, { width: 64, height: 64 })),
       newRenderer: outcome(() => new ProgramRenderer(lostCanvas)),
     }
+  },
+
+  /**
+   * Per-stage GPU time (median of `runs` profiled renders) for the scene and for a stub of the same program whose
+   * shader functions return constants, so each stage splits into engine cost and the recipe's own shader cost.
+   * `burst` is the time per frame over 10 renders drawn back to back with one wait at the end: the GPU stays busy,
+   * so it is steadier than single renders, which an idle GPU slows down.
+   */
+  profile(request: RenderRequest & { runs?: number }): ProfileResult & { stub: ProfileResult } {
+    const options = { width: request.width, height: request.height, supersample: request.supersample ?? 1 }
+    const runs = Math.max(1, request.runs ?? 5)
+    const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)]
+    const measure = (program: RecipeProgram): ProfileResult => {
+      renderer.renderProgram(program, request.scene, { ...options, profile: true })
+      const totals: number[] = []
+      const bursts: number[] = []
+      const perStage: Record<string, number[]> = {}
+      for (let i = 0; i < runs; i++) {
+        const stats = renderer.renderProgram(program, request.scene, { ...options, measure: true })
+        totals.push(stats.ms)
+        const profiled = renderer.renderProgram(program, request.scene, { ...options, profile: true })
+        for (const [stage, ms] of Object.entries(profiled.stages ?? {})) (perStage[stage] ??= []).push(ms)
+        const start = performance.now()
+        for (let frame = 0; frame < 9; frame++) renderer.renderProgram(program, request.scene, options)
+        renderer.renderProgram(program, request.scene, { ...options, measure: true })
+        bursts.push((performance.now() - start) / 10)
+      }
+      return {
+        total: median(totals),
+        burst: median(bursts),
+        stages: Object.fromEntries(Object.entries(perStage).map(([stage, values]) => [stage, median(values)])),
+      }
+    }
+    const program = requestProgram(request)
+    return { ...measure(program), stub: measure(stubProgram(program)) }
+  },
+
+  /** The scene a recipe's compose makes for a pack, controls, seed and aspect. */
+  compose(recipeId: RecipeId, packId: PackId, controls: ControlValues, seed: number, aspect: number): Scene {
+    const recipe = recipes.get(recipeId)
+    if (!recipe) throw new Error(recipeErrors.get(recipeId) ?? `${recipeId} is not loaded`)
+    const scene = composeScene(recipe, { pack: getPack(packId), controls, seed, aspect })
+    if (!scene) throw new Error(`${recipeId} has no compose`)
+    return scene
   },
 
   /** Times one render without and with measure (GPU finished), in ms. */

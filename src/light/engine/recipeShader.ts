@@ -63,8 +63,8 @@ void main() {
 function sceneRadianceGlsl(program: Pick<RecipeProgram, 'scatter'>): string {
   const blurs = program.scatter ?? []
   if (blurs.length === 0) return `vec3 sceneRadiance(vec2 uv, vec2 p) { return radiance(uv, p); }\n`
-  const samplers = blurs.map((_, i) => `uniform sampler2D uScatter${i};`).join('\n')
-  const args = blurs.map((_, i) => `sampleSmooth(uScatter${i}, uv)`).join(', ')
+  const samplers = blurs.map((_, i) => `uniform sampler2D uScatter${i};\nuniform vec4 uScatterMap${i};`).join('\n')
+  const args = blurs.map((_, i) => `sampleSmooth(uScatter${i}, uv * uScatterMap${i}.xy + uScatterMap${i}.zw)`).join(', ')
   return `${samplers}\nvec3 sceneRadiance(vec2 uv, vec2 p) { return combine(uv, p, radiance(uv, p), ${args}); }\n`
 }
 

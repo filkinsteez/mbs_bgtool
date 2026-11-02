@@ -341,14 +341,19 @@ try {
     const flat = await harness.render({ scene: { program: 'test.scatter.flat', lens: noLens, output: { grain: 0 } }, width: 160, height: 90, dither: false })
     const expected = [0.4, 0.4, 0.4].map((v) => Math.round(linearToSrgb(v) * 255))
     let matching = 0
+    const found = new Map()
     for (let i = 0; i < flat.data.length; i += 4) {
       if (flat.data[i] === expected[0] && flat.data[i + 1] === expected[1] && flat.data[i + 2] === expected[2]) matching++
+      const value = `${flat.data[i]},${flat.data[i + 1]},${flat.data[i + 2]}`
+      found.set(value, (found.get(value) ?? 0) + 1)
     }
     const pixels = flat.data.length / 4
+    const common = [...found.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([value, n]) => `${value} x${n}`)
     record(
       'scatter: combine gets the radiance blur, then the aux blur',
       matching === pixels,
-      `flat fields: ${matching}/${pixels} pixels at the expected ${expected.join(',')} (0.5 radiance + 0.5 blurred radiance + 0.25 blurred aux)`,
+      `flat fields: ${matching}/${pixels} pixels at the expected ${expected.join(',')} (0.5 radiance + 0.5 blurred radiance + 0.25 blurred aux)` +
+        (matching === pixels ? '' : `; most common ${common.join(', ')}`),
     )
     const size = { width: 900, height: 900 }
     const off = await harness.render({ scene: { program: 'test.scatter', params: { amount: 0 }, lens: noLens }, ...size, dither: false })

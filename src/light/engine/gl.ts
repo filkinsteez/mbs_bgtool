@@ -51,6 +51,10 @@ void main() {
 
 type AnyCanvas = HTMLCanvasElement | OffscreenCanvas
 
+/** Free targets stay pooled for this many renders after their last use, within this many bytes. */
+const POOL_RENDERS = 2
+const POOL_BYTES = 256 * 1024 * 1024
+
 /** Owns one WebGL2 context: programs, render targets and fullscreen-triangle draws. */
 export class Gpu {
   readonly gl: WebGL2RenderingContext
@@ -58,8 +62,11 @@ export class Gpu {
   private readonly programs = new Map<string, Program>()
   private readonly vertexShader: WebGLShader
   private readonly vao: WebGLVertexArrayObject
+  /** Oldest release first. */
   private readonly freeTargets: Target[] = []
   private readonly liveTargets = new Set<Target>()
+  private readonly releasedAt = new Map<Target, number>()
+  private renders = 0
   private lost = false
 
   constructor(canvas: AnyCanvas) {
@@ -160,20 +167,41 @@ export class Gpu {
     if (!target || !this.liveTargets.has(target)) return
     this.liveTargets.delete(target)
     this.freeTargets.push(target)
+    this.releasedAt.set(target, this.renders)
   }
 
-  /** Frees pooled targets that are not in use. */
-  trimPool(keep = 12): void {
-    while (this.freeTargets.length > keep) {
-      const target = this.freeTargets.shift()
-      if (target) this.destroyTarget(target)
+  /**
+   * Call once at the end of each render. Frees pooled targets that the last
+   * POOL_RENDERS renders did not use, and the oldest while the pool is over
+   * POOL_BYTES. Creating a target waits for the GPU, so repeated renders of
+   * one size reuse theirs.
+   */
+  trimPool(): void {
+    this.renders++
+    let bytes = 0
+    for (let i = this.freeTargets.length - 1; i >= 0; i--) {
+      const target = this.freeTargets[i]
+      const size = targetBytes(target)
+      if (this.renders - (this.releasedAt.get(target) ?? 0) > POOL_RENDERS || bytes + size > POOL_BYTES) {
+        this.freeTargets.splice(i, 1)
+        this.releasedAt.delete(target)
+        this.destroyTarget(target)
+      } else {
+        bytes += size
+      }
     }
   }
 
   draw(program: Program, target: Target | null, options: DrawOptions = {}): void {
     const gl = this.gl
     gl.bindFramebuffer(gl.FRAMEBUFFER, target ? target.framebuffer : null)
-    const viewport = options.viewport ?? [0, 0, target ? target.width : gl.drawingBufferWidth, target ? target.height : gl.drawingBufferHeight]
+    const width = target ? target.width : gl.drawingBufferWidth
+    const height = target ? target.height : gl.drawingBufferHeight
+    const viewport = options.viewport ?? [0, 0, width, height]
+    // Nothing blends, so a draw over the whole target needs none of its old contents loaded.
+    if (viewport[0] <= 0 && viewport[1] <= 0 && viewport[0] + viewport[2] >= width && viewport[1] + viewport[3] >= height) {
+      gl.invalidateFramebuffer(gl.FRAMEBUFFER, !target ? [gl.COLOR] : target.second ? [gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1] : [gl.COLOR_ATTACHMENT0])
+    }
     gl.viewport(viewport[0], viewport[1], viewport[2], viewport[3])
     gl.useProgram(program.program)
     const units: number[] = []
@@ -304,9 +332,14 @@ export class Gpu {
   }
 }
 
+function targetBytes(target: Target): number {
+  return target.width * target.height * (target.format === 'rgba16f' ? 8 : 4) * (target.second ? 2 : 1)
+}
+
 function setUniform(gl: WebGL2RenderingContext, info: UniformInfo, value: UniformValue): void {
   const { location, type } = info
-  const list = typeof value === 'number' || typeof value === 'boolean' ? [Number(value)] : Array.from(value as ArrayLike<number>)
+  const list =
+    typeof value === 'number' || typeof value === 'boolean' ? [Number(value)] : value instanceof Float32Array ? value : Array.from(value as ArrayLike<number>)
   switch (type) {
     case gl.FLOAT:
       gl.uniform1fv(location, list)
@@ -323,22 +356,22 @@ function setUniform(gl: WebGL2RenderingContext, info: UniformInfo, value: Unifor
     case gl.INT:
     case gl.BOOL:
     case gl.SAMPLER_2D:
-      gl.uniform1iv(location, list.map(Math.round))
+      gl.uniform1iv(location, Array.from(list, Math.round))
       return
     case gl.INT_VEC2:
     case gl.BOOL_VEC2:
-      gl.uniform2iv(location, list.map(Math.round))
+      gl.uniform2iv(location, Array.from(list, Math.round))
       return
     case gl.INT_VEC3:
     case gl.BOOL_VEC3:
-      gl.uniform3iv(location, list.map(Math.round))
+      gl.uniform3iv(location, Array.from(list, Math.round))
       return
     case gl.INT_VEC4:
     case gl.BOOL_VEC4:
-      gl.uniform4iv(location, list.map(Math.round))
+      gl.uniform4iv(location, Array.from(list, Math.round))
       return
     case gl.UNSIGNED_INT:
-      gl.uniform1uiv(location, list.map((v) => Math.max(0, Math.round(v))))
+      gl.uniform1uiv(location, Array.from(list, (v) => Math.max(0, Math.round(v))))
       return
     case gl.FLOAT_MAT2:
       gl.uniformMatrix2fv(location, false, list)

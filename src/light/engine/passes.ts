@@ -1,6 +1,7 @@
 import type { PostPass, RecipeContext } from '../scene'
 import type { Gpu, Target } from './gl'
 import { CHUNK_LIBRARY, GLSL_HEADER } from './glsl'
+import { NO_PROFILE, type Profiler } from './profile'
 
 /** Post passes run at this short side at most; their output is upsampled with a cubic filter. */
 export const POST_MAX_SHORT_SIDE = 2048
@@ -115,11 +116,64 @@ void main() {
 }
 `
 
+const EXACT_GAUSSIAN_SHADER =
+  GLSL_HEADER +
+  /* glsl */ `
+uniform sampler2D uSrc;
+uniform ivec2 uDirection;
+uniform float uSigma;
+out vec4 fragColor;
+// Separable gaussian with every tap read exactly (no filtering); edges repeat. 3 sigma, at most 32 texels, each side.
+void main() {
+  ivec2 size = textureSize(uSrc, 0);
+  ivec2 px = ivec2(gl_FragCoord.xy);
+  int radius = min(32, int(ceil(3.0 * uSigma)));
+  vec4 sum = texelFetch(uSrc, px, 0);
+  float total = 1.0;
+  for (int i = 1; i <= 32; i++) {
+    if (i > radius) break;
+    float w = exp(-0.5 * float(i * i) / (uSigma * uSigma));
+    sum += w * (texelFetch(uSrc, clamp(px + i * uDirection, ivec2(0), size - 1), 0) + texelFetch(uSrc, clamp(px - i * uDirection, ivec2(0), size - 1), 0));
+    total += 2.0 * w;
+  }
+  fragColor = sum / total;
+}
+`
+
+const PAD_SHADER =
+  GLSL_HEADER +
+  /* glsl */ `
+uniform sampler2D uSrc;
+uniform ivec2 uPad;
+out vec4 fragColor;
+// The source uPad texels in from the bottom-left corner, its edge pixels repeated outward.
+void main() {
+  ivec2 size = textureSize(uSrc, 0);
+  fragColor = texelFetch(uSrc, clamp(ivec2(gl_FragCoord.xy) - uPad, ivec2(0), size - 1), 0);
+}
+`
+
+const TENT_HALVE_SHADER =
+  GLSL_HEADER +
+  /* glsl */ `
+uniform sampler2D uSrc;
+uniform vec2 uDstSize;
+out vec4 fragColor;
+// [1, 3, 3, 1] / 8 per axis: four bilinear taps 0.75 source texels from the center. Positions are in uv, so odd
+// sizes stay aligned with the frame.
+void main() {
+  vec2 uv = gl_FragCoord.xy / uDstSize;
+  vec2 t = 0.75 / vec2(textureSize(uSrc, 0));
+  fragColor = 0.25 * (texture(uSrc, uv + vec2(-t.x, -t.y)) + texture(uSrc, uv + vec2(t.x, -t.y))
+                    + texture(uSrc, uv + vec2(-t.x, t.y)) + texture(uSrc, uv + vec2(t.x, t.y)));
+}
+`
+
 /**
  * Runs a recipe's post passes on its radiance image. Returns the input itself
  * when every pass is a no-op; otherwise a new target the caller releases.
  */
-export function runPostPasses(gpu: Gpu, input: Target, passes: readonly PostPass[], ctx: RecipeContext): Target {
+export function runPostPasses(gpu: Gpu, input: Target, passes: readonly PostPass[], ctx: RecipeContext, profiler: Profiler = NO_PROFILE): Target {
   let current = input
   const short = Math.min(input.width, input.height)
   const aspect = [input.width / short, input.height / short]
@@ -128,6 +182,12 @@ export function runPostPasses(gpu: Gpu, input: Target, passes: readonly PostPass
     current = next
   }
   for (const pass of passes) {
+    runPass(pass)
+    profiler.mark(`post ${pass.kind}`, current)
+  }
+  return current
+
+  function runPass(pass: PostPass): void {
     switch (pass.kind) {
       case 'gaussianBlur': {
         const { radius } = pass.settings(ctx)
@@ -171,7 +231,6 @@ export function runPostPasses(gpu: Gpu, input: Target, passes: readonly PostPass
       }
     }
   }
-  return current
 }
 
 /** Gaussian blur with sigma in pixels of the input. Large sigmas blur a downsampled copy. Caller releases the result. */
@@ -208,4 +267,119 @@ export function gaussianBlur(gpu: Gpu, input: Target, sigma: number): Target {
   })
   gpu.release(both)
   return out
+}
+
+/** Blurs for sampling keep at least this sigma, in texels of the level they run on, on levels at least this short side. */
+const MIN_LEVEL_SIGMA = 4
+const MIN_LEVEL_SIDE = 8
+
+export interface SamplingLevel {
+  /** Halvings of the source the gaussian runs on. */
+  level: number
+  /** Gaussian sigma in texels of that level. */
+  sigma: number
+}
+
+/**
+ * Where a blur by sigma (pixels of a width x height source) runs when
+ * shaders read the result with sampleSmooth: on the coarsest halving where the
+ * gaussian is still MIN_LEVEL_SIGMA texels wide. Its sigma leaves room for the
+ * halvings and the cubic read, so the variances add up to what a full-size
+ * blur read with sampleSmooth gives: sigma² plus a third of a source pixel².
+ */
+export function samplingLevel(sigma: number, width: number, height: number): SamplingLevel {
+  const total = sigma * sigma + 1 / 3
+  let best: SamplingLevel = { level: 0, sigma }
+  let w = width
+  let h = height
+  for (let k = 1; ; k++) {
+    w = Math.max(1, Math.round(w / 2))
+    h = Math.max(1, Math.round(h / 2))
+    if (Math.min(w, h) < MIN_LEVEL_SIDE) break
+    const area = 4 ** k
+    // Tent halvings add 0.75 texel² of their input level each, the cubic read a third of a texel² of this level.
+    const left = total - 0.25 * (area - 1) - area / 3
+    const s = left > 0 ? Math.sqrt(left / area) : 0
+    if (s < MIN_LEVEL_SIGMA) break
+    best = { level: k, sigma: s }
+  }
+  return best
+}
+
+/**
+ * Separable gaussian, sigma in texels of the input; caller releases the
+ * result. Paired bilinear taps come out a few tenths of a percent dark over a
+ * chain of half-float passes, so blurs on halved levels read every tap exactly;
+ * full-size blurs keep the paired taps they always had.
+ */
+export function blurLevel(gpu: Gpu, input: Target, sigma: number, exact: boolean): Target {
+  const program = gpu.program(exact ? EXACT_GAUSSIAN_SHADER : GAUSSIAN_SHADER)
+  const uSigma = Math.max(sigma, 0.01)
+  const horizontal = gpu.acquire(input.width, input.height)
+  gpu.draw(program, horizontal, { textures: { uSrc: input }, uniforms: { uDirection: [1, 0], uSigma } })
+  const both = gpu.acquire(input.width, input.height)
+  gpu.draw(program, both, { textures: { uSrc: horizontal }, uniforms: { uDirection: [0, 1], uSigma } })
+  gpu.release(horizontal)
+  return both
+}
+
+/** Halves a target with a [1, 3, 3, 1] tent per axis (sizes round); caller releases the result. */
+export function halve(gpu: Gpu, src: Target): Target {
+  const next = gpu.acquire(Math.max(1, Math.round(src.width / 2)), Math.max(1, Math.round(src.height / 2)))
+  gpu.draw(gpu.program(TENT_HALVE_SHADER), next, { textures: { uSrc: src }, uniforms: { uDstSize: [next.width, next.height] } })
+  return next
+}
+
+/**
+ * Past the frame edges, a blur by sigma (source pixels) repeats the edge
+ * texels of the coarsest halving on which it is at most 24 texels wide: the
+ * edge look the scatter presets were tuned with.
+ */
+export function edgeLevel(sigma: number, width: number, height: number): number {
+  let level = 0
+  let w = width
+  let h = height
+  while (sigma / 2 ** level > 24 && Math.min(w, h) > 8) {
+    w = Math.max(1, Math.round(w / 2))
+    h = Math.max(1, Math.round(h / 2))
+    level++
+  }
+  return level
+}
+
+/** A source extended past its edges and halved on demand, shared by the blurs of it that run on halved levels. */
+export interface Halvings {
+  /** The extended source halved k times (k up to the `levels` it was made for), [1, 3, 3, 1] tent per axis. */
+  level(k: number): Target
+  /** Maps the source's uv into the levels' uv: xy scale, zw offset. */
+  readonly uvMap: readonly [number, number, number, number]
+  /** Releases the extended source and its halvings; the source stays with the caller. */
+  release(): void
+}
+
+/**
+ * Extends a source by repeating its edge pixels, which is what a blur's
+ * clamped taps see past the frame on the source itself, so blurs on further
+ * halvings treat the edges the same way. Four texels of the coarsest level
+ * are enough: beyond them the extension is constant outward and clamping
+ * repeats it. The size rounds up so that `levels` halvings are exact.
+ */
+export function halvings(gpu: Gpu, source: Target, levels: number): Halvings {
+  const step = 2 ** levels
+  const pad = 4 * step
+  const width = Math.ceil((source.width + 2 * pad) / step) * step
+  const height = Math.ceil((source.height + 2 * pad) / step) * step
+  const extended = gpu.acquire(width, height)
+  gpu.draw(gpu.program(PAD_SHADER), extended, { textures: { uSrc: source }, uniforms: { uPad: [pad, pad] } })
+  const chain = [extended]
+  return {
+    uvMap: [source.width / width, source.height / height, pad / width, pad / height],
+    level(k) {
+      while (chain.length <= k) chain.push(halve(gpu, chain[chain.length - 1]))
+      return chain[k]
+    },
+    release() {
+      for (const target of chain) gpu.release(target)
+    },
+  }
 }

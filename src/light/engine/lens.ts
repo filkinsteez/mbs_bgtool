@@ -4,6 +4,7 @@ import type { Gpu, Target } from './gl'
 import { CHUNK_LIBRARY, GLSL_HEADER } from './glsl'
 import { TONE_CURVE_GLSL } from './output'
 import { gaussianBlur } from './passes'
+import { NO_PROFILE, type Profiler } from './profile'
 
 /**
  * The lens works on a copy of the scene whose short side is always 512 px, so
@@ -234,6 +235,65 @@ void main() {
 }
 `
 
+/** The composite for a radiance texture at render resolution: one texel per pixel, unfiltered. */
+export const TEXEL_COMPOSITE_SHADER =
+  GLSL_HEADER +
+  CHUNK_LIBRARY +
+  LENS_COMPOSITE_GLSL +
+  /* glsl */ `
+uniform sampler2D uRadianceTex;
+uniform vec2 uRenderSize;
+uniform vec2 uTileOrigin;
+out vec4 fragColor;
+void main() {
+  vec2 px = gl_FragCoord.xy + uTileOrigin;
+  vec4 scene = texelFetch(uRadianceTex, ivec2(px), 0);
+  fragColor = vec4(lensAndTone(scene.rgb, px / uRenderSize), scene.a);
+}
+`
+
+/**
+ * The lens base from a radiance texture at render resolution: the area
+ * average of the texels under each base pixel, and (output 1) of each texel's
+ * own exposed light above nominal, as the radiance pass takes it per sample.
+ * At most 7 texels per base pixel per axis.
+ */
+export const BASE_FROM_RADIANCE_SHADER =
+  GLSL_HEADER +
+  /* glsl */ `
+uniform sampler2D uSrc;
+uniform vec2 uDstSize;
+uniform float uStart;
+uniform float uExposureScale;
+layout(location = 0) out vec4 fragColor;
+layout(location = 1) out vec4 hotColor;
+void main() {
+  vec2 scale = vec2(textureSize(uSrc, 0)) / uDstSize;
+  vec2 lo = (gl_FragCoord.xy - 0.5) * scale;
+  vec2 hi = lo + scale;
+  vec4 sum = vec4(0.0);
+  vec3 hot = vec3(0.0);
+  float total = 0.0;
+  for (int j = 0; j < 8; j++) {
+    float y = floor(lo.y) + float(j);
+    if (y >= hi.y) break;
+    float wy = min(y + 1.0, hi.y) - max(y, lo.y);
+    for (int i = 0; i < 8; i++) {
+      float x = floor(lo.x) + float(i);
+      if (x >= hi.x) break;
+      float w = wy * (min(x + 1.0, hi.x) - max(x, lo.x));
+      vec4 c = texelFetch(uSrc, ivec2(x, y), 0);
+      vec3 exposed = max(c.rgb, vec3(0.0)) * uExposureScale;
+      sum += w * c;
+      hot += w * exposed * smoothstep(vec3(uStart), vec3(2.0 * uStart), exposed);
+      total += w;
+    }
+  }
+  fragColor = sum / total;
+  hotColor = vec4(hot / total, 1.0);
+}
+`
+
 export interface LensOutput {
   bloom: Target | null
   halation: Target | null
@@ -247,8 +307,9 @@ export interface LensOutput {
  * (base.second); otherwise it is taken from the averaged base. Caller
  * releases the returned targets.
  */
-export function runLens(gpu: Gpu, base: Target, lens: LensSettings, exposure: number): LensOutput {
+export function runLens(gpu: Gpu, base: Target, lens: LensSettings, exposure: number, profiler: Profiler = NO_PROFILE): LensOutput {
   const bloom = lens.bloom > 0 ? pyramid(gpu, base, bloomLevelFactors(lens)) : null
+  if (bloom) profiler.mark('lens bloom', bloom)
   let halation: Target | null = null
   let surround: Target | null = null
   if (lens.halation > 0) {
@@ -272,6 +333,7 @@ export function runLens(gpu: Gpu, base: Target, lens: LensSettings, exposure: nu
     })
     surround = gaussianBlur(gpu, small, SURROUND_BLUR_PX)
     gpu.release(small)
+    profiler.mark('lens halation', surround)
   }
   return { bloom, halation, surround }
 }
