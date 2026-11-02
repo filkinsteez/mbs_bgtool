@@ -48,7 +48,7 @@ export const REFERENCES = [
     recipe: "sunset.ramp",
     tile: [925, 1369.7115478515625],
     fill: { fit: "crop", box: { left: -0.1868, top: -0.0798, width: 1.3736, height: 1.1596 } },
-    ignore: [],
+    ignore: [{ kind: "text", rect: [0, 1360, 925, 10] }],
   },
   {
     id: "sunset-blue-diagonal",
@@ -128,7 +128,10 @@ export const REFERENCES = [
     recipe: "contour.halo",
     tile: [925, 1308.843505859375],
     fill: { fit: "cover" },
-    ignore: [{ kind: "text", rect: [290, 1027, 346, 244] }],
+    ignore: [
+      { kind: "text", rect: [282, 1019, 362, 260] },
+      { kind: "other", rect: [922, 0, 3, 1309] },
+    ],
   },
   {
     id: "contour-iridescent-rings",

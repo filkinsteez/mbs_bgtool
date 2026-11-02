@@ -40,7 +40,17 @@
       "width": 925,
       "height": 1370,
       "recipe": "sunset.ramp",
-      "ignore": [],
+      "ignore": [
+        {
+          "kind": "text",
+          "rect": [
+            0,
+            1360,
+            925,
+            10
+          ]
+        }
+      ],
       "cornerRadius": 0,
       "notes": "docs/references/awe/sunset-red-yellow-arcs.md"
     },
@@ -194,10 +204,19 @@
         {
           "kind": "text",
           "rect": [
-            290,
-            1027,
-            346,
-            244
+            282,
+            1019,
+            362,
+            260
+          ]
+        },
+        {
+          "kind": "other",
+          "rect": [
+            922,
+            0,
+            3,
+            1309
           ]
         }
       ],
