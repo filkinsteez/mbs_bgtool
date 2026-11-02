@@ -5,7 +5,7 @@ import '@/styles/dial-panel.css'
 import '@/styles/tool.css'
 import { DialStore, useDialKitController } from 'dialkit'
 import { useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { getPack } from '@/light'
+import { EXPORT_SIZES, getPack, type ExportAspect } from '@/light'
 import { buildScene } from './controls'
 import { buildDialConfig, PACK_SWATCHES, PANEL_ID, PANEL_NAME, readToolState } from './dialConfig'
 import { exportPng } from './exportImage'
@@ -34,6 +34,9 @@ function randomSeed(current: number): number {
   return next
 }
 
+/** Width / height of the format's frame; recipes with `compose` lay out the scene for it. */
+const frameAspect = (format: ExportAspect) => EXPORT_SIZES[format].width / EXPORT_SIZES[format].height
+
 const isTextField = (target: EventTarget | null) =>
   target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select') !== null)
 
@@ -54,8 +57,8 @@ export function Tool({ initial }: { initial: ToolState }) {
   const query = toQuery(state)
   const { look, pack, seed, intensity, softness, moodControl, format } = state
   const scene = useMemo(
-    () => buildScene(look, getPack(pack), seed, { intensity, softness, mood: moodControl }),
-    [look, pack, seed, intensity, softness, moodControl],
+    () => buildScene(look, getPack(pack), seed, { intensity, softness, mood: moodControl }, frameAspect(format)),
+    [look, pack, seed, intensity, softness, moodControl, format],
   )
 
   const access = useMemo(
