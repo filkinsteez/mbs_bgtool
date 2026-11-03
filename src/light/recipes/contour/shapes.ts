@@ -489,6 +489,30 @@ export const META_LOGO_LANDMARKS: readonly Vec2[] = [
   [2080, 1000],
 ].map(([x, y]) => [(x - 1752.4136) / 1000, (y - 1500) / 1000] as Vec2)
 
+const logoUnits = (points: readonly (readonly [number, number])[]): Vec2[] => points.map(([x, y]) => [(x - 1752.4136) / 1000, (y - 1500) / 1000])
+
+/**
+ * The logo's recognizable parts (units and placement of metaLogo), each as the
+ * points that show it: a crop that shows more than one part starts to read as
+ * the logo. The crossing region holds the notch where the loops meet above,
+ * the crossing, the point where they meet below and the two hole tips.
+ */
+export const META_LOGO_PARTS: Readonly<Record<'leftEnd' | 'rightEnd' | 'leftTop' | 'rightTop' | 'leftBottom' | 'rightBottom' | 'crossing', readonly Vec2[]>> = {
+  leftEnd: logoUnits([[1000, 1655.86]]),
+  rightEnd: logoUnits([[2504.83, 1649.66]]),
+  leftTop: logoUnits([[1432.41, 1000]]),
+  rightTop: logoUnits([[2080, 1000]]),
+  leftBottom: logoUnits([[1273.1, 2000]]),
+  rightBottom: logoUnits([[2245.5, 2000]]),
+  crossing: logoUnits([
+    [1772.84, 1210.99],
+    [1762, 1340],
+    [1752.79, 1471.26],
+    [1675.9, 1353.3],
+    [1915.37, 1420.09],
+  ]),
+}
+
 /** Only the outer contour of the Meta logo (no holes), same units and placement as metaLogo. */
 export function metaLogoEdge(): Shape {
   return { contours: [metaLogo().contours[0]] }

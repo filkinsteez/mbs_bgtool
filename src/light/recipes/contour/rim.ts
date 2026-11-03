@@ -5,6 +5,7 @@ import {
   frameSize,
   geo,
   lerp,
+  logoPartsShown,
   longestRun,
   pickBase,
   pickLight,
@@ -38,7 +39,7 @@ import {
   type ShapeKind,
   type ShapeSettings,
 } from './curveLight'
-import { META_LOGO_LANDMARKS, type Vec2 } from './shapes'
+import { META_LOGO_LANDMARKS, META_LOGO_PARTS, type Vec2 } from './shapes'
 
 const COLORS = 8
 const STOPS = 6
@@ -89,16 +90,18 @@ const params: ParamSpec[] = [
   { kind: 'number', key: 'soften', label: 'Overall width', min: 0.05, max: 8, step: 0.001, default: 1 },
 ]
 
-/** Logo outline points (logo units, viewBox 1000 1000 1504.8 1000) a crop can center on: the notch where the loops meet, hole tips, loop ends. */
+/**
+ * Logo outline points (logo units, viewBox 1000 1000 1504.8 1000) a tight crop
+ * centers on: the notch where the loops meet above, the point where they meet
+ * below, the two hole tips and the two loop ends.
+ */
 const LOGO_FEATURES: readonly (readonly [Vec2, number])[] = [
   [[1772.84, 1210.99], 3],
   [[1752.79, 1471.26], 2],
   [[1675.9, 1353.3], 2],
   [[1915.37, 1420.09], 2],
-  [[1100, 1655.86], 2],
-  [[2400, 1649.66], 2],
-  [[1432.41, 1080], 1],
-  [[2080, 1080], 1],
+  [[1000, 1655.86], 2],
+  [[2504.83, 1649.66], 2],
 ]
 const LOGO_CENTER: Vec2 = [1752.4136, 1500]
 
@@ -108,12 +111,17 @@ const rotate = (v: Vec2, degrees: number): Vec2 => {
 }
 
 /**
- * Logo landmarks (the crossing, the two loop tops) that show: a loop reads from
- * the curve around its top, so a landmark counts once it is within 0.15 of the
- * logo's height (plus 0.05) of the frame.
+ * A tight crop shows one part of the logo: no part other than the one it
+ * centers on comes near the frame, and at most one of the crossing and the
+ * two loop tops shows (counting 0.15 of the logo's height, plus 0.05, past the
+ * frame edge, since a loop reads from the curve around its top).
  */
-function logoLandmarksShown(shape: ShapeSettings, anchor: Vec2, aspect: number): number {
-  return pointsNearFrame(META_LOGO_LANDMARKS, shape.size, shape.rotate, shape.flip, anchor, aspect, 0.05 + 0.15 * shape.size)
+function logoCropTooWide(shape: ShapeSettings, anchor: Vec2, aspect: number): boolean {
+  const { size, rotate: turn, flip } = shape
+  return (
+    logoPartsShown(META_LOGO_PARTS, size, turn, flip, anchor, aspect) > 1 ||
+    pointsNearFrame(META_LOGO_LANDMARKS, size, turn, flip, anchor, aspect, 0.05 + 0.15 * size) > 1
+  )
 }
 
 interface RimLayout {
@@ -125,7 +133,7 @@ interface RimLayout {
 }
 
 /** Where the shape goes for this seed and frame; the light keeps to one part of the frame so the rest stays dark. */
-type RimKind = Exclude<ShapeKind, 'logoEdge'>
+type RimKind = Exclude<ShapeKind, 'logoEdge' | 'sCurve'>
 
 /** A rounded corner whose vertex sits at or just past a frame edge: one leg runs into the frame, the other leaves it. */
 function cornerLayout(rand: () => number, aspect: number): RimLayout {
@@ -205,32 +213,24 @@ function rimLayout(kind: RimKind, rand: () => number, aspect: number): RimLayout
         oneSided: true,
       }
     }
-    case 'sCurve': {
-      const vertical = aspect < 1 ? rand() < 0.3 : rand() < 0.2
-      const at: Vec2 = vertical ? [sx * fw * lerp(0.12, 0.26, rand()), 0] : [fw * lerp(-0.12, 0.12, rand()), sy * fh * lerp(0.14, 0.28, rand())]
-      return {
-        shape: { kind, size: lerp(0.35, 0.9, rand()), angle: lerp(28, 58, rand()), aspect: 1, rotate: (vertical ? 90 : 0) + lerp(-18, 18, rand()), flip: rand() < 0.5 },
-        anchor: at,
-        oneSided: true,
-      }
-    }
     case 'logo': {
+      // A tight crop: the logo is 3.2 to 5.5 short sides tall and one part of its outline shows.
       const feature = pickWeighted(rand, LOGO_FEATURES)
-      const size = lerp(1.6, 2.8, rand())
-      const turn = pickWeighted(rand, [[0, 3], [180, 1], [90, 1], [-90, 1]] as const) + lerp(-12, 12, rand())
+      const size = lerp(3.2, 5.5, rand())
+      const turn = pickWeighted(rand, [[0, 3], [180, 1], [90, 1], [-90, 1]] as const) + lerp(-20, 20, rand())
       const unit = rotate([(feature[0] - LOGO_CENTER[0]) / 1000, (feature[1] - LOGO_CENTER[1]) / 1000], turn)
       // Put the feature toward the side where the logo's body lies, so the body runs off the frame.
       const norm = Math.hypot(unit[0], unit[1]) || 1
-      const reachOut = lerp(0.04, 0.2, rand())
+      const reachOut = lerp(0, 0.25, rand())
       const target: Vec2 = [(-unit[0] / norm) * fw * reachOut, (-unit[1] / norm) * fh * reachOut]
       const place = (scale: number): RimLayout => ({
         shape: { kind, size: size * scale, angle: 90, aspect: 1, rotate: turn, flip: false },
         anchor: [target[0] - unit[0] * size * scale, target[1] - unit[1] * size * scale],
         oneSided: true,
       })
-      // Never the whole logo: at most one of the crossing and the two loop tops shows; a larger logo keeps the rest out.
+      // Never the whole logo: a larger logo keeps every other part out of the frame.
       let layout = place(1)
-      for (let scale = 1.2; scale < 12 && logoLandmarksShown(layout.shape, layout.anchor, aspect) > 1; scale *= 1.2) layout = place(scale)
+      for (let scale = 1.15; scale < 12 && logoCropTooWide(layout.shape, layout.anchor, aspect); scale *= 1.15) layout = place(scale)
       return layout
     }
     case 'ring': {
@@ -269,8 +269,7 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     ['corner', 4],
     ['line', 2],
     ['arc', 2],
-    ['sCurve', 2],
-    ['logo', 2],
+    ['logo', 4],
   ])
   const layout = rimLayout(kind, rand, aspect)
   const shape = buildShape(layout.shape)

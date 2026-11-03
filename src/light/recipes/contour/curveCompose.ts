@@ -148,6 +148,17 @@ export function pointsNearFrame(points: readonly Vec2[], size: number, rotate: n
   }).length
 }
 
+/**
+ * How many of the logo's parts show in or near the frame for a logo placed
+ * like buildShape and the shader place it (size = the logo's height). A part
+ * counts once any of its points is within 0.05 plus 0.1 of the logo's height
+ * of the frame, because a loop or a notch reads from the curve around it.
+ */
+export function logoPartsShown(parts: Readonly<Record<string, readonly Vec2[]>>, size: number, rotate: number, flip: boolean, anchor: Vec2, aspect: number): number {
+  const margin = 0.05 + 0.1 * size
+  return Object.values(parts).filter((points) => pointsNearFrame(points, size, rotate, flip, anchor, aspect, margin) > 0).length
+}
+
 /** Total turning of a run of points (radians): how far its direction rotates along it, both ways counted. */
 export function turning(run: readonly Vec2[]): number {
   let total = 0

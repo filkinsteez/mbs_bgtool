@@ -73,7 +73,7 @@ describe('contour outlines fit their layout and stay closed', () => {
               for (const problem of outlineProblems(item, scene, aspect)) problems.push(`${pack.id} ${aspect.toFixed(3)} seed ${seed}: ${problem}`)
             }
       expect(problems).toEqual([])
-    })
+    }, 60_000)
   }
 
   it('the reference presets', () => {

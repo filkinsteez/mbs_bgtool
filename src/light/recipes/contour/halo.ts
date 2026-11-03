@@ -6,6 +6,7 @@ import {
   geo,
   haloParts,
   lerp,
+  logoPartsShown,
   longestRun,
   normalNear,
   pickBase,
@@ -37,7 +38,7 @@ import {
   type EmitterSettings,
   type ShapeSettings,
 } from './curveLight'
-import { distanceToShape, META_LOGO_LANDMARKS, windingNumber, type Vec2 } from './shapes'
+import { distanceToShape, META_LOGO_LANDMARKS, META_LOGO_PARTS, windingNumber, type Vec2 } from './shapes'
 
 const COLORS = 8
 const RINGS = 3
@@ -85,14 +86,12 @@ const params: ParamSpec[] = [
   { kind: 'number', key: 'soften', label: 'Overall width', min: 0.05, max: 8, step: 0.001, default: 1 },
 ]
 
-/** Outer-contour points of the logo (logo units) a halo crop can follow: loop ends, tops and bottoms. */
-const LOGO_EDGE_FEATURES: readonly Vec2[] = [
-  [1000, 1655.86],
-  [2504.83, 1649.66],
-  [1432.41, 1000],
-  [2080, 1000],
-  [1273.1, 2000],
-  [2245.5, 2000],
+/** Outer-contour points of the logo (logo units) a tight halo crop centers on: the two loop ends and where the loops meet above (the notch) and below. */
+const LOGO_EDGE_FEATURES: readonly (readonly [Vec2, number])[] = [
+  [[1000, 1655.86], 2],
+  [[2504.83, 1649.66], 2],
+  [[1772.84, 1210.99], 3],
+  [[1752.79, 1471.26], 2],
 ]
 const LOGO_CENTER: Vec2 = [1752.4136, 1500]
 
@@ -133,7 +132,7 @@ function ringDistance(settings: ShapeSettings, unit: Vec2, gap: number): number 
 }
 
 /** A large curve crossing one part of the frame: a ring or ellipse centered off the frame, a slow S, or the logo's outer edge. */
-function haloLayout(kind: 'ring' | 'ellipse' | 'sCurve' | 'logoEdge', rand: () => number, aspect: number): HaloLayout {
+function haloLayout(kind: 'ring' | 'ellipse' | 'logoEdge', rand: () => number, aspect: number): HaloLayout {
   const [fw, fh] = frameSize(aspect)
   const short = Math.min(fw, fh)
   const sx = rand() < 0.5 ? 1 : -1
@@ -164,21 +163,13 @@ function haloLayout(kind: 'ring' | 'ellipse' | 'sCurve' | 'logoEdge', rand: () =
       }
       break
     }
-    case 'sCurve': {
-      const vertical = aspect < 1 ? rand() < 0.7 : rand() < 0.25
-      const at: Vec2 = vertical ? [sx * fw * lerp(0.1, 0.25, rand()), fh * lerp(-0.1, 0.1, rand())] : [fw * lerp(-0.15, 0.15, rand()), sy * fh * lerp(0.1, 0.25, rand())]
-      const size = lerp(0.9, 1.8, rand()) * short
-      const angle = lerp(22, 38, rand())
-      const turn = (vertical ? 90 : 0) + lerp(-22, 22, rand())
-      const flip = rand() < 0.5
-      place = (scale) => ({ shape: { kind: 'sCurve', size: size * scale, angle, aspect: 1, rotate: turn, flip }, anchor: at })
-      break
-    }
     case 'logoEdge': {
-      const feature = LOGO_EDGE_FEATURES[Math.floor(rand() * LOGO_EDGE_FEATURES.length)]
-      const size = lerp(2.8, 4.6, rand())
-      const turn = [0, 180, 90, -90][Math.floor(rand() * 4)] + lerp(-15, 15, rand())
-      const out = lerp(0.12, 0.3, rand())
+      // A tight crop: the logo is 3 to 6 short sides tall and one part of its outline shows.
+      const feature = pickWeighted(rand, LOGO_EDGE_FEATURES)
+      const size = lerp(3, 6, rand())
+      // Any turn, so the crops of one feature (a loop end) land in different parts of the frame from seed to seed.
+      const turn = rand() * 360
+      const out = lerp(0.08, 0.3, rand())
       place = (scale) => {
         const local = rotate([((feature[0] - LOGO_CENTER[0]) / 1000) * size * scale, ((feature[1] - LOGO_CENTER[1]) / 1000) * size * scale], turn)
         // The feature sits toward the side where the logo body lies, so the body runs off the frame.
@@ -193,10 +184,14 @@ function haloLayout(kind: 'ring' | 'ellipse' | 'sCurve' | 'logoEdge', rand: () =
       throw new Error(`Unknown halo kind: ${String(unknown)}`)
     }
   }
-  // Never the whole logo: at most one of the crossing and the two loop tops may show.
+  // Rings and ellipses that turn too much inside the frame read as a planet. A logo crop may turn more (a loop
+  // end, the notch), but never shows the whole logo: one part of the outline, and at most one of the crossing
+  // and the two loop tops.
   const tooMuch = (l: HaloLayout) =>
-    turning(longestRun(visibleRuns(buildShape(l.shape), l.anchor, aspect))) > MAX_TURN ||
-    (kind === 'logoEdge' && pointsNearFrame(META_LOGO_LANDMARKS, l.shape.size, l.shape.rotate, l.shape.flip, l.anchor, aspect, 0.05 + 0.15 * l.shape.size) > 1)
+    kind === 'logoEdge'
+      ? logoPartsShown(META_LOGO_PARTS, l.shape.size, l.shape.rotate, l.shape.flip, l.anchor, aspect) > 1 ||
+        pointsNearFrame(META_LOGO_LANDMARKS, l.shape.size, l.shape.rotate, l.shape.flip, l.anchor, aspect, 0.05 + 0.15 * l.shape.size) > 1
+      : turning(longestRun(visibleRuns(buildShape(l.shape), l.anchor, aspect))) > MAX_TURN
   let layout = place(1)
   for (let scale = 1.2; scale < 12 && tooMuch(layout); scale *= 1.2) layout = place(scale)
   return layout
@@ -215,8 +210,7 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   const kind = pickWeighted(seededRandom(seed, 29), [
     ['ring', 2],
     ['ellipse', 3],
-    ['sCurve', 3],
-    ['logoEdge', 3],
+    ['logoEdge', 6],
   ] as const)
   const layout = haloLayout(kind, rand, aspect)
   // The hot spot and the falloff follow the longest piece of the curve inside the frame.
@@ -227,7 +221,7 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   const at: Vec2 = [hot[0] - layout.anchor[0], hot[1] - layout.anchor[1]]
   const gain = geo(controls.intensity, 0.35, 1, 2.8)
   const soften = geo(controls.softness, 0.45, 1, 2.4)
-  // Light falls 20 to 60 times from the hot spot to the far end of the visible curve. The light field is three
+  // Light falls 20 to 60 times from the hot spot to the far end of the visible curve. The light field is six
   // times longer across the curve, so the glow keeps its long fade outward near the hot spot.
   const power = lerp(2, 3, rand())
   const across = normalNear(path, hot)

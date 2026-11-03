@@ -314,24 +314,38 @@ float clPrimDistance(int base, vec2 q, float best) {
   return length(q - g.xy - ab * f);
 }
 
-// Winding number contribution of the ray from q toward +x.
+// Crossing of the ray from q toward +x with an arc piece whose y only rises or only falls (angles a < b at
+// heights ya, yb; dir +1 when the path runs from a to b). Like a segment: the lower end counts, the upper not.
+float clArcPieceWinding(vec4 g, float a, float b, float ya, float yb, float dir, vec2 q) {
+  if (q.y < min(ya, yb) || q.y >= max(ya, yb)) return 0.0;
+  float dy = q.y - g.y;
+  float x = g.x + sign(cos(0.5 * (a + b))) * sqrt(max(g.z * g.z - dy * dy, 0.0));
+  if (x <= q.x) return 0.0;
+  return (yb > ya ? 1.0 : -1.0) * dir;
+}
+
+// Winding number contribution of the ray from q toward +x. Arcs are split where their circle turns in y, so
+// every piece is crossed at most once, and their ends use the stored heights their neighbors share, so a row
+// through a shared end counts it once (angle comparisons rounded badly near the top and bottom of a circle and
+// left single rows with inside and outside swapped).
 float clPrimWinding(int base, vec2 q) {
   vec4 g = uClPrim[base];
   vec4 m = uClPrim[base + 1];
   if (int(m.x + 0.5) == 2) {
-    float dy = q.y - g.y;
-    if (abs(dy) >= g.z) return 0.0;
-    float dx = sqrt(g.z * g.z - dy * dy);
-    float w = 0.0;
-    for (int s = 0; s < 2; s++) {
-      float x = s == 0 ? dx : -dx;
-      if (g.x + x <= q.x) continue;
-      float rel = (atan(dy, x) - g.w) * sign(m.y);
-      rel -= TAU * floor(rel / TAU);
-      if (rel >= abs(m.y)) continue;
-      w += sign(m.y) * sign(x);
+    if (abs(q.y - g.y) > g.z) return 0.0;
+    float yStart = uClPrim[base + 2].w;
+    float yEnd = uClPrim[base + 3].w;
+    float lo = min(g.w, g.w + m.y);
+    float hi = max(g.w, g.w + m.y);
+    float yLo = m.y > 0.0 ? yStart : yEnd;
+    float yHi = m.y > 0.0 ? yEnd : yStart;
+    float dir = m.y > 0.0 ? 1.0 : -1.0;
+    float turn = 0.5 * PI + ceil((lo - 0.5 * PI) / PI) * PI;
+    if (turn > lo && turn < hi) {
+      float yTurn = g.y + g.z * sin(turn);
+      return clArcPieceWinding(g, lo, turn, yLo, yTurn, dir, q) + clArcPieceWinding(g, turn, hi, yTurn, yHi, dir, q);
     }
-    return w;
+    return clArcPieceWinding(g, lo, hi, yLo, yHi, dir, q);
   }
   vec2 a = g.xy;
   vec2 b = g.zw;
@@ -820,8 +834,9 @@ export function curveLightUniforms(
       const p = entry.primitive
       prim.set(p.kind === 'segment' ? [p.a[0], p.a[1], p.b[0], p.b[1]] : [p.center[0], p.center[1], p.radius, p.start], o)
       prim.set([entry.kind, p.kind === 'arc' ? p.sweep : 0, entry.inside, primitiveLength(p)], o + 4)
-      prim.set([entry.e0[0], entry.e0[1], entry.e0[2], 0], o + 8)
-      prim.set([entry.e1[0], entry.e1[1], entry.e1[2], 0], o + 12)
+      // The ends' y, worked out once in double precision, so neighbors share the same numbers for the inside test.
+      prim.set([entry.e0[0], entry.e0[1], entry.e0[2], primitivePoint(p, 0)[1]], o + 8)
+      prim.set([entry.e1[0], entry.e1[1], entry.e1[2], primitivePoint(p, 1)[1]], o + 12)
     })
     bounds.set(chunkBounds(packed), e * chunks * 4)
     emit.set([settings.anchor[0], settings.anchor[1], packed.length, sided.length > 0 ? 1 : 0], e * EMIT_VEC4 * 4)

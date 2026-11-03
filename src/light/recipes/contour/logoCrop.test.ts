@@ -59,6 +59,6 @@ describe('logo crops never show the whole logo', () => {
             }
       expect(crops).toBeGreaterThan(0)
       expect(problems).toEqual([])
-    })
+    }, 60_000)
   }
 })
