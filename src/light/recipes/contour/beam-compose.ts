@@ -36,11 +36,6 @@ export function luminanceOf(hex: string): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
-/** The largest linear channel of a color; light clips once this channel passes 1. */
-export function peakChannelOf(hex: string): number {
-  return Math.max(...hexToLinear(hex))
-}
-
 /**
  * The color a light (linear RGB) turns as it overexposes, at unit luminance: the camera
  * tone curve's own path to white three times past clipping, so Meta Blue goes toward a

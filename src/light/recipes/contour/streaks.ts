@@ -1,6 +1,6 @@
 import type { ColorPack } from '../../color/packs'
 import type { ComposeInput, Composition, RecipeDefinition } from '../../scene'
-import { contourLights, frameHalf, geo, lerp, luminanceOf, peakChannelOf, pickContourLight, round4, seededRandom } from './beam-compose'
+import { contourLights, frameHalf, geo, lerp, luminanceOf, paleTarget, pickContourLight, round4, seededRandom } from './beam-compose'
 
 /**
  * Shafts of light through gaps in a cloud layer, converging on a point on
@@ -43,6 +43,7 @@ uniform vec4 uFloorA;      // sky reflection, pool level, pool depth, pool width
 uniform vec3 uFloorB;      // streaks, streak scale x, streak scale y
 uniform vec3 uPale;        // pale share, from, to (luminance)
 uniform float uPaleWhite;  // how far the pale color goes from the light's color toward white
+uniform vec3 uPaleTarget;  // the light's color on the camera's path to white, at unit luminance
 uniform vec2 uLook;        // base level, vignette
 
 const int SHADOW_TAPS = 20;
@@ -236,7 +237,7 @@ vec3 combine(vec2 uv, vec2 p, vec3 line, vec3 cached) {
   float lumHaze = max(luminance(uHazeColor), 1e-5);
   float lumLight = max(luminance(uLightColor), 1e-5);
   float pale = saturate(uPale.x * smoothstep(uPale.y, uPale.z, scatter * lumHaze));
-  vec3 paleColor = mix(uLightColor / lumLight, vec3(1.0), uPaleWhite) * lumHaze;
+  vec3 paleColor = mix(uLightColor / lumLight, uPaleTarget, uPaleWhite) * lumHaze;
   vec3 color = uBaseColor * uLook.x + scatter * mix(uHazeColor, paleColor, pale);
   vec2 half_ = 0.5 * uFrameAspect;
   float vig = 1.0 - uLook.y * dot(p, p) / dot(half_, half_);
@@ -251,11 +252,14 @@ const SKY_CACHE_BLUR = 0.012
 const HAZE_LUMINANCE = 0.12
 
 /**
- * Largest channel one unit of scattered light may have. A saturated haze (Meta Blue) has
- * one channel far above its luminance, so without this it clips into a flat pale patch
- * at a brightness where pale hazes still have room.
+ * Pack output's light level over HAZE_LUMINANCE. At the default Intensity the brightest
+ * shafts and the floor pool land at 2 to 4 times nominal, so the tone curve takes them
+ * toward pale white; Meta Blue gets there, as the pale hazes do.
  */
-const HAZE_PEAK = 0.42
+const LIGHT_GAIN = 4
+
+/** Smallest level of the sky past the lit side, as a share of the lit side's level. */
+const DARK_SHARE = 0.15
 
 /**
  * Pack output. Light (the mood control) moves the point where the shafts meet along the
@@ -271,9 +275,9 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
   const { halfW, halfH } = frameHalf(aspect)
   const wide = aspect >= 1
   const light = pickContourLight(pack, random)
-  const hazeGain = Math.min(HAZE_LUMINANCE / Math.max(luminanceOf(light.haze), 0.01), HAZE_PEAK / Math.max(peakChannelOf(light.haze), 0.01))
+  const hazeGain = HAZE_LUMINANCE / Math.max(luminanceOf(light.haze), 0.01)
   const soft = (lo: number, hi: number) => lerp(lo, hi, softness)
-  const power = geo(intensity, 0.35, 0.75, 1.4) * hazeGain
+  const power = geo(intensity, 0.35, 0.75, 1.4) * hazeGain * LIGHT_GAIN
 
   const horizonAt = wide ? lerp(0.58, 0.74, random()) : lerp(0.62, 0.78, random())
   const cy = -halfH + 2 * halfH * horizonAt
@@ -300,17 +304,17 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
     params: {
       center: [round4(cx), round4(cy)],
       sky: [round4(sky[0]), round4(sky[1]), round4(soft(0.35, 0.6)), round4(lerp(0.8, 1.2, random()))],
-      skyLevel: [round4(Math.min(8, 2.2 * power)), round4(0.16 * power), round4(lerp(0.45, 0.7, random()))],
+      skyLevel: [round4(Math.min(16, 2.2 * power)), round4(0.16 * power), round4(lerp(DARK_SHARE, 1.6 * DARK_SHARE, random()))],
       rise: [round4(lerp(4, 7, random())), round4(lerp(0.2, 0.32, random())), round4(lerp(0.9, 1.2, random())), round4(lerp(3.5, 5, random()))],
       clouds: [round4(lerp(17, 24, random())), round4(soft(3.2, 1.6)), round4(soft(4, 1.8)), round4(soft(0.06, 0.32))],
       layer: [layerIn, layerOut, round4(lerp(0.25, 0.5, random())), round4(lerp(2.5, 5, random()))],
       horizon: [round4(lerp(0.45, 0.75, random())), round4(lerp(0.03, 0.1, random())), round4(lerp(0.4, 0.8, random())), round4(soft(0.1, 0.25))],
       horizonShape: horizonShape.map(round4),
-      glow: [round4(glowSide * lerp(0, 0.05, random())), round4(Math.min(4, 1.2 * power)), round4(lerp(0.05, 0.1, random())), round4(lerp(0.2, 0.32, random()))],
+      glow: [round4(glowSide * lerp(0, 0.05, random())), round4(Math.min(8, 1.2 * power)), round4(lerp(0.05, 0.1, random())), round4(lerp(0.2, 0.32, random()))],
       glowShape: [round4(lerp(0.35, 0.55, random())), round4(lerp(0.3, 0.7, random()))],
       line: [round4(Math.min(4, 0.3 * power)), round4(soft(0.005, 0.014))],
       band: [round4(Math.min(6, 0.9 * power)), round4(soft(0.015, 0.03))],
-      floor: [round4(lerp(0.25, 0.45, random())), round4(Math.min(8, 1.6 * power)), round4(lerp(0.05, 0.09, random())), round4(lerp(0.12, 0.22, random()))],
+      floor: [round4(lerp(0.25, 0.45, random())), round4(Math.min(16, 1.6 * power)), round4(lerp(0.05, 0.09, random())), round4(lerp(0.12, 0.22, random()))],
       floorStreaks: [round4(lerp(0.2, 0.45, random())), 1.6, 14],
       pale: [0.8, 0.08, 0.45],
       paleWhite: light.light === light.haze ? 0.5 : 0.2,
@@ -335,17 +339,17 @@ export const contourStreaks: RecipeDefinition = {
   params: [
     { kind: 'vector', key: 'center', label: 'Point', min: -2, max: 2, step: 0.005, default: [-0.14, 0.22] },
     { kind: 'vector', key: 'sky', label: 'Lit sky', min: -3.6, max: 3.6, step: 0.005, default: [-3.2, -0.72, 0.22, 1.3] },
-    { kind: 'vector', key: 'skyLevel', label: 'Sky level', min: 0, max: 8, step: 0.005, default: [3.4, 0.18, 0.3] },
+    { kind: 'vector', key: 'skyLevel', label: 'Sky level', min: 0, max: 16, step: 0.005, default: [3.4, 0.18, 0.3] },
     { kind: 'vector', key: 'rise', label: 'Rise', min: 0, max: 20, step: 0.005, default: [8, 0.25, 0.8, 4] },
     { kind: 'vector', key: 'clouds', label: 'Clouds', min: 0, max: 24, step: 0.005, default: [7, 2, 3, 0.25] },
     { kind: 'vector', key: 'layer', label: 'Cloud layer', min: 0, max: 6, step: 0.005, default: [0.15, 0.45, 0.3, 1.5] },
     { kind: 'vector', key: 'horizon', label: 'Horizon', min: 0, max: 2, step: 0.005, default: [0.55, 0.1, 0.6, 0.3] },
     { kind: 'vector', key: 'horizonShape', label: 'Horizon shape', min: -1, max: 1, step: 0.0005, default: [0, 0, 0, 0] },
-    { kind: 'vector', key: 'glow', label: 'Glow', min: -2, max: 4, step: 0.005, default: [-0.02, 1.35, 0.12, 0.25] },
+    { kind: 'vector', key: 'glow', label: 'Glow', min: -2, max: 8, step: 0.005, default: [-0.02, 1.35, 0.12, 0.25] },
     { kind: 'vector', key: 'glowShape', label: 'Glow shape', min: 0, max: 3, step: 0.005, default: [0.2, 0.6] },
     { kind: 'vector', key: 'line', label: 'Horizon line', min: 0, max: 4, step: 0.0005, default: [0.6, 0.005] },
     { kind: 'vector', key: 'band', label: 'Band', min: 0, max: 6, step: 0.005, default: [2.5, 0.04] },
-    { kind: 'vector', key: 'floor', label: 'Floor', min: 0, max: 8, step: 0.005, default: [0.4, 2, 0.12, 0.3] },
+    { kind: 'vector', key: 'floor', label: 'Floor', min: 0, max: 16, step: 0.005, default: [0.4, 2, 0.12, 0.3] },
     { kind: 'vector', key: 'floorStreaks', label: 'Floor streaks', min: 0, max: 40, step: 0.005, default: [1, 3, 22] },
     { kind: 'vector', key: 'pale', label: 'Pale', min: 0, max: 2, step: 0.005, default: [0.6, 0.15, 0.8] },
     { kind: 'number', key: 'paleWhite', label: 'Pale toward white', min: 0, max: 1, step: 0.005, default: 0 },
@@ -373,6 +377,7 @@ export const contourStreaks: RecipeDefinition = {
     uFloorB: ctx.vec('floorStreaks'),
     uPale: ctx.vec('pale'),
     uPaleWhite: ctx.num('paleWhite'),
+    uPaleTarget: paleTarget(ctx.color('light')),
     uLook: [ctx.num('base'), ctx.num('vignette')],
   }),
   scatter: [{ source: 'aux', radius: () => SKY_CACHE_BLUR }],
