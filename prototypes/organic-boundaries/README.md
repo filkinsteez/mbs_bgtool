@@ -228,6 +228,19 @@ The engine module changes steps 3 and 4:
 
   The change back to the usual field happens in the flat color beside the edge. The edge is softer at its crests: its width grows by exp(0.24 k (crest - mean)), the crest in spreads, and its softness noise is calmed by 0.65 k. Crests end up 1.1-1.5 times softer than troughs, width min/max stays 0.62-0.83 (one 0.96), and the edge keeps 2.2-2.6 times less of its wiggle in waves shorter than 0.25 S.
 
+  The crest height is a smooth curve of the edge's move toward the light side, in spreads: near 0 below -1, about the move itself from 1 to 2, levelling off toward 2.5 (a softplus, then a soft limit: `crestOf` on the CPU, `boundaryCrest` in the shader). Until 2026-11-02 it was clamped at 0 and 2.5. The clamp put a kink in the width along the edge, and on a long soft transition the kink showed as a soft vertical column. Ramp moved its glow to `boundarySoftAt` because of it.
+
+![smooth crest](results/crest-smooth.jpg)
+
+`crest-sheet.mjs`: one 0.55-wide transition over a much darker ground (Bold Yellow over Meta Blue at 16:9, Atmospheric Ice over Slate at 9:16), rendered on the GPU through the engine before (clamped, commit 701d8fa) and now. Under each render, how sharply its lightness bends along x, at one gain for both: the clamp's kinks are the sharp vertical lines through the whole transition, two in Bold and one in Atmospheric, and the smooth crest has none. The plot is the softness multiplier along the edge (orange before, blue now). At the bottom, a 1:1 crop around the strongest column, each row's lightness less its straight-line fit: before, a sharp V runs down the column; now the shading is smooth.
+
+- Largest bend of the softness multiplier along the edge (second difference per short side squared): 2778 → 20 (Bold), 3559 → 33 (Atmospheric).
+- Columns (that bend of lightness averaged over the transition's rows, 1e-6 Oklab L per px²): 19.7 → 11.0 and 81.3 → 17.6. What is left is the 8-bit steps, which are the same in both.
+- In the looks: Ramp's uniforms change in its 318 cases with a silhouette edge (the crest mean in `uBndDark`, by up to 0.126). Its pixels change by at most 1 code value, in 41 of 624 frames (seeds 1-8, three packs, both formats, 13 control settings). Bands and Blooms do not change.
+- The boundary tests pass without changes, GPU and CPU still match (0.009-0.011 mean, 0.34-0.40 max Oklab ΔE × 100), and the calibration takes the same time (Ramp drag step median 3.7 ms both).
+
+Other clamps along the boundary that can still put a kink in it: the softness noise and the amplitude change along the boundary are clamped at ±2.5 RMS (the noise reaches 3.2 RMS at most, so this is rare), and the guard curve is clamped to 0-1 where its spline overshoots.
+
 Measured on the engine's noise (`tools/`): RMS 0.3052, largest value 3.2 RMS, steepest slope 9.5 RMS per lattice unit (12.7 with two octaves), correlation 0.5 at 0.39 lattice units. So a measured half-correlation distance `d` means `Ly = d / 0.39`. A strict guard on the steepest point allows a typical slope of only about 0.19, which is why the guard is measured on the actual frame instead of using a worst-case formula.
 
 ### Uniforms
@@ -254,7 +267,7 @@ Engine (`BOUNDARY_GLSL` in `boundary.ts`): `uBndSeed`; `uBndShared` (cS, 1/Ls, S
 
 ### How each recipe plugs in
 
-The engine module is `src/light/recipes/sunset/boundary.ts`, with tests in `boundary.test.ts`. No recipe uses it yet.
+The engine module is `src/light/recipes/sunset/boundary.ts`, with tests in `boundary.test.ts`. Ramp (`ramp-boundary.ts`, `ramp-shader.ts`) and Blooms (`blooms-boundary.ts`, `blooms.ts`) call `calibrateBoundary` and use `BOUNDARY_GLSL`; Bands uses only its `gradientNoise`.
 
 - In the recipe's `uniforms()`, call `calibrateBoundary(params, aspect, seed)` and spread the returned `uniforms` into the recipe's own. The same parameters, aspect and seed give the same uniforms, so the result can be cached by those three.
 - Put `BOUNDARY_GLSL` in front of the recipe's fragment. It uses the engine's `gradientNoise` from the chunk library and adds only `boundary*` functions and `uBnd*` uniforms.
@@ -273,7 +286,7 @@ In the shader:
 - edge mode: transition j sits at `uBndTrans[j].x + boundaryEdge(a, j)` with the same softness;
 - `boundarySoftAt(a, m, w)` for a boundary that is not in the transition list (a glow's side), `boundaryFeather(a, s, j)` for print looks.
 
-`gpu-compare.mjs` is a working example: a small ramp fragment on top of `BOUNDARY_GLSL`, rendered through the engine's `ProgramRenderer` next to the same scene on the CPU and next to the previous version of the module (899c06d), for all three packs at 16:9 and 9:16. GPU and CPU match to 0.009-0.011 mean and 0.35-0.40 max Oklab ΔE × 100 (8-bit rounding). Under each landscape row, the portrait's dark ground edge is shown 1.1 times larger, now and before:
+`gpu-compare.mjs` is a working example: a small ramp fragment on top of `BOUNDARY_GLSL`, rendered through the engine's `ProgramRenderer` next to the same scene on the CPU and next to the previous version of the module (899c06d), for all three packs at 16:9 and 9:16. GPU and CPU match to 0.009-0.011 mean and 0.34-0.40 max Oklab ΔE × 100 (8-bit rounding). Under each landscape row, the portrait's dark ground edge is shown 1.1 times larger, now and before. `node gpu-compare.mjs` writes the sheet to `out/gpu/`; `--update-results` replaces the one below.
 
 ![GPU vs CPU](results/gpu-vs-cpu.jpg)
 
@@ -449,8 +462,44 @@ Numbers from the curves: `boundaryGeometry` (wander, tilt, bow, wiggle, DCT spec
 
 - **Coordinate mode**, per pixel: shared term (2 octaves) + 2D term (2 octaves) + amplitude modulation = 5 `gradientNoise`, plus an envelope loop (≤ 8 knots) and one `tanh`. Per transition: one more `gradientNoise` for softness and optionally one for the feather, plus one `exp`. With 6 transitions, about 12-17 noise calls and 700-1000 ALU. At 3840×2160 that is about 1-2 ms on a desktop GPU and 5-8 ms integrated (estimate). The 1D terms depend only on `a`, so they can also go into a small per-column texture.
 - **Edge mode**: one warp per edge, so the pink riso's 15 edges cost about 75 noise calls per pixel. The edge displacements depend only on x, so precompute a `W × edges` texture once per render (one tiny pass); then it is one texture read per edge.
-- **CPU calibration**: about 25,000 field evaluations per layer, 50-250 ms in this prototype. Cache it per seed, aspect and Softness value.
+- **CPU calibration**: about 25,000 field evaluations per layer, 50-250 ms in this prototype. Cache it per seed, aspect and Softness value. The engine's `calibrateBoundary` takes 2-4 ms per call on the params Ramp passes during a drag (see the next section).
 - **Audit**: about 1.5 s per image on the CPU.
+
+## Speed of the calibration
+
+Every step of a slider drag gives the looks new params, so their caches miss and `calibrateBoundary` runs in full. Before commit 701d8fa that took 21-30 ms per Ramp step on a quiet machine (45-190 ms under load from other work), more than a 16.7 ms frame. 701d8fa makes it about 8 times faster with the same numbers:
+
+- each noise cell's corner gradients are kept per seed (up to 400,000 cells);
+- noise down a fixed column works out its x part once, and the x products of its last cell;
+- the grids reuse each row's cell and fade, and add one octave at a time down a whole column, in the same order;
+- the heavy tables are freed after each call.
+
+None of this depends on the per-edge softness or the silhouette rules: it speeds up the noise and the grids that every path uses, so those rules can be changed or dropped without touching it.
+
+The uniforms match the version before to the last bit: on all 1,146 calls the looks made in captured drags, and in 1,872 look cases (3 looks, 3 packs, 2 formats, 8 seeds, 13 control settings; 318 with a silhouette edge). The rendered frames match to 0 code values (468 frames of Ramp and Blooms, seeds 1-3).
+
+Measured on 2026-11-02 at 21:54, load average 5-6 on 14 cores. Old is commit 3e9cd9c, now is 701d8fa plus the smooth crest. Median per drag step, Bold, seed 1, 31 steps from 0.2 to 0.8:
+
+| look, format | `uniforms()` Softness / Horizon / Intensity, old → now (ms) | preview render at the tool's size, old → now (ms) |
+| --- | --- | --- |
+| Ramp 16:9 | 27.0 / 21.6 / 26.7 → 3.7 / 2.9 / 3.7 | 28.2 / 22.7 / 26.9 → 6.4 / 4.2 / 5.5 |
+| Ramp 9:16 | 29.9 / 27.2 / 29.9 → 3.0 / 2.2 / 2.8 | 27.0 / 20.7 / 26.6 → 4.4 / 3.5 / 4.4 |
+| Bands, both | 0.0 (it does not calibrate) | 0.9-1.8, unchanged |
+| Blooms, both | 0.0 (its cache hits during a drag) | 1.6-4.7, unchanged |
+
+Blooms calibrates once per seed, pack and format: 22.6 → 6.9 ms at 16:9 and 20.0 → 3.4 ms at 9:16. The worst Ramp step went from 37.8 to 11.6 ms in the preview render.
+
+In the tool (`tools/tool-drag.mjs`: headless Chrome against the dev server, 1440 × 900 at device pixel ratio 2, so the preview is 2152 × 1210 or 940 × 1672), now: on all 18 drags (3 looks, 2 formats, 3 sliders) the frame interval has a median of 16.7 ms and a 95th percentile of at most 16.8 ms. Each drag has 0-2 single frames of 33 ms, Bands included, so they do not come from the calibration. Ramp's preview renders take a median of 7.5-10.0 ms at 16:9 (worst 15.6) and 4.8-6.4 ms at 9:16 (worst 12.2). The old version was not run in the tool, because that would mean replacing the production file; `tools/preview-ab.mjs` renders both versions at the tool's preview size in turn instead.
+
+How to time and compare two versions of `boundary.ts` (the other version runs from a copy of the looks' folder in `out/look-copy/`, made by `tools/look-copy.mjs`; the production files are not touched):
+
+- `node speed-check.mjs --against <boundary.ts>`: each look's `uniforms()` per drag step, both versions in turn.
+- `node tools/preview-ab.mjs <boundary.ts>`: the preview render per drag step at the tool's size, both versions in turn.
+- `node tools/tool-drag.mjs`: drags in the tool on the dev server (current version only).
+- `node tools/uniform-diff.mjs <boundary.ts> [seeds]`: the largest uniform difference over all looks, packs, formats and control settings.
+- `node tools/same-moment-diff.mjs <boundary.ts>`: the largest pixel difference; `ONLY=<regex>` and `SEEDS=1,2,3` pick the cases.
+- `node tools/capture-params.mjs out/params.json`, then `node tools/calib-bench.mjs out/params.json <module.ts> ...` or `tools/calib-time.mjs`: the calls the looks make in a drag, timed on their own.
+- `node --cpu-prof --cpu-prof-dir=<dir> tools/look-profile.mjs ramp`, then `node tools/look-profile.mjs --read <dir>`: where the time goes.
 
 ## Recommendation for the engine
 
@@ -463,7 +512,7 @@ Numbers from the curves: `boundaryGeometry` (wander, tilt, bow, wiggle, DCT spec
 
 ## Current Sunset recipes, measured
 
-Measured on 2026-11-02 between 16:28 and 16:31 EST. The code was commit `4daccf7`, the last Sunset commit, plus uncommitted edits: the ramp agent's compose rework, `softFollow` and `dimBelow`, and engine edits in `gl`, `lens`, `passes`, `programRenderer` and `scatter`. The recipes change every few minutes, so re-run before relying on these numbers: `node recipes-audit.mjs`, then `node recipes-table.mjs`, then `node ramp-warp.mjs`.
+Measured on 2026-11-02 between 16:28 and 16:31 EST. The code was commit `4daccf7`, the last Sunset commit, plus uncommitted edits: the ramp agent's compose rework, `softFollow` and `dimBelow`, and engine edits in `gl`, `lens`, `passes`, `programRenderer` and `scatter`. The recipes change every few minutes, so re-run before relying on these numbers: `node recipes-audit.mjs`, then `node recipes-table.mjs`, then `node ramp-warp.mjs`. `recipes-table.mjs` writes its table and sheets to `artifacts/organic-boundaries/recipes/`; `--update-results` replaces the committed `results/recipes-*.jpg`.
 
 How:
 
@@ -548,5 +597,7 @@ The claim was: "every edge moves with the same noise (one `warpNoise` scaled per
 - `gpu-compare.mjs`: the engine module on the GPU next to the CPU and its previous version (`out/gpu/`, `results/gpu-vs-cpu.jpg`). `lib/engine-scene.mjs`: the production layouts for the engine module, the test ramp in GLSL and on the CPU, and the audit's bump numbers for a line.
 - `tools/aspect-probe.mjs`: the bump numbers of every transition in the production layouts, landscape and portrait, from the module's CPU field. `tools/ref-steepness.mjs`: how steep the references' own boundaries get.
 - `recipes-audit.mjs`, `recipes-table.mjs`, `ramp-warp.mjs`, `lib/tracked.mjs`: the audit of the current Sunset recipes (`artifacts/organic-boundaries/`, `results/recipes-*.jpg`). `tools/fold-map.mjs` marks where isolines are crossed twice; `tools/crease.mjs` shows abrupt slope changes in a frame's lightness.
+- `crest-sheet.mjs`: the silhouette edge's crest term before and now on a long soft transition (`out/crest/`, `results/crest-smooth.jpg`).
+- `speed-check.mjs`, `tools/preview-ab.mjs`, `tools/tool-drag.mjs`, `tools/uniform-diff.mjs`, `tools/same-moment-diff.mjs`, `tools/look-copy.mjs`, `tools/capture-params.mjs`, `tools/calib-time.mjs`, `tools/calib-bench.mjs`, `tools/look-profile.mjs`: timing the calibration and comparing two versions of `boundary.ts` (see Speed of the calibration).
 - `tools/`: noise bounds and correlation, octave bounds.
 - `presets/ref-sunset-*.json`: the six reference presets (`scene.params` holds the recipe fields above).
