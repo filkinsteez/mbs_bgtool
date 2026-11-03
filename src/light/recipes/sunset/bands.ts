@@ -1,86 +1,84 @@
+import { linearToOklch } from '../../color/oklab'
 import type { ColorPack } from '../../color/packs'
-import type { Rgb } from '../../color/srgb'
 import type { RecipeContext, RecipeDefinition, UniformMap } from '../../scene'
-import { bandBoundary } from './bands-boundary'
 import { composeBands } from './bands-compose'
-import { bridgeEnds } from './bands-light'
-import {
-  BAND_MAX,
-  BANDS_COLOR_SLOTS,
-  BANDS_PARAMS,
-  bandKey,
-  BUMP_MAX,
-  MODE_OVER,
-  PATCH_MAX,
-  patchKey,
-} from './bands-params'
-import { BOUNDARY_GLSL } from './boundary'
+import type { Rgb } from '../../color/srgb'
+import { bridgeLight, closeHues, paleLight } from './bands-light'
+import { BAND_MAX, BANDS_COLOR_SLOTS, BANDS_PARAMS, bandKey, BUMP_MAX, LIGHT_MAX, LIGHT_PALE, lightKey, PATCH_MAX, patchKey } from './bands-params'
+import { BANDS_SHAPE_GLSL, edgeSeed } from './bands-shape'
 
-/** Frame heights added to every band's reach; covers the one-pixel floor on edge radii at sizes down to about 100 px. */
-const REACH_MARGIN = 0.01
+/** Gaussian sigma over the lens radius: the same 10-90 edge width as a disc of that radius. */
+export const LENS_SIGMA = 0.53
+/**
+ * The one lens, chosen in one place. From this radius up (every pack frame) it is the engine's disc lens;
+ * below it (print presets with a hard edge) a gaussian of the same edge width, since a disc that small would
+ * need a source of tens of megapixels. The entry not in use gets radius 0 and an 8 px source.
+ */
+const DISC_FROM = 0.02
+const discRadius = (ctx: RecipeContext) => (ctx.num('lens') >= DISC_FROM ? ctx.num('lens') : 0)
+const gaussSigma = (ctx: RecipeContext) => (ctx.num('lens') >= DISC_FROM ? 0 : LENS_SIGMA * ctx.num('lens'))
+const LENS_SCATTER: RecipeDefinition['scatter'] = [
+  { source: 'aux', shape: 'lens', radius: discRadius, size: () => 8 },
+  { source: 'aux', radius: gaussSigma, size: (ctx) => (gaussSigma(ctx) > 0 ? Math.min(1024, Math.ceil(4 / gaussSigma(ctx))) : 8) },
+]
+
+const luminance = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 
 function bandUniforms(ctx: RecipeContext): UniformMap {
-  const count = Math.round(ctx.num('bands'))
-  const base = ctx.colors[0]
+  const count = Math.min(Math.round(ctx.num('bands')), BAND_MAX)
   const bandColor = (i: number) => ctx.colors[1 + i]
-  const boundary = bandBoundary(ctx, Math.min(count, BAND_MAX))
   const edge: number[] = []
-  const reach: number[] = []
+  const wave: number[] = []
   const look: number[] = []
   const tilt: number[] = []
   const sun: number[] = []
-  const bumpAt: number[] = []
-  const bumpWidth: number[] = []
-  const bumpTop: number[] = []
-  const bumpBottom: number[] = []
-  const bumpCover: number[] = []
-  const bumpLight: number[] = []
-  const pale: number[] = []
-  const down: number[] = []
-  const bridgeUnder: number[] = []
-  const bridgeOwn: number[] = []
-
-  const bridgeScale = ctx.num('bridge')
-
+  const bumps: Record<'at' | 'width' | 'top' | 'bottom' | 'cover' | 'light', number[]> = { at: [], width: [], top: [], bottom: [], cover: [], light: [] }
   for (let i = 0; i < BAND_MAX; i++) {
     const key = (name: Parameters<typeof bandKey>[1]) => bandKey(i, name)
     const [top, bottom] = ctx.vec(key('Edges'))
-    const [above, below] = ctx.vec(key('Soft'))
+    const [fadeTop, fadeBottom] = ctx.vec(key('Fade'))
+    const [waveTop, waveBottom, wavelength] = ctx.vec(key('Wave'))
     const [tiltTop, tiltBottom, tiltCover] = ctx.vec(key('Tilt'))
     const [sunLight, sunCover] = ctx.vec(key('Sun'))
-    const mode = Math.round(ctx.num(key('Mode')))
-    const line = ctx.bool(key('Line'))
-    const light = ctx.num(key('Light'))
-    const hazeShare = ctx.num(key('Haze'))
-    const softVary = ctx.num(key('SoftVary'))
-    const widths = ctx.vec(key('BumpWidth'))
-    const sumAbs = (values: number[]) => values.reduce((s, v, j) => s + (widths[j] > 0 ? Math.abs(v) : 0), 0)
-    const [moveTop, moveBottom] = boundary.move[i]
-    const leanTop = Math.abs(tiltTop) / 2 + sumAbs(ctx.vec(key('BumpTop')))
-    const topShift = leanTop + moveTop
-    const bottomShift = leanTop + Math.abs(tiltBottom) / 2 + sumAbs(ctx.vec(key('BumpBottom'))) + moveBottom
-    const blur = boundary.softMax ** softVary * (line ? 9 : hazeShare > 0 ? 3 : 1 + 1.7321 * ctx.num('rounding'))
-    const upReach = topShift + above * blur + REACH_MARGIN
-    const downReach = bottomShift + below * blur + REACH_MARGIN
-    reach.push(upReach, upReach, downReach, downReach)
-    edge.push(top, bottom, above, below)
-    look.push(ctx.num(key('Opacity')), light, mode, line ? 1 : 0)
-    tilt.push(tiltTop, tiltBottom, tiltCover, 0)
-    sun.push(sunLight, sunCover, hazeShare, softVary)
-    bumpAt.push(...ctx.vec(key('BumpAt')).slice(0, BUMP_MAX))
-    bumpWidth.push(...ctx.vec(key('BumpWidth')).slice(0, BUMP_MAX))
-    bumpTop.push(...ctx.vec(key('BumpTop')).slice(0, BUMP_MAX))
-    bumpBottom.push(...ctx.vec(key('BumpBottom')).slice(0, BUMP_MAX))
-    bumpCover.push(...ctx.vec(key('BumpCover')).slice(0, BUMP_MAX))
-    bumpLight.push(...ctx.vec(key('BumpLight')).slice(0, BUMP_MAX))
-    pale.push(ctx.num(key('Pale')))
-    down.push(...ctx.vec(key('LightDown')))
+    edge.push(top, bottom, fadeTop, fadeBottom)
+    wave.push(waveTop, waveBottom, Math.max(wavelength, 1e-3), ctx.num(key('FadeVary')))
+    look.push(ctx.num(key('Opacity')), ctx.num(key('Light')), Math.round(ctx.num(key('Mode'))), ctx.bool(key('Line')) ? 1 : 0)
+    tilt.push(tiltTop, tiltBottom, tiltCover, ctx.num(key('Lean')))
+    sun.push(sunLight, sunCover, ctx.num(key('Vary')), 0)
+    bumps.at.push(...ctx.vec(key('BumpAt')).slice(0, BUMP_MAX))
+    bumps.width.push(...ctx.vec(key('BumpWidth')).slice(0, BUMP_MAX))
+    bumps.top.push(...ctx.vec(key('BumpTop')).slice(0, BUMP_MAX))
+    bumps.bottom.push(...ctx.vec(key('BumpBottom')).slice(0, BUMP_MAX))
+    bumps.cover.push(...ctx.vec(key('BumpCover')).slice(0, BUMP_MAX))
+    bumps.light.push(...ctx.vec(key('BumpLight')).slice(0, BUMP_MAX))
+  }
 
-    const under = i === 0 ? base : scaled(bandColor(i - 1), Math.min(1, ctx.num(bandKey(i - 1, 'Light'))))
-    const own = scaled(bandColor(i), Math.min(1, light))
-    const [atUnder, atOwn] = i < count && mode === MODE_OVER && !line ? bridgeEnds(under, own, bridgeScale, ctx.num('intensity')) : [[0, 0, 0], [0, 0, 0]]
-    bridgeUnder.push(...atUnder)
-    bridgeOwn.push(...atOwn)
+  // A lighter neighbour of close hue (or a near-grey one) spills a little of its light across the shared edge.
+  const [spillAmount, spillReach] = ctx.vec('spill')
+  const spillAbove: number[] = []
+  const spillBelow: number[] = []
+  const lit = (i: number) => {
+    if (i < 0) return ctx.colors[0]
+    const c = bandColor(i)
+    const k = ctx.num(bandKey(i, 'Light'))
+    return [c[0] * k, c[1] * k, c[2] * k]
+  }
+  const spillFrom = (from: number, into: number): number[] => {
+    if (spillAmount <= 0 || from >= count || into >= count) return [0, 0, 0]
+    const a = lit(from)
+    const b = lit(into)
+    const lighter = linearToOklch(a as [number, number, number])[0] > linearToOklch(b as [number, number, number])[0] + 0.1
+    return lighter && closeHues(a as Rgb, b as Rgb) ? a.map((v) => v * spillAmount) : [0, 0, 0]
+  }
+  for (let i = 0; i < BAND_MAX; i++) {
+    spillAbove.push(...spillFrom(i - 1, i))
+    spillBelow.push(...spillFrom(i + 1, i))
+  }
+  // Pale light across a band's top edge where it meets a color far from its own, from both sides' light.
+  const bridge: number[] = []
+  for (let i = 0; i < BAND_MAX; i++) {
+    const amount = i < count ? ctx.num(bandKey(i, 'Bridge')) : 0
+    bridge.push(...(amount > 0 ? bridgeLight(lit(i - 1) as Rgb, lit(i) as Rgb).map((v) => v * amount) : [0, 0, 0]))
   }
 
   const patchShape: number[] = []
@@ -90,55 +88,75 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     const [opacity, light, mode] = ctx.vec(patchKey(j, 'Look'))
     patchLook.push(opacity, light, Math.round(mode), 0)
   }
+  const lightShape: number[] = []
+  const lightLook: number[] = []
+  const lightColor: number[] = []
+  for (let k = 0; k < LIGHT_MAX; k++) {
+    lightShape.push(...ctx.vec(lightKey(k, 'Shape')))
+    const [gain, kind, band, tail] = ctx.vec(lightKey(k, 'Look'))
+    lightLook.push(gain, Math.round(kind), Math.round(band), tail)
+    const color = ctx.colors[1 + BAND_MAX + PATCH_MAX + k]
+    lightColor.push(...(Math.round(kind) === LIGHT_PALE ? paleLight(color) : color))
+  }
 
-  const [sunX, sunWidth] = ctx.vec('sun')
+  const lens = ctx.num('lens')
+  const frameH = Math.max(1 / ctx.aspect, 1)
   return {
-    ...boundary.uniforms,
-    uBandCount: Math.min(count, BAND_MAX),
+    uBandCount: count,
     uPatchCount: Math.min(Math.round(ctx.num('patches')), PATCH_MAX),
-    uBase: base,
+    uLightCount: Math.min(Math.round(ctx.num('lights')), LIGHT_MAX),
+    uBase: ctx.colors[0],
     uBandColor: Array.from({ length: BAND_MAX }, (_, i) => bandColor(i)).flat(),
     uPatchColor: Array.from({ length: PATCH_MAX }, (_, j) => ctx.colors[1 + BAND_MAX + j]).flat(),
+    uLightColor: lightColor,
+    uWaterColor: ctx.colors[1 + BAND_MAX + PATCH_MAX + LIGHT_MAX],
     uBandEdge: edge,
-    uBandReach: reach,
+    uBandWave: wave,
     uBandLook: look,
     uBandTilt: tilt,
     uBandSun: sun,
-    uBumpAt: bumpAt,
-    uBumpWidth: bumpWidth,
-    uBumpTop: bumpTop,
-    uBumpBottom: bumpBottom,
-    uBumpCover: bumpCover,
-    uBumpLight: bumpLight,
-    uBandPale: pale,
-    uBandDown: down,
-    uBridgeUnder: bridgeUnder,
-    uBridgeOwn: bridgeOwn,
+    uBumpAt: bumps.at,
+    uBumpWidth: bumps.width,
+    uBumpTop: bumps.top,
+    uBumpBottom: bumps.bottom,
+    uBumpCover: bumps.cover,
+    uBumpLight: bumps.light,
+    uSpillAbove: spillAbove,
+    uSpillBelow: spillBelow,
+    uBandBridge: bridge,
+    uSpillReach: (spillReach * lens) / frameH,
     uPatchShape: patchShape,
     uPatchLook: patchLook,
-    uSun: [sunX, sunWidth],
-    uRounding: ctx.num('rounding'),
-    uInk: ctx.num('ink'),
-    uShade: ctx.vec('shade'),
-    uDeepen: ctx.num('deepen'),
+    uLightShape: lightShape,
+    uLightLook: lightLook,
+    uSun: ctx.vec('sun'),
     uIntensity: ctx.num('intensity'),
+    uDeepen: ctx.num('deepen'),
+    uShade: ctx.vec('shade'),
+    uInk: ctx.num('ink'),
     uGrainInk: ctx.vec('grainInk'),
     uLightVary: ctx.vec('lightVary'),
+    uOverlap: ctx.num('overlap'),
+    uExtinction: ctx.num('extinction'),
+    uSky: ctx.vec('sky'),
+    uWater: ctx.vec('water'),
+    uWaterLook: ctx.vec('waterLook'),
+    uEdgeSeed: edgeSeed(ctx.seed),
+    uBaseLum: Math.max(luminance(ctx.colors[0]), 1e-4),
+    uLensDisc: discRadius(ctx) > 0 ? 1 : 0,
   }
 }
 
-function scaled(color: Rgb, k: number): Rgb {
-  return [color[0] * k, color[1] * k, color[2] * k]
-}
-
 /**
- * Up to six stacked bands of light, each a translucent layer over the ones
- * above it (or light added to them, or a filter on them), with lens-defocus
- * (disk) edges. Every edge wanders and changes softness along its length
- * through the shared boundary model (boundary.ts, edge mode), on top of its
- * own tilt and bumps; light and cover can fall off sideways from the sun. Up
- * to four soft patches go on top. Where two distant hues blend, pale light is
- * added so the middle is lighter, not grey.
+ * Up to six stacked bands of pack-colored light, seen through one
+ * out-of-focus lens. The scene is built in linear light: outlines of masses
+ * are sharp in the scene (softer in some stretches), light transitions are
+ * soft in the scene and add where they overlap, every band's light changes
+ * slowly inside it, and glows are added light with no edge of their own.
+ * Water below a level horizon mirrors the sky above it. The engine renders
+ * the scene on a small grid and blurs it once with a Gaussian of the lens's
+ * width (scatter), so every edge has the same softness floor and the preview
+ * and an export compute the same image.
  */
 export const sunsetBands: RecipeDefinition = {
   id: 'sunset.bands',
@@ -148,104 +166,56 @@ export const sunsetBands: RecipeDefinition = {
   defaultColors: composeBands({ pack: null, seed: 1, aspect: 16 / 9 }).colors,
   params: BANDS_PARAMS,
   fragment: /* glsl */ `
-${BOUNDARY_GLSL}
+${BANDS_SHAPE_GLSL}
 #define BAND_MAX ${BAND_MAX}
 #define PATCH_MAX ${PATCH_MAX}
+#define LIGHT_MAX ${LIGHT_MAX}
 
 uniform int uBandCount;
 uniform int uPatchCount;
+uniform int uLightCount;
 uniform vec3 uBase;
 uniform vec3 uBandColor[BAND_MAX];
 uniform vec3 uPatchColor[PATCH_MAX];
-uniform vec4 uBandEdge[BAND_MAX];   // top, bottom, softness above, softness below (frame heights)
-uniform vec4 uBandReach[BAND_MAX];  // how far each edge's blur and shift reach: above top, below top, above bottom, below bottom
-uniform vec4 uBandLook[BAND_MAX];   // opacity, light, mode (0 over, 1 multiply, 2 add), thin line
-uniform vec3 uEdgeBnd[2 * BAND_MAX]; // per band, top then bottom edge: boundary transition (-1: none), distance from its group's anchor (frame heights, 0 or less), amount of the factor on that distance
-uniform vec4 uBandTilt[BAND_MAX];   // tilt of the top edge, extra tilt of the bottom edge, cover tilt, 0
-uniform vec4 uBandSun[BAND_MAX];    // light toward the sun, cover toward the sun, haze share, power on the softness change
+uniform vec3 uLightColor[LIGHT_MAX];
+uniform vec3 uWaterColor;
+uniform vec4 uBandEdge[BAND_MAX];   // top, bottom, scene 10-90 width of the top and of the bottom edge (frame heights)
+uniform vec4 uBandWave[BAND_MAX];   // broad wave of the top edge, extra wave of the bottom edge (frame heights), lattice (short sides), change of the scene width along the edges
+uniform vec4 uBandLook[BAND_MAX];   // opacity, light, mode (0 cover, 1 multiply, 2 add, 3 light), thin line
+uniform vec4 uBandTilt[BAND_MAX];   // tilt of the top edge, extra tilt of the bottom edge, cover tilt, light lean
+uniform vec4 uBandSun[BAND_MAX];    // light toward the sun, cover toward the sun, share of the light change, 0
 uniform vec4 uBumpAt[BAND_MAX];
 uniform vec4 uBumpWidth[BAND_MAX];
 uniform vec4 uBumpTop[BAND_MAX];
 uniform vec4 uBumpBottom[BAND_MAX];
 uniform vec4 uBumpCover[BAND_MAX];
 uniform vec4 uBumpLight[BAND_MAX];
-uniform float uBandPale[BAND_MAX];
-uniform vec2 uBandDown[BAND_MAX];   // share of the light above nominal at the top edge, depth where it is full (frame heights; 0 off)
-uniform vec3 uBridgeUnder[BAND_MAX]; // pale light added where a band blends with what is under it, at the under end
-uniform vec3 uBridgeOwn[BAND_MAX];   // the same at the band's own end
+uniform vec3 uSpillAbove[BAND_MAX];  // light this band takes from the band above, near their edge
+uniform vec3 uSpillBelow[BAND_MAX];  // the same from the band below
+uniform vec3 uBandBridge[BAND_MAX];  // pale light added across a light band's top edge, most halfway across
+uniform float uSpillReach;           // frame heights
 uniform vec4 uPatchShape[PATCH_MAX]; // x, y, radius x, radius y
 uniform vec4 uPatchLook[PATCH_MAX];  // opacity, light, mode
+uniform vec4 uLightShape[LIGHT_MAX]; // x (frame widths), y (frame heights), size across (frame widths), size down (frame heights)
+uniform vec4 uLightLook[LIGHT_MAX];  // gain, kind (0 glow, 1 dome, 2 shade), band (-1: the sky behind every band), tail up (frame heights)
 uniform vec2 uSun;                   // x, width of the sideways falloff (frame widths)
-uniform float uRounding;
-uniform float uInk;
-uniform vec2 uShade;
-uniform float uDeepen;
 uniform float uIntensity;
+uniform float uDeepen;
+uniform vec2 uShade;
+uniform float uInk;
 uniform vec2 uGrainInk;              // how much grain follows ink, grain on bare base
-uniform vec3 uLightVary;             // slow change of light: RMS share, lattice along and down (short-side units)
+uniform vec3 uLightVary;             // RMS share of the light change inside bands, lattice along and down (short sides)
+uniform float uOverlap;
+uniform float uExtinction;           // how much a glow's light takes the place of the sky's own light
+uniform vec3 uSky;                   // sky light toward the sun, stops less per frame height above the nominal height, that height
+uniform vec4 uWater;                 // horizon (frame heights; above 1.5 off), squeeze, smear, reflection at the bottom edge
+uniform vec4 uWaterLook;             // own light, strip gain, strip width (frame heights), ripple lattice (short sides)
+uniform int uEdgeSeed;
+uniform float uBaseLum;
+uniform float uLensDisc;             // 1: the disc lens result, 0: the gaussian one
 
-// Set by radiance() for grainWeight(), which the engine calls right after it for the same point.
+// Set by combine() for grainWeight(), which the engine calls right after it for the same point.
 float gGrainWeight = 1.0;
-
-// The last transition evaluated at this point, so the edges of one group (a glow's top and its
-// horizon) share the work. radiance() resets it.
-int gBndJ = -1;
-float gBndMove = 0.0;
-float gBndSoft = 1.0;
-
-// An edge's move from the boundary model, in frame heights: its group's displacement and, for an edge
-// above the group's anchor, its distance from the anchor times a slow positive factor, so the two never
-// cross. soft gets the edge's softness factor, raised to the band's power.
-float edgeMove(float a, float frameH, vec3 link, float power, inout float soft) {
-  if (link.x < 0.0) return 0.0;
-  int j = int(link.x + 0.5);
-  if (j != gBndJ) {
-    gBndJ = j;
-    gBndMove = boundaryEdge(a, j);
-    gBndSoft = boundarySoft(a, j);
-  }
-  float move = gBndMove / frameH;
-  if (link.z > 0.0) {
-    // Two octaves on the model's own lattice along the edge.
-    float n = gradientNoise(vec2(a * uBndWarp.y + 13.7, 3.1 * float(j) + 0.4), uBndSeed + 4243);
-    n += uBndShape.x * gradientNoise(vec2(a * 2.0 * uBndWarp.y + 16.0, 3.1 * float(j) + 2.9), uBndSeed + 4304);
-    move += link.y * (exp(link.z * clamp(n / BND_RMS, -2.5, 2.5)) - 1.0);
-  }
-  soft = pow(gBndSoft, power);
-  return move;
-}
-
-// The model's fine feather of an edge at signed distance d (frame heights) from it.
-float edgeFeather(float a, float frameH, float transition, float d) {
-  if (transition < 0.0 || uBndFeather.x <= 0.0) return 0.0;
-  int j = int(transition + 0.5);
-  return boundaryFeather(a, uBndTrans[j].x + d * frameH, j) / frameH;
-}
-
-// Share of a defocus disk of radius 1 that lies past an edge at signed distance t.
-float diskStep(float t) {
-  t = clamp(t, -1.0, 1.0);
-  return 0.5 + (t * sqrt(1.0 - t * t) + asin(t)) * (1.0 / PI);
-}
-
-// Blurred step across an edge: a defocus disk, optionally rounded by a small
-// gaussian (3-point Gauss-Hermite), mixed with a haze that is a disk three times as wide.
-float edgeStep(float d, float radius, float haze) {
-  float t = d / radius;
-  float core = diskStep(t);
-  if (uRounding > 0.0) {
-    float o = 1.7320508 * uRounding;
-    core = (4.0 * core + diskStep(t + o) + diskStep(t - o)) * (1.0 / 6.0);
-  }
-  return haze > 0.0 ? mix(core, diskStep(t * (1.0 / 3.0)), haze) : core;
-}
-
-// A thin line: sharp core and long tail, peak 1.
-float lineCover(float d, float width) {
-  float x = d / width;
-  float x2 = 0.5 * x * x;
-  return 0.55 * exp(-x2 / 0.36) + 0.35 * exp(-x2 / 1.44) + 0.1 * exp(-x2 / 9.0);
-}
 
 // Dim light gets deeper (Beer-Lambert powers of its own unit-peak color), so a
 // fading warm light reads amber or red instead of olive or brown.
@@ -257,83 +227,86 @@ vec3 deepen(vec3 c, float level) {
   return m * pow(c / m, vec3(1.0 + uDeepen * fade));
 }
 
-// The pale member of a color's light family (Beer-Lambert power below 1), at the color's own luminance.
-vec3 paleOf(vec3 c, float share) {
-  float m = maxComponent(c);
-  if (m <= 1e-6) return c;
-  vec3 pale = pow(c / m, vec3(1.0 - 0.85 * share));
-  return pale * (luminance(c) / max(luminance(pale), 1e-6));
-}
-
 vec3 toMix(vec3 c) { return uInk > 0.0 ? pow(max(c, vec3(0.0)), vec3(1.0 / (1.0 + uInk))) : c; }
 
-// Front-to-back compositing: acc gathers light from the layers in front, through
-// the share of each channel (pass) that the layers in front let through.
-// over: a translucent layer; multiply: a filter on what is behind; add: light added.
-void layer(inout vec3 acc, inout vec3 pass, vec3 emit, vec3 added, float a, int mode, vec3 base) {
-  if (mode == 2) {
-    acc += pass * (a * emit);
-  } else if (mode == 1) {
-    pass *= 1.0 - a + a * emit / max(base, vec3(1e-4));
-  } else {
-    acc += pass * (a * emit + added);
-    pass *= 1.0 - a;
-  }
+// Scene coverage across an edge with a 10-90 width w: the share of a disk past the edge, as light seen
+// through soft air; a disk of radius r is 1.38 r wide from 10 to 90%.
+float sceneStep(float d, float w) {
+  float t = clamp(d / (w / 1.38), -1.0, 1.0);
+  return 0.5 + (t * sqrt(1.0 - t * t) + asin(t)) * (1.0 / PI);
 }
 
-vec3 radiance(vec2 uv, vec2 p) {
-  float x = uv.x;
-  float v = uv.y;
+// A thin line: sharp core and long tail, peak 1.
+float lineCover(float d, float width) {
+  float x = d / width;
+  float x2 = 0.5 * x * x;
+  return 0.55 * exp(-x2 / 0.36) + 0.35 * exp(-x2 / 1.44) + 0.1 * exp(-x2 / 9.0);
+}
+
+// Slow light change inside band k: zero mean, RMS about 1.
+float lightChange(vec2 p, int k) {
+  vec2 q = p / max(uLightVary.yz, vec2(1e-3));
+  float n = gradientNoise(q + vec2(3.1 + 7.3 * float(k), 1.7), uEdgeSeed + 211 + 17 * k)
+    + 0.3 * gradientNoise(q * 1.8 + vec2(9.4, 4.2 + 5.1 * float(k)), uEdgeSeed + 212 + 17 * k);
+  return clamp(n / (0.3052 * 1.044), -2.5, 2.5);
+}
+
+// The pack-colored light of everything at frame position (x, v) in front of the lens.
+vec3 scene(float x, float v, vec2 p) {
   float dx = x - 0.5;
   float frameH = uFrameAspect.y;
-  float pixel = uPixel / frameH;
-  gBndJ = -1;
+  float sharpest = 1.5 * uPixel / frameH;
   float sunFall = 1.0 / (1.0 + pow(abs(x - uSun.x) / max(uSun.y, 1e-3), 1.6));
+
   vec3 base = toMix(deepen(uBase, uIntensity));
-  vec3 acc = vec3(0.0);
-  vec3 pass = vec3(1.0);
+  float skyGain = (1.0 + uSky.x * sunFall) * exp2(-uSky.y * max(0.0, uSky.z - v));
+  if (uLightVary.x > 0.0) skyGain *= max(0.0, 1.0 + uLightVary.x * lightChange(p, BAND_MAX));
 
-  for (int j = PATCH_MAX - 1; j >= 0; j--) {
-    if (j >= uPatchCount) continue;
-    vec4 shape = uPatchShape[j];
-    vec4 look = uPatchLook[j];
-    vec2 q = vec2((x - shape.x) / max(shape.z, 1e-4), (v - shape.y) / max(shape.w, 1e-4));
-    float cover = exp(-0.5 * dot(q, q));
-    if (cover <= 1e-5) continue;
-    int mode = int(look.z + 0.5);
-    vec3 emit = toMix(deepen(uPatchColor[j], look.y * uIntensity) * look.y);
-    layer(acc, pass, emit, vec3(0.0), mode == 2 ? cover : min(1.0, cover * look.x), mode, base);
+  // Glows, pale glows and domes: light in the sky with no edge of their own. Where a glow is strong the sky's
+  // own light gives way to it (as at dusk the blue fades near the glow), so the glow shows its own color.
+  vec3 glow = vec3(0.0);
+  float glowDepth = 0.0;
+  for (int k = 0; k < LIGHT_MAX; k++) {
+    if (k >= uLightCount) break;
+    vec4 s = uLightShape[k];
+    vec4 l = uLightLook[k];
+    int kind = int(l.y + 0.5);
+    if (l.z > -0.5 || kind == 2) continue;
+    float across = (x - s.x) / max(s.z, 1e-3);
+    float side = 1.0 / (1.0 + across * across);
+    float f;
+    if (kind != 1) {
+      float dv = v - s.y;
+      // The light reaches highest over its source, so the glow's top is a broad dome.
+      float tail = max(l.w, 1e-3) * (0.55 + 0.45 * side);
+      f = exp(dv < 0.0 ? dv / tail : -dv / max(s.w, 1e-3)) * side;
+      // Below its peak the glow dims toward the line and the sky comes back only slowly: dusk light there is the
+      // glow's own deeper color.
+      if (kind == 0) glowDepth += l.x * exp(dv < 0.0 ? dv / tail : -dv / (3.0 * max(s.w, 1e-3))) * side;
+    } else {
+      float d2 = across * across + pow((v - s.y) / max(s.w, 1e-3), 2.0);
+      f = 0.5 * exp(-2.0 * d2) + 0.5 / (1.0 + 4.0 * d2);
+    }
+    // A dim glow deepens like any dim warm light (amber and red instead of olive or brown).
+    glow += toMix(kind == 0 ? deepen(uLightColor[k], f) : uLightColor[k]) * (l.x * f);
   }
+  float giveWay = exp(-uExtinction * glowDepth);
+  vec3 c = base * skyGain * giveWay;
+  // Share of the frame here that no covering band hides; the glow shows through it.
+  float open = 1.0;
 
-  for (int i = BAND_MAX - 1; i >= 0; i--) {
-    if (i >= uBandCount) continue;
-    if (maxComponent(pass) < 1e-3) break;
+  int shown = -1;
+  float shownTop = 0.0;
+  float shownBottom = 2.0;
+  for (int i = 0; i < BAND_MAX; i++) {
+    if (i >= uBandCount) break;
     vec4 edge = uBandEdge[i];
-    vec4 reach = uBandReach[i];
-    if (v < edge.x - reach.x || v > edge.y + reach.w) continue;
+    vec4 wave = uBandWave[i];
     vec4 look = uBandLook[i];
-    vec3 linkTop = uEdgeBnd[2 * i];
-    vec3 linkBottom = uEdgeBnd[2 * i + 1];
     vec4 tilt = uBandTilt[i];
     vec4 sun = uBandSun[i];
-    bool line = look.w > 0.5;
-    bool nearTop = line || v < edge.x + reach.y;
-    bool nearBottom = line || v > edge.y - reach.z;
-    // The bottom edge follows the top edge's tilt and bumps; each edge has its own move from the boundary model.
-    float shift = 0.0;
-    float shiftBottom = 0.0;
-    float moveTop = 0.0;
-    float moveBottom = 0.0;
-    float softTop = 1.0;
-    float softBottom = 1.0;
-    if (nearTop || nearBottom) {
-      shift = tilt.x * dx;
-      if (nearTop) moveTop = edgeMove(p.x, frameH, linkTop, sun.w, softTop);
-      if (nearBottom) {
-        shiftBottom = tilt.y * dx;
-        moveBottom = edgeMove(p.x, frameH, linkBottom, sun.w, softBottom);
-      }
-    }
+    float shift = tilt.x * dx;
+    float shiftBottom = tilt.y * dx;
     float cover = 1.0 + tilt.z * dx;
     float light = look.y;
     for (int j = 0; j < 4; j++) {
@@ -346,67 +319,147 @@ vec3 radiance(vec2 uv, vec2 p) {
       cover *= 1.0 + uBumpCover[i][j] * g;
       light *= 1.0 + uBumpLight[i][j] * g;
     }
-    cover = max(cover, 0.0) * mix(1.0, sunFall, sun.y);
-    light = max(light, 0.0) * mix(1.0, sunFall, sun.x);
-    float top = edge.x + shift + moveTop;
-    float bottom = edge.y + shift + shiftBottom + moveBottom;
-    vec2 down = uBandDown[i];
-    if (down.y > 0.0 && light > 1.0) light = 1.0 + (light - 1.0) * mix(down.x, 1.0, smoothstep(0.0, 1.0, (v - top) / down.y));
-    float above = max(edge.z * softTop, pixel);
-    float below = max(edge.w * softBottom, pixel);
-    float shape = 1.0;
-    if (line) {
+    if (wave.x != 0.0) shift += wave.x * edgeWave(p.x, wave.z, float(2 * i), uEdgeSeed);
+    if (wave.y != 0.0) shiftBottom += wave.y * edgeWave(p.x, wave.z, float(2 * i + 1), uEdgeSeed);
+    float top = edge.x + shift;
+    float bottom = edge.y + shift + shiftBottom;
+    float widthTop = edge.z;
+    float widthBottom = edge.w;
+    if (wave.w > 0.0) {
+      widthTop *= clamp(1.0 + wave.w * gradientNoise(vec2(p.x / 0.5 + 3.7, 11.0 + 3.1 * float(2 * i)), uEdgeSeed + 91) / 0.3052, 0.05, 2.5);
+      widthBottom *= clamp(1.0 + wave.w * gradientNoise(vec2(p.x / 0.5 + 8.3, 11.0 + 3.1 * float(2 * i + 1)), uEdgeSeed + 91) / 0.3052, 0.05, 2.5);
+    }
+    float shape;
+    if (look.w > 0.5) {
       float d = v - 0.5 * (top + bottom);
-      shape = lineCover(d, d < 0.0 ? above : below);
-    } else if (nearTop || nearBottom) {
-      float enter = nearTop ? edgeStep(v - top + edgeFeather(p.x, frameH, linkTop.x, v - top), above, sun.z) : 1.0;
-      float leave = nearBottom ? edgeStep(v - bottom + edgeFeather(p.x, frameH, linkBottom.x, v - bottom), below, sun.z) : 0.0;
-      shape = max(0.0, enter - leave);
+      shape = lineCover(d, max(d < 0.0 ? widthTop : widthBottom, sharpest));
+    } else {
+      shape = max(0.0, sceneStep(v - top, max(widthTop, sharpest)) - sceneStep(v - bottom, max(widthBottom, sharpest)));
     }
     if (shape <= 1e-5) continue;
+    cover = max(cover, 0.0) * mix(1.0, sunFall, sun.y);
+    light = max(light, 0.0) * mix(1.0, sunFall, sun.x) * exp(2.0 * tilt.w * dx);
+    if (uLightVary.x > 0.0 && sun.z > 0.0) light *= max(0.0, 1.0 + uLightVary.x * sun.z * lightChange(p, i));
+    for (int k = 0; k < LIGHT_MAX; k++) {
+      if (k >= uLightCount) break;
+      vec4 l = uLightLook[k];
+      if (l.z < -0.5 || int(l.y + 0.5) != 2 || int(l.z + 0.5) != i) continue;
+      float r = (x - uLightShape[k].x) / max(uLightShape[k].z, 1e-3);
+      light *= 1.0 - l.x * exp(-0.5 * r * r);
+    }
     int mode = int(look.z + 0.5);
-    float a = mode == 2 ? shape * cover : min(1.0, shape * cover * look.x);
-    vec3 color = deepen(uBandColor[i], light * uIntensity);
-    float paleShare = uBandPale[i] * (1.0 - min(a, 1.0));
-    if (paleShare > 0.0) color = paleOf(color, paleShare);
-    vec3 emit = toMix(color * light);
-    vec3 bridge = mix(uBridgeUnder[i], uBridgeOwn[i], a) * (4.0 * a * (1.0 - a) * min(light, 1.0));
-    layer(acc, pass, emit, bridge, a, mode, base);
+    float a = mode == 2 || mode == 3 ? shape * cover : min(1.0, shape * cover * look.x);
+    vec3 emit = toMix(deepen(uBandColor[i], light * uIntensity) * light);
+    if (mode == 3) {
+      // Light bands are the sky's own light too, so they give way to a glow in the same way.
+      emit *= giveWay;
+      if (uBandBridge[i] != vec3(0.0)) {
+        // Two colors far apart never cross-fade: the color above fades out over the upper part of the edge, this
+        // band's light comes in over the lower part, and the pale light fills the gap between them.
+        float w = max(widthTop, sharpest);
+        float gone = cover * sceneStep(v - (top - 0.3 * w), 0.4 * w);
+        float come = cover * sceneStep(v - (top + 0.3 * w), 0.4 * w);
+        c = c * (1.0 - gone) + emit * come + uBandBridge[i] * giveWay * gone * (1.0 - come);
+      } else {
+        c = c * pow(1.0 - min(a, 1.0), uOverlap) + emit * pow(min(a, 1.0), uOverlap);
+      }
+    } else if (mode == 2) {
+      c += a * emit;
+    } else if (mode == 1) {
+      c *= 1.0 - a + a * emit / max(base, vec3(1e-4));
+    } else {
+      c = mix(c, emit, a);
+      open *= 1.0 - a;
+    }
+    if (shape > 0.5) {
+      shown = i;
+      shownTop = top;
+      shownBottom = i + 1 < uBandCount ? uBandEdge[i + 1].x + uBandTilt[i + 1].x * dx : 2.0;
+    }
   }
-  acc += pass * base;
 
-  vec3 lit = uInk > 0.0 ? pow(max(acc, vec3(0.0)), vec3(1.0 + uInk)) : acc;
-  float shade = max(0.0, 1.0 + uShade.x * dx + uShade.y * (v - 0.5));
-  if (uLightVary.x > 0.0) {
-    // Two octaves; 0.3234 is the RMS of the sum, so the share is the RMS change of light.
-    vec2 q = p / max(uLightVary.yz, vec2(1e-3));
-    float n = gradientNoise(q + vec2(3.7, 1.9), uSeed + 811) + 0.35 * gradientNoise(2.0 * q + vec2(8.1, 5.3), uSeed + 977);
-    shade *= 1.0 + uLightVary.x * clamp(n / 0.3234, -2.5, 2.5);
+  c += glow * open;
+
+  // A lighter neighbour of close hue spills a little light into the band shown here, most next to their edge.
+  if (shown >= 0 && uSpillReach > 0.0) {
+    c += uSpillAbove[shown] * exp(-max(0.0, v - shownTop) / uSpillReach);
+    c += uSpillBelow[shown] * exp(-max(0.0, shownBottom - v) / uSpillReach);
   }
+
+  for (int j = 0; j < PATCH_MAX; j++) {
+    if (j >= uPatchCount) break;
+    vec4 shape = uPatchShape[j];
+    vec4 look = uPatchLook[j];
+    vec2 q = vec2((x - shape.x) / max(shape.z, 1e-4), (v - shape.y) / max(shape.w, 1e-4));
+    float cover = exp(-0.5 * dot(q, q));
+    if (cover <= 1e-5) continue;
+    int mode = int(look.z + 0.5);
+    vec3 emit = toMix(deepen(uPatchColor[j], look.y * uIntensity) * look.y);
+    float a = mode == 2 ? cover : min(1.0, cover * look.x);
+    if (mode == 2) c += a * emit;
+    else if (mode == 1) c *= 1.0 - a + a * emit / max(base, vec3(1e-4));
+    else c = mix(c, emit, a);
+  }
+
+  vec3 lit = uInk > 0.0 ? pow(max(c, vec3(0.0)), vec3(1.0 + uInk)) : c;
+  float shade = max(0.0, 1.0 + uShade.x * dx + uShade.y * (v - 0.5));
+  return lit * shade * uIntensity;
+}
+
+// Water below a level horizon: the sky mirrored about the line, squeezed toward it, smeared up and down by
+// ripples and dimmer with depth, over the water's own light; a soft lighter strip runs under the line.
+vec3 water(float x, float v, vec2 p) {
+  float frameH = uFrameAspect.y;
+  float d = v - uWater.x;
+  float ripple = gradientNoise(vec2(p.x / max(uWaterLook.w, 1e-3), d * frameH / max(0.35 * uWaterLook.w, 1e-3)), uEdgeSeed + 503) / 0.3052;
+  float smear = uWater.z * d;
+  float mirrored = uWater.x - uWater.y * d;
+  vec2 pm = vec2(p.x, (mirrored - 0.5) * frameH);
+  vec3 sky = 0.5 * (scene(x, mirrored + smear * (0.6 + 0.4 * ripple), pm) + scene(x, mirrored - smear * (0.6 - 0.4 * ripple), pm));
+  // The water's own color shows only in the near half; the far water is a clean mirror, since the own color
+  // mixed under mirrored warm light turns it mauve.
+  float depth = smoothstep(0.5, 1.0, d / max(1.0 - uWater.x, 0.05));
+  float reflect = mix(0.95, uWater.w, depth);
+  vec3 own = uWaterColor * uWaterLook.x * uIntensity;
+  // The bright line on the far water: ripples there catch the glow's brightest light, so the strip adds the
+  // light found at the glow's peak.
+  float peak = uWater.x - 0.08;
+  for (int k = 0; k < LIGHT_MAX; k++) {
+    if (k >= uLightCount) break;
+    if (uLightLook[k].z < -0.5 && int(uLightLook[k].y + 0.5) == 0) {
+      peak = uLightShape[k].y;
+      break;
+    }
+  }
+  vec3 caught = scene(x, peak, vec2(p.x, (peak - 0.5) * frameH));
+  float strip = uWaterLook.y * exp(-d / max(uWaterLook.z, 1e-4)) * max(0.0, 1.0 + 0.5 * gradientNoise(vec2(p.x / 0.3 + 2.1, 4.4), uEdgeSeed + 509) / 0.3052);
+  return reflect * (sky + strip * caught) + (1.0 - reflect) * own;
+}
+
+vec3 auxRadiance(vec2 uv, vec2 p) {
+  if (uWater.x < 1.5 && uv.y > uWater.x) return water(uv.x, uv.y, p);
+  return scene(uv.x, uv.y, p);
+}
+
+// The pipeline's radiance is the lensed scene from combine().
+vec3 radiance(vec2 uv, vec2 p) { return vec3(0.0); }
+
+vec3 combine(vec2 uv, vec2 p, vec3 radiance, vec3 disc, vec3 gauss) {
+  vec3 lensed = uLensDisc > 0.5 ? disc : gauss;
   if (uGrainInk.x > 0.0) {
-    float darkness = saturate(1.0 - luminance(lit) / max(luminance(deepen(uBase, uIntensity)), 1e-4));
+    float darkness = saturate(1.0 - luminance(lensed) / (uBaseLum * uIntensity));
     gGrainWeight = mix(1.0, mix(uGrainInk.y, 1.0, darkness), uGrainInk.x);
   }
-  return lit * shade * uIntensity;
+  return lensed;
 }
 
 float grainWeight(vec2 uv, vec2 p) { return gGrainWeight; }
 `,
   uniforms: bandUniforms,
   grainWeight: true,
-  // Half-resolution radiance when every edge, at its sharpest along its length, is wider than about 0.6% of the frame height.
-  radianceScale: (ctx) => {
-    const count = Math.min(Math.round(ctx.num('bands')), BAND_MAX)
-    const sharpest = Math.exp(-2.5 * ctx.vec('boundarySoft')[0])
-    let thinnest = Infinity
-    for (let i = 0; i < count; i++) {
-      const [above, below] = ctx.vec(bandKey(i, 'Soft'))
-      const [top, bottom] = ctx.vec(bandKey(i, 'Edges'))
-      const k = sharpest ** ctx.num(bandKey(i, 'SoftVary'))
-      thinnest = Math.min(thinnest, top > -0.5 ? above * k : Infinity, bottom < 1.5 ? below * k : Infinity)
-    }
-    return thinnest >= 0.006 ? 0.5 : 1
-  },
+  scatter: LENS_SCATTER,
+  // The lensed scene is smooth at half resolution unless the lens is very small (print presets with a hard edge).
+  radianceScale: (ctx) => (ctx.num('lens') >= 0.02 ? 0.5 : 1),
   fromPack: (pack: ColorPack) => composeBands({ pack, seed: 1, aspect: 16 / 9 }).colors,
   compose: ({ pack, controls, seed, aspect }) =>
     composeBands({ pack, seed, aspect, intensity: controls.intensity, softness: controls.softness, horizon: controls.mood }),

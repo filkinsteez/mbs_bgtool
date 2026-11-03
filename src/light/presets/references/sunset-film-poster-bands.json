@@ -18,49 +18,35 @@
       "#F0AD86"
     ],
     "params": {
-      "bands": 5,
-      "patches": 4,
-      "intensity": 1,
-      "sun": [
-        0.7,
-        0.3
-      ],
-      "bridge": 0,
-      "deepen": 0,
-      "rounding": 0,
-      "shade": [
-        0,
-        0
-      ],
-      "ink": 0,
       "band1Edges": [
         -0.4646,
         0.0377
       ],
-      "band1Soft": [
-        0.0568,
-        0.0503
+      "band1Fade": [
+        0.05198078556472171,
+        0.03709789762136906
       ],
+      "band1FadeVary": 0,
       "band1Opacity": 1,
       "band1Light": 1,
       "band1Mode": 0,
       "band1Line": false,
-      "band1Wander": [
-        0,
-        0.004
-      ],
-      "band1SoftVary": 0.6,
       "band1Tilt": [
         0,
         0,
         0
       ],
+      "band1Lean": 0,
+      "band1Wave": [
+        0,
+        0,
+        0.32
+      ],
       "band1Sun": [
         0,
         0
       ],
-      "band1Haze": 0,
-      "band1Pale": 0,
+      "band1Vary": 0,
       "band1BumpAt": [
         0.4624,
         0.4483,
@@ -101,30 +87,31 @@
         0.2918,
         0.5039
       ],
-      "band2Soft": [
-        0.0863,
-        0.0994
+      "band2Fade": [
+        0.10364039486573552,
+        0.12399237152311257
       ],
+      "band2FadeVary": 0,
       "band2Opacity": 1,
       "band2Light": 1.0239,
       "band2Mode": 0,
       "band2Line": false,
-      "band2Wander": [
-        0.004,
-        0.004
-      ],
-      "band2SoftVary": 1,
       "band2Tilt": [
         0,
         0,
         0
       ],
+      "band2Lean": 0,
+      "band2Wave": [
+        0,
+        0,
+        0.32
+      ],
       "band2Sun": [
         0,
         0
       ],
-      "band2Haze": 0,
-      "band2Pale": 0,
+      "band2Vary": 0,
       "band2BumpAt": [
         0,
         0.6025,
@@ -165,30 +152,31 @@
         0.6398,
         0.7745
       ],
-      "band3Soft": [
-        0.1883,
-        0.0278
+      "band3Fade": [
+        0.25314433023065236,
+        0
       ],
+      "band3FadeVary": 0,
       "band3Opacity": 1,
       "band3Light": 1.0562,
       "band3Mode": 0,
       "band3Line": false,
-      "band3Wander": [
-        0.008,
-        0.009
-      ],
-      "band3SoftVary": 3,
       "band3Tilt": [
         0,
         0,
         0
       ],
+      "band3Lean": 0,
+      "band3Wave": [
+        0,
+        0,
+        0.32
+      ],
       "band3Sun": [
         0,
         0
       ],
-      "band3Haze": 0,
-      "band3Pale": 0,
+      "band3Vary": 0,
       "band3BumpAt": [
         0,
         0.6305,
@@ -229,30 +217,31 @@
         0.6716,
         1.8266
       ],
-      "band4Soft": [
-        0.0217,
-        0.0563
+      "band4Fade": [
+        0,
+        0.050934352336370996
       ],
+      "band4FadeVary": 0,
       "band4Opacity": 1,
       "band4Light": 1,
       "band4Mode": 0,
       "band4Line": false,
-      "band4Wander": [
-        0.008,
-        0
-      ],
-      "band4SoftVary": 1.5,
       "band4Tilt": [
         0,
         0,
         0
       ],
+      "band4Lean": 0,
+      "band4Wave": [
+        0,
+        0,
+        0.32
+      ],
       "band4Sun": [
         0,
         0
       ],
-      "band4Haze": 0,
-      "band4Pale": 0,
+      "band4Vary": 0,
       "band4BumpAt": [
         0.2662,
         0.6725,
@@ -293,30 +282,31 @@
         0.9795,
         1.9407
       ],
-      "band5Soft": [
-        0.0436,
-        0.0456
+      "band5Fade": [
+        0.013346866146237493,
+        0.022757060353340484
       ],
+      "band5FadeVary": 0,
       "band5Opacity": 1,
       "band5Light": 1,
       "band5Mode": 0,
       "band5Line": false,
-      "band5Wander": [
-        0.006,
-        0
-      ],
-      "band5SoftVary": 1,
       "band5Tilt": [
         0,
         0,
         0
       ],
+      "band5Lean": 0,
+      "band5Wave": [
+        0,
+        0,
+        0.32
+      ],
       "band5Sun": [
         0,
         0
       ],
-      "band5Haze": 0,
-      "band5Pale": 0,
+      "band5Vary": 0,
       "band5BumpAt": [
         0.5,
         0.5,
@@ -353,6 +343,7 @@
         0,
         0
       ],
+      "patches": 4,
       "patch1Shape": [
         0.5941,
         0.2554,
@@ -397,29 +388,20 @@
         0.9561,
         0.0067
       ],
-      "boundaryNoise": [
-        0.5,
-        0.32,
-        0.35,
-        1
+      "bands": 5,
+      "lights": 0,
+      "intensity": 1,
+      "lens": 0.06,
+      "sun": [
+        0.7,
+        0.3
       ],
-      "boundaryAlong": [
-        0.3,
-        0.6
-      ],
-      "boundarySoft": [
-        0.18,
-        0.5,
-        0.25,
-        0.5
-      ],
-      "boundaryFeather": [
+      "deepen": 0,
+      "shade": [
         0,
-        0.03,
-        2
+        0
       ],
-      "boundaryGap": 0.35,
-      "boundaryWindow": 0
+      "ink": 0
     },
     "lens": {
       "bloom": 0,

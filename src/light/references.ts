@@ -72,7 +72,7 @@ export const FALLBACK_REFERENCES: readonly FallbackReference[] = [
     mood: 'sunset',
     figmaNodeId: '41:26',
     title: 'Riso white to green to mustard',
-    recipe: 'sunset.ramp',
+    recipe: 'sunset.bands',
     file: 'sunset/s50-green-riso.png',
     ignore: [{ kind: 'fold', rect: [0, 704, 895, 24] }],
   },

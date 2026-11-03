@@ -18,49 +18,35 @@
       "#E4E3DF"
     ],
     "params": {
-      "bands": 2,
-      "patches": 0,
-      "intensity": 1,
-      "sun": [
-        0.7,
-        0.3
-      ],
-      "bridge": 0,
-      "deepen": 0,
-      "rounding": 0.15,
-      "shade": [
-        -0.03196268140981341,
-        0
-      ],
-      "ink": 2.72,
       "band1Edges": [
         0.1918,
         0.7981
       ],
-      "band1Soft": [
-        0.172,
-        0.2038
+      "band1Fade": [
+        0.23671285374642317,
+        0.2806980460651188
       ],
+      "band1FadeVary": 0,
       "band1Opacity": 0.97,
       "band1Light": 1,
       "band1Mode": 1,
       "band1Line": false,
-      "band1Wander": [
-        0.0025,
-        0.003
-      ],
-      "band1SoftVary": 0.3,
       "band1Tilt": [
         -0.02557014512785073,
         0.05114029025570146,
         0.06392536281962682
       ],
+      "band1Lean": 0,
+      "band1Wave": [
+        0,
+        0,
+        0.25
+      ],
       "band1Sun": [
         0,
         0
       ],
-      "band1Haze": 0,
-      "band1Pale": 0,
+      "band1Vary": 0,
       "band1BumpAt": [
         0.5,
         0.5,
@@ -101,30 +87,31 @@
         0.8063,
         1.8
       ],
-      "band2Soft": [
-        0.2155,
-        0.2018
+      "band2Fade": [
+        0.2968737402142122,
+        0.2779326245419482
       ],
+      "band2FadeVary": 0,
       "band2Opacity": 0.97,
       "band2Light": 1,
       "band2Mode": 1,
       "band2Line": false,
-      "band2Wander": [
-        0.003,
-        0
-      ],
-      "band2SoftVary": 0.3,
       "band2Tilt": [
         0,
         0,
         0.06392536281962682
       ],
+      "band2Lean": 0,
+      "band2Wave": [
+        0,
+        0,
+        0.25
+      ],
       "band2Sun": [
         0,
         0
       ],
-      "band2Haze": 0,
-      "band2Pale": 0,
+      "band2Vary": 0,
       "band2BumpAt": [
         0.5,
         0.5,
@@ -161,33 +148,25 @@
         0,
         0
       ],
+      "patches": 0,
+      "bands": 2,
+      "lights": 0,
+      "intensity": 1,
+      "lens": 0.02,
+      "sun": [
+        0.7,
+        0.3
+      ],
+      "deepen": 0,
+      "shade": [
+        -0.03196268140981341,
+        0
+      ],
+      "ink": 2.72,
       "grainInk": [
         1,
         0.12
-      ],
-      "boundaryNoise": [
-        0.5,
-        0.25,
-        0.4,
-        2.5
-      ],
-      "boundaryAlong": [
-        0.2,
-        0.9
-      ],
-      "boundarySoft": [
-        0.1,
-        0.5,
-        0.25,
-        0.5
-      ],
-      "boundaryFeather": [
-        0.03,
-        0.02,
-        1.5
-      ],
-      "boundaryGap": 0.35,
-      "boundaryWindow": 0
+      ]
     },
     "lens": {
       "bloom": 0,
