@@ -1,5 +1,6 @@
 import { linearToOklch } from '../../color/oklab'
 import type { Rgb } from '../../color/srgb'
+import { placeHorizon } from './horizon'
 
 /** Color slots of sunset.blooms. `deep1` and `deep2` are the colors the sky deepens toward, `light1` and `light2` the glow colors. */
 export const SLOT = { sky: 0, deep1: 1, deep2: 2, light1: 3, light2: 4 } as const
@@ -83,16 +84,20 @@ export function isWarm(c: Rgb): boolean {
   return chroma > 0.04 && hue >= 25 && hue <= 105
 }
 
+/** Least gain of a light: a little above its hex, so even Ice or Yellow reaches its color and its center rolls toward white. */
+const MIN_LIGHT_GAIN = 1.15
+
 /**
- * Gain that puts every light color's center at the same luminance. Cyan then
- * sits a little above max channel 1 at its center, so the brightest part of
- * a cyan glow is also its palest. Green-yellow light has no match in a sky,
- * so it is brighter (paler) at its center and the composer keeps it smaller.
+ * Gain that puts every light color's center at the same luminance, and at
+ * least a little above its own hex. Cyan then sits a little above max channel
+ * 1 at its center, so the brightest part of a cyan glow is also its palest.
+ * Green-yellow light has no match in a sky, so it is brighter (paler) at its
+ * center and the composer keeps it smaller.
  */
 export function lightGain(c: Rgb): number {
   const y = luminance(c)
   if (y <= 1e-6) return 0
-  return clamp((isGreen(c) ? 0.8 : 0.62) / y, 0.5, 2.2)
+  return clamp(Math.max(MIN_LIGHT_GAIN, (isGreen(c) ? 0.8 : 0.62) / y), 0.5, 2.2)
 }
 
 /** Lime-like light: chroma with a hue between yellow and cyan. */
@@ -134,22 +139,42 @@ function pick<T>(options: readonly (readonly [T, number])[], u: number): T {
   return options[options.length - 1][0]
 }
 
-type Kind = 'low' | 'corner' | 'side' | 'pair'
+type Kind = 'inside' | 'low' | 'corner' | 'side' | 'pair'
 
 /** Longest half-length of the lead glow, in units of sqrt(width * height) (a 16:9 frame is 1.33 wide). */
 const LEAD_MAX_LONG_RADIUS = 1.15
 
-const KINDS: readonly (readonly [Kind, number])[] = [
-  ['low', 0.22],
-  ['corner', 0.3],
-  ['side', 0.3],
-  ['pair', 0.18],
+/** Where the lead comes from when its center is not inside the frame. */
+const EDGE_KINDS: readonly (readonly [Kind, number])[] = [
+  ['corner', 0.4],
+  ['side', 0.4],
+  ['low', 0.1],
+  ['pair', 0.1],
 ]
 
 /**
+ * Height of the lead light, in frame heights from the top, for the shared
+ * horizon height (horizon.ts: 1.06 at Horizon 0, 0.27 at Horizon 1): just
+ * below the frame at 0 and about 55% down at 1, as the horizon study proposes
+ * for Blooms (docs/light/research/horizon-placement.md). Blooms draws no line.
+ */
+function lightHeight(horizonY: number): number {
+  return 0.55 + (horizonY - 0.27) * ((1.04 - 0.55) / (1.06 - 0.27))
+}
+
+/** Seeds come in runs of three; two in each run have the lead's center inside the frame, at a seeded place in the run. */
+function insideSeed(seed: number): boolean {
+  const n = Math.round(seed) - 1
+  const run = Math.floor(n / 3)
+  const edge = Math.floor(random(run * 7 + 3)() * 3)
+  return ((n % 3) + 3) % 3 !== edge
+}
+
+/**
  * Which light slot leads: the warm light more often than not; with no warm
- * light, the lighter one. Green-yellow light leads less often (it has no
- * match in a sky).
+ * light, the lighter one, since a dark color brightened is not a light (Steel
+ * never reaches a light color, so Ice leads in every Atmospheric seed).
+ * Green-yellow light leads less often (it has no match in a sky).
  */
 function pickLead(colors: readonly Rgb[], u: number): { lead: number; other: number } {
   const a = SLOT.light1
@@ -163,8 +188,7 @@ function pickLead(colors: readonly Rgb[], u: number): { lead: number; other: num
     return u < 1 - coolOdds ? { lead: warm, other: cool } : { lead: cool, other: warm }
   }
   const lighter = luminance(colors[a]) >= luminance(colors[b]) ? a : b
-  const darker = lighter === a ? b : a
-  return u < 0.6 ? { lead: lighter, other: darker } : { lead: darker, other: lighter }
+  return { lead: lighter, other: lighter === a ? b : a }
 }
 
 /**
@@ -179,14 +203,18 @@ function pickLead(colors: readonly Rgb[], u: number): { lead: number; other: num
  * softens; Rise lifts the light. A cool lead never gets a warm light: that
  * would be a second light direction.
  */
-export function composeLayout(colors: readonly Rgb[], seed: number, controls: BloomsControls): BloomsLayout {
+export function composeLayout(colors: readonly Rgb[], seed: number, controls: BloomsControls, aspect: number): BloomsLayout {
   const r = random(seed)
   const soft = clamp(controls.softness, 0, 1)
   const rise = clamp(controls.rise, 0, 1)
   const { lead, other } = pickLead(colors, r())
-  // A cyan light along the bottom edge reads as a horizon (a sea), so it comes from a side, higher up.
+  // A cyan light along the bottom edge reads as a horizon (a sea), so it sits higher and comes in level.
   const cyanLead = isCyan(colors[lead])
-  const kind: Kind = cyanLead ? 'side' : pick(KINDS, r())
+  const height = lightHeight(placeHorizon(rise, seed, aspect).y) - (cyanLead ? lerp(0.2, 0.28, r()) : 0)
+  // Inside the frame, the lead's brightest point stays more than a tenth of the short side from the bottom edge.
+  const bottomRoom = 1 - 0.1 * Math.min(aspect, 1) - 0.04
+  const edgeKind = pick(EDGE_KINDS, r())
+  const kind: Kind = insideSeed(seed) && height <= bottomRoom ? 'inside' : cyanLead ? 'side' : edgeKind
   const side = r() < 0.5 ? -1 : 1
 
   // Softness changes how the light falls off, not how far it reaches: the radius is scaled so the
@@ -196,38 +224,44 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const size = lerp(0.8, 1.2, r()) * lerp(0.95, 1.08, soft) * sameHalfWidth * lerp(0.88, 1.16, rise) * (isGreen(colors[lead]) ? 0.72 : 1)
   const bend = () => lerp(0.04, 0.2, r())
 
-  // Centers stay off-frame: below the bottom edge, beyond a lower corner, or beyond a side.
+  // The lead sits at the shared light height: inside the frame (two seeds in three), just beyond a
+  // side or a lower corner so its core still shows, or below the bottom edge.
+  const jitter = lerp(-0.03, 0.03, r())
   let at: [number, number]
   let tilt: number
   let radius: number
   let aniso: number
   switch (kind) {
+    case 'inside':
+      // A bloom, not a band: rounder and smaller than a light from off-frame, with sky on both sides.
+      at = [0.5 + side * lerp(0.05, 0.28, r()), Math.min(bottomRoom, height + jitter)]
+      tilt = lerp(-6, 8, r())
+      radius = lerp(0.36, 0.46, r()) * (cyanLead ? 0.85 : 1)
+      aniso = lerp(1.7, 2.6, r())
+      break
     case 'low':
-      at = [0.5 + side * lerp(0.16, 0.34, r()), Math.max(1.01, lerp(1.15, 1.0, rise) + lerp(-0.02, 0.03, r()))]
+      at = [0.5 + side * lerp(0.16, 0.34, r()), Math.max(1.01, height + 0.2 + jitter)]
       tilt = lerp(2, 9, r())
       radius = lerp(0.58, 0.7, r())
       aniso = lerp(3.8, 4.6, r())
       break
     case 'corner':
-      // Beyond the side edge, low, with the horizon tilted down away from the light.
-      at = [0.5 + side * lerp(0.55, 0.64, r()), lerp(1.0, 0.76, rise) + lerp(-0.04, 0.04, r())]
+      // Just beyond the side edge, low, with the light tilted down away from it.
+      at = [0.5 + side * lerp(0.52, 0.58, r()), Math.max(0.88, height + 0.1 + jitter)]
       tilt = lerp(16, 28, r())
       radius = lerp(0.56, 0.68, r())
       aniso = lerp(3.9, 4.9, r())
       break
     case 'side':
-      at = [
-        0.5 + side * (lerp(0.7, 0.58, rise) + lerp(0, 0.05, r())),
-        cyanLead ? lerp(0.72, 0.5, rise) + lerp(-0.06, 0.06, r()) : lerp(0.94, 0.66, rise) + lerp(-0.1, 0.08, r()),
-      ]
-      // A cyan light from a side comes in on a slant and rounder, so in a narrow frame it does not
-      // cross the whole width as a band.
-      tilt = cyanLead ? lerp(18, 32, r()) : lerp(-3, 7, r())
+      // Just beyond the side edge. A cyan light there is rounder and level, so in a narrow frame it
+      // neither crosses the whole width as a band nor runs down to the bottom edge.
+      at = [0.5 + side * lerp(0.53, 0.6, r()), height + jitter]
+      tilt = cyanLead ? lerp(-8, 2, r()) : lerp(-3, 7, r())
       radius = lerp(0.52, 0.62, r())
       aniso = cyanLead ? lerp(2.6, 3.4, r()) : lerp(3.8, 4.8, r())
       break
     case 'pair':
-      at = [0.5 + side * lerp(0.22, 0.34, r()), Math.max(1.01, lerp(1.15, 1.0, rise) + lerp(-0.02, 0.02, r()))]
+      at = [0.5 + side * lerp(0.22, 0.34, r()), Math.max(1.01, height + 0.2 + jitter)]
       tilt = lerp(1, 6, r())
       radius = lerp(0.54, 0.64, r())
       aniso = lerp(3.6, 4.4, r())
@@ -269,15 +303,16 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // or the other one). Otherwise it is a slightly paler patch of sky: faint green or grey light
   // over blue turns grey-teal or grey, and a warm bloom above a cool light would be a second
   // light direction.
+  // Its edge is much softer than the lead's, so the frame has one firm and one very soft edge.
   const innerColor = isCyan(colors[lead]) ? lead : isCyan(colors[other]) ? other : SLOT.sky
   glows.push({
     color: innerColor,
     at: [0.5 + side * lerp(0.05, 0.3, r()), lerp(0.42, 0.28, rise) + lerp(-0.05, 0.05, r())],
-    radius: radius * lerp(0.9, 1.15, r()),
+    radius: radius * lerp(1.15, 1.4, r()),
     aniso: lerp(2.8, 3.8, r()),
     angle: -side * lerp(-4, 12, r()),
     gain: innerColor === SLOT.sky ? lerp(0.25, 0.4, r()) : lightGain(colors[innerColor]) * lerp(0.16, 0.28, r()),
-    beta: beta * lerp(0.75, 0.9, r()),
+    beta: beta * lerp(0.5, 0.6, r()),
     haze: 0,
     vary: lerp(0.4, 0.8, r()),
     bend: bend(),
@@ -332,10 +367,10 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     }
   }
 
-  // Near the light: a smaller, weaker lobe of the same light further along the same edge
-  // (at a side light, in the bottom corner below it), so the light is not one ellipse. A cyan
+  // Near a light from off-frame: a smaller, weaker lobe of the same light further along the same
+  // edge (at a side light, in the bottom corner below it), so the light is not one ellipse. A cyan
   // light gets none, since that would put cyan on the bottom edge.
-  if (!cyanLead && r() < 0.3) {
+  if (kind !== 'inside' && !cyanLead && r() < 0.3) {
     const lobeAt: [number, number] =
       kind === 'side'
         ? [0.5 + side * lerp(0.3, 0.46, r()), lerp(1.06, 1.14, r())]

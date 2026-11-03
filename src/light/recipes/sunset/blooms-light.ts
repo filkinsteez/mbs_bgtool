@@ -52,6 +52,27 @@ export function deepen(c: Rgb, power: number): Rgb {
   return [m * (c[0] / m) ** power, m * (c[1] / m) ** power, m * (c[2] / m) ** power]
 }
 
+/** Weakest channel over strongest of a pale light's deep member. */
+const DEEP_FLOOR = 0.25
+/** A saturated light's deep member is this power of it: the longer path near the horizon. */
+const DEEP_MIN_POWER = 1.3
+const DEEP_MAX_POWER = 16
+
+/**
+ * The deeper, more saturated member of a light's own family: a power of its
+ * unit-peak color, so its strongest channel stays and the light is not dimmed
+ * in it. A pale light deepens until its weakest channel is DEEP_FLOOR of its
+ * strongest (pink-white to coral, Ice to blue); a saturated one (Yellow,
+ * Orange-red) goes a little deeper, as light low in the sky does.
+ */
+export function deepMember(c: Rgb): Rgb {
+  const m = Math.max(c[0], c[1], c[2], 1e-6)
+  const q = Math.min(c[0], c[1], c[2]) / m
+  if (q > 0.9999) return [c[0], c[1], c[2]]
+  const toFloor = q > DEEP_FLOOR ? Math.log(DEEP_FLOOR) / Math.log(q) : 1
+  return deepen(c, Math.min(DEEP_MAX_POWER, Math.max(DEEP_MIN_POWER, toFloor)))
+}
+
 /** Glow weight where the glow and the sky behind its haze weigh the same: k = exp(-haze k^2). */
 function balancePoint(haze: number): number {
   let lo = 0
@@ -67,16 +88,23 @@ function balancePoint(haze: number): number {
 /**
  * How far a glow's light is from the deepened sky, 0..1: 1 for light that
  * would grey it (a hue far from the deep area's, or near-neutral light), 0
- * for light of the deep area's own hue, which only deepens its color. Over
- * the deep area, the faint part of far light takes the deep hue. The deep
- * area's color is the sky three quarters of the way to the deep color.
+ * for light of the deep area's own hue, which only deepens its color. Far
+ * light follows the sky's darker top. The deep area's color is the sky three
+ * quarters of the way to the deep color.
  */
 export function deepFade(sky: Rgb, deep: Rgb, glow: Rgb): number {
-  const area: Rgb = [0.25 * sky[0] + 0.75 * deep[0], 0.25 * sky[1] + 0.75 * deep[1], 0.25 * sky[2] + 0.75 * deep[2]]
-  const [, ca, ha] = linearToOklch(area)
+  return otherHue([0.25 * sky[0] + 0.75 * deep[0], 0.25 * sky[1] + 0.75 * deep[1], 0.25 * sky[2] + 0.75 * deep[2]], glow)
+}
+
+/**
+ * 1 for light that would turn a colored ground's hue as it lightens it (a far
+ * hue, or near-neutral light such as Ice or white over Meta Blue), 0 for light
+ * of the ground's own hue (Cyan over Meta Blue mostly keeps its own color).
+ */
+export function otherHue(ground: Rgb, glow: Rgb): number {
+  const [, cb, hb] = linearToOklch(ground)
   const [, cg, hg] = linearToOklch(glow)
-  const same = Math.max(0, Math.cos(((hg - ha) * Math.PI) / 180)) * smoothstep(0.03, 0.08, cg) * smoothstep(0.01, 0.03, ca)
-  return 1 - same
+  return 1 - Math.max(0, Math.cos(((hg - hb) * Math.PI) / 180)) * smoothstep(0.03, 0.08, cg) * smoothstep(0.01, 0.03, cb)
 }
 
 /** 1 for a glow whose hue is far from the sky's and both have color, 0 for near hues or a grey end. */

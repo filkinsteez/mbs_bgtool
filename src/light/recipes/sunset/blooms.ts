@@ -14,7 +14,7 @@ import type {
 } from '../../scene'
 import { BLOOM_BOUNDARY, BLOOM_MINOR_REF, BLOOM_ROW, bloomBoundaryUniforms } from './blooms-boundary'
 import { composeLayout, GLOW_COUNT, isWarm, random, SLOT, SLOT_COUNT, type BloomsLayout, type GlowSpec } from './blooms-compose'
-import { bridgeAmount, bridgeGate, bridgeTint, deepen, deepFade, skyPaleTint } from './blooms-light'
+import { bridgeAmount, bridgeTint, deepen, deepFade, deepMember, otherHue, skyPaleTint } from './blooms-light'
 import { BOUNDARY_GLSL } from './boundary'
 
 const DEFAULT_GLOWS: readonly GlowSpec[] = [
@@ -231,10 +231,10 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
   const sky = colors[SLOT.sky]
   const skyPale = skyPaleTint(sky)
   const deep = slot(layout.zenith.color)
-  const deepHue = luminance(deep) > 1e-5 ? scale(deep, 1 / luminance(deep)) : skyPale
   const glowColor: number[] = []
   const glowTail: number[] = []
-  const glowDeepTail: number[] = []
+  const glowLow: number[] = []
+  const glowWarm: number[] = []
   const glowShape: number[] = []
   const glowAxis: number[] = []
   const glowEdge: number[] = []
@@ -252,7 +252,8 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     if (!glow) {
       glowColor.push(0, 0, 0)
       glowTail.push(0, 0, 0)
-      glowDeepTail.push(0, 0, 0)
+      glowLow.push(0, 0, 0)
+      glowWarm.push(0)
       glowShape.push(0, 0, 2, 0)
       glowAxis.push(1, 0, 1, 1)
       glowEdge.push(0, 1, 0, 0)
@@ -262,17 +263,20 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     }
     const base = slot(glow.color)
     const light = scale(isWarm(base) ? deepen(base, depth) : base, glow.gain)
-    // A glow's haze may hide at most as much sky light as the glow itself adds, so haze never darkens the frame.
+    // A glow's haze may hide at most as much sky light as the glow itself adds, so haze does not darken
+    // the frame; only below the glow's center, where the light crosses more air, it hides a little more.
     const haze = Math.min(glow.haze, luminance(light) / Math.max(luminance(sky), 1e-4))
     const front = inFront(glow.haze)
     const gain = skyGain + (lightGain - skyGain) * front
     glowColor.push(...scale(light, gain))
-    // The faint outer light of a glow whose hue is far from the sky's pales the sky without turning
-    // its hue, at the same luminance, so a warm glow meets blue through pale blue, not a lavender ring.
+    // Where the sky still shows through, the light of a glow whose hue is far from the sky's (or of
+    // near-white light) pales the sky without turning its hue, at the same luminance, so a warm or
+    // white glow meets blue through pale blue, not a lavender ring.
     const y = luminance(light) * gain
-    const tailShare = bridgeGate(sky, light)
+    const tailShare = otherHue(sky, light)
     glowTail.push(...light.map((c, ch) => c * gain * (1 - tailShare) + skyPale[ch] * y * tailShare))
-    glowDeepTail.push(...scale(deepHue, y))
+    glowLow.push(...scale(deepMember(light), gain))
+    glowWarm.push(isWarm(base) ? 1 : 0)
     glowShape.push(glow.at[0], glow.at[1], glow.beta, haze)
     glowAxis.push(...axis(glow.radius * reach, glow.aniso, glow.angle))
     glowEdge.push(glow.vary, 1.15, 1.7 * i + 0.3, front)
@@ -286,7 +290,6 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
   return {
     uSky: scale(sky, skyGain),
     uDeep: scale(slot(z.color), skyGain),
-    uDeepLight: clamp(luminance(slot(z.color)) / Math.max(luminance(sky), 1e-4), 0, 1),
     uSkyRamp: [layout.sky.top, layout.sky.mid, layout.sky.tilt, layout.sky.vary],
     uZenithShape: [z.at[0], z.at[1], clamp(z.amount, 0, 1), z.falloff],
     uZenithAxis: axis(z.radius, z.aniso, z.angle),
@@ -295,7 +298,8 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     uGlowCount: layout.glows.length,
     uGlowColor: glowColor,
     uGlowTail: glowTail,
-    uGlowDeepTail: glowDeepTail,
+    uGlowLow: glowLow,
+    uGlowWarm: glowWarm,
     uGlowDeepFade: glowDeepFade,
     uGlowShape: glowShape,
     uGlowAxis: glowAxis,
@@ -348,11 +352,11 @@ export const sunsetBlooms: RecipeDefinition = {
 #define GLOW_COUNT ${GLOW_COUNT}
 #define LOBES ${LOBES}
 #define TAIL_END 4.5
+#define LOW_HAZE 1.5
 #define BLOOM_MINOR_REF ${BLOOM_MINOR_REF.toFixed(6)}
 #define BLOOM_ROW ${BLOOM_ROW.toFixed(6)}
 uniform vec3 uSky;
 uniform vec3 uDeep;
-uniform float uDeepLight;             // luminance of the deep color over the sky's, 0..1
 uniform vec4 uSkyRamp;                // stops darker at the top, height of the exact hex, tilt, light variation
 uniform vec4 uZenithShape;           // center (frame fractions), amount, falloff exponent
 uniform vec4 uZenithAxis;            // cos, sin, 1 / long radius, 1 / short radius
@@ -360,8 +364,9 @@ uniform vec4 uZenithLobe[LOBES];     // offset along and across (in radii), 1 / 
 uniform float uZenithLobeFalloff[LOBES];
 uniform int uGlowCount;
 uniform vec3 uGlowColor[GLOW_COUNT];
-uniform vec3 uGlowTail[GLOW_COUNT];   // color of the faint outer light
-uniform vec3 uGlowDeepTail[GLOW_COUNT]; // the same light in the deep color's hue
+uniform vec3 uGlowTail[GLOW_COUNT];   // color of the faint outer light toward the open sky
+uniform vec3 uGlowLow[GLOW_COUNT];    // the glow's deeper member, for its lower side and over a deep area
+uniform float uGlowWarm[GLOW_COUNT];  // 1 for warm light, whose lower part takes the deeper member
 uniform float uGlowDeepFade[GLOW_COUNT]; // how far the glow's hue is from the deepened sky's, 0..1
 uniform vec4 uGlowShape[GLOW_COUNT];  // center (frame fractions), falloff exponent, haze
 uniform vec4 uGlowAxis[GLOW_COUNT];   // cos, sin, 1 / long radius, 1 / short radius
@@ -484,16 +489,21 @@ vec3 radiance(vec2 uv, vec2 p) {
   sky *= topLight * exp(uSkyRamp.w * 3.0 * noise2x2(P * 2.6 + vec2(7.1, 2.3), uSeed + 23).x);
 
   float k[GLOW_COUNT];
+  float low[GLOW_COUNT];
   float ext = 0.0;
   for (int i = 0; i < GLOW_COUNT; i++) {
     k[i] = 0.0;
+    low[i] = 0.0;
     if (i < uGlowCount) {
       for (int j = 0; j < LOBES; j++) {
         lobe[j] = uGlowLobe[i * LOBES + j];
         falloff[j] = uGlowLobeFalloff[i * LOBES + j];
       }
       k[i] = bloom(P, warp, (uGlowShape[i].xy - 0.5) * frame, uGlowAxis[i], stretch, uGlowShape[i].z, uGlowEdge[i].xyz, uGlowBend[i], i, shortUnit, lobe, falloff);
-      ext += uGlowShape[i].w * k[i] * k[i];
+      vec2 c = (uGlowShape[i].xy - 0.5) * frame;
+      low[i] = smoothstep(-0.25, 1.0, (P.y - c.y) * uGlowAxis[i].w * stretch.y);
+      // Low down the light passes through more air, which hides more of the sky behind it.
+      ext += uGlowShape[i].w * k[i] * k[i] * (1.0 + LOW_HAZE * low[i]);
     }
   }
   float T = exp(-ext);
@@ -501,20 +511,23 @@ vec3 radiance(vec2 uv, vec2 p) {
   vec3 front = vec3(0.0);
   float lit = 0.0;
   vec3 bridge = vec3(0.0);
+  float deepArea = z * z * z;
   for (int i = 0; i < GLOW_COUNT; i++) {
     if (i >= uGlowCount) break;
-    // Over a deep area, the faint light of a glow of another hue takes the deep area's hue at the
-    // same luminance, so it lightens the dark area in its own color instead of greying it (a sunset's
-    // outer light turns violet and blue the same way). The pale bridge light dims there instead.
-    float far = z * z * z * uGlowDeepFade[i];
+    // A glow shows its own color where it outweighs the sky; where the sky still shows through, its
+    // light pales the sky in the sky's own hue and meets it through the pale bridge, so warm or
+    // white light over blue never reads lavender. Low down a warm glow's own color is its deeper
+    // member, so it keeps its chroma toward the horizon. Over a deep area the faint light is the
+    // deeper member too, added as light: pink-white turns coral and makes violet over indigo.
     float ill = mix(1.0, topLight, uGlowDeepFade[i]);
-    vec3 tail = mix(uGlowTail[i], uGlowDeepTail[i], far);
-    vec3 light = mix(tail, uGlowColor[i], smoothstep(0.05, 0.4, k[i])) * (k[i] * ill);
+    vec3 body = mix(uGlowColor[i], uGlowLow[i], low[i] * uGlowWarm[i]);
+    vec3 faint = mix(uGlowTail[i], uGlowLow[i], deepArea);
+    vec3 light = mix(faint, body, smoothstep(0.3, 0.85, k[i])) * (k[i] * ill);
     float f = uGlowEdge[i].w;
     behind += (1.0 - f) * light;
     front += f * light;
     lit += f * k[i];
-    bridge += uGlowBridge[i] * (k[i] * ill * mix(1.0, uDeepLight, far));
+    bridge += uGlowBridge[i] * (k[i] * ill * (1.0 - deepArea));
   }
   // Pale light where the glows and the sky weigh about the same, reaching further out on the sky
   // side, where faint warm light over blue would read as a lavender ring; zero at both ends, and
@@ -533,13 +546,14 @@ vec3 radiance(vec2 uv, vec2 p) {
   radianceScale: 0.5,
   lens: { bloom: 0.12, bloomRadius: 0.75, bloomWidth: 1.5 },
   fromPack: rolesFromPack,
-  compose: ({ pack, controls, seed }): Composition => {
+  compose: ({ pack, controls, seed, aspect }): Composition => {
     const colors = rolesFromPack(pack)
-    const layout = composeLayout(colors.map(hexToLinear), seed, {
-      intensity: controls.intensity,
-      softness: controls.softness,
-      rise: controls.mood,
-    })
+    const layout = composeLayout(
+      colors.map(hexToLinear),
+      seed,
+      { intensity: controls.intensity, softness: controls.softness, rise: controls.mood },
+      aspect,
+    )
     const soft = clamp(controls.softness, 0, 1)
     return {
       colors,
