@@ -311,6 +311,15 @@ const DARK_STRETCH = 0.4
 const DARK_DETAIL = 0.7
 const DARK_SOFT_CALM = 0.65
 const DARK_CREST = 0.24
+// Crest height for that width, from the move toward the light side in spreads: near 0
+// below -1, about the move itself from 1 to 2, levelling off toward 2.5. It has no
+// kinks (a softplus, then a soft limit): a kink in the width along the edge shows as
+// soft vertical columns on a long soft transition.
+const crestSoftplus = (x: number) => Math.max(x, 0) + 0.5 * Math.log(1 + Math.exp(-2 * Math.abs(x)))
+const crestOf = (x: number) => {
+  const c = crestSoftplus(x)
+  return c - crestSoftplus(c - 2.5)
+}
 const AUDIT_WIGGLE = 0.003 // the audit measures bump aspect above 0.3% of the frame height wiggle
 const FLANK_RISE = 0.002 // rises below 0.2% of the frame height are not bumps
 const GUARD_REACH = 0.6 // the guard dips no narrower than this share of the lattice on either side
@@ -700,7 +709,7 @@ export function calibrateBoundary(params: BoundaryParams, aspect: number, seed: 
     const k = dark[j].k
     const s = softNoise(a, tr[j].at, tr[j].width, 1 - DARK_SOFT_CALM * k)
     if (!(k > 0)) return s
-    const crest = Math.min(2.5, Math.max(0, crestScale[j] * edgeMove(a, j)))
+    const crest = crestOf(crestScale[j] * edgeMove(a, j))
     return s * Math.exp(DARK_CREST * k * (crest - crestMean[j]))
   }
 
@@ -896,7 +905,7 @@ export function calibrateBoundary(params: BoundaryParams, aspect: number, seed: 
         // coordinate mode: the edge sits at at - D, so a positive D lifts it; edge mode: at + D
         const toward = (r.mode === 'edges' ? -1 : 1) * Math.sign(tr[j].contrast)
         crestScale[j] = sd > 1e-9 ? toward / sd : 0
-        crestMean[j] = d.reduce((s, x) => s + Math.min(2.5, Math.max(0, crestScale[j] * x)), 0) / d.length
+        crestMean[j] = d.reduce((s, x) => s + crestOf(crestScale[j] * x), 0) / d.length
       }
     }
     // the 50% line of transition j (or the line through knot k when there are no transitions) across the frame
@@ -1292,13 +1301,20 @@ float boundarySoftNoise(float a, float m, float w, float calm) {
 // Softness multiplier for a boundary at m with 10-90 width w.
 float boundarySoftAt(float a, float m, float w) { return boundarySoftNoise(a, m, w, 1.0); }
 
+// Crest height in spreads, smooth through zero and levelling off toward 2.5 (crestOf on the CPU).
+float boundaryCrestPlus(float x) { return max(x, 0.0) + 0.5 * log(1.0 + exp(-2.0 * abs(x))); }
+float boundaryCrest(float x) {
+  float c = boundaryCrestPlus(x);
+  return c - boundaryCrestPlus(c - 2.5);
+}
+
 // Softness multiplier of transition j; a silhouette edge is softer at its crests.
 float boundarySoft(float a, int j) {
   vec4 t = uBndTrans[j];
   vec4 dk = uBndDark[j];
   float s = boundarySoftNoise(a, t.x, t.y, 1.0 - BND_SOFT_CALM * dk.x);
   if (dk.x <= 0.0) return s;
-  float crest = clamp(dk.z * boundaryEdge(a, j), 0.0, 2.5);
+  float crest = boundaryCrest(dk.z * boundaryEdge(a, j));
   return s * exp(BND_CREST * dk.x * (crest - dk.w));
 }
 
