@@ -15,9 +15,16 @@ export { DEFAULT_CONTROLS, type ControlValues } from '@/light'
 
 export type MoodControlKey = 'horizon' | 'light'
 
+/** The mood control's name in the URL query. */
 export const MOOD_CONTROL: Readonly<Record<MoodId, MoodControlKey>> = {
   sunset: 'horizon',
   contour: 'light',
+}
+
+/** The mood control's key in the panel. DialKit shows a key as the control's label, with its first letter upper case. */
+export const MOOD_DIAL_KEY: Readonly<Record<MoodId, string>> = {
+  sunset: 'horizon',
+  contour: 'light position',
 }
 
 export interface RecipeMapping {

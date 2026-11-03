@@ -1,6 +1,6 @@
 import type { DialConfig } from 'dialkit'
 import { EXPORT_ASPECTS, isPackId, PACKS, recipesForMood, type MoodId } from '@/light'
-import { DEFAULT_CONTROLS, MOOD_CONTROL } from './controls'
+import { DEFAULT_CONTROLS, MOOD_DIAL_KEY } from './controls'
 import { clampSeed, clampUnit, DEFAULT_STATE, fixLook, isExportAspect, SEED_MAX, SEED_MIN, type ToolState } from './state'
 
 export const PANEL_ID = 'tool'
@@ -32,7 +32,7 @@ export function buildDialConfig(mood: MoodId, initial: ToolState, exportLabel: s
     colors: { type: 'select', options: PACK_OPTIONS, default: initial.pack },
     intensity: [initial.intensity, 0, 1, 0.01],
     softness: [initial.softness, 0, 1, 0.01],
-    [MOOD_CONTROL[mood]]: [sameMood ? initial.moodControl : DEFAULT_CONTROLS.mood, 0, 1, 0.01],
+    [MOOD_DIAL_KEY[mood]]: [sameMood ? initial.moodControl : DEFAULT_CONTROLS.mood, 0, 1, 0.01],
     seed: [initial.seed, SEED_MIN, SEED_MAX, 1],
     format: { type: 'select', options: [...EXPORT_ASPECTS], default: initial.format },
     export: { type: 'action', label: exportLabel },
@@ -49,7 +49,7 @@ export function readToolState(values: Readonly<Record<string, unknown>>, mood: M
     pack: typeof pack === 'string' && isPackId(pack) ? pack : DEFAULT_STATE.pack,
     intensity: clampUnit(values.intensity, DEFAULT_STATE.intensity),
     softness: clampUnit(values.softness, DEFAULT_STATE.softness),
-    moodControl: clampUnit(values[MOOD_CONTROL[mood]], DEFAULT_STATE.moodControl),
+    moodControl: clampUnit(values[MOOD_DIAL_KEY[mood]], DEFAULT_STATE.moodControl),
     seed: clampSeed(values.seed, DEFAULT_STATE.seed),
     format: isExportAspect(format) ? format : DEFAULT_STATE.format,
   }

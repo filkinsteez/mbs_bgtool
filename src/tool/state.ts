@@ -17,7 +17,7 @@ export interface ToolState {
   pack: PackId
   intensity: number
   softness: number
-  /** Horizon for Sunset, Light for Contour. */
+  /** Horizon for Sunset, Light position for Contour (`light` in the URL). */
   moodControl: number
   seed: number
   format: ExportAspect
