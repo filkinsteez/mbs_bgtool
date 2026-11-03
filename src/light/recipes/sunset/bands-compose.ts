@@ -90,6 +90,8 @@ interface Band {
   drift: [number, number, number]
   /** Thickness floor in lens radii, at every point. */
   floor: number
+  /** A thin bright line in the middle of its place, between its top edge and the next band's. */
+  line?: boolean
 }
 
 interface LightTerm {
@@ -189,6 +191,8 @@ interface Scene {
 interface Entry {
   hex: string
   under: number
+  /** A thin bright line in the middle of its place instead of a band. */
+  line?: boolean
 }
 
 /**
@@ -223,10 +227,31 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   // other or both. A pack with no dark color (Bold) may end with a color again under less light: Meta Blue, or
   // Orange-red itself, since Meta Blue right below Orange-red meets it through the lens as magenta. Orange-red
   // keeps most of its light: much dimmer it reads as brick.
-  const build = (chosenLight: string | undefined, chosenDarks: readonly string[], base: boolean): Entry[] => {
+  // A pack whose light is near-white (Atmospheric) may also put its darkest chosen color as a band above the sky
+  // (a night top), Meta Blue again, under less light, as a band low in the frame (a low blue), or its near-white
+  // light as a thin bright line instead of a band (an ice line).
+  type Form = 'plain' | 'nightTop' | 'lowBlue' | 'iceLine'
+  const build = (chosenLight: string | undefined, chosenDarks: readonly string[], base: boolean, form: Form = 'plain'): Entry[] => {
     const picked = rest.filter((hex) => (lights.includes(hex) ? hex === chosenLight : darks.includes(hex) ? chosenDarks.includes(hex) : true))
     const list: Entry[] = [{ hex: sky, under: 1 }, ...picked.map((hex) => ({ hex, under: 1 }))]
     if (base && chosenLight) list.push(hue(chosenLight) < 60 ? { hex: chosenLight, under: 0.68 } : { hex: sky, under: 0.5 })
+    if (form === 'nightTop' && chosenDarks.length) {
+      const darkest = chosenDarks.reduce((a, b) => (lightness(b) < lightness(a) ? b : a))
+      const at = list.findIndex((e) => e.hex === darkest)
+      if (at > 0) list.unshift(...list.splice(at, 1))
+    }
+    if (form === 'lowBlue') {
+      const at = list.findIndex((e, i) => i > 0 && lightness(e.hex) < 0.45)
+      list.splice(at > 0 ? at : list.length, 0, { hex: sky, under: 0.7 })
+    }
+    if (form === 'iceLine') {
+      // The line lies over the band below it: over Meta Blue it would read lavender through the lens.
+      const at = list.findIndex((e, i) => i > 0 && i < list.length - 1 && lightness(e.hex) > 0.95)
+      if (at > 0 && lightness(list[at + 1].hex) >= 0.45) {
+        const [near] = list.splice(at, 1)
+        list.splice(at + 1, 0, { ...near, line: true })
+      }
+    }
     return list
   }
   const shown = (e: Entry) => lightness(e.hex) * Math.cbrt(e.under)
@@ -257,17 +282,24 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   // The seed's choices: the colors, one or two wide bands (near-white Ice only half as wide), and whether the sky
   // darkens toward the top. Every combination is listed, the second light (Orange-red, Tan) in about a third of
   // them.
-  type Choice = { light: string | undefined; darks: readonly string[]; base: boolean; wide: readonly number[]; zenith: number }
+  type Choice = { light: string | undefined; darks: readonly string[]; base: boolean; wide: readonly number[]; zenith: number; form: Form }
   const choices: Choice[] = []
+  const forms: Form[] = lights.length ? ['plain'] : ['plain', 'nightTop', 'lowBlue', 'iceLine']
   for (const [li, l] of (lights.length ? lights : [undefined]).entries()) {
     for (const d of darks.length > 1 ? [[darks[0]], [darks[1]], darks] : [darks]) {
       for (const base of darks.length ? [false] : [true, false]) {
-        const can = build(l, d, base).map((_, i) => i)
-        const wides = [...can.map((i) => [i]), ...can.flatMap((i, k) => can.slice(k + 1).map((j) => [i, j]))]
-        wides.forEach((wide, k) => {
-          if (li > 0 && k % 2 === 1) return
-          for (const zenith of [0, 1.1]) choices.push({ light: l, darks: d, base, wide, zenith })
-        })
+        for (const form of forms) {
+          // A low blue only with one dark color: with two, the stack is too crowded for the lens.
+          if (form === 'lowBlue' && d.length > 1) continue
+          const can = build(l, d, base, form)
+            .map((e, i) => (e.line ? -1 : i))
+            .filter((i) => i >= 0)
+          const wides = [...can.map((i) => [i]), ...can.flatMap((i, k) => can.slice(k + 1).map((j) => [i, j]))]
+          wides.forEach((wide, k) => {
+            if (li > 0 && k % 2 === 1) return
+            for (const zenith of [0, 1.1]) choices.push({ light: l, darks: d, base, wide, zenith, form })
+          })
+        }
       }
     }
   }
@@ -280,7 +312,7 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   if (!order) {
     // A choice's look: its colors down the frame at the middle of each share, sampled at 16 heights in Oklab.
     const look = (c: Choice) => {
-      const list = build(c.light, c.darks, c.base)
+      const list = build(c.light, c.darks, c.base, c.form)
       const least = leastOf(list, R0)
       const shares = list.map((e, i) => shareOf(e, i, c.wide, (lo, hi) => (lo + hi) / 2))
       const spare = Math.max(0, 1 - least.reduce((s, v) => s + v, 0))
@@ -289,10 +321,15 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
       return Array.from({ length: 16 }, (_, k) => {
         const y = (k + 0.5) / 16
         const at = ends.findIndex((end) => y < end)
-        const e = list[at < 0 ? list.length - 1 : at]
-        const i = at < 0 ? list.length - 1 : at
+        const j = at < 0 ? list.length - 1 : at
+        // A line's place shows the color above it, with a third of the line's light through the lens.
+        const i = j - (list[j].line ? 1 : 0)
+        const e = list[i]
         const sky = i === 0 ? 2 ** (-c.zenith * Math.max(0, 0.5 - y)) : 1
-        return oklab(e.hex).map((v) => v * Math.cbrt((i === 0 ? 1 : baseLight(list, i) * iceCap(e.hex, 1)) * sky))
+        const own = oklab(e.hex).map((v) => v * Math.cbrt((i === 0 ? 1 : baseLight(list, i) * iceCap(e.hex, 1)) * sky))
+        if (!list[j].line) return own
+        const lit = oklab(list[j].hex).map((v) => v * Math.cbrt(iceCap(list[j].hex, 1)))
+        return own.map((v, k) => v + (lit[k] - v) / 3)
       })
     }
     const looks = choices.map(look)
@@ -317,7 +354,7 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     runOrders.set(key, order)
   }
   const choice = choices[order[((n0 % choices.length) + choices.length) % choices.length]]
-  const entries = build(choice.light, choice.darks, choice.base)
+  const entries = build(choice.light, choice.darks, choice.base, choice.form)
   const wideEntries = choice.wide.map((i) => entries[i])
   // The image's light: its warm or light color, else the brightest after the sky (Ice).
   const light = choice.light ?? entries.slice(1).reduce((a, b) => (lightness(b.hex) > lightness(a.hex) ? b : a)).hex
@@ -400,25 +437,33 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
       }
     }
     const darker = i + 1 < list.length && shown(e) < Math.min(shown(upper), shown(list[i + 1])) - 0.1
+    // A wide near-white band (Ice) has very soft edges: a glow rather than a stripe.
+    const fade =
+      ((warmOnDark ? rnd.between(0.05, 0.1) : outline ? rnd.between(0.3, 0.8) : bridge ? rnd.between(1.2, 1.8) : rnd.between(1.2, 2.6)) *
+        ([i - 1, i].some((j) => wide.includes(j) && lightness(list[j].hex) > 0.95) ? 1.8 : 1) *
+        R) /
+      frameH
     bands.push({
       color: e.hex,
       edge: { base: tops[i], tilt, bumps: lobes, wave, wavelength: 1.5, row: 2 * bands.length },
       mode: outline ? MODE_COVER : MODE_LIGHT,
-      fade: ((warmOnDark ? rnd.between(0.05, 0.1) : outline ? rnd.between(0.3, 0.8) : bridge ? rnd.between(1.2, 1.8) : rnd.between(1.2, 2.6)) * R) / frameH,
-      fadeVary: warmOnDark ? 0.5 : outline ? 0.9 : 0.35,
+      // A line is sharp in the scene, a third of a lens radius; the lens spreads it.
+      fade: e.line ? (0.35 * R) / frameH : fade,
+      fadeVary: e.line ? 0.3 : warmOnDark ? 0.5 : outline ? 0.9 : 0.35,
       light: 1,
       lean: rnd.between(-0.15, 0.15),
-      bridge: bridge ? 1 : 0,
+      bridge: bridge && !e.line ? 1 : 0,
       vary: 1,
       sun: 0,
       drift: dimDrift(hexToLinear(e.hex)),
       floor: darker ? 3.2 : 2,
+      line: e.line,
     })
     under.push(e.under)
   })
   const landBand = below === 'land' ? bands.length - 1 : -1
   // A dome: a band lighter than the one above rises into it.
-  const domes = bands.map((_, i) => i).filter((i) => i !== landBand && lightness(bands[i].color) > lightness(i === 0 ? sky : bands[i - 1].color) + 0.05)
+  const domes = bands.map((_, i) => i).filter((i) => i !== landBand && lightness(bands[i].color) > lightness(i === 0 ? list[0].hex : bands[i - 1].color) + 0.05)
   if (domes.length && rnd.chance(0.75)) {
     const b = bands[domes[rnd.int(0, domes.length - 1)]]
     const dome: Bump = [rnd.between(0.15, 0.85), rnd.between(0.4, 0.7) / frameW, -rnd.between(0.035, 0.06) / frameH]
@@ -477,8 +522,11 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     const isLight = b.color === light && under[i] === 1
     const warmLight = warmAt(i)
     const lift = level >= 1 ? level ** (isLight ? 1.6 : 0.8) : 1
-    b.light = baseLight(list, i + 1) * lift * (warmLight ? dim ** -0.5 : 1) * iceCap(b.color, level)
-    b.sun = 1 - 1 / lift
+    // A near-white light (Atmospheric's Ice) gathers part of its light around the light's column at every
+    // Intensity, so the bright part of the frame moves with the seed.
+    const column = !lights.length && lightness(b.color) > 0.95 ? 0.4 : 0
+    b.light = baseLight(list, i + 1) * lift * (warmLight ? dim ** -0.5 : 1) * iceCap(b.color, level) * (1 + 0.6 * column)
+    b.sun = Math.max(column, 1 - 1 / lift)
     if (warmLight && (darkAt(i - 1) || darkAt(i + 1))) b.vary = 0.5
   })
 
@@ -493,8 +541,8 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   if (shaded !== undefined) lightTerms.push({ color: sky, shape: shadeShape, look: shadeLook })
   for (let k = rnd.int(1, 2); k > 0; k--) {
     const bi = rnd.int(0, bands.length - 1)
-    const from = rnd.chance(0.5) && bi + 1 < bands.length ? bands[bi + 1].color : bi > 0 ? bands[bi - 1].color : sky
-    if (!closeHues(hexToLinear(from), hexToLinear(bands[bi].color))) continue
+    const from = rnd.chance(0.5) && bi + 1 < bands.length ? bands[bi + 1].color : bi > 0 ? bands[bi - 1].color : list[0].hex
+    if (bands[bi].line || !closeHues(hexToLinear(from), hexToLinear(bands[bi].color))) continue
     const top = bands[bi].edge.base
     const bottom = bi + 1 < bands.length ? bands[bi + 1].edge.base : 1
     patches.push({
@@ -507,7 +555,7 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   const lightVary = rnd.between(0.1, 0.17)
   // The light's column: where Intensity above the middle gathers its extra light.
   const sun: [number, number] = [rnd.between(0.2, 0.8), rnd.between(0.22, 0.35)]
-  return { sky, bands, lights: lightTerms, patches, sun, lightVary, skyFall: zenith + 3 * Math.max(0, 1 - level), skyLift: 1.2 * Math.max(0, level - 1), dim }
+  return { sky: list[0].hex, bands, lights: lightTerms, patches, sun, lightVary, skyFall: zenith + 3 * Math.max(0, 1 - level), skyLift: 1.2 * Math.max(0, level - 1), dim }
 }
 
 /** Ice is close to white: below white at the default Intensity. */
@@ -523,13 +571,13 @@ function writeScene(scene: Scene, R: number): BandsComposition {
     colors.push(b.color)
     const bumps = b.edge.bumps.slice(0, BUMP_MAX)
     const pad = (values: number[], fill: number) => Array.from({ length: BUMP_MAX }, (_, j) => values[j] ?? fill)
-    params[key('Edges')] = [b.edge.base, 2]
+    params[key('Edges')] = [b.edge.base, b.line ? (scene.bands[i + 1]?.edge.base ?? 1) : 2]
     params[key('Fade')] = [b.fade, 0]
     params[key('FadeVary')] = b.fadeVary
     params[key('Opacity')] = 1
     params[key('Light')] = b.light
     params[key('Mode')] = b.mode
-    params[key('Line')] = false
+    params[key('Line')] = b.line ?? false
     params[key('Tilt')] = [b.edge.tilt, 0, 0]
     params[key('Lean')] = b.lean
     params[key('Wave')] = [b.edge.wave, 0, b.edge.wavelength]
