@@ -1,5 +1,7 @@
-// Pass/fail table per recipe from recipes-audit.mjs's report, and the small
-// sheets for results/. node recipes-table.mjs
+// Pass/fail table per recipe from recipes-audit.mjs's report, and two small
+// sheets. node recipes-table.mjs [--update-results]
+// Everything goes to artifacts/organic-boundaries/recipes/ (not committed);
+// --update-results writes the sheets to results/ instead, for the README.
 //
 // Pack frames: generic bands. A check is "not measured" when it needs two
 // boundaries and the frame has one, or (wavelength) when no boundary wiggles more
@@ -82,7 +84,9 @@ const stack = async (files, width) => {
   return column(sheets, { gap: 10 })
 }
 const fit = (c, width) => [c, width, Math.round((c.h * width) / c.w)]
+const sheetDir = process.argv.includes('--update-results') ? path.join(PROTO, 'results') : DIR
 const packs = ['sunset.ramp', 'sunset.bands', 'sunset.blooms'].map((r) => path.join(DIR, `iso-packs-${r}.jpg`))
-await saveCanvas(await stack(packs, 1400), path.join(PROTO, 'results', 'recipes-packs.jpg'), { quality: 78 })
+await saveCanvas(await stack(packs, 1400), path.join(sheetDir, 'recipes-packs.jpg'), { quality: 78 })
 const refs = ['sunset.ramp', 'sunset.bands'].map((r) => path.join(DIR, `iso-refs-${r}.jpg`))
-await saveCanvas(await stack(refs, 1200), path.join(PROTO, 'results', 'recipes-refs.jpg'), { quality: 78 })
+await saveCanvas(await stack(refs, 1200), path.join(sheetDir, 'recipes-refs.jpg'), { quality: 78 })
+console.log(`table: ${path.relative(ROOT, path.join(DIR, 'table.md'))}; sheets: ${path.relative(ROOT, sheetDir)}/recipes-packs.jpg, recipes-refs.jpg`)

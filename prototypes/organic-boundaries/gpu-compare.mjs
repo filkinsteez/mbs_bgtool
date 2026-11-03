@@ -1,7 +1,9 @@
 // The boundary model in the engine (src/light/recipes/sunset/boundary.ts) on the
 // GPU, next to the same scene on the CPU and next to the previous version of the
 // module (commit 899c06d, before the bump rule and the silhouette rule).
-// node gpu-compare.mjs  ->  out/gpu/<pack>-<aspect>-s<seed>-*.png, results/gpu-vs-cpu.jpg
+// node gpu-compare.mjs [--update-results]  ->  out/gpu/<pack>-<aspect>-s<seed>-*.png and
+// out/gpu/gpu-vs-cpu.jpg (not committed); --update-results writes the sheet to
+// results/gpu-vs-cpu.jpg instead, for the README.
 //
 // The scene is the prototype's production Sunset layout (lib/production.mjs) in
 // short-side units (lib/engine-scene.mjs): a stop ramp mixed in linear light,
@@ -123,6 +125,8 @@ for (let p = 0; p < 3; p++) {
   const left = await column([rows[2 * p].sheet, rows[2 * p + 1].zoom], { gap: 8 })
   packRows.push(await row([left, rows[2 * p + 1].sheet], { gap: 14 }))
 }
-await saveCanvas(await column(packRows, { gap: 12 }), path.join(PROTO, 'results/gpu-vs-cpu.jpg'), { width: 1600, quality: 84 })
+const sheetFile = process.argv.includes('--update-results') ? path.join(PROTO, 'results/gpu-vs-cpu.jpg') : path.join(dir, 'gpu-vs-cpu.jpg')
+await saveCanvas(await column(packRows, { gap: 12 }), sheetFile, { width: 1600, quality: 84 })
+console.log(`sheet: ${path.relative(ROOT, sheetFile)}`)
 fs.writeFileSync(path.join(dir, 'numbers.txt'), `${lines.join('\n')}\n`)
 await harness.close()
