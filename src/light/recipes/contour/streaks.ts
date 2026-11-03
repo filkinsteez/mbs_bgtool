@@ -1,6 +1,6 @@
 import type { ColorPack } from '../../color/packs'
 import type { ComposeInput, Composition, RecipeDefinition } from '../../scene'
-import { contourLights, frameHalf, geo, lerp, luminanceOf, paleTarget, pickContourLight, round4, seededRandom } from './beam-compose'
+import { clipLuminanceOf, contourLights, frameHalf, geo, lerp, luminanceOf, paleTarget, pickContourLight, round4, seededRandom } from './beam-compose'
 
 /**
  * Shafts of light through gaps in a cloud layer, converging on a point on
@@ -316,7 +316,9 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
       band: [round4(Math.min(6, 0.9 * power)), round4(soft(0.015, 0.03))],
       floor: [round4(lerp(0.25, 0.45, random())), round4(Math.min(16, 1.6 * power)), round4(lerp(0.05, 0.09, random())), round4(lerp(0.12, 0.22, random()))],
       floorStreaks: [round4(lerp(0.2, 0.45, random())), 1.6, 14],
-      pale: [0.8, 0.08, 0.45],
+      // The color starts toward white from 0.4 of the haze's clipping level and is there by
+      // 2.3 times it, so light passing nominal keeps whitening at the same pace.
+      pale: [0.8, round4(0.4 * clipLuminanceOf(light.haze)), round4(2.3 * clipLuminanceOf(light.haze))],
       paleWhite: light.light === light.haze ? 0.5 : 0.2,
       base: light.baseLevel,
       vignette: round4(lerp(0.08, 0.15, random())),
@@ -351,7 +353,7 @@ export const contourStreaks: RecipeDefinition = {
     { kind: 'vector', key: 'band', label: 'Band', min: 0, max: 6, step: 0.005, default: [2.5, 0.04] },
     { kind: 'vector', key: 'floor', label: 'Floor', min: 0, max: 16, step: 0.005, default: [0.4, 2, 0.12, 0.3] },
     { kind: 'vector', key: 'floorStreaks', label: 'Floor streaks', min: 0, max: 40, step: 0.005, default: [1, 3, 22] },
-    { kind: 'vector', key: 'pale', label: 'Pale', min: 0, max: 2, step: 0.005, default: [0.6, 0.15, 0.8] },
+    { kind: 'vector', key: 'pale', label: 'Pale', min: 0, max: 4, step: 0.005, default: [0.6, 0.15, 0.8] },
     { kind: 'number', key: 'paleWhite', label: 'Pale toward white', min: 0, max: 1, step: 0.005, default: 0 },
     { kind: 'number', key: 'base', label: 'Base', min: 0, max: 4, step: 0.005, default: 1 },
     { kind: 'number', key: 'vignette', label: 'Vignette', min: 0, max: 1, step: 0.005, default: 0.1 },

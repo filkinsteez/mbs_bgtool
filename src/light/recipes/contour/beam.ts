@@ -1,6 +1,6 @@
 import type { ColorPack } from '../../color/packs'
 import type { ComposeInput, Composition, RecipeContext, RecipeDefinition } from '../../scene'
-import { contourLights, frameHalf, geo, lerp, luminanceOf, paleTarget, pickContourLight, round4, seededRandom } from './beam-compose'
+import { clipLuminanceOf, contourLights, frameHalf, geo, lerp, luminanceOf, paleTarget, pickContourLight, round4, seededRandom } from './beam-compose'
 
 /**
  * A beam of light from a source above the frame, seen through haze, landing
@@ -134,15 +134,17 @@ float beamInScatter(vec2 s, float zNear, float zFar, float mirror, float widen, 
   return sum * dz * (length(dir) / F) * hgPhase(cosTheta, uHazeB.z) * loss * max(1.0 + densityNoise, 0.0) / a;
 }
 
-// Pool light scattered by the haze at screen offset d (x from the pool's center, y above
-// the floor line). It falls off as 1/distance from the pool (the view ray's integral of
-// 1/distance^2), with a Lambert cosine for the floor's emission; the stage's rim shadows
-// the haze at grazing angles.
+// Pool light scattered by the haze at screen offset d (x from the pool's center, y its
+// distance from the pool: height above it, or depth in front of it, at the pool's scale).
+// It falls off as 1/distance from the pool (the view ray's integral of 1/distance^2).
+// Haze right over the pool is lit from below and is brightest at the pool; beside the pool
+// the floor's light arrives at a grazing angle (Lambert cosine), and the stage's rim
+// shadows it.
 float poolGlow(vec2 d, float halfWidth, float core, float density) {
   float across = max(d.x - 0.8 * halfWidth, 0.0) / max(uBounce.z, 0.1);
   float h = sqrt(across * across + d.y * d.y + core * core);
-  float lambert = (d.y + 0.25 * core) / (h + 0.25 * core);
-  float rim = smoothstep(0.25 * uBounce.w, uBounce.w, d.y / max(d.x, 1e-4));
+  float lambert = (d.y + 0.25 * core) / (sqrt(across * across + d.y * d.y) + 0.25 * core);
+  float rim = smoothstep(0.25 * uBounce.w, uBounce.w, (d.y + 0.05 * core) / (across + 1e-3));
   float side = exp(-across / max(uBounce.y, 1e-3));
   return uBounce.x * density * (core / h) * exp(-d.y / max(uBounce.y, 1e-3)) * side * lambert * rim;
 }
@@ -165,6 +167,10 @@ vec3 radiance(vec2 uv, vec2 p) {
   float edgeY = horizon + F / ze;
   float onFloor = p.y > horizon ? smoothstep(-uPool.w, uPool.w, p.y - edgeY) : 0.0;
   float zFloor = p.y > horizon ? F / (p.y - horizon) : 1e6;
+  // The stage's edge is rounded: right past it the floor curves away, so it hides the light
+  // behind the edge, gets the beam's light and mirrors the haze over a short distance
+  // instead of all at once.
+  float rounded = p.y > horizon ? smoothstep(-uPool.w, uPool.w + 0.18 * aScreen, p.y - edgeY) : 0.0;
 
   float hazeHere = hazeDensity(p.y);
 
@@ -176,14 +182,20 @@ vec3 radiance(vec2 uv, vec2 p) {
   }
 
   // Beam: in front of the floor where the floor is, and over the edge into the pit behind it.
-  float beamSeen = beamInScatter(p, 0.01, mix(1e6, zFloor, onFloor), 1.0, 0.0, noise, 10);
+  // Across the rounded edge the two views blend, so the light seen past the edge fades out
+  // over the whole edge instead of stopping where the floor is fully there.
+  float beamSeen = rounded < 1.0 ? beamInScatter(p, 0.01, 1e6, 1.0, 0.0, noise, 10) : 0.0;
+  if (rounded > 0.0) beamSeen = mix(beamSeen, beamInScatter(p, 0.01, zFloor, 1.0, 0.0, noise, 10), rounded);
   float scatter = uBeamLight.x * beamSeen;
 
-  // The pool's light scattered by the haze above it. The pool is a flat emitter as wide as
-  // the beam, so the glow is flat across it and falls off above and to the sides.
+  // The pool's light scattered by the haze around it. The pool is a flat emitter as wide as
+  // the beam, so the glow is flat across it and falls off above and to the sides. Over the
+  // floor the camera looks through the lit haze in front of the pool, so the glow runs on
+  // past the stage edge and falls off below the pool as it does above it.
   float beamX = uWorld.y * F / zb;
   float core = 0.35 * aScreen;
-  scatter += (1.0 - onFloor) * uBeamLight.x * poolGlow(vec2(abs(p.x - beamX), max(contactY - p.y, 0.0)), aScreen, core, hazeHere);
+  float glow = poolGlow(vec2(abs(p.x - beamX), abs(contactY - p.y)), aScreen, core, hazeHere);
+  scatter += uBeamLight.x * glow;
 
   float direct = 0.0;
   float floorLight = 0.0;
@@ -220,19 +232,21 @@ vec3 radiance(vec2 uv, vec2 p) {
       float fresnel = 0.04 + 0.96 * pow(1.0 - view.y, 5.0);
       float lanes = 1.0;
       if (uLanes.x > 0.0) {
-        // Gloss varies across the floor much faster than along it, and the lanes drift.
+        // Gloss varies across the floor much faster than along it, and the lanes drift. Far
+        // away, at grazing angles, every board reflects alike, so the lanes fade in below the
+        // pool and no dull board starts at the pool line.
         vec2 l = floorAt / (uLanes.y * a);
         l.x += 0.35 * valueNoise(vec2(l.y * 0.08, 7.3), uSeed + 127);
         l.y *= 0.08;
         float n = 0.65 * valueNoise(l, uSeed + 131) + 0.35 * valueNoise(vec2(2.1 * l.x, 2.1 * l.y + 3.5), uSeed + 137);
-        lanes = max(0.0, 1.0 + uLanes.x * n);
+        lanes = exp(uLanes.x * smoothstep(0.02, 0.3, travel / zb) * n);
       }
       reflection = uFloorLook.x * fresnel * lanes * (uBeamLight.x * mirrored + mBounce);
     }
 
     float spill = uPool.y * exp(-0.5 * d * d / max(uPool.z * uPool.z, 1e-4));
-    direct = onFloor * uPool.x * uBeamLight.x * lit * tex;
-    floorLight = onFloor * (spill * uBeamLight.x + reflection) * tex;
+    direct = rounded * uPool.x * uBeamLight.x * lit * tex;
+    floorLight = rounded * (spill * uBeamLight.x + reflection) * tex;
   }
   scatter += floorLight;
 
@@ -321,7 +335,9 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
       gloss: [round4(lerp(2.8, 3.4, random())), round4(soft(0.22, 0.32))],
       texture: [0.05, 0.006],
       lanes: [round4(lerp(1.5, 1.9, random())), round4(lerp(0.4, 0.6, random()))],
-      pale: [round4(lerp(0.5, 0.7, random())), 0.075, 0.25],
+      // The color starts toward white from 0.4 of the haze's clipping level and is there by
+      // 1.3 times it, so light passing nominal keeps whitening at the same pace.
+      pale: [round4(lerp(0.5, 0.7, random())), round4(0.4 * clipLuminanceOf(light.haze)), round4(1.3 * clipLuminanceOf(light.haze))],
       paleWhite: light.light === light.haze ? 0.5 : 0.2,
       ambient: [light.baseLevel, 0, light.baseLevel],
       vignette: round4(lerp(0.1, 0.18, random())),

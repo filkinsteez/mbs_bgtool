@@ -36,6 +36,11 @@ export function luminanceOf(hex: string): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
+/** Luminance of a color's light at the brightness where its brightest channel reaches 1. */
+export function clipLuminanceOf(hex: string): number {
+  return luminanceOf(hex) / Math.max(...hexToLinear(hex), 1e-6)
+}
+
 /**
  * The color a light (linear RGB) turns as it overexposes, at unit luminance: the camera
  * tone curve's own path to white three times past clipping, so Meta Blue goes toward a
