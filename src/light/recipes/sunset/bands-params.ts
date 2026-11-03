@@ -40,6 +40,7 @@ export type BandParamName =
   | 'BumpCover'
   | 'BumpLight'
   | 'Bridge'
+  | 'Drift'
 
 export type PatchParamName = 'Shape' | 'Look'
 export type LightParamName = 'Shape' | 'Look'
@@ -89,6 +90,8 @@ function bandSpecs(index: number): ParamSpec[] {
     { kind: 'vector', key: key('BumpLight'), label: `Band ${n} bump light`, min: -1, max: 2, step: 0.005, default: zeros(BUMP_MAX) },
     // Pale light added across a light-mode top edge, so two colors far apart meet through a pale bridge (0 none).
     { kind: 'number', key: key('Bridge'), label: `Band ${n} pale bridge at its top edge`, min: 0, max: 2, step: 0.01, default: 0 },
+    // How fast each channel deepens as the band's light dims (1, 1, 1: all alike).
+    { kind: 'vector', key: key('Drift'), label: `Band ${n} deepening of red, green, blue as its light dims`, min: -2, max: 6, step: 0.01, default: [1, 1, 1] },
   ]
 }
 

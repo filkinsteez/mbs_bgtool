@@ -32,6 +32,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
   const look: number[] = []
   const tilt: number[] = []
   const sun: number[] = []
+  const drift: number[] = []
   const bumps: Record<'at' | 'width' | 'top' | 'bottom' | 'cover' | 'light', number[]> = { at: [], width: [], top: [], bottom: [], cover: [], light: [] }
   for (let i = 0; i < BAND_MAX; i++) {
     const key = (name: Parameters<typeof bandKey>[1]) => bandKey(i, name)
@@ -45,6 +46,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     look.push(ctx.num(key('Opacity')), ctx.num(key('Light')), Math.round(ctx.num(key('Mode'))), ctx.bool(key('Line')) ? 1 : 0)
     tilt.push(tiltTop, tiltBottom, tiltCover, ctx.num(key('Lean')))
     sun.push(sunLight, sunCover, ctx.num(key('Vary')), 0)
+    drift.push(...ctx.vec(key('Drift')).slice(0, 3))
     bumps.at.push(...ctx.vec(key('BumpAt')).slice(0, BUMP_MAX))
     bumps.width.push(...ctx.vec(key('BumpWidth')).slice(0, BUMP_MAX))
     bumps.top.push(...ctx.vec(key('BumpTop')).slice(0, BUMP_MAX))
@@ -117,6 +119,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     uBandLook: look,
     uBandTilt: tilt,
     uBandSun: sun,
+    uBandDrift: drift,
     uBumpAt: bumps.at,
     uBumpWidth: bumps.width,
     uBumpTop: bumps.top,
@@ -186,6 +189,7 @@ uniform vec4 uBandWave[BAND_MAX];   // broad wave of the top edge, extra wave of
 uniform vec4 uBandLook[BAND_MAX];   // opacity, light, mode (0 cover, 1 multiply, 2 add, 3 light), thin line
 uniform vec4 uBandTilt[BAND_MAX];   // tilt of the top edge, extra tilt of the bottom edge, cover tilt, light lean
 uniform vec4 uBandSun[BAND_MAX];    // light toward the sun, cover toward the sun, share of the light change, 0
+uniform vec3 uBandDrift[BAND_MAX];  // how fast red, green and blue deepen as the band's light dims
 uniform vec4 uBumpAt[BAND_MAX];
 uniform vec4 uBumpWidth[BAND_MAX];
 uniform vec4 uBumpTop[BAND_MAX];
@@ -220,14 +224,17 @@ uniform float uLensDisc;             // 1: the disc lens result, 0: the gaussian
 float gGrainWeight = 1.0;
 
 // Dim light gets deeper (Beer-Lambert powers of its own unit-peak color), so a
-// fading warm light reads amber or red instead of olive or brown.
-vec3 deepen(vec3 c, float level) {
+// fading warm light reads amber or red instead of olive or brown; w sets how
+// fast each channel deepens (a negative one rises), so a color can drift.
+vec3 deepen(vec3 c, float level, vec3 w) {
   float fade = saturate(1.0 - level);
   if (uDeepen <= 0.0 || fade <= 0.0) return c;
   float m = maxComponent(c);
   if (m <= 1e-6) return c;
-  return m * pow(c / m, vec3(1.0 + uDeepen * fade));
+  return m * pow(c / m, max(vec3(0.05), 1.0 + uDeepen * fade * w));
 }
+
+vec3 deepen(vec3 c, float level) { return deepen(c, level, vec3(1.0)); }
 
 vec3 toMix(vec3 c) { return uInk > 0.0 ? pow(max(c, vec3(0.0)), vec3(1.0 / (1.0 + uInk))) : c; }
 
@@ -351,7 +358,7 @@ vec3 scene(float x, float v, vec2 p) {
     }
     int mode = int(look.z + 0.5);
     float a = mode == 2 || mode == 3 ? shape * cover : min(1.0, shape * cover * look.x);
-    vec3 emit = toMix(deepen(uBandColor[i], light * uIntensity) * light);
+    vec3 emit = toMix(deepen(uBandColor[i], light * uIntensity, uBandDrift[i]) * light);
     if (mode == 3) {
       // Light bands are the sky's own light too, so they give way to a glow in the same way.
       emit *= giveWay;

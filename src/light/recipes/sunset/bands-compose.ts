@@ -2,7 +2,7 @@ import { linearToOklch } from '../../color/oklab'
 import { PACKS, type ColorPack } from '../../color/packs'
 import { hexToLinear } from '../../color/srgb'
 import type { LensSettings, OutputSettings, ParamValue } from '../../scene'
-import { closeHues, isLightColor, isWarm, needsBridge } from './bands-light'
+import { closeHues, dimDrift, isLightColor, isWarm, needsBridge } from './bands-light'
 import { BAND_MAX, bandKey, BUMP_MAX, LIGHT_MAX, LIGHT_SHADE, lightKey, MODE_ADD, MODE_COVER, MODE_LIGHT, PATCH_MAX, patchKey } from './bands-params'
 import { edgeAt, edgeSeed, type Bump, type EdgeShape } from './bands-shape'
 import { placeHorizon } from './horizon'
@@ -86,6 +86,8 @@ interface Band {
   vary: number
   /** Share of the band's light that gathers around the light's column (0: even across the frame). */
   sun: number
+  /** How fast red, green and blue deepen as the band's light dims. */
+  drift: [number, number, number]
   /** Thickness floor in lens radii, at every point. */
   floor: number
 }
@@ -179,6 +181,8 @@ interface Scene {
   skyFall: number
   /** Extra sky light at the light's column, as a share of the sky's own. */
   skyLift: number
+  /** The whole scene's light, below 1 at the low end of Intensity. */
+  dim: number
 }
 
 /** A color of the stack: its hex and the share of nominal light it gets (a deep band is the same color under less light). */
@@ -407,6 +411,7 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
       bridge: bridge ? 1 : 0,
       vary: 1,
       sun: 0,
+      drift: dimDrift(hexToLinear(e.hex)),
       floor: darker ? 3.2 : 2,
     })
     under.push(e.under)
@@ -459,20 +464,20 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     b.edge = { ...b.edge, base: edgeTop, tilt: b.edge.tilt * s, bumps: b.edge.bumps.map(([bx, bw, sh]) => [bx, bw, sh * s] as Bump), wave: b.edge.wave * s }
   })
 
-  // Light: the image's light rises most with Intensity; deep bands are a color under less light; a cool band next
-  // to one of similar lightness gets less light, so neighbours contrast. A warm color dimmed reads olive, khaki
-  // or brown: below the middle of Intensity it keeps its light, and so does a dark band next to it, whose seam
-  // with it the lens would widen; the other bands and the upper sky dim instead. Above the middle the extra light
-  // gathers around the light's column, so white shows only near the light, never as a flat band across the frame.
-  // Next to a dark band, where the lens dims a warm color further, its light changes half as much.
+  // Light: the image's light rises most with Intensity, and above the middle the extra light gathers around the
+  // light's column, so white shows only near the light, never as a flat band across the frame. Below the middle
+  // the whole scene dims (`dim`), warm bands half as much in stops (much dimmer, and mixed with their neighbours
+  // through the lens, they read khaki and mauve), and each band's color deepens as it dims: warm ones toward amber
+  // or deep red, a lime toward deep green (`drift`). Next to a dark band, where the lens dims a warm color
+  // further, its light changes half as much.
+  const dim = Math.min(1, level) ** 1.6
   const darkAt = (j: number) => j >= 0 && j < bands.length && lightness(bands[j].color) * Math.cbrt(under[j]) < 0.45
   const warmAt = (j: number) => j >= 0 && j < bands.length && warmHex(bands[j].color)
   bands.forEach((b, i) => {
     const isLight = b.color === light && under[i] === 1
     const warmLight = warmAt(i)
-    const holds = warmLight || (darkAt(i) && (warmAt(i - 1) || warmAt(i + 1)))
     const lift = level >= 1 ? level ** (isLight ? 1.6 : 0.8) : 1
-    b.light = baseLight(list, i + 1) * (level >= 1 ? lift : level ** (holds ? 0 : 0.8)) * iceCap(b.color, level)
+    b.light = baseLight(list, i + 1) * lift * (warmLight ? dim ** -0.5 : 1) * iceCap(b.color, level)
     b.sun = 1 - 1 / lift
     if (warmLight && (darkAt(i - 1) || darkAt(i + 1))) b.vary = 0.5
   })
@@ -502,7 +507,7 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   const lightVary = rnd.between(0.1, 0.17)
   // The light's column: where Intensity above the middle gathers its extra light.
   const sun: [number, number] = [rnd.between(0.2, 0.8), rnd.between(0.22, 0.35)]
-  return { sky, bands, lights: lightTerms, patches, sun, lightVary, skyFall: zenith + 4.5 * Math.max(0, 1 - level), skyLift: 1.2 * Math.max(0, level - 1) }
+  return { sky, bands, lights: lightTerms, patches, sun, lightVary, skyFall: zenith + 3 * Math.max(0, 1 - level), skyLift: 1.2 * Math.max(0, level - 1), dim }
 }
 
 /** Ice is close to white: below white at the default Intensity. */
@@ -537,6 +542,7 @@ function writeScene(scene: Scene, R: number): BandsComposition {
     params[key('BumpCover')] = pad([], 0)
     params[key('BumpLight')] = pad([], 0)
     params[key('Bridge')] = b.bridge
+    params[key('Drift')] = b.drift
   })
   while (colors.length < 1 + BAND_MAX) colors.push(scene.sky)
   scene.patches.slice(0, PATCH_MAX).forEach((patch, j) => {
@@ -556,7 +562,7 @@ function writeScene(scene: Scene, R: number): BandsComposition {
   params.bands = Math.min(scene.bands.length, BAND_MAX)
   params.patches = Math.min(scene.patches.length, PATCH_MAX)
   params.lights = Math.min(scene.lights.length, LIGHT_MAX)
-  params.intensity = 1
+  params.intensity = scene.dim
   params.lens = R
   params.sun = scene.sun
   params.deepen = 0.8

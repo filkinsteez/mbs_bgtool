@@ -31,6 +31,23 @@ export function isLightColor(color: Rgb): boolean {
 }
 
 /**
+ * How fast red, green and blue deepen as a band's light dims (the `Drift` param). A dim warm light drifts toward
+ * amber, a lime toward a deep green like Forest's, never olive, mustard or brown: a yellow loses green faster, a
+ * pale warm color like Tan loses green and blue, a lime loses red fast while its blue holds, and Orange-red
+ * deepens alike in all three, toward deep red. Cool, grey and dark colors don't deepen, so they keep their hue
+ * (a deepened Cyan turns Meta Blue).
+ */
+export function dimDrift(color: Rgb): [number, number, number] {
+  const [L, C, h] = linearToOklch(color)
+  if (L <= 0.6 || C <= 0.04) return [0, 0, 0]
+  if (h > 110 && h <= 140) return [5, 1, -0.3]
+  if (h > 75 && h <= 110 && C >= 0.12) return [1, 2.5, 1]
+  if (h > 40 && h <= 110 && C < 0.12) return [1, 3.5, 3]
+  if (h <= 40 || h >= 330) return [1, 1, 1]
+  return [0, 0, 0]
+}
+
+/**
  * Whether light of one color can spill into the other without making a color
  * outside the pack: hues within 50 degrees (Meta Blue and Cyan, Steel and
  * Slate), or one or both near grey or white. Tan or Lime light on Forest is
