@@ -343,7 +343,7 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
       vignette: round4(lerp(0.1, 0.18, random())),
     },
     lens: { bloom: round4(soft(0.04, 0.07)), bloomLevels: [1, 0.6, 0.3, 0.15, 0.1, 0.05, 0, 0], halation: 0 },
-    output: { grain: 0 },
+    output: { grain: 0, toe: light.toe },
   }
 }
 

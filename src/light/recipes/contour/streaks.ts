@@ -245,8 +245,15 @@ vec3 combine(vec2 uv, vec2 p, vec3 line, vec3 cached) {
 }
 `
 
-/** Sigma of the scatter pass's blur of the cached sky: it sets the cache's size (about 330 px on the short side). */
+/** Sigma of the scatter pass's blur of the cached sky, in short-side units. */
 const SKY_CACHE_BLUR = 0.012
+
+/**
+ * Short side of the cached sky in px: the size that blur gave before sources had their own
+ * size, with one sample per texel, so the picture is the same and a 1080p frame takes about
+ * 5 ms instead of 7.5.
+ */
+const SKY_CACHE_SIZE = 334
 
 /** Luminance one unit of scattered light should have, whatever the pack's haze color. */
 const HAZE_LUMINANCE = 0.12
@@ -324,7 +331,7 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
       vignette: round4(lerp(0.08, 0.15, random())),
     },
     lens: { bloom: round4(soft(0.03, 0.06)), bloomLevels: [1, 0.5, 0.25, 0.1, 0, 0, 0, 0], halation: 0 },
-    output: { grain: 0 },
+    output: { grain: 0, toe: light.toe },
   }
 }
 
@@ -382,7 +389,7 @@ export const contourStreaks: RecipeDefinition = {
     uPaleTarget: paleTarget(ctx.color('light')),
     uLook: [ctx.num('base'), ctx.num('vignette')],
   }),
-  scatter: [{ source: 'aux', radius: () => SKY_CACHE_BLUR }],
+  scatter: [{ source: 'aux', radius: () => SKY_CACHE_BLUR, size: () => SKY_CACHE_SIZE }],
   lens: { bloom: 0.04, bloomLevels: [1, 0.5, 0.25, 0.1, 0, 0, 0, 0], halation: 0 },
   fromPack: (pack: ColorPack) => {
     const { light, haze, base } = contourLights(pack)[0]

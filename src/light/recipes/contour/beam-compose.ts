@@ -60,7 +60,17 @@ export interface ContourLight {
   base: string
   /** Level of the base color (dim room light); 0 with black. */
   baseLevel: number
+  /** Share of seeds that pick this light. */
+  weight: number
+  /** Paper toe for warm lights, so their dim light reads amber, red or green instead of olive or brown. */
+  toe: number
 }
+
+/**
+ * Paper toe for the warm lights (Yellow, Orange-red, Lime, Tan): dim Orange-red stays red
+ * instead of brown and dim Lime green instead of olive. Blue, Cyan and Ice lights keep 0.
+ */
+const WARM_TOE = 1
 
 function hexByName(pack: ColorPack, name: string): string {
   const color = pack.colors.find((c) => c.name === name)
@@ -69,30 +79,39 @@ function hexByName(pack: ColorPack, name: string): string {
 }
 
 /**
- * The lights a pack offers, in the order a seed is most likely to pick them.
- * Each keeps to one hue family. Dark pack colors (Forest, Plum, Slate,
- * Near-black) only appear as bases, never as light.
+ * The lights a pack offers, the first the one the look starts from. Each keeps
+ * to one hue family, and its light and haze are the color that shows as the
+ * area of light. Dark pack colors (Forest, Plum, Slate, Near-black) only appear
+ * as bases, never as light. Weights add up to 1.
  */
 export function contourLights(pack: ColorPack): ContourLight[] {
   const blue = pack.colors[0].hex
   switch (pack.id) {
-    case 'bold':
+    case 'bold': {
+      const cyan = hexByName(pack, 'Cyan')
+      const yellow = hexByName(pack, 'Yellow')
+      const orange = hexByName(pack, 'Orange-red')
       return [
-        { light: hexByName(pack, 'Cyan'), haze: blue, base: blue, baseLevel: 0.025 },
-        { light: blue, haze: blue, base: '#000000', baseLevel: 0 },
-        { light: hexByName(pack, 'Yellow'), haze: hexByName(pack, 'Orange-red'), base: '#000000', baseLevel: 0 },
+        { light: cyan, haze: cyan, base: blue, baseLevel: 0.05, weight: 0.3, toe: 0 },
+        { light: blue, haze: blue, base: '#000000', baseLevel: 0, weight: 0.3, toe: 0 },
+        { light: yellow, haze: yellow, base: '#000000', baseLevel: 0, weight: 0.2, toe: WARM_TOE },
+        { light: orange, haze: orange, base: '#000000', baseLevel: 0, weight: 0.2, toe: WARM_TOE },
       ]
-    case 'elemental':
+    }
+    case 'elemental': {
+      const lime = hexByName(pack, 'Lime')
+      const tan = hexByName(pack, 'Tan')
       return [
-        { light: blue, haze: blue, base: hexByName(pack, 'Forest'), baseLevel: 0.15 },
-        { light: hexByName(pack, 'Lime'), haze: hexByName(pack, 'Lime'), base: hexByName(pack, 'Forest'), baseLevel: 0.12 },
-        { light: hexByName(pack, 'Tan'), haze: hexByName(pack, 'Tan'), base: hexByName(pack, 'Plum'), baseLevel: 0.12 },
+        { light: blue, haze: blue, base: hexByName(pack, 'Forest'), baseLevel: 0.15, weight: 0.4, toe: 0 },
+        { light: lime, haze: lime, base: hexByName(pack, 'Forest'), baseLevel: 0.12, weight: 0.3, toe: WARM_TOE },
+        { light: tan, haze: tan, base: hexByName(pack, 'Plum'), baseLevel: 0.12, weight: 0.3, toe: WARM_TOE },
       ]
+    }
     case 'atmospheric':
       return [
-        { light: hexByName(pack, 'Ice'), haze: hexByName(pack, 'Steel'), base: hexByName(pack, 'Near-black'), baseLevel: 0.2 },
-        { light: hexByName(pack, 'Ice'), haze: blue, base: hexByName(pack, 'Near-black'), baseLevel: 0.18 },
-        { light: blue, haze: blue, base: hexByName(pack, 'Slate'), baseLevel: 0.1 },
+        { light: hexByName(pack, 'Ice'), haze: hexByName(pack, 'Steel'), base: hexByName(pack, 'Near-black'), baseLevel: 0.2, weight: 0.5, toe: 0 },
+        { light: hexByName(pack, 'Ice'), haze: blue, base: hexByName(pack, 'Near-black'), baseLevel: 0.18, weight: 0.3, toe: 0 },
+        { light: blue, haze: blue, base: hexByName(pack, 'Slate'), baseLevel: 0.1, weight: 0.2, toe: 0 },
       ]
     default: {
       const unknown: never = pack.id
@@ -101,11 +120,13 @@ export function contourLights(pack: ColorPack): ContourLight[] {
   }
 }
 
-/** Picks a light: the first one most of the time, the others less often. */
+/** Picks a light by the lights' weights, with one draw from the seed. */
 export function pickContourLight(pack: ColorPack, random: () => number): ContourLight {
   const lights = contourLights(pack)
-  const u = random()
-  if (u < 0.5) return lights[0]
-  if (u < 0.8) return lights[1]
-  return lights[2]
+  let u = random()
+  for (const light of lights) {
+    if (u < light.weight) return light
+    u -= light.weight
+  }
+  return lights[lights.length - 1]
 }
