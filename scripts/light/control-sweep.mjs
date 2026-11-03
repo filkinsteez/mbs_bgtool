@@ -10,7 +10,6 @@
 //   [--ratio 4] [--floor 0.003] [--peak-floor 0.02] [--frames 0:1:0.1] [--no-strips] [--strip-all]
 //   [--tool-check http://localhost:3000]
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
 import { copyFile, cp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -133,26 +132,21 @@ async function runInCopy() {
   const rev = typeof args.rev === 'string' ? args.rev : null
   const sha = rev ? execFileSync('git', ['rev-parse', '--short', rev], { cwd: ROOT, encoding: 'utf8' }).trim() : null
   const patch = typeof args.patch === 'string' ? path.resolve(ROOT, args.patch) : null
-  // A plain commit copy is kept for the next run; a working-tree or patched copy is made fresh and removed.
-  const keep = rev && !patch
-  const dir = path.join(os.tmpdir(), keep ? `control-sweep-${sha}` : `control-sweep-${rev ? sha : 'tree'}-${process.pid}`)
-  const ready = path.join(dir, '.ready')
-  if (!keep || !existsSync(ready)) {
-    await rm(dir, { recursive: true, force: true })
-    await mkdir(dir, { recursive: true })
-    const paths = ['src', 'scripts', 'package.json', 'tsconfig.json']
-    if (rev) {
-      const tar = path.join(dir, 'code.tar')
-      execFileSync('git', ['archive', '--format=tar', '-o', tar, sha, ...paths], { cwd: ROOT })
-      execFileSync('tar', ['-xf', tar, '-C', dir])
-      await rm(tar)
-    } else {
-      for (const item of paths) await cp(path.join(ROOT, item), path.join(dir, item), { recursive: true })
-    }
-    if (patch) execFileSync('git', ['apply', patch], { cwd: dir })
-    await symlink(path.join(ROOT, 'node_modules'), path.join(dir, 'node_modules'))
-    await writeFile(ready, '')
+  // Every run makes its own copy and removes it at the end: other agents may sweep the same commit at the same time.
+  const dir = path.join(os.tmpdir(), `control-sweep-${rev ? sha : 'tree'}-${process.pid}`)
+  await rm(dir, { recursive: true, force: true })
+  await mkdir(dir, { recursive: true })
+  const paths = ['src', 'scripts', 'package.json', 'tsconfig.json']
+  if (rev) {
+    const tar = path.join(dir, 'code.tar')
+    execFileSync('git', ['archive', '--format=tar', '-o', tar, sha, ...paths], { cwd: ROOT })
+    execFileSync('tar', ['-xf', tar, '-C', dir])
+    await rm(tar)
+  } else {
+    for (const item of paths) await cp(path.join(ROOT, item), path.join(dir, item), { recursive: true })
   }
+  if (patch) execFileSync('git', ['apply', patch], { cwd: dir })
+  await symlink(path.join(ROOT, 'node_modules'), path.join(dir, 'node_modules'))
   // The copy runs this version of the script, whatever version the commit has.
   const script = path.join(dir, 'scripts/light/control-sweep.mjs')
   await copyFile(fileURLToPath(import.meta.url), script)
@@ -170,13 +164,16 @@ async function runInCopy() {
   const runLabel = typeof args.label === 'string' ? args.label : source
   const out = path.resolve(ROOT, typeof args.out === 'string' ? args.out : defaultOut())
   console.log(`Running on a copy of ${source} in ${dir}`)
-  const result = spawnSync(process.execPath, [script, ...forward, '--out', out, '--label', runLabel], {
-    cwd: dir,
-    stdio: 'inherit',
-    env: { ...process.env, CONTROL_SWEEP_REPO: ROOT },
-  })
-  if (!keep) await rm(dir, { recursive: true, force: true })
-  return result.status ?? 1
+  try {
+    const result = spawnSync(process.execPath, [script, ...forward, '--out', out, '--label', runLabel], {
+      cwd: dir,
+      stdio: 'inherit',
+      env: { ...process.env, CONTROL_SWEEP_REPO: ROOT },
+    })
+    return result.status ?? 1
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 }
 
 function median(numbers) {
