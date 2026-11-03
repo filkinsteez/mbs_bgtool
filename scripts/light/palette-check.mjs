@@ -32,7 +32,12 @@ const T = {
   litOutside: 0.2, // Contour: fail when this share of the lit area (L 0.35 and up) is outside the pack
   drift: 0.25, // Contour, own renders: fail when this share of the lit area is a pack color the scene does not light with
   lightL: 0.5, // Contour: pack colors at least this light (Oklab L) are the light colors a pack offers
+  lensEdge: 0.165, // new rule: a lens-blurred edge between two pack colors may be this share of the short side wide
+  // (the full blur of the disc lens, 2 x R with R = 0.0825 at Softness 0.5; R runs 0.045 to 0.12 with Softness)
+  mixTolerance: 0.03, // new rule: Oklab distance from the linear-light mix of two pack colors that still counts as it
 }
+// Hues that are neither neighbour, so a lens edge never excuses them (SHARED.md palette rules).
+const THIRD_HUES = new Set(['pink', 'salmon', 'mauve', 'lavender', 'purple', 'magenta', 'mauve-grey'])
 
 // Linear-light mixes that stay clean, measured in docs/light/research/perception-additive-light.md section 5.
 // Every other pair goes grey, invents a hue (magenta, mint) or turns olive, khaki or brown, so its mix counts as
@@ -59,6 +64,10 @@ const fromDir = typeof args.from === 'string' ? path.resolve(args.from) : null
 const dev = Boolean(args.dev)
 const devUrl = typeof args.url === 'string' ? args.url : 'http://localhost:3000'
 const maps = Boolean(args.maps)
+// old: every off-pack area thicker than a thin bridge counts; new (default, 2026-11-03): lens edges between two pack
+// colors count as edges up to the lens's own width.
+const rule = args.rule === 'old' ? 'old' : 'new'
+if (typeof args['lens-edge'] === 'string') T.lensEdge = Number(args['lens-edge'])
 const startedAt = new Date()
 const hhmm = startedAt.toTimeString().slice(0, 5)
 const sourceLabel =
@@ -206,7 +215,7 @@ try {
 
   // Plain names for colors outside the pack, from Oklab lightness, chroma and hue.
   function outsideName(L, C, h) {
-    if (C < 0.03) return h > 20 && h < 110 && C >= 0.015 ? 'grey-brown' : 'grey'
+    if (C < 0.03) return h > 20 && h < 110 && C >= 0.015 ? 'grey-brown' : C >= 0.012 && (h >= 290 || h < 20) ? 'mauve-grey' : 'grey'
     if (h < 20 || h >= 345) return L >= 0.7 ? 'pink' : L < 0.45 ? 'maroon' : 'red'
     if (h < 50) return L >= 0.7 ? 'salmon' : L < 0.55 ? (C < 0.08 ? 'grey-brown' : 'brick') : 'orange'
     if (h < 75) return L >= 0.78 ? 'peach' : L < 0.6 ? (C < 0.06 ? 'grey-brown' : 'brown') : 'ochre'
@@ -224,7 +233,60 @@ try {
   const BUCKET_WHITE = -3
   const BUCKET_OUT = -4
   const BUCKET_PALE = -5
-  async function analyse(file, packId, sceneHexes, mapFile) {
+  const BUCKET_EDGE = -6 // new rule: on the linear-light mix of two pack colors in the frame (a lens edge)
+  // Is this linear color a mix of pack colors i and j, a * ci + b * cj with a, b >= 0, through the tone curve?
+  function onMix(k, pairs, lin, lab) {
+    for (const [i, j] of pairs) {
+      const ci = k.colors[i].lin
+      const cj = k.colors[j].lin
+      const ii = ci[0] * ci[0] + ci[1] * ci[1] + ci[2] * ci[2]
+      const jj = cj[0] * cj[0] + cj[1] * cj[1] + cj[2] * cj[2]
+      const ij = ci[0] * cj[0] + ci[1] * cj[1] + ci[2] * cj[2]
+      const pi = lin[0] * ci[0] + lin[1] * ci[1] + lin[2] * ci[2]
+      const pj = lin[0] * cj[0] + lin[1] * cj[1] + lin[2] * cj[2]
+      const det = ii * jj - ij * ij
+      if (det <= 1e-12) continue
+      let a = (pi * jj - pj * ij) / det
+      let b = (pj * ii - pi * ij) / det
+      if (a < 0) [a, b] = [0, Math.max(0, pj / jj)]
+      if (b < 0) [a, b] = [Math.max(0, pi / ii), 0]
+      if (a <= 0 || b <= 0) continue
+      const mix = linearToOklab(toneCurve([a * ci[0] + b * cj[0], a * ci[1] + b * cj[1], a * ci[2] + b * cj[2]]))
+      if (Math.hypot(mix[0] - lab[0], mix[1] - lab[1], mix[2] - lab[2]) <= T.mixTolerance) return true
+    }
+    return false
+  }
+  // Pixels that survive an opening with a disc of radius r: the parts of the area thicker than 2r.
+  function opening(isIn, W, H, r) {
+    const n = W * H
+    const offsets = []
+    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (dx * dx + dy * dy <= r * r) offsets.push([dx, dy])
+    const eroded = new Uint8Array(n)
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        let all = isIn(y * W + x)
+        for (let o = 0; all && o < offsets.length; o++) {
+          const xx = x + offsets[o][0]
+          const yy = y + offsets[o][1]
+          if (xx >= 0 && xx < W && yy >= 0 && yy < H && !isIn(yy * W + xx)) all = false
+        }
+        eroded[y * W + x] = all ? 1 : 0
+      }
+    }
+    const opened = new Uint8Array(n)
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (!eroded[y * W + x]) continue
+        for (const [dx, dy] of offsets) {
+          const xx = x + dx
+          const yy = y + dy
+          if (xx >= 0 && xx < W && yy >= 0 && yy < H && isIn(yy * W + xx)) opened[yy * W + xx] = 1
+        }
+      }
+    }
+    return opened
+  }
+  async function analyse(file, packId, sceneHexes, mapFile, contour) {
     const k = classifiers[packId]
     const { data, info } = await sharp(file).resize(320, 320, { fit: 'inside' }).removeAlpha().raw().toBuffer({ resolveWithObject: true })
     const W = info.width
@@ -235,13 +297,17 @@ try {
     const Ls = new Float32Array(n)
     const shares = new Float64Array(k.colors.length)
     const own = new Float64Array(k.colors.length) // at or below the color's own nominal brightness, not overexposed
+    const sat = new Float64Array(k.colors.length) // saturated (Oklab chroma 0.12 or more)
+    const near = new Float64Array(k.colors.length) // at 60% of the color's nominal lightness or more: an area of that color, not a dim base
     const bridges = new Float64Array(k.pairs.length)
     const outside = {}
     let dark = 0
     let white = 0
     let pale = 0
+    const labs = new Float32Array(n * 3)
     for (let p = 0; p < n; p++) {
       const lab = linearToOklab([SRGB_TO_LINEAR[data[3 * p]], SRGB_TO_LINEAR[data[3 * p + 1]], SRGB_TO_LINEAR[data[3 * p + 2]]])
+      labs.set(lab, 3 * p)
       const [L, C, h] = lch(lab)
       Ls[p] = L
       if (L < T.dark) {
@@ -269,6 +335,8 @@ try {
         bucket[p] = fam
         shares[fam]++
         if (L <= k.colors[fam].path.L0) own[fam]++
+        if (C >= 0.12) sat[fam]++
+        if (L >= 0.6 * k.colors[fam].path.L0) near[fam]++
       } else if (bridge >= 0) {
         bucket[p] = 100 + bridge
         bridges[bridge]++
@@ -282,32 +350,43 @@ try {
         outside[name] = (outside[name] ?? 0) + 1
       }
     }
-    // Wide outside areas: what survives an opening with a disk of radius wideRadius x short side.
-    const r = Math.max(2, Math.round(T.wideRadius * Math.min(W, H)))
-    const offsets = []
-    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (dx * dx + dy * dy <= r * r) offsets.push([dx, dy])
-    const isOut = (p) => bucket[p] === BUCKET_OUT
-    const eroded = new Uint8Array(n)
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        let all = isOut(y * W + x)
-        for (let o = 0; all && o < offsets.length; o++) {
-          const xx = x + offsets[o][0]
-          const yy = y + offsets[o][1]
-          if (xx >= 0 && xx < W && yy >= 0 && yy < H && !isOut(yy * W + xx)) all = false
+    // New rule: an off-pack pixel on the linear-light mix of two pack colors in the frame is a lens edge, unless its
+    // hue is a third hue (pink, mauve, lavender and the like), which is neither neighbour. Both colors must show as
+    // areas near their own brightness: a warm light's tail over a dim base is not an edge between two colors (C-025).
+    let edge = 0
+    if (rule === 'new') {
+      // In Contour the dark base is not a lit area: a light's falloff over it is its tail, judged by C-025.
+      const baseCount = new Float64Array(k.colors.length)
+      for (let p = 0; p < n; p++) if (bucket[p] >= 0 && bucket[p] < 100 && Ls[p] < 0.35) baseCount[bucket[p]]++
+      const base = contour ? baseCount.indexOf(Math.max(...baseCount)) : -1
+      const inFrame = k.colors.map((c, i) => i).filter((i) => near[i] >= 0.01 * n && i !== base)
+      const pairs = []
+      for (let a = 0; a < inFrame.length; a++) for (let b = a + 1; b < inFrame.length; b++) pairs.push([inFrame[a], inFrame[b]])
+      for (let p = 0; p < n; p++) {
+        if (bucket[p] !== BUCKET_OUT || THIRD_HUES.has(names[p])) continue
+        const lin = [SRGB_TO_LINEAR[data[3 * p]], SRGB_TO_LINEAR[data[3 * p + 1]], SRGB_TO_LINEAR[data[3 * p + 2]]]
+        if (onMix(k, pairs, lin, labs.subarray(3 * p, 3 * p + 3))) {
+          bucket[p] = BUCKET_EDGE
+          edge++
+          outside[names[p]]--
         }
-        eroded[y * W + x] = all ? 1 : 0
       }
+      for (const name of Object.keys(outside)) if (outside[name] <= 0) delete outside[name]
     }
-    const wide = new Uint8Array(n)
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        if (!eroded[y * W + x]) continue
-        for (const [dx, dy] of offsets) {
-          const xx = x + dx
-          const yy = y + dy
-          if (xx >= 0 && xx < W && yy >= 0 && yy < H && isOut(yy * W + xx)) wide[yy * W + xx] = 1
-        }
+    // Wide outside areas: what survives an opening with a disc of radius wideRadius x short side; a lens edge only
+    // counts where it is wider than the lens's own width.
+    const r = Math.max(2, Math.round(T.wideRadius * Math.min(W, H)))
+    const isOut = (p) => bucket[p] === BUCKET_OUT
+    const wide = opening(isOut, W, H, r)
+    if (rule === 'new') {
+      // A mix area wider than the lens's own width is an off-pack area again, for every check below.
+      const wideEdge = opening((p) => bucket[p] === BUCKET_EDGE, W, H, Math.max(2, Math.round((T.lensEdge / 2) * Math.min(W, H))))
+      for (let p = 0; p < n; p++) {
+        if (!wideEdge[p]) continue
+        wide[p] = 1
+        bucket[p] = BUCKET_OUT
+        edge--
+        outside[names[p]] = (outside[names[p]] ?? 0) + 1
       }
     }
     let wideCount = 0
@@ -353,7 +432,7 @@ try {
       const colorRgb = k.colors.map((c) => hexRgb(c.hex))
       for (let p = 0; p < n; p++) {
         const b = bucket[p]
-        const rgb = b >= 100 ? [128, 128, 128] : b >= 0 ? colorRgb[b] : b === BUCKET_WHITE ? [255, 255, 255] : b === BUCKET_PALE ? [210, 210, 210] : b === BUCKET_DARK ? [0, 0, 0] : wide[p] ? [255, 0, 0] : [255, 150, 0]
+        const rgb = b >= 100 ? [128, 128, 128] : b >= 0 ? colorRgb[b] : b === BUCKET_WHITE ? [255, 255, 255] : b === BUCKET_PALE ? [210, 210, 210] : b === BUCKET_DARK ? [0, 0, 0] : wide[p] ? [255, 0, 0] : b === BUCKET_EDGE ? [60, 120, 120] : [255, 150, 0]
         px.set(rgb, 3 * p)
       }
       await sharp(px, { raw: { width: W, height: H, channels: 3 } }).png().toFile(mapFile)
@@ -394,6 +473,8 @@ try {
     let lit = 0
     let litOut = 0
     const litByColor = new Float64Array(k.colors.length)
+    // A drift into another color needs color: a near-grey (chroma under 0.05) belongs to no color family.
+    const litChromatic = new Float64Array(k.colors.length)
     const baseNames = {}
     const litNames = {}
     for (let p = 0; p < n; p++) {
@@ -410,7 +491,10 @@ try {
         if (isOut(p)) {
           litOut++
           litNames[names[p]] = (litNames[names[p]] ?? 0) + 1
-        } else if (bucket[p] >= 0 && bucket[p] < 100) litByColor[bucket[p]]++
+        } else if (bucket[p] >= 0 && bucket[p] < 100) {
+          litByColor[bucket[p]]++
+          if (Math.hypot(labs[3 * p + 1], labs[3 * p + 2]) >= 0.05) litChromatic[bucket[p]]++
+        }
       }
     }
     const frac = (v) => v / n
@@ -426,6 +510,8 @@ try {
       dark: frac(dark),
       white: frac(white),
       pale: frac(pale),
+      edge: frac(edge),
+      saturated: Object.fromEntries(k.colors.map((c, i) => [c.name, frac(sat[i])])),
       outside: top(outside),
       outsideShare: frac(Object.values(outside).reduce((s, v) => s + v, 0)),
       wideShare: frac(wideCount),
@@ -434,7 +520,13 @@ try {
       darkLine: frac(darkLine),
       darkLineNames: top(darkLineNames),
       base: { share: frac(base), outside: base ? baseOut / base : 0, names: top(baseNames, Math.max(1, base)) },
-      lit: { share: frac(lit), outside: lit ? litOut / lit : 0, names: top(litNames, Math.max(1, lit)), byColor: Object.fromEntries(k.colors.map((c, i) => [c.name, lit ? litByColor[i] / lit : 0])) },
+      lit: {
+        share: frac(lit),
+        outside: lit ? litOut / lit : 0,
+        names: top(litNames, Math.max(1, lit)),
+        byColor: Object.fromEntries(k.colors.map((c, i) => [c.name, lit ? litByColor[i] / lit : 0])),
+        chromatic: Object.fromEntries(k.colors.map((c, i) => [c.name, lit ? litChromatic[i] / lit : 0])),
+      },
       source: source === null ? null : k.colors[source].name,
       sceneColors: sceneHexes ? [...new Set(sceneHexes.map((h) => h.toUpperCase()))].filter((h) => h !== '#000000').map((h) => k.colors.find((c) => c.hex.toUpperCase() === h)?.name ?? h) : null,
     }
@@ -459,7 +551,8 @@ try {
     }
     if (warmGroup.length && warmGroup.reduce((s, name) => s + m.shares[name], 0) >= T.present) {
       const named = warmGroup.reduce((a, b) => (m.own[b] > m.own[a] ? b : a))
-      present.push(m.own[named] >= 0.01 ? named : 'pale warm light')
+      const brightest = warmGroup.reduce((a, b) => (m.saturated[b] > m.saturated[a] ? b : a))
+      present.push(m.own[named] >= 0.01 ? named : m.saturated[brightest] >= 0.02 ? `${brightest} (overexposed)` : 'pale warm light')
     }
     m.present = present
     if (m.largestPatch >= T.largestPatch || m.wideShare >= T.wideShare) {
@@ -474,7 +567,7 @@ try {
         const haze = share >= 0.2 ? `, ${pct(share)} is a ${mix} mix` : ''
         fails.push(`${present.length} pack color${present.length === 1 ? '' : 's'} (${present.join(', ') || 'none'}${haze})`)
       }
-      const warm = present.filter((name) => WARM[packId].includes(name) || name === 'pale warm light')
+      const warm = present.filter((name) => WARM[packId].includes(name) || name === 'pale warm light' || name.endsWith('(overexposed)'))
       if (WARM[packId].length && warm.length === 0) fails.push('no warm color')
       if (packId === 'bold' && WARM.bold.every((name) => m.own[name] >= T.present)) fails.push('two warm colors (Yellow and Orange-red)')
       if (packId === 'elemental' && warm.length > 1) notes.push('Lime and Tan together (open question 7)')
@@ -486,7 +579,7 @@ try {
         // Atmospheric's greys are one hue named by lightness, so a grey light's falloff is never a drift.
         const neutralNames = k.neutrals.map((i) => k.colors[i].name)
         const lightsWith = new Set(m.sceneColors.some((name) => neutralNames.includes(name)) ? [...m.sceneColors, ...neutralNames] : m.sceneColors)
-        const drifted = Object.entries(m.lit.byColor).filter(([name]) => !lightsWith.has(name))
+        const drifted = Object.entries(m.lit.chromatic).filter(([name]) => !lightsWith.has(name))
         const drift = drifted.reduce((s, [, v]) => s + v, 0)
         if (drift >= T.drift) {
           const into = drifted.sort((x, y) => y[1] - x[1])[0][0]
@@ -536,7 +629,7 @@ try {
   await fs.mkdir(path.join(outDir, 'renders'), { recursive: true })
   if (maps) await fs.mkdir(path.join(outDir, 'maps'), { recursive: true })
   const report = { source: sourceLabel, startedAt: startedAt.toISOString(), thresholds: T, looks: {} }
-  const summary = [`# Palette check: ${sourceLabel}`, '', `Started ${startedAt.toISOString()}. Thresholds in \`palette-check.mjs\` (T).`, '']
+  const summary = [`# Palette check: ${sourceLabel}`, '', `Started ${startedAt.toISOString()}. Rule: ${rule}${rule === 'new' ? `, lens edges up to ${T.lensEdge} of the short side` : ''}. Thresholds in \`palette-check.mjs\` (T).`, '']
   for (const look of looks) {
     const frames = frameList(look)
     for (const f of frames) {
@@ -556,7 +649,7 @@ try {
     }
     for (const f of frames) {
       if (f.missing) continue
-      f.m = await analyse(f.file, f.pack, f.sceneHexes ?? null, maps ? path.join(outDir, 'maps', `${f.id}.png`) : null)
+      f.m = await analyse(f.file, f.pack, f.sceneHexes ?? null, maps ? path.join(outDir, 'maps', `${f.id}.png`) : null, look.startsWith('contour.'))
       Object.assign(f, judge(look, f.pack, f.m))
     }
     // Contour: across seeds 1-8 at 16:9, does every light color the pack offers light at least one frame?
@@ -606,7 +699,7 @@ try {
     const height = 70 + PACK_ORDER.length * ROWH + 40
     const comp = [
       { input: textSvg([{ text: `${look}: palette check`, color: '#fff' }], width, 22, 16), left: 12, top: 8 },
-      { input: textSvg([sourceLabel, `Bar: each pack color's share in its hex, then clean mixes (grey), pale bridges (light grey), white, the dark base (black), and outside colors (red). A red frame fails. Fail: a wide outside area ${pct(T.largestPatch)}+ (or ${pct(T.wideShare)}+ in all)${look.startsWith('sunset.') ? `, under 3 pack colors, no Meta Blue, no warm color, two warm colors (Bold)` : `, base or light outside the pack, a pack light color never used across seeds`}.`], width, 34, 11, '#aaa'), left: 12, top: 30 },
+      { input: textSvg([sourceLabel, `Rule: ${rule}${rule === 'new' ? ` (lens edges up to ${T.lensEdge} of the short side)` : ''}. Bar: each pack color's share in its hex, then clean mixes (grey), lens edges (teal grey), pale bridges (light grey), white, the dark base (black), and outside colors (red). A red frame fails. Fail: a wide outside area ${pct(T.largestPatch)}+ (or ${pct(T.wideShare)}+ in all)${look.startsWith('sunset.') ? `, under 3 pack colors, no Meta Blue, no warm color, two warm colors (Bold)` : `, base or light outside the pack, a pack light color never used across seeds`}.`], width, 34, 11, '#aaa'), left: 12, top: 30 },
     ]
     for (const [r, pack] of PACK_ORDER.entries()) {
       const top = 70 + r * ROWH
@@ -643,6 +736,7 @@ try {
     const segs = []
     for (const c of k.colors) segs.push([m.shares[c.name], c.hex])
     segs.push([Object.values(m.bridges).reduce((s, v) => s + v, 0), '#808080'])
+    segs.push([m.edge ?? 0, '#3c7878'])
     segs.push([m.pale, '#d2d2d2'])
     segs.push([m.white, '#ffffff'])
     segs.push([m.dark, '#000000'])
