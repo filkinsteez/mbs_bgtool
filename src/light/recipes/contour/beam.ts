@@ -1,6 +1,6 @@
 import type { ColorPack } from '../../color/packs'
 import type { ComposeInput, Composition, RecipeContext, RecipeDefinition } from '../../scene'
-import { clipLuminanceOf, contourLights, frameHalf, geo, lerp, luminanceOf, paleTarget, pickContourLight, round4, seededRandom } from './beam-compose'
+import { clipLuminanceOf, contourLights, frameHalf, geo, hazeGainFor, lerp, luminanceOf, paleTarget, pickContourLight, round4, seededRandom, tailParam, tailUniform } from './beam-compose'
 
 /**
  * A beam of light from a source above the frame, seen through haze, landing
@@ -45,6 +45,9 @@ uniform vec4 uFloorLook;  // gloss, roughness, texture amount, texture cell
 uniform vec3 uPale;       // pale share, from, to (luminance)
 uniform float uPaleWhite; // how far the pale color goes from the light's color toward white
 uniform vec3 uPaleTarget; // the light's color on the camera's path to white, at unit luminance
+uniform vec2 uEdge;       // rounded stage edge width (beam half-widths), glow falloff over the floor (1: as above it)
+uniform vec4 uTail;       // dim haze color at unit luminance, luminance below which the haze drifts to it (0: off)
+uniform float uTailFall;  // how much faster haze below that luminance falls toward black (1: as it is)
 uniform vec3 uAmbient;    // room level, haze share, floor level
 uniform float uVignette;
 
@@ -170,7 +173,7 @@ vec3 radiance(vec2 uv, vec2 p) {
   // The stage's edge is rounded: right past it the floor curves away, so it hides the light
   // behind the edge, gets the beam's light and mirrors the haze over a short distance
   // instead of all at once.
-  float rounded = p.y > horizon ? smoothstep(-uPool.w, uPool.w + 0.18 * aScreen, p.y - edgeY) : 0.0;
+  float rounded = p.y > horizon ? smoothstep(-uPool.w, uPool.w + uEdge.x * aScreen, p.y - edgeY) : 0.0;
 
   float hazeHere = hazeDensity(p.y);
 
@@ -194,7 +197,8 @@ vec3 radiance(vec2 uv, vec2 p) {
   // past the stage edge and falls off below the pool as it does above it.
   float beamX = uWorld.y * F / zb;
   float core = 0.35 * aScreen;
-  float glow = poolGlow(vec2(abs(p.x - beamX), abs(contactY - p.y)), aScreen, core, hazeHere);
+  float below = p.y - contactY;
+  float glow = poolGlow(vec2(abs(p.x - beamX), below > 0.0 ? below * uEdge.y : -below), aScreen, core, hazeHere);
   scatter += uBeamLight.x * glow;
 
   float direct = 0.0;
@@ -253,7 +257,17 @@ vec3 radiance(vec2 uv, vec2 p) {
   float lum = scatter * lumHaze;
   float pale = saturate(uPale.x * smoothstep(uPale.y, uPale.z, lum + direct * lumLight));
   vec3 paleColor = mix(uLightColor / lumLight, uPaleTarget, uPaleWhite) * lumHaze;
-  vec3 scattered = scatter * mix(uHazeColor, paleColor, pale);
+  // Warm haze dimmer than uTail.w falls toward black faster and drifts toward its tail color
+  // (amber; deep green for Lime), so its faint light never spreads as olive, brick or
+  // grey-brown.
+  float tail = 0.0;
+  float fall = 1.0;
+  if (uTail.w > 0.0) {
+    tail = 1.0 - smoothstep(0.0, uTail.w, lum);
+    fall = lum < uTail.w ? pow(max(lum, 1e-6) / uTail.w, uTailFall - 1.0) : 1.0;
+  }
+  vec3 hazeTone = mix(uHazeColor, uTail.rgb * lumHaze, tail);
+  vec3 scattered = scatter * fall * mix(hazeTone, paleColor, pale);
   vec3 directColor = mix(uLightColor, uPaleTarget * lumLight, uPaleWhite * pale);
   vec3 ambient = uBaseColor * mix(uAmbient.x * (1.0 - uAmbient.y + uAmbient.y * hazeHere), uAmbient.z, onFloor);
   vec3 color = ambient + scattered + directColor * direct;
@@ -266,6 +280,15 @@ vec3 radiance(vec2 uv, vec2 p) {
 
 /** Luminance one unit of scattered light should have, whatever the pack's haze color. */
 const HAZE_LUMINANCE = 0.12
+
+/** Share of its clipping level one unit of a warm light's scattered light reaches. */
+const WARM_SHARE = 0.9
+
+/** Warm haze dimmer than this share of its clipping level drifts toward its tail color. */
+const TAIL_BELOW = 0.6
+
+/** How much faster that dim warm haze falls toward black. */
+const TAIL_FALL = 2.5
 
 /**
  * Stage edges at least this soft (short-side units) survive half-resolution radiance in a
@@ -290,8 +313,8 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
   const { intensity, softness, mood } = controls
   const { halfW, halfH } = frameHalf(aspect)
   const wide = aspect >= 1
-  const light = pickContourLight(pack, random)
-  const hazeGain = HAZE_LUMINANCE / Math.max(luminanceOf(light.haze), 0.01)
+  const light = pickContourLight(pack, seed, random)
+  const hazeGain = hazeGainFor(light, HAZE_LUMINANCE, WARM_SHARE)
   const soft = (lo: number, hi: number) => lerp(lo, hi, softness)
 
   const edgeAt = wide ? lerp(0.62, 0.72, random()) : lerp(0.64, 0.74, random())
@@ -300,13 +323,18 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
   const focal = lerp(1.2, 1.6, random())
   const width = lerp(0.15, 0.185, random())
   const offset = lerp(-0.1, 0.1, random())
-  const side = Math.min(0.85, Math.max(0.15, 0.5 + (mood - 0.5) * (wide ? 0.62 : 0.4) + offset))
+  // Light moves the beam across a range around the seed's own place that stays inside
+  // 0.15..0.85 of the frame, so it keeps moving up to both ends of the slider.
+  const center = 0.5 + offset
+  const reach = Math.min(wide ? 0.31 : 0.2, 0.85 - center, center - 0.15)
+  const side = center + (mood - 0.5) * 2 * reach
   const beamAt = (side - 0.5) * 2 * halfW
   const lean = random() < 0.5 ? -1 : 1
   const tilt = [lean * lerp(0, 0.05, random()), lerp(-0.04, 0.04, random())]
 
   const power = geo(intensity, 0.35, 0.75, 1.6) * hazeGain * lerp(0.9, 1.1, random())
-  const pool = lerp(6, 8.5, random()) * (luminanceOf(light.haze) / Math.max(luminanceOf(light.light), 0.01))
+  // Warm light already sits near nominal over the whole beam, so its pool is less hot.
+  const pool = lerp(6, 8.5, random()) * (luminanceOf(light.haze) / Math.max(luminanceOf(light.light), 0.01)) * (light.toe > 0 ? 0.5 : 1)
 
   return {
     colors: [light.light, light.haze, light.base],
@@ -339,6 +367,8 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
       // 1.3 times it, so light passing nominal keeps whitening at the same pace.
       pale: [round4(lerp(0.5, 0.7, random())), round4(0.4 * clipLuminanceOf(light.haze)), round4(1.3 * clipLuminanceOf(light.haze))],
       paleWhite: light.light === light.haze ? 0.5 : 0.2,
+      tail: tailParam(light, TAIL_BELOW),
+      tailFall: light.tail ? TAIL_FALL : 1,
       ambient: [light.baseLevel, 0, light.baseLevel],
       vignette: round4(lerp(0.1, 0.18, random())),
     },
@@ -392,11 +422,14 @@ export const contourBeam: RecipeDefinition = {
     { kind: 'vector', key: 'bounce', label: 'Bounce', min: 0, max: 4, step: 0.005, default: [1, 0.08, 2, 0.12] },
     { kind: 'vector', key: 'pool', label: 'Pool', min: 0, max: 10, step: 0.005, default: [1.5, 0.3, 1.6] },
     { kind: 'number', key: 'edgeSoftness', label: 'Edge softness', min: 0, max: 0.1, step: 0.0005, default: 0.01 },
+    { kind: 'vector', key: 'edgeLight', label: 'Light at the edge', min: 0, max: 6, step: 0.005, default: [0.18, 1] },
     { kind: 'vector', key: 'lanes', label: 'Floor lanes', min: 0, max: 4, step: 0.005, default: [0.6, 0.3] },
     { kind: 'vector', key: 'gloss', label: 'Gloss', min: 0, max: 4, step: 0.005, default: [1, 0.1] },
     { kind: 'vector', key: 'texture', label: 'Floor texture', min: 0, max: 0.3, step: 0.0005, default: [0.04, 0.004] },
     { kind: 'vector', key: 'pale', label: 'Pale', min: 0, max: 2, step: 0.005, default: [0, 0.1, 0.6] },
     { kind: 'number', key: 'paleWhite', label: 'Pale toward white', min: 0, max: 1, step: 0.005, default: 0 },
+    { kind: 'vector', key: 'tail', label: 'Dim haze color', min: 0, max: 4, step: 0.0005, default: [1, 1, 1, 0] },
+    { kind: 'number', key: 'tailFall', label: 'Dim haze falloff', min: 1, max: 4, step: 0.005, default: 1 },
     { kind: 'vector', key: 'ambient', label: 'Ambient', min: 0, max: 4, step: 0.005, default: [1, 0.3, 1] },
     { kind: 'number', key: 'vignette', label: 'Vignette', min: 0, max: 1, step: 0.005, default: 0.1 },
   ],
@@ -427,6 +460,9 @@ export const contourBeam: RecipeDefinition = {
       uPale: ctx.vec('pale'),
       uPaleWhite: ctx.num('paleWhite'),
       uPaleTarget: paleTarget(ctx.color('light')),
+      uEdge: ctx.vec('edgeLight'),
+      uTail: tailUniform(ctx.vec('tail')),
+      uTailFall: ctx.num('tailFall'),
       uAmbient: ctx.vec('ambient'),
       uVignette: ctx.num('vignette'),
     }

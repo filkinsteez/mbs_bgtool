@@ -1,6 +1,6 @@
 import type { ColorPack } from '../../color/packs'
 import type { ComposeInput, Composition, RecipeDefinition } from '../../scene'
-import { clipLuminanceOf, contourLights, frameHalf, geo, lerp, luminanceOf, paleTarget, pickContourLight, round4, seededRandom } from './beam-compose'
+import { clipLuminanceOf, contourLights, frameHalf, geo, hazeGainFor, lerp, luminanceOf, paleTarget, pickContourLight, round4, seededRandom, tailParam, tailUniform } from './beam-compose'
 
 /**
  * Shafts of light through gaps in a cloud layer, converging on a point on
@@ -44,6 +44,8 @@ uniform vec3 uFloorB;      // streaks, streak scale x, streak scale y
 uniform vec3 uPale;        // pale share, from, to (luminance)
 uniform float uPaleWhite;  // how far the pale color goes from the light's color toward white
 uniform vec3 uPaleTarget;  // the light's color on the camera's path to white, at unit luminance
+uniform vec4 uTail;        // dim haze color at unit luminance, luminance below which the haze drifts to it (0: off)
+uniform float uTailFall;   // how much faster haze below that luminance falls toward black (1: as it is)
 uniform vec2 uLook;        // base level, vignette
 
 const int SHADOW_TAPS = 20;
@@ -238,7 +240,18 @@ vec3 combine(vec2 uv, vec2 p, vec3 line, vec3 cached) {
   float lumLight = max(luminance(uLightColor), 1e-5);
   float pale = saturate(uPale.x * smoothstep(uPale.y, uPale.z, scatter * lumHaze));
   vec3 paleColor = mix(uLightColor / lumLight, uPaleTarget, uPaleWhite) * lumHaze;
-  vec3 color = uBaseColor * uLook.x + scatter * mix(uHazeColor, paleColor, pale);
+  // Warm haze dimmer than uTail.w falls toward black faster and drifts toward its tail color
+  // (amber; deep green for Lime), so its faint light never spreads as olive, brick or
+  // grey-brown.
+  float lum = scatter * lumHaze;
+  float tail = 0.0;
+  float fall = 1.0;
+  if (uTail.w > 0.0) {
+    tail = 1.0 - smoothstep(0.0, uTail.w, lum);
+    fall = lum < uTail.w ? pow(max(lum, 1e-6) / uTail.w, uTailFall - 1.0) : 1.0;
+  }
+  vec3 hazeTone = mix(uHazeColor, uTail.rgb * lumHaze, tail);
+  vec3 color = uBaseColor * uLook.x + scatter * fall * mix(hazeTone, paleColor, pale);
   vec2 half_ = 0.5 * uFrameAspect;
   float vig = 1.0 - uLook.y * dot(p, p) / dot(half_, half_);
   return color * max(vig, 0.0);
@@ -268,6 +281,21 @@ const LIGHT_GAIN = 4
 /** Smallest level of the sky past the lit side, as a share of the lit side's level. */
 const DARK_SHARE = 0.15
 
+/** Share of its clipping level one unit of a warm light's scattered light reaches. */
+const WARM_SHARE = 0.45
+
+/** Warm haze dimmer than this share of its clipping level drifts toward its tail color. */
+const TAIL_BELOW = 1.1
+
+/** How much faster that dim warm haze falls toward black. */
+const TAIL_FALL = 2.5
+
+/**
+ * The sky's ambient light over the beam's room level: the pack's dark color shows in the
+ * shadows between shafts, so a light shared by two packs still reads as its own pack.
+ */
+const BASE_GAIN = 4
+
 /**
  * Pack output. Light (the mood control) moves the point where the shafts meet along the
  * horizon. The seed picks the light, which side of the point is lit (the other side stays
@@ -281,18 +309,23 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
   const { intensity, softness, mood } = controls
   const { halfW, halfH } = frameHalf(aspect)
   const wide = aspect >= 1
-  const light = pickContourLight(pack, random)
-  const hazeGain = HAZE_LUMINANCE / Math.max(luminanceOf(light.haze), 0.01)
+  const light = pickContourLight(pack, seed, random)
+  const hazeGain = hazeGainFor(light, HAZE_LUMINANCE, WARM_SHARE)
   const soft = (lo: number, hi: number) => lerp(lo, hi, softness)
   const power = geo(intensity, 0.35, 0.75, 1.4) * hazeGain * LIGHT_GAIN
 
   const horizonAt = wide ? lerp(0.58, 0.74, random()) : lerp(0.62, 0.78, random())
   const cy = -halfH + 2 * halfH * horizonAt
-  const along = Math.min(0.88, Math.max(0.12, lerp(0.15, 0.85, mood) + lerp(-0.06, 0.06, random())))
+  const jitter = lerp(-0.06, 0.06, random())
+  // The seed picks the lit side. In three seeds of four Light moves the point from the lit
+  // side's frame edge to the middle, so the dark sky covers the wider part of the frame; in the
+  // rest it moves from the middle toward the far edge. More Light always lights more sky.
+  const pick = random()
+  const litLeft = pick < 0.5
+  const near = pick % 0.5 >= 0.125
+  const toward = near ? lerp(0.15, 0.5, mood) : lerp(0.5, 0.85, mood)
+  const along = Math.min(0.88, Math.max(0.12, (litLeft ? toward : 1 - toward) + jitter))
   const cx = (along - 0.5) * 2 * halfW
-  // Most seeds light the side toward the nearer frame edge, so the dark sky covers the
-  // wider part of the frame.
-  const litLeft = random() < 0.25 ? along >= 0.5 : along < 0.5
   const end = lerp(1.6, 2.4, random())
   const sky = litLeft ? [lerp(-3.3, -3.05, random()), -Math.PI + end] : [lerp(-0.1, 0.15, random()), -end]
   const glowSide = litLeft ? -1 : 1
@@ -327,7 +360,9 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
       // 2.3 times it, so light passing nominal keeps whitening at the same pace.
       pale: [0.8, round4(0.4 * clipLuminanceOf(light.haze)), round4(2.3 * clipLuminanceOf(light.haze))],
       paleWhite: light.light === light.haze ? 0.5 : 0.2,
-      base: light.baseLevel,
+      tail: tailParam(light, TAIL_BELOW),
+      tailFall: light.tail ? TAIL_FALL : 1,
+      base: round4(BASE_GAIN * light.baseLevel),
       vignette: round4(lerp(0.08, 0.15, random())),
     },
     lens: { bloom: round4(soft(0.03, 0.06)), bloomLevels: [1, 0.5, 0.25, 0.1, 0, 0, 0, 0], halation: 0 },
@@ -362,6 +397,8 @@ export const contourStreaks: RecipeDefinition = {
     { kind: 'vector', key: 'floorStreaks', label: 'Floor streaks', min: 0, max: 40, step: 0.005, default: [1, 3, 22] },
     { kind: 'vector', key: 'pale', label: 'Pale', min: 0, max: 4, step: 0.005, default: [0.6, 0.15, 0.8] },
     { kind: 'number', key: 'paleWhite', label: 'Pale toward white', min: 0, max: 1, step: 0.005, default: 0 },
+    { kind: 'vector', key: 'tail', label: 'Dim haze color', min: 0, max: 4, step: 0.0005, default: [1, 1, 1, 0] },
+    { kind: 'number', key: 'tailFall', label: 'Dim haze falloff', min: 1, max: 4, step: 0.005, default: 1 },
     { kind: 'number', key: 'base', label: 'Base', min: 0, max: 4, step: 0.005, default: 1 },
     { kind: 'number', key: 'vignette', label: 'Vignette', min: 0, max: 1, step: 0.005, default: 0.1 },
   ],
@@ -387,6 +424,8 @@ export const contourStreaks: RecipeDefinition = {
     uPale: ctx.vec('pale'),
     uPaleWhite: ctx.num('paleWhite'),
     uPaleTarget: paleTarget(ctx.color('light')),
+    uTail: tailUniform(ctx.vec('tail')),
+    uTailFall: ctx.num('tailFall'),
     uLook: [ctx.num('base'), ctx.num('vignette')],
   }),
   scatter: [{ source: 'aux', radius: () => SKY_CACHE_BLUR, size: () => SKY_CACHE_SIZE }],
