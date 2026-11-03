@@ -181,8 +181,8 @@ Risks: there is no list of roles yet. Preview speed at 2x on laptops. Export mem
 
 Deliverables, in this order. The owner asked on 2026-11-02 for grain, risograph and ASCII, kept simple, with the light staying the focus. The research is in [`research/filters.md`](research/filters.md) (f389655, sheets in `prototypes/filters-research/results/`).
 
-1. Grain, settled first: fine film grain at 1 to 2 percent, added at output size so it never scales with the image, stronger or weaker with brightness, doubling as dither. Off by default until settled. The engine's `grain.ts` already does this; it needs the strength slider in the tool.
-2. Riso: the same grain pass with its coarse riso-end settings at every strength, so strength 1 looks like the moodboard prints. No ink separation, dot screens or misregistration; at our export sizes riso dots are smaller than a pixel.
+1. Grain, settled first: fine film grain at 1 to 2 percent, added last at output size, stronger or weaker with brightness, doubling as dither. Off by default until settled. Grain size is a fraction of the short side (clumps about 1 px at 4K), because grain fixed to output pixels loses about two thirds of its strength when an export is shown smaller (`prototypes/grain-study/README.md`). The engine's `grain.ts` already does this; it needs the strength slider in the tool.
+2. Riso: the same grain pass with its coarse riso-end settings at every strength, so strength 1 looks like the moodboard prints. Left out: dot screens (they read as salt-and-pepper noise or camouflage blotches that bury the light), misregistration (invisible on soft gradients, chromatic aberration on thin rims) and separating the image into pack inks.
 3. ASCII: one character per cell, 64 rows on the short side, each pixel keeping its own color. A cell's bright part (the character in dark cells, the background in bright cells) and dim part are weighted so the cell's average light is unchanged. Characters are picked by density only, mixed between neighbours so rows of the same character don't form stripes over a vertical gradient. Strength sets contrast only. The 5×7 pixel font needs no asset. Contour's near-black base and the hottest cores stay free of characters.
 4. Pixel: dropped for now. Flat cells turn thin lines into rows of squares, and keeping each pixel's own color still reads as a grid. It can come back as a setting of the ASCII cell pass.
 
@@ -190,13 +190,13 @@ Defaults chosen by the coordinator (easy to reverse; the owner decides at the fi
 - Grain stops at fine film grain, and the coarse end belongs to Riso.
 - ASCII keeps the exact mean color, so text is dark over Sunset skies and light over Contour's dark base.
 - The filter and its strength go in the URL and the file name next to the seed.
-- Open for the owner when ASCII is built: whether ASCII is offered on Contour, given the brief's "not a science-fiction interface" rule.
+- Open for the owner when ASCII is built: whether ASCII is offered on Contour, given the brief's "not a science-fiction interface" rule, and how strong strength 1 is. At 1 in the research, the dim part keeps 30% of the light, the gaps between text lines read as horizontal stripes on flat bands, and small thumbnails come out about one just-noticeable difference darker.
 
 The owner sees: each filter at strength 0, 50 and 100 on each mood, plus 4K crops.
 
-Done when: the owner approves each filter; a filter changes the surface but not the color (blurred mean ΔE between filtered and unfiltered under about 0.01); grain looks the same size in pixels at every export size.
+Done when: the owner approves each filter; a filter changes the surface but not the color (blurred mean ΔE between filtered and unfiltered under about 0.01); grain looks the same at every export size when the images are shown at the same size.
 
-Risks: ASCII and Pixel can shift the average color or brightness. Grain can read as digital noise instead of film.
+Risks: ASCII can shift the average color or brightness, mostly in small thumbnails. Grain can read as digital noise instead of film.
 
 ## Phase 7: Warp Speed
 
