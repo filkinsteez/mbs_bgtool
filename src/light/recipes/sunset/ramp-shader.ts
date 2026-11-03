@@ -86,7 +86,7 @@ uniform float uWaterMirror;  // share of calm water's reflectance that a rough s
 uniform vec3 uGroundTop;     // land right under its outline
 uniform vec3 uGroundBottom;  // land at the bottom edge
 uniform vec2 uGroundHaze;    // share of the sky's light in far land, and the depth over which it fades
-uniform vec3 uLandLit;       // land's and the water's own light on their side toward the sun: extra light there, the width of that side, and how much land's relief changes its light
+uniform vec3 uLandLit;       // land's and the water's own light on their side toward the sun: extra light there, the width of that side, and how much land's relief or the water's wind patches change it
 
 uniform vec4 uLand;          // coverage, height at the center, slope, drop at the side edges
 uniform vec4 uLandWarp;      // amplitude, cycles per short side, phase, octaves
@@ -470,7 +470,10 @@ vec3 rampScene(vec2 p) {
         kind = 2;
         depth = p.y - line;
         float below = uWater.y * depth / 0.5;
-        r = waterFresnel(below);
+        // Wind lays patches of ripples on the water, which mirror less of the sky; they shrink
+        // toward the horizon.
+        float wind = hazeFbm(vec2(1.5 * p.x, 2.5 * log(depth + 0.04)), uSeed + 987);
+        r = clamp(waterFresnel(below) * (1.0 + uLandLit.z * wind), 0.0, 1.0);
         uint texel = uint(gl_FragCoord.x) * 0x9e3779b1u ^ uint(gl_FragCoord.y) * 0x85ebca6bu;
         float ripple = 2.0 * rampUnit(texel, uSeed + 977) - 1.0;
         float up = max(uWater.x * depth * (1.0 + uWater.z * ripple), 0.002);

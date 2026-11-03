@@ -235,7 +235,7 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, va
   switch (packId) {
     case 'bold': {
       const [cyan, yellow, orangeRed] = rest
-      const dark = { landTop: [metaBlue, 0.5] as Tone, landBottom: [metaBlue, 0.16] as Tone, water: [metaBlue, 0.3] as Tone }
+      const dark = { landTop: [metaBlue, 0.6] as Tone, landBottom: [metaBlue, 0.12] as Tone, water: [metaBlue, 0.3] as Tone }
       // Orange-red over a Cyan low sky: the two add up to a pale neutral, which keeps its bridge
       // at low light too. It lights every water and land frame: reflected in water or spilled
       // over land, Yellow turns khaki.
@@ -251,14 +251,14 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, va
     }
     case 'elemental': {
       const [lime, forest, tan, plum] = rest
-      const dark = { landTop: [plum, 1.7] as Tone, landBottom: [plum, 0.85] as Tone, water: [metaBlue, 0.3] as Tone }
+      const dark = { landTop: [plum, 1.7] as Tone, landBottom: [plum, 0.6] as Tone, water: [metaBlue, 0.3] as Tone }
       // Lime or Tan is the one light. Lime pales into Meta Blue through added light; it lights some
       // open skies and the Forest land, never water, where its dim reflection turns olive.
       const limeLight = { light: lime, coreColor: lime, glow: 1.0, path: [-0.2, 0, 0.35], hue: [-0.15, 0.1], bridge: 0.3, bridgeLift: 0.3, haze: 0.8, sideDeeper: 0, core: 1 } satisfies Partial<PackLook>
       // Open skies end in a dark dusk band in front of the glow, Forest under Lime and Plum under
       // Tan, so three pack colors show.
       const dusk = (tone: Tone) => (ground ? {} : { dusk: tone, downReach: 0.35, glowUp: 0.6 })
-      if (structure === 'land' && darkAlt) return { ...sky, ...dark, ...limeLight, landTop: [forest, 1.8], landBottom: [forest, 1.0], landHaze: 0.05, landLit: 0.35 }
+      if (structure === 'land' && darkAlt) return { ...sky, ...dark, ...limeLight, landTop: [forest, 1.8], landBottom: [forest, 0.7], landHaze: 0.05, landLit: 0.35 }
       if (!ground && pickLight < 0.4) return { ...sky, ...dark, ...limeLight, ...dusk([forest, 1.2]) }
       // Tan meets Meta Blue through pale cream; mixed, the two make lavender or grey. Under the glow
       // line the skylight fades out, so the glow's body is Tan itself and the bridge acts only where
@@ -266,7 +266,7 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, va
       // dark blue: seen through Plum, the mirrored Tan and cream turn mauve and grey, the blue violet.
       // Deepened, Tan turns brown, so it barely deepens toward the horizon or away from the sun.
       // Water has a far bank of Forest or Plum land on its horizon.
-      const bank = structure === 'water' ? { bank: 0.17, ...(pickLight < 0.5 ? { landTop: [forest, 1.8] as Tone, landBottom: [forest, 1.0] as Tone } : {}) } : {}
+      const bank = structure === 'water' ? { bank: 0.17, ...(pickLight < 0.5 ? { landTop: [forest, 1.8] as Tone, landBottom: [forest, 0.7] as Tone } : {}) } : {}
       return { ...sky, ...dark, ...bank, extinction: 3, glowUp: 0.5, glowRise: 0.4, horizonGain: 0.42, landHaze: 0.05, landLit: 0.25, light: tan, coreColor: tan, glow: 1.6, path: [0.1, 0.1, 0.4], hue: [-0.3, 0.1], bridge: 1.8, bridgeLift: 0.5, bridgeWarmth: 1, bridgeFloor: 0.1, haze: 0.8, sideDeeper: 0, waterDegrees: [1, 1.5], waterMirror: 1, ...dusk([plum, 1.0]) }
     }
     case 'atmospheric': {
@@ -702,7 +702,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     water: [1.25, lerp(look.waterDegrees[0], look.waterDegrees[1], ridgePick) * [0.6, 1.6, 1][variant], 0.12, 1.5],
     waterMirror: water ? look.waterMirror : 1,
     groundHaze: [look.landHaze, (land ? 0.1 : 0.05) * tall],
-    landLit: [ground ? look.landLit : 0, lerp(0.3, 0.5, widthPick) * frameWidth, land ? 0.35 : 0],
+    landLit: [ground ? look.landLit : 0, lerp(0.3, 0.5, widthPick) * frameWidth, land ? 0.6 : water ? 0.35 : 0],
     groundTopGain: look.landTop[1] * groundGain,
     groundBottomGain: look.landBottom[1] * groundGain,
     waterGain: look.water[1] * groundGain,
