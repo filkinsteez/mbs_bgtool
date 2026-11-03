@@ -1,12 +1,14 @@
 import type { ColorPack } from '../../color/packs'
 import type { ComposeInput, Composition, ParamSpec, ParamValue, RecipeContext, RecipeDefinition } from '../../scene'
 import {
+  blockPlan,
   falloffRadius,
   frameSize,
   geo,
   lerp,
   logoPartsShown,
   longestRun,
+  normalNear,
   pickBase,
   pickLight,
   pickWeighted,
@@ -18,16 +20,19 @@ import {
   toFrame,
   visiblePath,
   visibleRuns,
+  warmDrift,
   warmToe,
 } from './curveCompose'
 import {
   buildShape,
   curveLightGlsl,
   curveLightUniforms,
+  driftParams,
   farParams,
   farScatter,
   lightParams,
   nearParams,
+  readDrift,
   readFar,
   readLights,
   readNear,
@@ -40,7 +45,7 @@ import {
   type ShapeKind,
   type ShapeSettings,
 } from './curveLight'
-import { META_LOGO_LANDMARKS, META_LOGO_PARTS, type Vec2 } from './shapes'
+import { META_LOGO_LANDMARKS, META_LOGO_PARTS, windingNumber, type Vec2 } from './shapes'
 
 const COLORS = 8
 const STOPS = 6
@@ -83,6 +88,7 @@ const params: ParamSpec[] = [
   { kind: 'number', key: 'facing', label: 'Edges facing the light get more of it', min: 0, max: 1, step: 0.01, default: 0 },
   { kind: 'number', key: 'facingAngle', label: 'Light comes from (degrees)', min: -360, max: 360, step: 0.1, default: 0 },
   { kind: 'number', key: 'facingPower', label: 'Facing falloff', min: 0.1, max: 8, step: 0.01, default: 1 },
+  ...driftParams('drift', 'Dim light'),
   { kind: 'vector', key: 'maskShift', label: 'Inside edge shift', min: -2, max: 2, step: 0.0005, default: [0, 0] },
   { kind: 'number', key: 'maskGrow', label: 'Inside edge grow', min: -1, max: 1, step: 0.0001, default: 0 },
   { kind: 'number', key: 'base', label: 'Base color slot (0 black)', min: 0, max: COLORS, step: 1, default: 0 },
@@ -136,16 +142,26 @@ interface RimLayout {
 /** Where the shape goes for this seed and frame; the light keeps to one part of the frame so the rest stays dark. */
 type RimKind = Exclude<ShapeKind, 'logoEdge' | 'sCurve'>
 
+/**
+ * The frame edge toward `where` (0 top, 1 bottom, 2 left, 3 right) and the
+ * direction along it toward `where` (-1, 0 or 1 along x for the top and
+ * bottom, along y for the sides). A diagonal place picks one of its two edges.
+ */
+function edgeToward(where: Vec2, rand: () => number, aspect: number): { edge: number; along: number } {
+  const horizontal = Math.abs(where[1]) > Math.abs(where[0]) + 1e-3 || (Math.abs(Math.abs(where[1]) - Math.abs(where[0])) <= 1e-3 && rand() < (aspect >= 1 ? 0.6 : 0.4))
+  if (horizontal) return { edge: where[1] < 0 ? 0 : 1, along: Math.abs(where[0]) > 1e-3 ? Math.sign(where[0]) : 0 }
+  return { edge: where[0] < 0 ? 2 : 3, along: Math.abs(where[1]) > 1e-3 ? Math.sign(where[1]) : 0 }
+}
+
 /** A rounded corner whose vertex sits at or just past a frame edge: one leg runs into the frame, the other leaves it. */
-function cornerLayout(rand: () => number, aspect: number): RimLayout {
+function cornerLayout(rand: () => number, aspect: number, edge: number, alongSign: number): RimLayout {
   const [fw, fh] = frameSize(aspect)
-  const edge = pickWeighted(rand, (aspect >= 1
-    ? [[0, 3], [1, 2], [2, 1.2], [3, 1.2]]
-    : [[2, 2], [3, 2], [0, 1.5], [1, 1]]) as readonly (readonly [number, number])[])
   const inward: Vec2 = ([[0, 1], [0, -1], [1, 0], [-1, 0]] as const)[edge] as Vec2
   const tangent: Vec2 = inward[0] === 0 ? [rand() < 0.5 ? 1 : -1, 0] : [0, rand() < 0.5 ? 1 : -1]
   const extent = inward[0] === 0 ? fw : fh
-  const along = lerp(-0.28, 0.28, rand()) * extent
+  // The vertex sits toward the seed's place along the edge, or near the edge's middle for a place straight out.
+  const reach = lerp(0.1, 0.3, rand())
+  const along = (alongSign === 0 ? reach - 0.2 : alongSign * (tangent[0] + tangent[1]) * reach) * extent
   const past = lerp(-0.01, 0.08, rand())
   const toEdge = (inward[0] === 0 ? fh : fw) / 2 + past
   const vertex: Vec2 = [tangent[0] * along - inward[0] * toEdge, tangent[1] * along - inward[1] * toEdge]
@@ -161,12 +177,14 @@ function cornerLayout(rand: () => number, aspect: number): RimLayout {
   }
 }
 
-function rimLayout(kind: RimKind, rand: () => number, aspect: number): RimLayout {
+/** Where the shape goes for this seed and frame: its light lies toward `where` (one of PLACES). */
+function rimLayout(kind: RimKind, rand: () => number, aspect: number, where: Vec2): RimLayout {
   const [fw, fh] = frameSize(aspect)
-  const right = rand() < 0.5
-  const top = rand() < 0.65
-  const sx = right ? 1 : -1
-  const sy = top ? -1 : 1
+  // Length of the longest piece inside the frame (its points are about 0.01 apart).
+  const runLength = (l: RimLayout) => longestRun(visibleRuns(buildShape(l.shape), l.anchor, aspect)).length * 0.01
+  const { edge, along } = edgeToward(where, rand, aspect)
+  const sx = where[0] > 1e-3 ? 1 : where[0] < -1e-3 ? -1 : rand() < 0.5 ? 1 : -1
+  const sy = where[1] > 1e-3 ? 1 : where[1] < -1e-3 ? -1 : rand() < 0.5 ? 1 : -1
   const long = Math.max(fw, fh)
   switch (kind) {
     case 'corner': {
@@ -175,7 +193,7 @@ function rimLayout(kind: RimKind, rand: () => number, aspect: number): RimLayout
       let best: RimLayout | null = null
       let bestLength = -1
       for (let attempt = 0; attempt < 12 && bestLength < 0.9 * Math.min(fw, fh); attempt++) {
-        const candidate = cornerLayout(rand, aspect)
+        const candidate = cornerLayout(rand, aspect, edge, along)
         const length = longestRun(visibleRuns(buildShape(candidate.shape), candidate.anchor, aspect)).length * 0.01
         if (length > bestLength) {
           best = candidate
@@ -185,7 +203,8 @@ function rimLayout(kind: RimKind, rand: () => number, aspect: number): RimLayout
       return best as RimLayout
     }
     case 'line': {
-      const vertical = aspect >= 1 ? rand() < 0.75 : rand() < 0.35
+      // A line runs along the side toward the seed's place (left or right: upright; top or bottom: across).
+      const vertical = edge >= 2
       const offset = lerp(0.18, 0.34, rand())
       return {
         shape: { kind, size: 4 * long, angle: 90, aspect: 1, rotate: (vertical ? 90 : 0) + lerp(-10, 10, rand()), flip: false },
@@ -196,7 +215,8 @@ function rimLayout(kind: RimKind, rand: () => number, aspect: number): RimLayout
     case 'arc': {
       // A large circle whose arc crosses the frame near one edge; the glow faces its center.
       const radius = lerp(0.9, 2.2, rand()) * long
-      const side = Math.floor(rand() * 4)
+      // The arc crosses the frame near the edge toward the seed's place.
+      const side = [1, 0, 3, 2][edge]
       const reach = lerp(0.22, 0.4, rand())
       const normals: readonly Vec2[] = [
         [0, 1],
@@ -216,24 +236,40 @@ function rimLayout(kind: RimKind, rand: () => number, aspect: number): RimLayout
       }
     }
     case 'logo': {
-      // A tight crop: the logo is 3.2 to 5.5 short sides tall and one part of its outline shows.
-      const feature = pickWeighted(rand, LOGO_FEATURES)
-      const size = lerp(3.2, 5.5, rand())
-      const turn = pickWeighted(rand, [[0, 3], [180, 1], [90, 1], [-90, 1]] as const) + lerp(-20, 20, rand())
-      const unit = rotate([(feature[0] - LOGO_CENTER[0]) / 1000, (feature[1] - LOGO_CENTER[1]) / 1000], turn)
-      // Put the feature toward the side where the logo's body lies, so the body runs off the frame.
-      const norm = Math.hypot(unit[0], unit[1]) || 1
-      const reachOut = lerp(0, 0.25, rand())
-      const target: Vec2 = [(-unit[0] / norm) * fw * reachOut, (-unit[1] / norm) * fh * reachOut]
-      const place = (scale: number): RimLayout => ({
-        shape: { kind, size: size * scale, angle: 90, aspect: 1, rotate: turn, flip: false },
-        anchor: [target[0] - unit[0] * size * scale, target[1] - unit[1] * size * scale],
-        oneSided: true,
-      })
-      // Never the whole logo: a larger logo keeps every other part out of the frame.
-      let layout = place(1)
-      for (let scale = 1.15; scale < 12 && logoCropTooWide(layout.shape, layout.anchor, aspect); scale *= 1.15) layout = place(scale)
-      return layout
+      const draw = (): RimLayout => {
+        // A tight crop: the logo is 3.2 to 5.5 short sides tall and one part of its outline shows.
+        const feature = pickWeighted(rand, LOGO_FEATURES)
+        const size = lerp(3.2, 5.5, rand())
+        // Turned so the feature lies toward the seed's place, with the logo's body off the frame beyond it.
+        const from = Math.atan2(feature[1] - LOGO_CENTER[1], feature[0] - LOGO_CENTER[0])
+        const turn = ((Math.atan2(-where[1], -where[0]) - from) * 180) / Math.PI + lerp(-20, 20, rand())
+        const unit = rotate([(feature[0] - LOGO_CENTER[0]) / 1000, (feature[1] - LOGO_CENTER[1]) / 1000], turn)
+        const norm = Math.hypot(unit[0], unit[1]) || 1
+        const reachOut = lerp(0.1, 0.3, rand())
+        const target: Vec2 = [(-unit[0] / norm) * fw * reachOut, (-unit[1] / norm) * fh * reachOut]
+        const place = (scale: number): RimLayout => ({
+          shape: { kind, size: size * scale, angle: 90, aspect: 1, rotate: turn, flip: false },
+          anchor: [target[0] - unit[0] * size * scale, target[1] - unit[1] * size * scale],
+          oneSided: true,
+        })
+        // Never the whole logo: a larger logo keeps every other part out of the frame.
+        let layout = place(1)
+        for (let scale = 1.15; scale < 12 && logoCropTooWide(layout.shape, layout.anchor, aspect); scale *= 1.15) layout = place(scale)
+        return layout
+      }
+      // A few tries keep the first crop whose longest visible piece is at least the short side long, so the light
+      // never sits on a short scrap of outline.
+      let best = draw()
+      let bestLength = runLength(best)
+      for (let attempt = 1; attempt < 8 && bestLength < Math.min(fw, fh); attempt++) {
+        const next = draw()
+        const length = runLength(next)
+        if (length > bestLength) {
+          best = next
+          bestLength = length
+        }
+      }
+      return best
     }
     case 'ring': {
       const radius = lerp(0.7, 1.4, rand())
@@ -266,14 +302,11 @@ const dist = (a: Vec2, b: Vec2) => Math.hypot(a[0] - b[0], a[1] - b[1])
 function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition {
   const rand = seededRandom(seed, 7)
   const light = pickLight(pack, rand, seed, 61)
-  const base = pickBase(pack, rand)
-  const kind = pickWeighted<RimKind>(rand, [
-    ['corner', 4],
-    ['line', 2],
-    ['arc', 2],
-    ['logo', 4],
-  ])
-  const layout = rimLayout(kind, rand, aspect)
+  const base = pickBase(pack, rand, light.hex)
+  // A block of 8 seeds shows three corners, three logo crops, a line and an arc, each lighting a different part of the frame.
+  const plan = blockPlan<RimKind>(pack, seed, 61, ['corner', 'corner', 'corner', 'logo', 'logo', 'logo', 'line', 'arc'])
+  const kind = plan.kind
+  const layout = rimLayout(kind, rand, aspect, plan.place)
   const shape = buildShape(layout.shape)
   const [fw, fh] = frameSize(aspect)
   const path = visiblePath(shape, layout.anchor, aspect)
@@ -303,7 +336,16 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   // spot, so the Light control moves the light without resizing it.
   const power = line ? lerp(1.4, 2.2, powerDraw) : lerp(2, 3, powerDraw)
   const reach = line ? lerp(0.22, 0.34, reachDraw) * Math.max(fw, fh) : falloffRadius(run, home, lerp(10, 30, reachDraw), power)
-  const toward = (Math.atan2(at[1], at[0]) * 180) / Math.PI
+  // A logo crop's edges catch the light where they face the way the outline faces at the default hot spot, so the
+  // hot spot's own edge is always fully lit (around a hole tip the outline faces back toward the logo's middle).
+  const outwardAt = (p: Vec2): number => {
+    const n = normalNear(run, p, 2)
+    const probe: Vec2 = [p[0] + n[0] * 0.01 - layout.anchor[0], p[1] + n[1] * 0.01 - layout.anchor[1]]
+    const inside = windingNumber(shape.contours.flatMap((c) => c.primitives), probe) !== 0
+    return (Math.atan2(inside ? -n[1] : n[1], inside ? -n[0] : n[0]) * 180) / Math.PI
+  }
+  const toward = logo ? outwardAt(home) : (Math.atan2(at[1], at[0]) * 180) / Math.PI
+  const drift = warmDrift(light.hex)
   const params: Record<string, ParamValue> = {
     shape: SHAPE_KINDS.indexOf(layout.shape.kind) + 1,
     at: toFrame(layout.anchor, aspect).map(round4),
@@ -315,7 +357,6 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     stops: 1,
     stopColor: [2, 2, 2],
     ...productionParts('', {
-      hex: light.hex,
       side: layout.oneSided ? 1 : 0,
       soften,
       face: layout.oneSided ? 0.012 : 0,
@@ -325,6 +366,7 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     }),
     // Lines widen gradually toward the bright end (growth follows the long light, not the hot spot) and open into a haze there.
     ...(line ? { n2Grow: 1, n2GrowBy: [6, 1.5], n3Weight: 9, f1Grow: 1, f1GrowBy: [2, 1.5], f1Weight: 0.24, f1Width: 0.028 } : {}),
+    ...(drift ? { drift: drift.ratios, driftShape: [drift.knee, drift.sharpness] } : {}),
     facing: logo ? 0.85 : 0,
     facingAngle: round4(toward),
     facingPower: 1.5,
@@ -385,6 +427,7 @@ export function rimEmitters(ctx: RecipeContext): EmitterSettings[] {
       maskShift: ctx.vec('maskShift'),
       maskGrow: ctx.num('maskGrow'),
       facing: { strength: ctx.num('facing'), angle: ctx.num('facingAngle'), power: ctx.num('facingPower') },
+      drift: readDrift(ctx, 'drift'),
     },
   ]
 }

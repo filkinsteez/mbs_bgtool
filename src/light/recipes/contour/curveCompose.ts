@@ -53,25 +53,76 @@ export function toFrame(point: Vec2, aspect: number): [number, number] {
 const lightness = (hex: string) => linearToOklab(hexToLinear(hex))[0]
 
 /**
- * The light color for a seed, from the pack colors bright enough to be a light.
- * In every block of 8 seeds (1-8, 9-16, ...) each of them is the light at least
- * once; the spare places go to Meta Blue twice as often as to the others, and
- * the order is shuffled per block (salt keeps the looks' orders apart). It
- * still takes one draw from rand, so the rest of the composition draws the same
- * numbers as before.
+ * The item for a seed when a block of 8 seeds (1-8, 9-16, ...) shares out 8
+ * items: each seed of the block gets a different one, in an order shuffled per
+ * block (salt keeps the orders of different choices apart).
  */
-export function pickLight(pack: ColorPack, rand: () => number, seed: number, salt: number): PackColor {
-  rand()
-  const lights = pack.colors.filter((c) => lightness(c.hex) > 0.5)
+export function blockItem<T>(seed: number, salt: number, items: readonly T[]): T {
   const s = Math.round(seed)
   const order = seededRandom(Math.floor((s - 1) / 8), salt)
-  const slots = [...lights]
-  while (slots.length < 8) slots.push(pickWeighted(order, lights.map((c, i) => [c, i === 0 ? 2 : 1] as const)))
+  const slots = [...items]
   for (let i = slots.length - 1; i > 0; i--) {
     const j = Math.floor(order() * (i + 1))
     ;[slots[i], slots[j]] = [slots[j], slots[i]]
   }
-  return slots[(((s - 1) % 8) + 8) % 8]
+  return slots[(((s - 1) % slots.length) + slots.length) % slots.length]
+}
+
+/**
+ * Where a seed puts its light: eight directions from the frame center, 45
+ * degrees apart (x right, y down, in shares of the half frame). Each seed of a
+ * block of 8 gets a different one, so no two frames of a block light the same
+ * part of the frame.
+ */
+export const PLACES: readonly Vec2[] = Array.from({ length: 8 }, (_, k) => [Math.round(Math.cos((k * Math.PI) / 4) * 1e6) / 1e6, Math.round(Math.sin((k * Math.PI) / 4) * 1e6) / 1e6])
+
+/** The pack colors bright enough to be a light, shared out over 8 places as evenly as 8 allows, Meta Blue first for the spare ones. */
+function lightSlots(pack: ColorPack): PackColor[] {
+  const lights = pack.colors.filter((c) => lightness(c.hex) > 0.5)
+  return lights.flatMap((c, i) => Array.from({ length: Math.floor(8 / lights.length) + (i < 8 % lights.length ? 1 : 0) }, () => c))
+}
+
+/**
+ * The light color for a seed: a block of 8 seeds shares out the pack's lights
+ * (Bold 2 each; Elemental and Atmospheric 3, 3, 2). It still takes one draw
+ * from rand, so the rest of the composition draws as before.
+ */
+export function pickLight(pack: ColorPack, rand: () => number, seed: number, salt: number): PackColor {
+  rand()
+  return blockItem(seed, salt, lightSlots(pack))
+}
+
+/**
+ * Light, shape kind and place for a seed, planned for its whole block of 8 so
+ * that frames sharing a light color also differ in kind where the block allows
+ * and light parts of the frame as far apart as the places left allow
+ * (SHARED.md 10:15 AM: no two of seeds 1-8 look like the same frame).
+ */
+export function blockPlan<K>(pack: ColorPack, seed: number, salt: number, kinds: readonly K[]): { light: PackColor; kind: K; place: Vec2 } {
+  const s = Math.round(seed)
+  const first = Math.floor((s - 1) / 8) * 8 + 1
+  const lights = Array.from({ length: 8 }, (_, j) => blockItem(first + j, salt, lightSlots(pack)))
+  const kindsLeft = Array.from({ length: 8 }, (_, j) => blockItem(first + j, salt + 1, kinds))
+  const placesLeft = Array.from({ length: 8 }, (_, j) => blockItem(first + j, salt + 2, PLACES))
+  const angle = (p: Vec2) => Math.atan2(p[1], p[0])
+  const apart = (a: Vec2, b: Vec2) => Math.abs(Math.atan2(Math.sin(angle(a) - angle(b)), Math.cos(angle(a) - angle(b))))
+  const used: { light: PackColor; kind: K; place: Vec2 }[] = []
+  for (let j = 0; j <= (((s - 1) % 8) + 8) % 8; j++) {
+    const same = used.filter((u) => u.light.hex === lights[j].hex)
+    const k = Math.max(0, kindsLeft.findIndex((kind) => !same.some((u) => u.kind === kind)))
+    const kind = kindsLeft.splice(k, 1)[0]
+    let p = 0
+    let far = -1
+    placesLeft.forEach((place, i) => {
+      const nearest = Math.min(Math.PI, ...same.map((u) => apart(u.place, place)))
+      if (nearest > far + 1e-9) {
+        far = nearest
+        p = i
+      }
+    })
+    used.push({ light: lights[j], kind, place: placesLeft.splice(p, 1)[0] })
+  }
+  return used[used.length - 1]
 }
 
 /**
@@ -86,69 +137,77 @@ export function warmToe(hex: string): number {
   return Math.hypot(a, b) > 0.04 && hue >= 20 && hue <= 140 ? 0.85 : 0
 }
 
-const AMBER = hexToLinear('#FFB000')
-const ORANGE_RED = hexToLinear('#FF4F00')
+/** Where Orange-red's own dim tail ends up (linear): the deep red that Yellow's tail also drifts to. */
+const DEEP_RED = [1, 0.02, 0]
 const FOREST = hexToLinear('#0F3D33')
-
-/** Where a warm light's dim tail drifts: Lime (the greenest warm light) toward Forest's deep green, the others toward amber. */
-export type LimeTail = 'forest' | 'amber'
+/** A copper amber (linear) that dim Tan warms toward, so it reads as warm light rather than grey-brown. */
+const COPPER = [1, 0.41, 0.1]
 
 /**
- * Channel widths for a warm light's glow and haze that move its dim tail toward
- * a target color as it fades, so dim Yellow reads amber instead of olive and
- * dim Tan amber instead of grey-brown. Each channel's width is set so that four
- * widths out, where the light is down to about 0.03%, the channels stand in the
- * target's ratios; past that the light is too dark to read, so the tail never
- * shows running past the target (Orange-red's green turning the far tail green).
- * The luminance-weighted channel keeps width 1, so the glow keeps its size.
- * Returns null for lights that are not warm, which keep their own color family
- * as they dim.
+ * Where a warm light's dim tail goes (C-025, SHARED.md 10:40 AM): Yellow and
+ * Orange-red to deep red, Lime to Forest's deep green; Tan, warm but nearly
+ * grey, has no dark pack color to go to, so its halo stays bright and ends
+ * sooner instead. Null for cool lights, which keep their color as they dim.
  */
-export function warmTailWidths(hex: string, limeTail: LimeTail = 'forest'): number[] | null {
+export type WarmTail = 'deep red' | 'forest' | 'bright'
+
+export function warmTail(hex: string): WarmTail | null {
   if (warmToe(hex) === 0) return null
+  const [, a, b] = linearToOklab(hexToLinear(hex))
+  if (Math.hypot(a, b) < 0.1) return 'bright'
+  return (Math.atan2(b, a) * 180) / Math.PI > 110 ? 'forest' : 'deep red'
+}
+
+/**
+ * How a warm light's color changes as it dims, or null. Yellow drifts like
+ * fire: it keeps its color down to about a third of its level, is Orange-red's
+ * hue at a little under half its lightness and deep red below a quarter, like
+ * Orange-red's own tail; Orange-red drifts to the same deep red. Lime drifts
+ * to Forest's ratios and Tan toward copper amber right away, since both read
+ * olive or grey-brown one stop under their own brightness.
+ */
+export function warmDrift(hex: string): { ratios: number[]; knee: number; sharpness: number } | null {
+  const tail = warmTail(hex)
+  if (!tail) return null
   const light = hexToLinear(hex)
-  const [, a, b] = linearToOklab(light)
-  const hue = (Math.atan2(b, a) * 180) / Math.PI
-  // Yellow drifts through amber toward Orange-red (their mix is clean in Bold), Lime into Forest, the others to amber.
-  const target = hue > 110 && limeTail === 'forest' ? FOREST : hue > 85 ? ORANGE_RED : AMBER
-  const soft = (v: readonly number[]) => {
-    const m = Math.max(...v, 1e-6)
-    return v.map((x) => x / m + 0.08)
-  }
-  const [l, t] = [soft(light), soft(target)]
-  const logs = l.map((x, k) => Math.max(-1.6, Math.min(1.6, Math.log(t[k] / x))))
-  const weights = [0.2126, 0.7152, 0.0722].map((w, k) => w * light[k])
-  const mean = logs.reduce((s, g, k) => s + weights[k] * g, 0) / Math.max(1e-6, weights.reduce((s, w) => s + w, 0))
-  // A channel of width w gains exp(8 (1 - 1 / w^2)) on a width-1 channel four widths out.
-  return logs.map((g) => Math.min(1.35, Math.max(0.75, 1 / Math.sqrt(Math.max(0.3, 1 - (g - mean) / 8)))))
+  const target = tail === 'forest' ? FOREST : tail === 'bright' ? COPPER : DEEP_RED
+  const m = light.indexOf(Math.max(...light))
+  const ratios = light.map((c, k) => (k === m || c < 1e-6 ? 1 : round4(Math.min(8, target[k] / target[m] / (c / light[m])))))
+  return { ratios, knee: tail === 'deep red' ? 0.35 : 1, sharpness: 2 }
 }
 
 /** Oklab lightness of a base: dark enough that text set on it reads, light enough to tell from black. */
 const BASE_LIGHTNESS = 0.1
 
-/** Black or one of the pack's darker colors (or Meta Blue) at low light, as slot color and gain. */
-export function pickBase(pack: ColorPack, rand: () => number): { hex: string; gain: number } {
+/**
+ * Bases a warm light's dim tail must not fade into, because the mix between
+ * them is a third color: deep red over Meta Blue turns maroon and magenta,
+ * Lime's green over Plum grey, and Tan's copper over Meta Blue mauve-grey,
+ * over Forest olive and over Plum maroon.
+ */
+const BASES_TAIL_MUDDIES: Record<WarmTail, readonly string[]> = {
+  'deep red': ['#0064E0'],
+  forest: ['#4A0A3C'],
+  bright: ['#0064E0', '#0F3D33', '#4A0A3C'],
+}
+
+/** Black or one of the pack's darker colors (or Meta Blue) at low light, as slot color and gain, that the light's dim tail fades into cleanly. */
+export function pickBase(pack: ColorPack, rand: () => number, lightHex: string): { hex: string; gain: number } {
   const dark = pack.colors.filter((c) => lightness(c.hex) < 0.45)
   const atLow = (hex: string) => ({ hex, gain: round4((BASE_LIGHTNESS / lightness(hex)) ** 3) })
+  const tail = warmTail(lightHex)
+  const muddy = tail ? BASES_TAIL_MUDDIES[tail] : []
   const options: (readonly [{ hex: string; gain: number }, number])[] = [
     [{ hex: '#000000', gain: 0 }, 3],
     [atLow(pack.colors[0].hex), 1],
     ...dark.map((c) => [atLow(c.hex), 1] as const),
   ]
-  return pickWeighted(rand, options)
+  return pickWeighted(
+    rand,
+    options.filter(([o]) => !muddy.includes(o.hex.toUpperCase())),
+  )
 }
 
-/**
- * Channel widths scaled so the widest is 1. A far part's channel wider than the
- * part takes a little of the next, three times wider scatter blur, whose long
- * tail then turns the far edge of the glow that channel's color (Meta Blue's
- * green, Orange-red's green); at 1 or less every channel stays on the part's
- * own blurs.
- */
-export function widestAtOne(widths: readonly number[]): number[] {
-  const most = Math.max(...widths, 1e-6)
-  return widths.map((w) => w / most)
-}
 /** Points along the emitting contours that fall inside the frame (with a margin), in short-side units from the frame center. */
 export function visiblePath(shape: Shape, anchor: Vec2, aspect: number, margin = 0.02): Vec2[] {
   const [fw, fh] = frameSize(aspect)
@@ -263,8 +322,6 @@ export const round4 = (v: number) => Math.round(v * 1e4) / 1e4
 export const round6 = (v: number) => Math.round(v * 1e6) / 1e6
 
 export interface ProductionLight {
-  /** Light color hex, for the per-channel widths. */
-  hex: string
   /** 1 inside, 2 outside, 0 both sides. */
   side: number
   /** Overall width multiplier from Softness (the recipe applies it to every width). */
@@ -290,8 +347,6 @@ export interface ProductionLight {
  * along the curve, light field 2 the hot spot.
  */
 export function productionParts(prefix: string, light: ProductionLight): Record<string, number | number[]> {
-  // Cool lights keep their hue all the way down; warm ones drift toward amber (Lime toward Forest) as they dim.
-  const widths = widestAtOne(warmTailWidths(light.hex) ?? [1, 1, 1]).map(round4)
   const spread = light.spread ?? 0
   const parts: Record<string, number | number[]> = {
     n1Weight: 1.1,
@@ -306,7 +361,6 @@ export function productionParts(prefix: string, light: ProductionLight): Record<
     n2Side: light.side,
     n2Light: 1,
     n2LightGamma: 1.2,
-    n2ChWidth: widths,
     n2ChOffset: [round6(spread), 0, round6(-spread)],
     n2Grow: 2,
     n2GrowBy: [round4(light.fan ?? 1.8), 2],
@@ -321,7 +375,6 @@ export function productionParts(prefix: string, light: ProductionLight): Record<
     f1Side: light.side,
     f1Light: 1,
     f1LightGamma: 1,
-    f1ChWidth: widths,
     f2Weight: 0.05,
     f2Width: 0.035,
     f2Side: 0,
@@ -340,19 +393,19 @@ const prefixed = (prefix: string, values: Record<string, number | number[]>) =>
  * halo: dark inside, a fairly sharp rise at the curve, a crest band 0.035
  * outside it (near part 1, the pack color, wider where the light is strong)
  * and a long fade outward (far part 2, outside only, half at about 0.15 to 0.19
- * from the crest and close to the base by 0.5). A cool light keeps its hue as it
- * fades; a warm one drifts toward amber (Lime toward Forest). The inside keeps
- * the base level past the crest's inner side. All parts follow light field 1.
+ * from the crest and close to the base by 0.5). The inside keeps the base level
+ * past the crest's inner side. All parts follow light field 1.
  */
 export function haloParts(prefix: string, hex: string): Record<string, number | number[]> {
-  const widths = widestAtOne(warmTailWidths(hex) ?? [1, 1, 1]).map(round4)
-  const outside = { Side: 2, Light: 1, LightGamma: 1, ChWidth: widths, MaskSoft: 0.015 }
+  const outside = { Side: 2, Light: 1, LightGamma: 1, MaskSoft: 0.015 }
+  // A Tan halo keeps most of its light at or above Tan's own brightness: a brighter, shorter fade outward.
+  const bright = warmTail(hex) === 'bright'
   const parts: Record<string, number | number[]> = {
     ...prefixed('n1', { Weight: 0.25, Width: 0.026, Shape: 8, Side: 0, Offset: -0.035, Light: 1, LightGamma: 1, Grow: 1, GrowBy: [0.5, 1.5] }),
     n2Weight: 0,
     n3Weight: 0,
     f1Weight: 0,
-    ...prefixed('f2', { ...outside, Weight: 0.75, Width: 0.27 }),
+    ...prefixed('f2', { ...outside, Weight: bright ? 1.6 : 0.75, Width: bright ? 0.17 : 0.27 }),
     f3Weight: 0,
   }
   return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))

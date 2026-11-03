@@ -61,7 +61,7 @@ export const FAR_STEP = 2.5
 const PRIM_VEC4 = 4
 const NEAR_VEC4 = 6
 const FAR_VEC4 = 4
-const EMIT_VEC4 = 3
+const EMIT_VEC4 = 5
 const ARC_PIECE = Math.PI / 4
 /** Primitives per bounding box; layouts use a multiple of it. */
 const CHUNK = 4
@@ -135,19 +135,22 @@ vec3 clPow(vec3 x, int p) {
 function nearGlsl(layout: CurveLightLayout): string {
   const parts = Array.from({ length: layout.near }, (_, k) => k)
   const declare = parts
-    .map((k) => `  vec3 s2p${k}, offs${k}, amp${k}, acc${k} = vec3(0.0); float cut${k}, bp${k}; int p${k};
-  clNearSetup(nb + ${k * NEAR_VEC4}, sd, light1, light2, s2p${k}, offs${k}, amp${k}, cut${k}, p${k}, bp${k});`)
+    .map((k) => `  vec3 s2p${k}, offs${k}, amp${k}, acc${k} = vec3(0.0); float lit${k}, cut${k}, bp${k}; int p${k};
+  clNearSetup(nb + ${k * NEAR_VEC4}, sd, light1, light2, s2p${k}, offs${k}, amp${k}, lit${k}, cut${k}, p${k}, bp${k});`)
     .join('\n')
   const maxCut = parts.reduce((expr, k) => (expr ? `max(${expr}, cut${k})` : `cut${k}`), '')
   const segment = parts.map((k) => `        if (dist < cut${k}) acc${k} += em * clSegment(u, h, l, offs${k}, s2p${k}, p${k});`).join('\n')
   const arcs = parts
     .map((k) => `        if (radial < cut${k}) acc${k} += em * clArc(r, psiM, halfSweep, max(vec3(1e-6), g.z - toInside * offs${k}), s2p${k}, p${k}, bp${k});`)
     .join('\n')
-  const total = parts.map((k) => `amp${k} * acc${k}`).join(' + ')
+  const total = parts.map((k) => `amp${k} * clDrift(lit${k} * acc${k}, own, drift, sharpness)`).join(' + ')
   return /* glsl */ `
 // Near parts of emitter e, written out per part so their sums stay in registers.
 vec3 clNear(int e, vec2 q, float light1, float light2, float sd) {
   int nb = e * CL_N * ${NEAR_VEC4};
+  vec3 own = uClEmit[e * ${EMIT_VEC4} + 2].rgb;
+  vec4 drift = uClEmit[e * ${EMIT_VEC4} + 3];
+  float sharpness = uClEmit[e * ${EMIT_VEC4} + 4].x;
 ${declare}
   float maxCut = ${maxCut};
   if (maxCut < 0.0) return vec3(0.0);
@@ -211,8 +214,9 @@ uniform vec4 uClNear[CL_E * CL_N * ${NEAR_VEC4}];
 // Per far part: (weight, sigma, side, light); (tint, light gamma); (channel widths, grow light);
 // (grow gain, grow gamma, mask inset, mask softness).
 uniform vec4 uClFar[CL_E * CL_F * ${FAR_VEC4}];
-// Per emitter: (anchor u, anchor v, primitive count, any side mask); (mask shift x, y, mask grow, 0);
-// (emission rgb for scattered light from its own aux channel, 0).
+// Per emitter: (anchor u, anchor v, primitive count, any side mask); (mask shift x, y, mask grow, reach);
+// (emission rgb for scattered light from its own aux channel, ray direction); (drift ratios rgb, drift knee);
+// (drift sharpness, 0, 0, 0).
 uniform vec4 uClEmit[CL_E * ${EMIT_VEC4}];
 // Two light fields: (kind, x, y, radius); (length, power, stretch, angle). Positions are relative to emitter 1's anchor.
 uniform vec4 uClLight[4];
@@ -392,8 +396,26 @@ float clSideMask(int side, float sd, float inset, float soft) {
   return side == 1 ? softStep(-sd - inset, soft) : softStep(sd - inset, soft);
 }
 
+float clLit(int li, float light1, float light2, float gamma) {
+  if (li == 0) return 1.0;
+  float lit = li == 1 ? light1 : light2;
+  return gamma > 0.0 ? pow(lit, gamma) : lit;
+}
+
+// A part's light as it dims: v is its level against the emitter's own color (1 at the line of a straight emitter
+// under full light). The largest channel follows v; the others move from the light's own ratios toward d.rgb times
+// them as s falls from 1, with s = v^a (1 + k^a) / (v^a + k^a) (knee k = d.w, sharpness a). Off when k is 0.
+vec3 clDrift(vec3 raw, vec3 own, vec4 d, float sharpness) {
+  if (d.w <= 0.0) return raw;
+  float v = maxComponent(raw) / max(maxComponent(own), 1e-6);
+  float va = pow(max(v, 1e-12), sharpness);
+  float ka = pow(d.w, sharpness);
+  float s = min(1.0, va * (1.0 + ka) / (va + ka));
+  return raw * mix(d.rgb, vec3(1.0), s);
+}
+
 void clNearSetup(int cb, float sd, float light1, float light2,
-                 out vec3 s2p, out vec3 offs, out vec3 amp, out float cut, out int p, out float bp) {
+                 out vec3 s2p, out vec3 offs, out vec3 amp, out float lit, out float cut, out int p, out float bp) {
   vec4 c0 = uClNear[cb];
   vec4 c1 = uClNear[cb + 1];
   vec4 c2 = uClNear[cb + 2];
@@ -403,18 +425,16 @@ void clNearSetup(int cb, float sd, float light1, float light2,
   p = int(c0.z + 0.5);
   bp = c4.w;
   float mask = clSideMask(int(c0.w + 0.5), sd, c5.x, c5.y);
-  int li = int(c2.w + 0.5);
-  float lit = li == 0 ? 1.0 : (li == 1 ? light1 : light2);
-  if (li != 0 && c3.w > 0.0) lit = pow(lit, c3.w);
+  lit = clLit(int(c2.w + 0.5), light1, light2, c3.w);
   int gi = int(c4.x + 0.5);
   float grow = gi == 0 ? 1.0 : 1.0 + c4.y * pow(gi == 1 ? light1 : light2, c4.z);
   vec3 sigma = c0.y * c2.rgb * grow;
   vec3 sigmaEff = max(sigma, vec3(0.5 * uPixel));
   s2p = 2.0 * float(p) * sigmaEff * sigmaEff;
   offs = c1.w + c3.rgb;
-  amp = mask * lit * c0.x * c1.rgb * (sigma / sigmaEff);
+  amp = mask * c0.x * c1.rgb * (sigma / sigmaEff);
   // Reach: where this part's light falls below CL_FLOOR (a small fraction of one 8-bit step at black).
-  float peak = maxComponent(amp) * c5.w;
+  float peak = maxComponent(amp) * lit * c5.w;
   bool on = c0.x > 0.0 && peak > CL_FLOOR;
   float factor = on ? pow(CL_FLOOR / peak, -1.0 / float(p)) - 1.0 : 0.0;
   cut = on ? sqrt(max(s2p.x, max(s2p.y, s2p.z)) * factor) + max(abs(offs.x), max(abs(offs.y), abs(offs.z))) : -1.0;
@@ -467,6 +487,8 @@ vec3 clLine(int e, vec2 q, float sigma, bool ownColor) {
 vec3 clFar(int e, float light1, float light2, float sd, vec3 b0, vec3 b1, vec3 b2, vec3 b3, bool perEmitter) {
   vec3 total = vec3(0.0);
   vec3 own = uClEmit[e * ${EMIT_VEC4} + 2].rgb;
+  vec4 drift = uClEmit[e * ${EMIT_VEC4} + 3];
+  float sharpness = uClEmit[e * ${EMIT_VEC4} + 4].x;
   vec4 rung = uClRungs * ${literal(Math.sqrt(2 * Math.PI))};
   for (int f = 0; f < CL_F; f++) {
     int fb = (e * CL_F + f) * ${FAR_VEC4};
@@ -477,9 +499,7 @@ vec3 clFar(int e, float light1, float light2, float sd, vec3 b0, vec3 b1, vec3 b
     vec4 d = uClFar[fb + 3];
     float mask = clSideMask(int(a.z + 0.5), sd, d.z, d.w);
     if (mask <= 1e-5) continue;
-    int li = int(a.w + 0.5);
-    float lit = li == 0 ? 1.0 : (li == 1 ? light1 : light2);
-    if (li != 0 && b.w > 0.0) lit = pow(lit, b.w);
+    float lit = clLit(int(a.w + 0.5), light1, light2, b.w);
     if (lit <= 1e-6) continue;
     int gi = int(c.w + 0.5);
     float grow = gi == 0 ? 1.0 : 1.0 + d.x * pow(gi == 1 ? light1 : light2, d.y);
@@ -496,7 +516,7 @@ vec3 clFar(int e, float light1, float light2, float sd, vec3 b0, vec3 b1, vec3 b
     vec3 s2 = perEmitter ? own * b2[e] : b2;
     vec3 s3 = perEmitter ? own * b3[e] : b3;
     vec3 light = w0 * rung.x * s0 + w1 * rung.y * s1 + w2 * rung.z * s2 + w3 * rung.w * s3 + w4 * own;
-    total += mask * lit * a.x * b.rgb * light;
+    total += mask * a.x * b.rgb * clDrift(lit * light, own, drift, sharpness);
   }
   return total;
 }
@@ -607,6 +627,19 @@ export interface EmitterSettings {
   maskShift: readonly number[]
   maskGrow: number
   facing?: FacingSettings
+  drift?: DriftSettings
+}
+
+/**
+ * How a light's color changes as it dims: below `knee` of its own level the
+ * channels other than the largest move toward `ratios` times their own values
+ * (the largest channel's ratio is 1, so brightness follows the light), faster
+ * with a higher `sharpness`. Knee 0 turns it off.
+ */
+export interface DriftSettings {
+  ratios: readonly number[]
+  knee: number
+  sharpness: number
 }
 
 export interface LightSettings {
@@ -877,6 +910,9 @@ export function curveLightUniforms(
     emit.set([settings.anchor[0], settings.anchor[1], packed.length, sided.length > 0 ? 1 : 0], e * EMIT_VEC4 * 4)
     emit.set([settings.maskShift[0] ?? 0, settings.maskShift[1] ?? 0, settings.maskGrow, maskReach], e * EMIT_VEC4 * 4 + 4)
     emit.set([own[0], own[1], own[2], toward], e * EMIT_VEC4 * 4 + 8)
+    const drift = settings.drift ?? { ratios: [1, 1, 1], knee: 0, sharpness: 2 }
+    emit.set([drift.ratios[0], drift.ratios[1], drift.ratios[2], Math.max(0, drift.knee)], e * EMIT_VEC4 * 4 + 12)
+    emit.set([Math.max(0.1, drift.sharpness), 0, 0, 0], e * EMIT_VEC4 * 4 + 16)
     settings.near.slice(0, layout.near).forEach((c, k) => {
       const o = (e * layout.near + k) * NEAR_VEC4 * 4
       const p = Math.min(MAX_KERNEL_POWER, Math.max(1, Math.round(c.p)))
@@ -984,6 +1020,19 @@ export function lightParams(defaults: Defaults = {}): ParamSpec[] {
     { kind: 'number', key: `light${i}Angle`, label: `Light ${i} angle`, min: -360, max: 360, step: 0.01, default: 0 },
   ])
   return withDefaults(specs, '', defaults)
+}
+
+/** Param specs for an emitter's drift: the ratios under `key` and [knee, sharpness] under `${key}Shape`. */
+export function driftParams(key: string, label: string): ParamSpec[] {
+  return [
+    { kind: 'vector', key, label: `${label} drifts toward (ratio per channel)`, min: 0, max: 8, step: 0.001, default: [1, 1, 1] },
+    { kind: 'vector', key: `${key}Shape`, label: `${label} drift knee (0 off), sharpness`, min: 0, max: 8, step: 0.001, default: [0, 2] },
+  ]
+}
+
+export function readDrift(ctx: RecipeContext, key: string): DriftSettings {
+  const [knee, sharpness] = ctx.vec(`${key}Shape`)
+  return { ratios: ctx.vec(key), knee, sharpness }
 }
 
 export function readNear(ctx: RecipeContext, prefix: string, widthScale: number, gainScale: number): NearSettings {
