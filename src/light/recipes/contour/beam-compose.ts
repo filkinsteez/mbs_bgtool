@@ -18,6 +18,72 @@ export function seededRandom(seed: number, salt: number): () => number {
 export const clamp01 = (t: number) => Math.min(1, Math.max(0, t))
 export const lerp = (a: number, b: number, t: number) => a + (b - a) * t
 
+/** Seed 1-8 is slot 0-7 of block 0, seed 9-16 slot 0-7 of block 1, and so on. */
+function blockSlot(seed: number): { block: number; slot: number } {
+  return { block: Math.floor((seed - 1) / 8), slot: (((seed - 1) % 8) + 8) % 8 }
+}
+
+/** The numbers 0-7 in an order fixed by the stream. */
+function shuffledEight(random: () => number): number[] {
+  const order = [0, 1, 2, 3, 4, 5, 6, 7]
+  for (let i = 7; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1))
+    ;[order[i], order[j]] = [order[j], order[i]]
+  }
+  return order
+}
+
+/**
+ * Shares in (0, 1) for the parts of a layout, one per part. In each block of 8 seeds (1-8,
+ * 9-16, ...) every eighth of a part's range goes to exactly one seed, in an order of its own
+ * for each part. `random` places each share inside its eighth.
+ */
+export function seedShares(seed: number, salt: number, parts: number, random: () => number): number[] {
+  const { block, slot } = blockSlot(seed)
+  return Array.from({ length: parts }, (_, part) => (shuffledEight(seededRandom(block, salt + 101 * (part + 1)))[slot] + lerp(0.2, 0.8, random())) / 8)
+}
+
+/**
+ * Four two-way choices as bits, in pairs of opposites. Every two of these eight words differ
+ * in at least two bits, and the two words of a pair in all four.
+ */
+const LAYOUT_PAIRS: [number, number][] = [
+  [0b0000, 0b1111],
+  [0b0011, 0b1100],
+  [0b0101, 0b1010],
+  [0b0110, 0b1001],
+]
+
+/**
+ * The seed's choice (0 or 1) for each of the four main parts of a layout. In each block of 8
+ * seeds (1-8, 9-16, ...) every word of LAYOUT_PAIRS goes to exactly one seed, so any two of
+ * those seeds differ in at least two parts. Seeds with the same light (pickContourLight)
+ * differ most: the second gets the opposite of the first in all four parts, a third a word
+ * of its own. The order is fixed per block, pack and look (salt).
+ */
+export function seedLayout(pack: ColorPack, seed: number, salt: number): number[] {
+  const { block, slot } = blockSlot(seed)
+  const random = seededRandom(block, salt)
+  const pairs = shuffledEight(random)
+    .filter((i) => i < LAYOUT_PAIRS.length)
+    .map((i) => (random() < 0.5 ? LAYOUT_PAIRS[i] : ([LAYOUT_PAIRS[i][1], LAYOUT_PAIRS[i][0]] as [number, number])))
+  const used = new Set<number>()
+  const given = new Map<number, number[]>()
+  let word = 0
+  for (let s = 0; s <= slot; s++) {
+    const light = contourLightIndex(pack, block * 8 + 1 + s)
+    const before = given.get(light) ?? []
+    const freePair = pairs.find(([a, b]) => !used.has(a) && !used.has(b))
+    const opposite = before.length === 1 ? before[0] ^ 0b1111 : -1
+    if (before.length === 0 && freePair) word = freePair[0]
+    else if (opposite >= 0 && !used.has(opposite)) word = opposite
+    else word = pairs.flat().find((w) => !used.has(w)) ?? 0
+    used.add(word)
+    given.set(light, [...before, word])
+  }
+  return [0, 1, 2, 3].map((bit) => (word >> bit) & 1)
+}
+
 /** Piecewise geometric through (0, lo), (0.5, mid), (1, hi); for gains and widths (all > 0). */
 export function geo(t: number, lo: number, mid: number, hi: number): number {
   const u = clamp01(t)
@@ -44,27 +110,51 @@ export function clipLuminanceOf(hex: string): number {
 
 /**
  * Gain for one unit of scattered light: `luminance` over the haze's luminance for cool
- * lights; for warm ones `warmShare` of the haze's own clipping level, so warm light sits
- * near nominal (dimmer, it reads brown and olive).
+ * lights; for warm ones `warmShare` of the haze's own clipping level (times the light's
+ * lift), so warm light sits near nominal (dimmer, it reads brown and olive).
  */
 export function hazeGainFor(light: ContourLight, luminance: number, warmShare: number): number {
-  if (light.toe > 0) return warmShare / Math.max(...hexToLinear(light.haze), 1e-6)
+  if (light.toe > 0) return (warmShare * light.lift) / Math.max(...hexToLinear(light.haze), 1e-6)
   return luminance / Math.max(luminanceOf(light.haze), 0.01)
 }
 
-/** Uniform for a dim haze param [r, g, b, below]: the color at unit luminance, and `below`. */
+/** A color (linear RGB) scaled so its brightest channel is 1. */
+function unitPeak(rgb: readonly number[]): number[] {
+  const peak = Math.max(rgb[0], rgb[1], rgb[2], 1e-6)
+  return [rgb[0] / peak, rgb[1] / peak, rgb[2] / peak]
+}
+
+/** Uniform for the `tail` param [r, g, b, from]: the color at unit peak, and `from`. */
 export function tailUniform(tail: readonly number[]): [number, number, number, number] {
-  const lum = Math.max(0.2126 * tail[0] + 0.7152 * tail[1] + 0.0722 * tail[2], 1e-6)
-  return [tail[0] / lum, tail[1] / lum, tail[2] / lum, tail[3] ?? 0]
+  const [r, g, b] = unitPeak(tail)
+  return [r, g, b, tail[3] ?? 0]
+}
+
+/** Uniform for the `tailEnd` param [r, g, b]: the color at unit peak. */
+export function tailEndUniform(tail: readonly number[]): [number, number, number] {
+  const [r, g, b] = unitPeak(tail)
+  return [r, g, b]
 }
 
 /**
- * Dim haze param for a light: its tail color (linear) and the haze luminance below which
- * the haze drifts toward it, `below` times the haze's clipping level; off for cool lights.
+ * Dim haze params for a light (colors linear, at unit peak): `tail` [r, g, b, from] is the
+ * color its haze has at half of `from` of its clipping level, and `tailEnd` the color at a
+ * quarter and below. `from` is the light's tailFrom, or the look's `lookFrom` for lights
+ * that leave it to the look; 0 (off) for lights that keep their hue.
  */
-export function tailParam(light: ContourLight, below: number): number[] {
-  if (!light.tail) return [1, 1, 1, 0]
-  return [...hexToLinear(light.tail).map(round4), round4(below * clipLuminanceOf(light.haze))]
+export function tailParams(light: ContourLight, lookFrom: number): { tail: number[]; tailEnd: number[] } {
+  if (!light.tail) return { tail: [1, 1, 1, 0], tailEnd: [1, 1, 1] }
+  return { tail: [...light.tail[0].map(round4), round4(light.tailFrom ?? lookFrom)], tailEnd: light.tail[1].map(round4) }
+}
+
+/**
+ * The `fall` param [from, factor] for a light: haze dimmer than `from` of its clipping level
+ * falls toward black `factor` times faster. Warm lights take the look's `from` and `factor`;
+ * a light with its own fall (Tan) starts it at nominal. Cool lights keep their falloff.
+ */
+export function fallParam(light: ContourLight, from: number, factor: number): number[] {
+  if (light.fall > 1) return [1, light.fall]
+  return light.toe > 0 ? [from, factor] : [0, 1]
 }
 
 /**
@@ -89,19 +179,59 @@ export interface ContourLight {
   /** Paper toe: warm lights 0.85 (as Rim and Halo), cool lights 0. */
   toe: number
   /**
-   * The color a warm light's dim haze drifts toward as it fades (amber; Forest's deep green
-   * for Lime), so it never reads olive, brick or grey-brown; null for cool lights.
+   * The colors (linear, at unit peak) a warm light's dim haze passes through as it fades, at
+   * half of tailFrom of its clipping level and at a quarter and below: Yellow like a flame,
+   * to Orange-red and then deep red; Orange-red to deep red; Tan to a muted and then a burnt
+   * orange; Lime halfway to Forest and then to Forest's deep green. Null for cool lights.
    */
-  tail: string | null
+  tail: [number[], number[]] | null
+  /**
+   * The share of its clipping level below which the haze leaves its own color: 1 (its
+   * nominal) for Yellow, Orange-red and Tan; null for Lime, which takes the look's level.
+   */
+  tailFrom: number | null
+  /** How much faster the light's dim haze falls toward black below nominal (1: as the look's). */
+  fall: number
+  /** Gain on the light's haze (1: as the look's). */
+  lift: number
 }
 
-/** Where a warm haze's dim tail drifts. */
-const AMBER = '#FFB000'
+/** The red a warm haze ends on as it fades, deeper than Orange-red. */
+const DEEP_RED = '#FF1A00'
 
-function warm(hex: string, tail: string): { toe: number; tail: string | null } {
-  const toe = warmToe(hex)
-  return { toe, tail: toe > 0 ? tail : null }
+/**
+ * Tan's dim haze: amber, then a deeper orange, warmer and purer than dim Tan (which reads
+ * grey-brown). The paper toe turns dim warm light redder, so these sit on the yellow side
+ * of where they show.
+ */
+const TAN_DIM = '#FFB000'
+const TAN_FAINT = '#FF9A00'
+
+/** A hex's linear color scaled so its brightest channel is 1. */
+function peakColor(hex: string): number[] {
+  return unitPeak(hexToLinear(hex))
 }
+
+/** Halfway between two colors, at unit peak. */
+function halfway(a: string, b: string): number[] {
+  const pa = peakColor(a)
+  const pb = peakColor(b)
+  return unitPeak(pa.map((v, i) => (v + pb[i]) / 2))
+}
+
+const cool = { toe: 0, tail: null, tailFrom: null, fall: 1, lift: 1 }
+
+function warm(hex: string, tail: [number[], number[]], tailFrom: number | null, fall = 1, lift = 1): Pick<ContourLight, 'toe' | 'tail' | 'tailFrom' | 'fall' | 'lift'> {
+  return { toe: warmToe(hex), tail, tailFrom, fall, lift }
+}
+
+/**
+ * Tan has no dark partner: its haze gets more light, so most of its lit area is at or above
+ * Tan's own lightness, and below nominal it falls toward black faster (with a rounded
+ * shoulder, see the looks' shaders), over a short distance.
+ */
+const TAN_FALL = 2.5
+const TAN_LIFT = 1.3
 
 function hexByName(pack: ColorPack, name: string): string {
   const color = pack.colors.find((c) => c.name === name)
@@ -118,7 +248,6 @@ function hexByName(pack: ColorPack, name: string): string {
  */
 export function contourLights(pack: ColorPack): ContourLight[] {
   const blue = pack.colors[0].hex
-  const cool = { toe: 0, tail: null }
   switch (pack.id) {
     case 'bold': {
       const cyan = hexByName(pack, 'Cyan')
@@ -127,8 +256,8 @@ export function contourLights(pack: ColorPack): ContourLight[] {
       return [
         { light: cyan, haze: cyan, base: blue, baseLevel: 0.05, ...cool },
         { light: blue, haze: blue, base: '#000000', baseLevel: 0, ...cool },
-        { light: yellow, haze: yellow, base: '#000000', baseLevel: 0, ...warm(yellow, AMBER) },
-        { light: orange, haze: orange, base: '#000000', baseLevel: 0, ...warm(orange, AMBER) },
+        { light: yellow, haze: yellow, base: '#000000', baseLevel: 0, ...warm(yellow, [peakColor(orange), peakColor(DEEP_RED)], 1) },
+        { light: orange, haze: orange, base: '#000000', baseLevel: 0, ...warm(orange, [peakColor(orange), peakColor(DEEP_RED)], 1) },
       ]
     }
     case 'elemental': {
@@ -137,8 +266,8 @@ export function contourLights(pack: ColorPack): ContourLight[] {
       const forest = hexByName(pack, 'Forest')
       return [
         { light: blue, haze: blue, base: hexByName(pack, 'Plum'), baseLevel: 0.15, ...cool },
-        { light: lime, haze: lime, base: forest, baseLevel: 0.12, ...warm(lime, forest) },
-        { light: tan, haze: tan, base: '#000000', baseLevel: 0, ...warm(tan, AMBER) },
+        { light: lime, haze: lime, base: forest, baseLevel: 0.12, ...warm(lime, [halfway(lime, forest), peakColor(forest)], null) },
+        { light: tan, haze: tan, base: '#000000', baseLevel: 0, ...warm(tan, [peakColor(TAN_DIM), peakColor(TAN_FAINT)], 1, TAN_FALL, TAN_LIFT) },
       ]
     }
     case 'atmospheric':
@@ -155,21 +284,24 @@ export function contourLights(pack: ColorPack): ContourLight[] {
 }
 
 /**
- * Picks the light for a seed. Seeds come in blocks as long as the pack's list of lights, and
- * each block uses every light once in an order of its own, so seeds 1 to 8 show every light
- * color as the main light. It still takes one draw from the seed's stream, so the rest of
- * the scene stays as it was.
+ * Index in contourLights(pack) of the seed's light. Seeds come in blocks as long as the
+ * pack's list of lights, and each block uses every light once in an order of its own, so
+ * seeds 1 to 8 show every light color as the main light.
  */
-export function pickContourLight(pack: ColorPack, seed: number, random: () => number): ContourLight {
-  random()
-  const lights = contourLights(pack)
-  const n = lights.length
+function contourLightIndex(pack: ColorPack, seed: number): number {
+  const n = contourLights(pack).length
   const index = (((seed - 1) % n) + n) % n
-  const order = lights.map((_, i) => i)
+  const order = Array.from({ length: n }, (_, i) => i)
   const shuffle = seededRandom(Math.floor((seed - 1) / n), 0x11c7)
   for (let i = n - 1; i > 0; i--) {
     const j = Math.floor(shuffle() * (i + 1))
     ;[order[i], order[j]] = [order[j], order[i]]
   }
-  return lights[order[index]]
+  return order[index]
+}
+
+/** Picks the light for a seed (contourLightIndex), taking one draw from the seed's stream. */
+export function pickContourLight(pack: ColorPack, seed: number, random: () => number): ContourLight {
+  random()
+  return contourLights(pack)[contourLightIndex(pack, seed)]
 }
