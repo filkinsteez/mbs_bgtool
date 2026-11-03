@@ -240,14 +240,14 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, ra
         return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.3, horizonGain: 0.42, skyEdge: [0.95, 0.4, 0.15], light: orangeRed, coreColor: yellow, glow: 1.2, glowUp: 0.25, glowRise: structure === 'land' ? 0.4 : 0.25, path: [-0.15, 0.55, 0.45], hue: [-0.25, 0.2], bridge: 0.9, bridgeLift: 0.5, bridgeWarmth: 0.8, bridgeFloor: 0.1, haze: 0.3, downReach: 1.5, sideDeeper: 0.3, waterDegrees: [6, 9], landHaze: 0.03, extinction: 3 }
       }
       // Yellow under a band of Cyan, so Meta Blue, Cyan and the warm light all show.
-      return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.6, skyEdge: [0.97, 0.75, 0.3], light: yellow, coreColor: yellow, glow: 0.92, glowUp: 0.5, path: [0.5, 1, 0.45], hue: [-0.3, 0.35], bridge: 0.5, haze: 0.5, sideDeeper: 0.4, core: 2 }
+      return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.1, skyEdge: [0.97, 0.75, 0.3], light: yellow, coreColor: yellow, glow: 0.7, glowUp: 0.5, path: [0.5, 1, 0.45], hue: [-0.3, 0.35], bridge: 0.5, haze: 0.5, sideDeeper: 0.4, core: 2 }
     }
     case 'elemental': {
       const [lime, forest, tan, plum] = rest
       const dark = { landTop: [plum, 1.7] as Tone, landBottom: [plum, 0.85] as Tone, water: [metaBlue, 0.3] as Tone }
       // Lime or Tan is the one light. Lime pales into Meta Blue through added light; it lights some
       // open skies and the Forest land, never water, where its dim reflection turns olive.
-      const limeLight = { light: lime, coreColor: lime, glow: 1.0, path: [-0.2, 0, 0.35], hue: [-0.15, 0.1], bridge: 0.8, bridgeLift: 0.3, haze: 0.8, sideDeeper: 0, core: 1 } satisfies Partial<PackLook>
+      const limeLight = { light: lime, coreColor: lime, glow: 1.0, path: [-0.2, 0, 0.35], hue: [-0.15, 0.1], bridge: 0.3, bridgeLift: 0.3, haze: 0.8, sideDeeper: 0, core: 1 } satisfies Partial<PackLook>
       // Open skies end in a dark dusk band in front of the glow, Forest under Lime and Plum under
       // Tan, so three pack colors show.
       const dusk = (tone: Tone) => (ground ? {} : { dusk: tone, downReach: 0.35, glowUp: 0.6 })
@@ -383,13 +383,14 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
       sunlight = 0.55
       break
     case 'arcs':
-      // The arcs center on the sun, off the frame's center, and lean toward it.
+      // The arcs center on the sun, off the frame's center, and lean toward it; the glow fades
+      // toward the far side instead of filling the width.
       bandAt = lerp(band, 1, 0.2) + 0.03 * shift
       sunIn = lerp(0.1, 0.4, sunPick)
       tilt = side * lerp(0, 6, tiltPick)
       dome = lerp(0.04, 0.1, bendPick) * frameWidth
-      floor = lerp(0.25, 0.55, floorPick)
-      lateral = lerp(1.1, 1.8, widthPick)
+      floor = lerp(0.15, 0.35, floorPick)
+      lateral = lerp(0.8, 1.3, widthPick)
       sunlight = 0.2
       break
     case 'water':
@@ -462,7 +463,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // the glow rises, widens and pales, and the sun's core whitens near the sun only.
   const zenithGain = stops2(intensity, 1.6)
   const lowGain = look.lowSkyGain * stops2(intensity, look.lowSkyGain < 1 ? 0.8 : 0.35)
-  const glowGain = stops2(intensity, 0.4)
+  const glowGain = stops2(intensity, 0.15)
   const sunGain = stops2(intensity, 2.4)
   const groundGain = stops2(intensity, 0.8)
   const day = stops2(intensity, 0.7)
@@ -638,7 +639,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     occlude: ground ? 0 : 0.85,
     occludeWidth: 0.04 * glowHaze,
     // The bridge gains no faster than the glow, or high Intensity turns the whole low sky white.
-    bridge: look.bridge * stops2(intensity, 0.4),
+    bridge: look.bridge * stops2(intensity, 0.15),
     bridgeLift: look.bridgeLift + 0.12 * softness,
     bridgeWarmth: look.bridgeWarmth,
     bridgeFloor: look.bridgeFloor,
