@@ -1,6 +1,6 @@
 // Renders reference presets at the target size and writes compare sheets and metrics.
 // Usage: node scripts/light/audit.mjs --ref <id>[,<id>...] | --all
-//          [--preset <path>] [--size WxH ...] [--export4k] [--isolines [6..10]] [--ss 1|2] [--out <dir>]
+//          [--preset <path>] [--size WxH ...] [--export4k] [--isolines [6..10]] [--ss 1|2] [--toe 0..1] [--out <dir>]
 import { existsSync } from 'node:fs'
 import { readdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -15,6 +15,8 @@ const outDir = path.resolve(ROOT, typeof args.out === 'string' ? args.out : 'art
 const sizes = list(args.size).map(parseSize)
 const supersample = args.ss ? Number(args.ss) : 2
 const isolineCount = args.isolines ? Math.min(10, Math.max(6, args.isolines === true ? 8 : Number(args.isolines) || 8)) : 0
+// --toe sets output.toe on every preset (for comparing the paper toe); without it presets keep their own.
+const toe = args.toe !== undefined ? Number(args.toe) : null
 const requested = list(args.ref)
 if (!args.all && requested.length === 0) {
   console.error('Give --ref <id>[,<id>...] or --all')
@@ -116,6 +118,7 @@ try {
       continue
     }
     const preset = await readPreset(presetFile)
+    if (toe !== null) preset.scene = { ...preset.scene, output: { ...(preset.scene.output ?? {}), toe } }
     if (ref.recipe && preset.scene.recipe !== ref.recipe) {
       console.warn(`${id}: preset uses ${preset.scene.recipe}, the reference list says ${ref.recipe}`)
     }

@@ -54,6 +54,7 @@ node scripts/light/audit.mjs --ref <id>[,<id>...] | --all
   [--export4k]        # also render at the 3840 px long edge with 1:1 crops
   [--isolines [6..10]] # draw Oklab lightness isolines over target and render (default 8)
   [--ss 1|2]          # supersample, default 2
+  [--toe 0..1]        # set output.toe on every preset (to compare the paper toe)
   [--out <dir>]       # default artifacts/light-audit
 ```
 
@@ -134,6 +135,13 @@ node scripts/light/dim-study.mjs [--out dir]
 ```
 
 Each warm pack color (Yellow and Orange-red over black and a dim Meta Blue, Lime and Tan over black, Forest and Plum) from 0.05x to 1x nominal, evenly in stops, with the toe off and at 1, plus the hex and Oklch at whole stops; then the contour.beam Elemental scenes whose light is Lime or Tan, toe off and at 1. Writes `artifacts/dim-study/dim-ramps-before-after.png` and `beam-<hex>-before-after.png`.
+
+```sh
+node scripts/light/toe-evidence.mjs [--recipe <id>[,<id>...]] [--seeds 1,2,3,4] [--out dir]
+node scripts/light/toe-evidence.mjs --preset <path> [--size 960x640] [--out dir]
+```
+
+The tool's scene (each recipe's compose, controls at 0.5) for the three packs at 16:9 and seeds 1 to 4, at toe 0 and 1, side by side with 3x crops of the window where the toe changes the picture most; one sheet per recipe, `artifacts/toe-evidence/<recipe>.png`, and the mean Oklab ΔE between the two per scene. With `--preset`, one preset the same way. Recipes change while their agents work, so run it from a frozen copy of HEAD (`git archive HEAD src scripts public package.json tsconfig.json`, with `node_modules` linked) when comparing.
 
 `output.grain` is one strength 0..1 (`src/light/engine/grain.ts`, ported from `prototypes/grain-study`): mono grain on Oklab L at output size, after the tone curve and before dither, with clump sizes as fractions of the short side so a preview and an export carry the same grain relative to the picture. 0 is off; 0.5 is fine film grain (about 1.25 % Oklab L at mid-tones in a 4K export); 1 matches the riso prints. It fades to 0 at black and eases off toward white. Reference presets use 1 for the three riso prints and 0 for every other reference. Older presets' `grainSize` (px) and `grainChroma` are ignored.
 
