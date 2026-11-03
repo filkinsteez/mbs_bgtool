@@ -1,6 +1,7 @@
 import type { ColorPack } from '../../color/packs'
 import type { Rgb } from '../../color/srgb'
-import type { NumberParam, ParamSpec, RecipeContext, RecipeDefinition, UniformMap, VectorParam } from '../../scene'
+import type { NumberParam, ParamSpec, RecipeContext, RecipeDefinition, ScatterBlur, UniformMap, VectorParam } from '../../scene'
+import { gradientNoise, NOISE_RMS } from './boundary'
 import { rampBoundary, type RampUniforms } from './ramp-boundary'
 import { composeRamp, rampPackColors } from './ramp-compose'
 import { GLOW_LAYERS, RAMP_COLORS, RAMP_EDGES, RAMP_FRAGMENT, SUN_LAYERS } from './ramp-shader'
@@ -81,7 +82,7 @@ const PARAMS: ParamSpec[] = [
     num(`glow${i}Down`, `Glow layer ${i} down`, 0.003, 2, 0.001, i === 1 ? 0.05 : 0.1),
   ]),
   num('extinction', 'Glow extinction', 0, 4, 0.001, 0.4),
-  num('horizonDim', 'Skylight dims toward the horizon', 0, 6, 0.005, 0),
+  num('horizonDim', 'Skylight dims toward the horizon', 0, 12, 0.005, 0),
   num('horizonDimHeight', 'Skylight dimming height', 0.004, 1, 0.001, 0.05),
   num('dimBelow', 'Skylight dimming below the horizon edge', 0, 1, 0.005, 1),
   num('reddenDown', 'Deeper toward the horizon', 0, 6, 0.005, 0),
@@ -118,6 +119,22 @@ const PARAMS: ParamSpec[] = [
   num('landLight', 'Land light', 0, 6, 0.005, 0),
   num('landLightWidth', 'Land light width', 0.02, 6, 0.005, 0.5),
   num('landLightDepth', 'Land light depth', 0.003, 3, 0.001, 0.08),
+  num('lensRadius', 'Lens radius, short sides; the scene is drawn sharp and seen through it (0: off)', 0, 0.3, 0.0005, 0),
+  vec('skyPatch', 'Light change inside the sky: amount, patch size in short sides, width over height', 0, 4, 0.001, [0, 0.6, 1]),
+  num('ground', 'Below the line: 0 more sky, 1 water, 2 land', 0, 2, 1, 0),
+  num('groundAt', 'Line height at the frame center (frame fraction)', -1, 3, 0.001, 1.1),
+  num('groundTilt', 'Line tilt, degrees (positive lowers the right)', -20, 20, 0.01, 0),
+  num('groundWave', 'Long low waves of the line, short sides', 0, 0.1, 0.0005, 0),
+  vec('ridge', 'Land: climb toward the light, side it climbs to (+1 right), broad bowl depth, wave length', -2, 2, 0.001, [0, 1, 0, 0.9]),
+  vec('shore', 'Far bank on the water: height, change along it', 0, 1, 0.001, [0, 0]),
+  vec('water', 'Water: squeeze, degrees below the horizon at the bottom edge, ripple smear, strip strength', 0, 40, 0.001, [1.25, 9, 0.12, 0.3]),
+  num('waterMirror', "Share of calm water's reflectance that a rough sea keeps", 0, 1, 0.01, 1),
+  num('mirrorReach', 'Highest share of the visible sky the water mirrors', 0.05, 1, 0.01, 1),
+  vec('glitter', "The sun's path on the water: strength, width at the line, width at the bottom edge", 0, 2, 0.001, [0, 0.1, 0.35]),
+  vec('groundHaze', 'Far land: share of the sky light, depth over which it fades', 0, 2, 0.001, [0.7, 0.08]),
+  num('groundTopGain', 'Land top gain', 0, 4, 0.005, 1),
+  num('groundBottomGain', 'Land bottom gain', 0, 4, 0.005, 0.5),
+  num('waterGain', 'Water own light gain', 0, 4, 0.005, 0.3),
 ]
 
 const COLOR_SLOTS = [
@@ -129,6 +146,9 @@ const COLOR_SLOTS = [
   { key: 'landTop', label: 'Land top' },
   { key: 'landBottom', label: 'Land bottom' },
   { key: 'landLight', label: 'Land light' },
+  { key: 'groundTop', label: 'Ground top' },
+  { key: 'groundBottom', label: 'Ground bottom' },
+  { key: 'water', label: 'Water' },
 ]
 
 const luma = (c: Rgb) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
@@ -204,9 +224,54 @@ function uniforms(ctx: RecipeContext): UniformMap {
     uLandBottom: scale(ctx.color('landBottom'), ctx.num('landBottomGain')),
     uLandLightColor: scale(ctx.color('landLight'), ctx.num('landLight')),
     uLandLight: [ctx.num('landLightWidth'), ctx.num('landLightDepth')],
+    uLens: ctx.num('lensRadius') > 0 ? 1 : 0,
+    uSkyPatch: skyPatchUniform(ctx),
+    uGround: Math.round(ctx.num('ground')),
+    uGroundLine: [(ctx.num('groundAt') - 0.5) * frameShort(ctx).y, Math.tan((ctx.num('groundTilt') * Math.PI) / 180), ctx.num('groundWave')],
+    uRidge: ctx.vec('ridge'),
+    uShore: ctx.vec('shore'),
+    uWater: ctx.vec('water'),
+    uWaterOwn: scale(ctx.color('water'), ctx.num('waterGain')),
+    uWaterMirror: ctx.num('waterMirror'),
+    uMirrorReach: ctx.num('mirrorReach'),
+    uGlitter: ctx.vec('glitter'),
+    uGroundTop: scale(ctx.color('groundTop'), ctx.num('groundTopGain')),
+    uGroundBottom: scale(ctx.color('groundBottom'), ctx.num('groundBottomGain')),
+    uGroundHaze: ctx.vec('groundHaze'),
   }
   return { ...u, ...rampBoundary(ctx, u).uniforms }
 }
+
+/** The frame in short-side units: width and height. */
+const frameShort = (ctx: RecipeContext) => ({ x: Math.max(ctx.aspect, 1), y: Math.max(1 / ctx.aspect, 1) })
+
+/** The sky patches' amount, 1 / size and their mean over the top fifth of the frame, which the shader removes. */
+function skyPatchUniform(ctx: RecipeContext): number[] {
+  const [amount, size, stretch] = ctx.vec('skyPatch')
+  if (!(amount > 0)) return [0, 1, 0, 1]
+  const k = 1 / Math.max(size, 1e-3)
+  const wide = Math.max(stretch, 0.1)
+  const { x: w, y: h } = frameShort(ctx)
+  const seed = Math.round(ctx.seed)
+  let sum = 0
+  let n = 0
+  for (let j = 0; j <= 8; j++) {
+    for (let i = 0; i <= 32; i++) {
+      const px = ((-0.5 + i / 32) * w * k) / wide
+      const py = (-0.5 + (0.2 * j) / 8) * h * k
+      sum += (gradientNoise(px + 3.1, py + 7.7, seed + 811) + 0.5 * gradientNoise(2 * px - 5.3, 2 * py + 1.9, seed + 823)) / NOISE_RMS
+      n++
+    }
+  }
+  return [amount, k, sum / n, wide]
+}
+
+/**
+ * The lens, kept in one place: the scene is drawn sharp and seen through one out-of-focus disc
+ * lens of radius R. Without a lens (R 0, the 1:1 presets) the aux source is unused, so it stays
+ * tiny.
+ */
+const LENS: ScatterBlur = { source: 'aux', shape: 'lens', radius: (ctx) => ctx.num('lensRadius'), size: () => 8 }
 
 /**
  * Sunset sky: a stop ramp in linear light along a tilted, bent axis whose
@@ -224,6 +289,7 @@ export const sunsetRamp: RecipeDefinition = {
   params: PARAMS,
   fragment: RAMP_FRAGMENT,
   uniforms,
+  scatter: [LENS],
   radianceScale: 0.5,
   fromPack: (pack: ColorPack) => rampPackColors(pack.id, 1),
   compose: ({ pack, controls, seed, aspect }) => composeRamp(pack.id, controls, seed, aspect),
