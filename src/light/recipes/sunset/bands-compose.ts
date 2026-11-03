@@ -89,6 +89,8 @@ interface Band {
   bridge: number
   /** Share of the image's light change inside the band. */
   vary: number
+  /** Share of the band's light that gathers around the light's column (0: even across the frame). */
+  sun: number
   /** Thickness floor in lens radii, at every point. */
   floor: number
 }
@@ -149,6 +151,8 @@ function keepThick(bands: Band[], R: number, frameW: number, frameH: number, see
  * seed is a stack of three to five bands; the seed changes which optional
  * colors stay, the band heights and every edge's shape. In some seeds the
  * shared horizon makes the stack's lowest boundary a ridge or bank of land.
+ * Softness and Horizon only resize and move the seed's bands, and Intensity
+ * only changes their light.
  * Light changes slowly inside every band, with the exact pack hex at the
  * nominal light.
  */
@@ -177,6 +181,8 @@ interface Scene {
   lightVary: number
   /** Stops the sky's light falls per frame height above its middle. */
   skyFall: number
+  /** Extra sky light at the light's column, as a share of the sky's own. */
+  skyLift: number
 }
 
 /** A color of the stack: its hex and the share of nominal light it gets (a deep band is the same color under less light). */
@@ -191,23 +197,27 @@ interface Entry {
  * again under less light; Elemental's Meta Blue, one light (Lime or Tan) and
  * at least one dark band (Forest or Plum); Atmospheric's Meta Blue, Ice, Steel
  * and at least one of Slate and Near-black. Only a second dark color or the
- * color added again at the bottom may go, by the seed or when the bands don't
- * fit a wide lens. The lowest boundary comes from the shared horizon: open
- * (the last band runs off the frame) or a ridge or bank of land.
+ * color added again at the bottom may go, by the seed. The seed's horizon
+ * makes the lowest boundary open (the last band runs off the frame) or a
+ * ridge or bank of land.
+ * The seed lays the scene out once, for the middle Softness and Horizon:
+ * which colors show, land or open, every band's height and edge. Softness and
+ * Horizon then only resize and move those bands: Horizon moves the lowest
+ * boundary, a wider lens gives thin bands more room, and edges flatten as
+ * their bands shrink.
  * Dark masses have outlines, sharp in the scene and softer in some stretches;
  * lighter colors fade into each other as light, and where two colors far apart
  * meet, pale light added across the transition keeps its middle pale.
  */
 function stack(pack: ColorPack, seed: number, R: number, level: number, horizon: number, aspect: number, frameW: number, frameH: number): Scene {
-  // Bands are laid out for at least the middle Softness's lens, so a sharper lens changes only the blur, not
-  // which colors show or how tall their bands are.
-  const RL = Math.max(R, lerp(0.045, 0.12, 0.5))
+  // The middle Softness's lens, which the seed's layout is made for.
+  const R0 = lerp(0.045, 0.12, 0.5)
   const warmHex = (hex: string) => isWarm(hexToLinear(hex)) || isLightColor(hexToLinear(hex))
   const rnd = random(seed * 6151 + pack.id.length * 17 + 3)
-  const place = placeHorizon(horizon, seed, aspect)
+  const place = placeHorizon(0.5, seed, aspect)
   const [sky, ...rest] = pack.colors.map((c) => c.hex)
 
-  // One warm color and one light per image, from the seed alone: Horizon moves the line, never the colors.
+  // One warm color and one light per image, from the seed alone.
   const drops = random(seed * 3571 + pack.id.length * 13 + 11)
   const warms = rest.filter((hex) => isWarm(hexToLinear(hex)))
   const warm = warms.length > 1 ? pickLight(warms, rnd) : warms[0]
@@ -245,24 +255,25 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     if (d.length) entries.splice(d[drops.int(0, d.length - 1)], 1)
   }
 
-  // The lowest boundary: where the shared horizon puts water or land in the frame, the last (dark) band is land, a
+  // The lowest boundary: where the seed's horizon has water or land in the frame, the last (dark) band is land, a
   // ridge or bank from the line down. (Water is left out: mirrored, a stack reads as stripes, and the mirrored
   // bridges go pink.)
   let below: 'open' | 'land' = place.y < 1 && place.below !== 'open' && dark(entries[entries.length - 1]) ? 'land' : 'open'
-  const floorOf = (list: Entry[], i: number) => {
-    const e = list[i]
-    const darker = i > 0 && i + 1 < list.length && shown(e) < Math.min(shown(list[i - 1]), shown(list[i + 1])) - 0.1
-    // The sky leads: it keeps the most room of the end bands, a little less above land.
-    return ((i === 0 ? (below === 'open' ? 2.8 : 2.4) : i === list.length - 1 ? 2.3 : darker ? 3.5 : 2.5) * RL) / frameH
-  }
-  const room = () => (below === 'open' ? 1 : place.y)
+  // Each band's least height in frame heights for a lens of radius r. The sky leads: it keeps the most room of the
+  // end bands, a little less above land.
+  const floorsAt = (r: number) =>
+    entries.map((e, i) => {
+      const last = i === entries.length - 1
+      const darker = i > 0 && !last && shown(e) < Math.min(shown(entries[i - 1]), shown(entries[i + 1])) - 0.1
+      return ((i === 0 ? (below === 'open' ? 2.8 : 2.4) : last ? (below === 'land' ? 2.2 : 2.3) : darker ? 3.5 : 2.5) * r) / frameH
+    })
   const fits = () => {
-    const stackFloors = (below === 'land' ? entries.slice(0, -1) : entries).reduce((s, _, i, l) => s + floorOf(l, i), 0)
-    const lowFloor = below === 'open' ? 0 : (2.2 * RL) / frameH
-    return stackFloors <= 0.97 * room() && 1 - room() >= lowFloor
+    const f = floorsAt(R0)
+    const above = f.slice(0, -1).reduce((s, v) => s + v, 0)
+    return below === 'open' ? above + f[f.length - 1] <= 0.97 : above <= 0.97 * place.y && 1 - place.y >= f[f.length - 1]
   }
-  // When the bands don't fit (a wide lens), land goes first, then the color added again, then a second dark
-  // color: the pack's colors stay.
+  // When the bands don't fit, land goes first, then the color added again, then a second dark color: the pack's
+  // colors stay.
   while (!fits()) {
     if (below !== 'open') {
       below = 'open'
@@ -275,30 +286,28 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   }
   if (below !== 'open' && !dark(entries[entries.length - 1])) below = 'open'
 
-  // Heights: unequal, each over its floor. With an open bottom, Horizon moves weight from the top bands to the
-  // bottom ones; with land the line itself moves.
+  // The seed's heights: unequal, each over its floor; above land they share the room down to the line. When even
+  // the pack's own colors don't fit their floors, all of them shrink together rather than one going.
   const list = entries
-  const stacked = below === 'land' ? list.slice(0, -1) : list
-  const n = stacked.length
-  const floors = stacked.map((_, i) => floorOf(stacked, i))
+  const n = list.length
+  const f0 = floorsAt(R0)
+  const shared = below === 'land' ? n - 1 : n
   // Ice is close to white, so its band stays smaller: never a wide white band. A color repeated under less light
   // at the bottom stays smaller too, so it doesn't read as a second, muddier color.
-  const weights = stacked.map((e) => rnd.between(0.45, 1.9) * (lightness(e.hex) > 0.95 ? 0.35 : 1) * (e.under < 1 ? 0.55 : 1))
-  const tip = below === 'open' ? lerp(0.7, 1.4, horizon) : 1
-  const ws = weights.map((w, i) => w * tip ** (n > 1 ? (i - (n - 1) / 2) / ((n - 1) / 2) : 0))
-  // When even the pack's own colors don't fit their floors (a wide lens on a wide frame), all of them shrink
-  // together rather than one going.
-  const floorSum = floors.reduce((s, v) => s + v, 0)
-  const extra = Math.max(0, room() - floorSum)
-  const squeeze = Math.min(1, room() / floorSum)
-  const spans = floors.map((f, i) => f * squeeze + (extra * ws[i]) / ws.reduce((s, v) => s + v, 0))
+  const weights = list.slice(0, shared).map((e) => rnd.between(0.45, 1.9) * (lightness(e.hex) > 0.95 ? 0.35 : 1) * (e.under < 1 ? 0.55 : 1))
+  const room = below === 'open' ? 1 : place.y
+  const floorSum = f0.slice(0, shared).reduce((s, v) => s + v, 0)
+  const extra = Math.max(0, room - floorSum)
+  const squeeze = Math.min(1, room / floorSum)
+  const weightSum = weights.reduce((s, v) => s + v, 0)
+  const spans = weights.map((w, i) => f0[i] * squeeze + (extra * w) / weightSum)
+  // Each band's top edge in the seed's layout: the sky's is the frame's top, and the last band's is the lowest
+  // boundary.
+  const tops = list.map((_, i) => (below === 'land' && i === n - 1 ? place.y : spans.slice(0, i).reduce((s, v) => s + v, 0)))
 
   const bands: Band[] = []
   const under: number[] = []
-  let at = 0
   list.forEach((e, i) => {
-    const top = below === 'land' && i === list.length - 1 ? place.y : at
-    at += spans[i] ?? 0
     if (i === 0) return
     const upper = list[i - 1]
     const isDark = dark(e)
@@ -307,32 +316,37 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     // lens softens it.
     const warmOnDark = outline && (warmHex(upper.hex) || warmHex(e.hex))
     const bridge = !outline && needsBridge(hexToLinear(upper.hex), hexToLinear(e.hex))
-    const lobes: Bump[] = []
+    // Every band draws the same random numbers, land or not, so no other edge depends on whether there is land.
     let tilt = (rnd.between(-0.05, 0.05) * frameW) / frameH
     let wave = (0.016 * rnd.between(0.7, 1.3)) / frameH
-    if (below === 'land' && i === list.length - 1) {
-      // Land: one ridge rising toward one side, or a low bank, tilted up to the shared horizon's tilt.
+    const side = rnd.sign()
+    const ridge = rnd.chance(0.5)
+    const count = rnd.int(1, 2)
+    const draws = [0, 1].map(() => [rnd.next(), rnd.next(), rnd.sign(), rnd.next()] as const)
+    const lobes: Bump[] = []
+    if (below === 'land' && i === n - 1) {
+      // Land: one ridge rising toward one side, or a low bank, tilted up to the seed's horizon tilt.
       const rise = (Math.tan((Math.abs(place.tilt) * Math.PI) / 180) * frameW) / frameH
-      const side = rnd.sign()
-      if (rnd.chance(0.5)) {
+      const [at, width, sign, shift] = draws[0]
+      if (ridge) {
         tilt = -side * rise
-        lobes.push([side > 0 ? rnd.between(0.7, 1.05) : rnd.between(-0.05, 0.3), rnd.between(0.45, 0.8) / frameW, -rnd.between(0.03, 0.06) / frameH])
+        lobes.push([side > 0 ? lerp(0.7, 1.05, at) : lerp(-0.05, 0.3, at), lerp(0.45, 0.8, width) / frameW, -lerp(0.03, 0.06, shift) / frameH])
       } else {
         tilt = -side * Math.min(rise, (0.03 * frameW) / frameH)
-        lobes.push([rnd.between(0.2, 0.8), rnd.between(0.5, 0.9) / frameW, (rnd.sign() * rnd.between(0.01, 0.02)) / frameH])
+        lobes.push([lerp(0.2, 0.8, at), lerp(0.5, 0.9, width) / frameW, (sign * lerp(0.01, 0.02, shift)) / frameH])
       }
       wave *= 0.6
     } else {
       // Broad, low lobes (from a few lens radii up to the frame width), so no edge reads as a hill, a tree line
       // or a cloud.
-      for (let k = rnd.int(1, 2); k > 0; k--) {
-        lobes.push([rnd.between(0.05, 0.95), Math.max(3 * R, rnd.between(0.45, 0.9)) / frameW, (rnd.sign() * rnd.between(0.015, 0.035)) / frameH])
+      for (const [at, width, sign, shift] of draws.slice(0, count)) {
+        lobes.push([lerp(0.05, 0.95, at), Math.max(3 * R0, lerp(0.45, 0.9, width)) / frameW, (sign * lerp(0.015, 0.035, shift)) / frameH])
       }
     }
     const darker = i + 1 < list.length && shown(e) < Math.min(shown(upper), shown(list[i + 1])) - 0.1
     bands.push({
       color: e.hex,
-      edge: { base: top, tilt, bumps: lobes, wave, wavelength: 1.5, row: 2 * bands.length },
+      edge: { base: tops[i], tilt, bumps: lobes, wave, wavelength: 1.5, row: 2 * bands.length },
       mode: outline ? MODE_COVER : MODE_LIGHT,
       fade: ((warmOnDark ? rnd.between(0.05, 0.1) : outline ? rnd.between(0.3, 0.8) : bridge ? rnd.between(1.2, 1.8) : rnd.between(1.2, 2.6)) * R) / frameH,
       fadeVary: warmOnDark ? 0.5 : outline ? 0.9 : 0.35,
@@ -340,6 +354,7 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
       lean: rnd.between(-0.15, 0.15),
       bridge: bridge ? 1 : 0,
       vary: 1,
+      sun: 0,
       floor: darker ? 3.2 : 2,
     })
     under.push(e.under)
@@ -360,13 +375,47 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     const swell: Bump = [side, rnd.between(0.45, 0.8) / frameW, -rnd.between(0.025, 0.045) / frameH]
     b.edge = { ...b.edge, bumps: [...b.edge.bumps, swell].slice(0, BUMP_MAX) }
   }
-  keepThick(bands, RL, frameW, frameH, edgeSeed(seed))
+  keepThick(bands, R0, frameW, frameH, edgeSeed(seed))
+
+  // Softness and Horizon move and resize the seed's bands. Every band is at least as tall as the lens rule asks
+  // (2 lens radii, 3.2 for a band darker than both neighbours); the height above that is spare. Horizon moves
+  // spare height between the last band (land, or the band running off the frame) and the bands above it: none
+  // for the last band at 0, the seed's own share at 0.5, all of it at 1. A lens wider than the middle one raises
+  // every least height, and the spare height shrinks; when none is left, all bands shrink together. Edges
+  // flatten as their bands shrink.
+  const least = (r: number) =>
+    list.map((e, i) => {
+      const darker = i > 0 && i < n - 1 && shown(e) < Math.min(shown(list[i - 1]), shown(list[i + 1])) - 0.1
+      return ((darker ? 3.2 : 2) * r) / frameH
+    })
+  const was = list.map((_, i) => (i + 1 < n ? tops[i + 1] : 1) - tops[i])
+  const leastSeed = least(R0)
+  const spareSeed = was.map((w, i) => Math.max(0, w - leastSeed[i]))
+  const leastNow = least(Math.max(R, R0))
+  const spare = 1 - leastNow.reduce((s, v) => s + v, 0)
+  const spareSeedSum = Math.max(1e-9, spareSeed.reduce((s, v) => s + v, 0))
+  const lastSeed = (spareSeed[n - 1] * Math.max(spare, 0)) / spareSeedSum
+  const lastSpare = horizon < 0.5 ? lerp(0, lastSeed, horizon / 0.5) : lerp(lastSeed, Math.max(spare, 0), (horizon - 0.5) / 0.5)
+  const aboveSeed = spareSeedSum - spareSeed[n - 1]
+  const now =
+    spare <= 0
+      ? leastNow.map((v) => v / (1 - spare))
+      : leastNow.map((v, i) =>
+          i === n - 1 ? v + lastSpare : v + (aboveSeed > 0 ? (spareSeed[i] / aboveSeed) * (spare - lastSpare) : (spare - lastSpare) / (n - 1)),
+        )
+  let edgeTop = 0
+  bands.forEach((b, k) => {
+    edgeTop += now[k]
+    const s = Math.min(1, now[k] / was[k], now[k + 1] / was[k + 1])
+    b.edge = { ...b.edge, base: edgeTop, tilt: b.edge.tilt * s, bumps: b.edge.bumps.map(([bx, bw, sh]) => [bx, bw, sh * s] as Bump), wave: b.edge.wave * s }
+  })
 
   // Light: the image's light rises most with Intensity; deep bands are a color under less light; a cool band next
   // to one of similar lightness gets less light, so neighbours contrast. A warm color dimmed reads olive, khaki
   // or brown: below the middle of Intensity it keeps its light, and so does a dark band next to it, whose seam
-  // with it the lens would widen; the other bands and the upper sky dim instead. Next to a dark band, where the
-  // lens dims a warm color further, its light changes half as much.
+  // with it the lens would widen; the other bands and the upper sky dim instead. Above the middle the extra light
+  // gathers around the light's column, so white shows only near the light, never as a flat band across the frame.
+  // Next to a dark band, where the lens dims a warm color further, its light changes half as much.
   const darkAt = (j: number) => j >= 0 && j < bands.length && lightness(bands[j].color) * Math.cbrt(under[j]) < 0.45
   const warmAt = (j: number) => j >= 0 && j < bands.length && warmHex(bands[j].color)
   bands.forEach((b, i) => {
@@ -376,8 +425,9 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     const warmLight = warmAt(i)
     const holds = warmLight || (darkAt(i) && (warmAt(i - 1) || warmAt(i + 1)))
     const base = under[i] < 1 ? under[i] : similar && !isWarm(hexToLinear(b.color)) ? 0.75 : 1
-    const gain = level ** (level >= 1 ? (isLight ? 1.6 : 0.8) : holds ? 0 : 0.8)
-    b.light = base * gain * iceCap(b.color, level)
+    const lift = level >= 1 ? level ** (isLight ? 1.6 : 0.8) : 1
+    b.light = base * (level >= 1 ? lift : level ** (holds ? 0 : 0.8)) * iceCap(b.color, level)
+    b.sun = 1 - 1 / lift
     if (warmLight && (darkAt(i - 1) || darkAt(i + 1))) b.vary = 0.5
   })
 
@@ -398,12 +448,15 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     const bottom = bi + 1 < bands.length ? bands[bi + 1].edge.base : 1
     patches.push({
       color: from,
-      shape: [rnd.between(0.1, 0.9), lerp(top, bottom, rnd.between(0.3, 0.7)), (rnd.between(2.5, 5) * RL) / frameW, (rnd.between(0.9, 1.4) * RL) / frameH],
+      shape: [rnd.between(0.1, 0.9), lerp(top, bottom, rnd.between(0.3, 0.7)), (rnd.between(2.5, 5) * R0) / frameW, (rnd.between(0.9, 1.4) * R0) / frameH],
       look: [1, rnd.between(0.08, 0.18) * level ** 0.8, MODE_ADD],
     })
   }
 
-  return { sky, bands, lights: lightTerms, patches, sun: [0.5, 0.5], lightVary: rnd.between(0.1, 0.17), skyFall: 4.5 * Math.max(0, 1 - level) }
+  const lightVary = rnd.between(0.1, 0.17)
+  // The light's column: where Intensity above the middle gathers its extra light.
+  const sun: [number, number] = [rnd.between(0.2, 0.8), rnd.between(0.22, 0.35)]
+  return { sky, bands, lights: lightTerms, patches, sun, lightVary, skyFall: 4.5 * Math.max(0, 1 - level), skyLift: 1.2 * Math.max(0, level - 1) }
 }
 
 /** Ice is close to white: below white at the default Intensity. */
@@ -429,7 +482,7 @@ function writeScene(scene: Scene, R: number): BandsComposition {
     params[key('Tilt')] = [b.edge.tilt, 0, 0]
     params[key('Lean')] = b.lean
     params[key('Wave')] = [b.edge.wave, 0, b.edge.wavelength]
-    params[key('Sun')] = [0, 0]
+    params[key('Sun')] = [b.sun, 0]
     params[key('Vary')] = b.vary
     params[key('BumpAt')] = pad(bumps.map((x) => x[0]), 0.5)
     params[key('BumpWidth')] = pad(bumps.map((x) => x[1]), 0)
@@ -467,7 +520,7 @@ function writeScene(scene: Scene, R: number): BandsComposition {
   params.overlap = 0.65
   params.extinction = 0
   params.spill = [0.12, 1.2]
-  params.sky = [0, scene.skyFall, 0.5]
+  params.sky = [scene.skyLift, scene.skyFall, 0.5]
   params.water = [2, 1.25, 0.3, 0.4]
   params.waterLook = [0.5, 0, 0.008, 0.05]
   return { colors, params, lens: { bloom: 0, halation: 0 }, output: { grain: 0, exposure: 0 } }
