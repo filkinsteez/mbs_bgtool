@@ -90,6 +90,98 @@ export const NOISE_RMS = 0.3052
 /** Steepest slope of gradientNoise per lattice unit, over its RMS. */
 export const NOISE_SLOPE_MAX = 9.476
 
+// The calibration reads the same few thousand noise cells many times, and a slider
+// drag reads them again for every new set of params. Each cell's four corner
+// gradients are kept per seed, so the noise below is gradientNoise to the last bit
+// without its hashes and trigonometry.
+const CELL_LIMIT = 400_000
+let cells = new Map<number, Float64Array>()
+
+function cellCorners(ix: number, iy: number, seed: number): Float64Array {
+  const a00 = hash1(ix, iy, seed) * TAU
+  const a10 = hash1(ix + 1, iy, seed) * TAU
+  const a01 = hash1(ix, iy + 1, seed) * TAU
+  const a11 = hash1(ix + 1, iy + 1, seed) * TAU
+  return Float64Array.of(Math.cos(a00), Math.sin(a00), Math.cos(a10), Math.sin(a10), Math.cos(a01), Math.sin(a01), Math.cos(a11), Math.sin(a11))
+}
+
+function cellOf(ix: number, iy: number, seed: number): Float64Array {
+  if (ix < -32768 || ix > 32767 || iy < -32768 || iy > 32767 || seed < 0 || seed > 1048575) return cellCorners(ix, iy, seed)
+  const key = seed * 4294967296 + (ix + 32768) * 65536 + (iy + 32768)
+  let c = cells.get(key)
+  if (c === undefined) {
+    c = cellCorners(ix, iy, seed)
+    if (cells.size >= CELL_LIMIT) cells = new Map()
+    cells.set(key, c)
+  }
+  return c
+}
+
+function cornersNoise(c: Float64Array, fx: number, fy: number, ux: number, uy: number): number {
+  const n00 = c[0] * fx + c[1] * fy
+  const n10 = c[2] * (fx - 1) + c[3] * fy
+  const n01 = c[4] * fx + c[5] * (fy - 1)
+  const n11 = c[6] * (fx - 1) + c[7] * (fy - 1)
+  const nx0 = n00 + (n10 - n00) * ux
+  const nx1 = n01 + (n11 - n01) * ux
+  return 1.41421356 * (nx0 + (nx1 - nx0) * uy)
+}
+
+/** gradientNoise, with each cell's corner gradients cached. */
+function noise(px: number, py: number, seed: number): number {
+  const ix = Math.floor(px)
+  const iy = Math.floor(py)
+  const fx = px - ix
+  const fy = py - iy
+  return cornersNoise(cellOf(ix, iy, seed), fx, fy, quintic(fx), quintic(fy))
+}
+
+/**
+ * gradientNoise at one fixed px for any py: the x part is worked out once, and for
+ * the last cell its corners' x products (the first terms of cornersNoise's sums).
+ */
+class NoiseColumn {
+  private readonly seed: number
+  private readonly ix: number
+  private readonly fx: number
+  private readonly ux: number
+  private iy = NaN
+  private c: Float64Array = new Float64Array(8)
+  private x00 = 0
+  private x10 = 0
+  private x01 = 0
+  private x11 = 0
+  constructor(px: number, seed: number) {
+    this.seed = seed
+    this.ix = Math.floor(px)
+    this.fx = px - this.ix
+    this.ux = quintic(this.fx)
+  }
+  at(py: number): number {
+    const iy = Math.floor(py)
+    return this.atCell(iy, py - iy, quintic(py - iy))
+  }
+  /** The same, with the row's cell, offset in it and fade already worked out. */
+  atCell(iy: number, fy: number, uy: number): number {
+    if (iy !== this.iy) {
+      this.iy = iy
+      const c = (this.c = cellOf(this.ix, iy, this.seed))
+      this.x00 = c[0] * this.fx
+      this.x10 = c[2] * (this.fx - 1)
+      this.x01 = c[4] * this.fx
+      this.x11 = c[6] * (this.fx - 1)
+    }
+    const c = this.c
+    const n00 = this.x00 + c[1] * fy
+    const n10 = this.x10 + c[3] * fy
+    const n01 = this.x01 + c[5] * (fy - 1)
+    const n11 = this.x11 + c[7] * (fy - 1)
+    const nx0 = n00 + (n10 - n00) * this.ux
+    const nx1 = n01 + (n11 - n01) * this.ux
+    return 1.41421356 * (nx0 + (nx1 - nx0) * uy)
+  }
+}
+
 // ---------------------------------------------------------------- parameters
 
 /** One transition between two colors: its position on s0 and its 10-90 width. */
@@ -336,7 +428,7 @@ function terms(r: Resolved, seed: number): Terms {
       let amp = 1
       let f = 1 / r.sharedScale
       for (let o = 0; o < r.octaves; o++) {
-        sum += amp * (o === 0 ? 1 : detail) * gradientNoise(a * f + 0.37 + 2.9 * o, 0.5 + 4 * o, seed)
+        sum += amp * (o === 0 ? 1 : detail) * noise(a * f + 0.37 + 2.9 * o, 0.5 + 4 * o, seed)
         amp *= r.gain
         f *= 2
       }
@@ -348,7 +440,7 @@ function terms(r: Resolved, seed: number): Terms {
       let fx = 1 / r.scale
       let fy = 1 / r.ly
       for (let o = 0; o < r.octaves; o++) {
-        sum += amp * (o === 0 ? 1 : detail) * gradientNoise(a * fx + 1.7 * o + 0.13, v * fy + 3.3 * o + 0.71, seed + 131 * (o + 1))
+        sum += amp * (o === 0 ? 1 : detail) * noise(a * fx + 1.7 * o + 0.13, v * fy + 3.3 * o + 0.71, seed + 131 * (o + 1))
         amp *= r.gain
         fx *= 2
         fy *= 1.5
@@ -357,7 +449,7 @@ function terms(r: Resolved, seed: number): Terms {
     },
     M(a) {
       if (r.modAmount <= 0) return 1
-      const n = Math.min(2.5, Math.max(-2.5, gradientNoise(a / r.modScale + 0.31, 7.5, seed + 977) / NOISE_RMS))
+      const n = Math.min(2.5, Math.max(-2.5, noise(a / r.modScale + 0.31, 7.5, seed + 977) / NOISE_RMS))
       return Math.max(0, 1 + r.modAmount * n)
     },
     v(s0) {
@@ -371,11 +463,31 @@ function terms(r: Resolved, seed: number): Terms {
 
 // ---------------------------------------------------------------- bump measures
 
-function polyfit(xs: readonly number[], ys: readonly number[], degree: number): number[] {
+// Sample positions in -1..1, their powers and the DCT's cosines for a line of n
+// samples, worked out once per n.
+interface LineTables {
+  xs: number[]
+  powers: number[][]
+  cosines: Float64Array
+}
+const lineTables = new Map<number, LineTables>()
+function tablesFor(n: number): LineTables {
+  let t = lineTables.get(n)
+  if (!t) {
+    const xs = Array.from({ length: n }, (_, i) => ((i + 0.5) / n) * 2 - 1)
+    const cosines = new Float64Array(64 * n)
+    for (let k = 0; k < Math.min(64, n); k++) for (let i = 0; i < n; i++) cosines[k * n + i] = Math.cos((Math.PI * k * (i + 0.5)) / n)
+    t = { xs, powers: xs.map((x) => [x ** 0, x ** 1, x ** 2]), cosines }
+    lineTables.set(n, t)
+  }
+  return t
+}
+
+function polyfit(xs: readonly number[], ys: readonly number[], degree: number, powers?: readonly number[][]): number[] {
   const n = degree + 1
   const M = Array.from({ length: n }, () => new Array<number>(n + 1).fill(0))
   for (let i = 0; i < xs.length; i++) {
-    const p = Array.from({ length: n }, (_, k) => xs[i] ** k)
+    const p = powers ? powers[i] : Array.from({ length: n }, (_, k) => xs[i] ** k)
     for (let r = 0; r < n; r++) {
       for (let c = 0; c < n; c++) M[r][c] += p[r] * p[c]
       M[r][n] += p[r] * ys[i]
@@ -394,11 +506,12 @@ function polyfit(xs: readonly number[], ys: readonly number[], degree: number): 
 // DCT-II component with the largest amplitude, from kMin up.
 function dominantK(v: readonly number[], kMin: number): number {
   const n = v.length
+  const cosines = tablesFor(n).cosines
   let best = kMin
   let bestAmp = -1
   for (let k = kMin; k < Math.min(64, n); k++) {
     let s = 0
-    for (let i = 0; i < n; i++) s += v[i] * Math.cos((Math.PI * k * (i + 0.5)) / n)
+    for (let i = 0; i < n; i++) s += v[i] * cosines[k * n + i]
     if (Math.abs(s) > bestAmp) {
       bestAmp = Math.abs(s)
       best = k
@@ -419,9 +532,9 @@ export interface BoundaryBumps {
 
 export function boundaryBumps(y: readonly number[], span: number, frameHeight: number): BoundaryBumps {
   const n = y.length
-  const xs = y.map((_, i) => ((i + 0.5) / n) * 2 - 1)
-  const lin = polyfit(xs, y, 1)
-  const quad = polyfit(xs, y, 2)
+  const { xs, powers } = tablesFor(n)
+  const lin = polyfit(xs, y, 1, powers)
+  const quad = polyfit(xs, y, 2, powers)
   const detr = y.map((v, i) => v - lin[0] - lin[1] * xs[i])
   const resid = y.map((v, i) => v - quad[0] - quad[1] * xs[i] - quad[2] * xs[i] * xs[i])
   const sigma = Math.sqrt(resid.reduce((s, v) => s + v * v, 0) / n)
@@ -520,78 +633,22 @@ export function calibrateBoundary(params: BoundaryParams, aspect: number, seed: 
   const halfH = 0.5 * Math.max(1 / aspect, 1)
   const frameHeight = 2 * halfH
   const [sMin, sMax] = params.range ?? [-halfH, halfH]
-  const columns = Array.from({ length: NA }, (_, i) => -halfW + (2 * halfW * (i + 0.5)) / NA)
-  const bumpColumns = Array.from({ length: NB }, (_, i) => -halfW + (2 * halfW * (i + 0.5)) / NB)
-  // The calibration window is at least calWidth wide, centered on the frame, so a
-  // tall frame shows the middle of the same pattern instead of a squeezed copy.
-  const halfCal = Math.max(halfW, r.calWidth / 2)
-  const window = Array.from({ length: NA }, (_, i) => -halfCal + (2 * halfCal * (i + 0.5)) / NA)
-  const spread = (f: (a: number) => number, at: readonly number[]) => {
-    const v = at.map(f)
-    const m = v.reduce((s, x) => s + x, 0) / v.length
-    return { mean: m, sd: Math.sqrt(v.reduce((s, x) => s + (x - m) ** 2, 0) / v.length) }
-  }
-
-  // 1. unit spread of each term over the window
-  const sharedStats = spread((a) => T.S(a), window)
-  let iVar = 0
-  let rows = 0
-  for (let j = 0; j < 32; j++) {
-    const s0 = sMin + ((sMax - sMin) * (j + 0.5)) / 32
-    iVar += spread((a) => T.I(a, T.v(s0)), window).sd ** 2
-    rows++
-  }
-  const cS = Math.sqrt(r.share) / Math.max(0.33, sharedStats.sd)
-  const cI = Math.sqrt(1 - r.share) / Math.max(0.33, Math.sqrt(iVar / rows))
-  const sMean = sharedStats.mean
   const clip = r.clip > 0 ? (x: number) => r.clip * Math.tanh(x / r.clip) : (x: number) => x
-  const raw = (a: number, v: number, detail = 1) => T.M(a) * clip(cS * (T.S(a, detail) - sMean) + cI * T.I(a, v, detail))
   const transitionV = tr.map((t) => T.v(t.at))
-  // the silhouette edge whose zone s0 is in (the strongest one), and how far in
-  const darkAt = (s0: number) => {
-    let w = 0
-    let jd = -1
-    for (let j = 0; j < nT; j++) {
-      if (!(dark[j].k > 0)) continue
-      const o = dark[j].k * (1 - smoothstep(dark[j].zone, dark[j].zone + tr[j].width, Math.abs(s0 - tr[j].at)))
-      if (o > w) {
-        w = o
-        jd = j
-      }
-    }
-    return { w, jd }
-  }
-  // the edge's own long wave: the same noise stretched along it, at its own row
-  const pieceRaw = (a: number, jd: number) => raw(a / (1 + DARK_STRETCH * dark[jd].k), transitionV[jd], 1 - DARK_DETAIL * dark[jd].k)
-  // unit-amplitude field for the knot calibration
-  const rawAt = (a: number, s0: number) => {
-    const { w, jd } = darkAt(s0)
-    const d = raw(a, T.v(s0))
-    return jd < 0 ? d : d + (pieceRaw(a, jd) - d) * w
-  }
-
-  // 2. knots: the request, lowered on very wide transitions, then scaled so the
-  // window shows that spread
-  const wideFactor = (s0: number) => {
-    if (!(r.wideWidth > 0) || nT === 0) return 1
-    let near = tr[0]
-    for (const t of tr) if (Math.abs(s0 - t.at) / t.width < Math.abs(s0 - near.at) / near.width) near = t
-    return Math.min(1, r.wideWidth / near.width)
-  }
-  const wanted = params.wander.slice(0, BOUNDARY_MAX_KNOTS).map(([s0, sd]) => [s0, Math.max(0, sd) * wideFactor(s0)] as [number, number])
-  wanted.sort((x, y) => x[0] - y[0])
-  const knots = wanted.map(([s0, sd]) => {
-    const got = spread((a) => rawAt(a, s0), window).sd
-    return [s0, got > 1e-9 ? sd / got : 0] as [number, number]
-  })
-  const E = (s0: number) => envelopeAt(knots, s0)
-
-  // the mutable parts of the field: amplitude per transition, guard, crests
-  const scale = new Array<number>(nT).fill(1)
   const G = BOUNDARY_GUARD_SAMPLES
+
+  // What the field is made of. `rules` below sets it; the field keeps only this, so
+  // the grids and tables the rules use are freed once they are done.
+  let cS = 0
+  let cI = 0
+  let sMean = 0
+  let knots: [number, number][] = []
+  const scale = new Array<number>(nT).fill(1)
   let samples = new Array<number>(G).fill(1)
   const crestScale = new Array<number>(nT).fill(0)
   const crestMean = new Array<number>(nT).fill(0)
+
+  const E = (s0: number) => envelopeAt(knots, s0)
   const scaleAt = (s0: number) => {
     if (nT === 0) return 1
     if (s0 <= tr[0].at) return scale[0]
@@ -601,22 +658,44 @@ export function calibrateBoundary(params: BoundaryParams, aspect: number, seed: 
     return scale[nT - 1]
   }
   const guard = (a: number) => guardAt(samples, -halfW, halfW, a)
-  const softNoise = (a: number, m: number, w: number, calm: number) => {
-    if (!(r.soft.amount > 0)) return 1
-    const amount = r.soft.wRef > 0 && w > r.soft.wRef ? (r.soft.amount * r.soft.wRef) / w : r.soft.amount
-    const n = Math.min(2.5, Math.max(-2.5, gradientNoise(a / r.soft.scale + 5.1, m / r.soft.ly + 2.3, seedInt + 577) / NOISE_RMS))
-    return Math.exp(amount * calm * n)
+  // the silhouette edge whose zone s0 is in (the strongest one), and how far in; into
+  // darkW and darkJ, so the many calls make no garbage
+  let darkW = 0
+  let darkJ = -1
+  const darkInto = (s0: number) => {
+    darkW = 0
+    darkJ = -1
+    for (let j = 0; j < nT; j++) {
+      if (!(dark[j].k > 0)) continue
+      const o = dark[j].k * (1 - smoothstep(dark[j].zone, dark[j].zone + tr[j].width, Math.abs(s0 - tr[j].at)))
+      if (o > darkW) {
+        darkW = o
+        darkJ = j
+      }
+    }
   }
+  const raw = (a: number, v: number, detail = 1) => T.M(a) * clip(cS * (T.S(a, detail) - sMean) + cI * T.I(a, v, detail))
+  // the edge's own long wave: the same noise stretched along it, at its own row
+  const pieceRaw = (a: number, jd: number) => raw(a / (1 + DARK_STRETCH * dark[jd].k), transitionV[jd], 1 - DARK_DETAIL * dark[jd].k)
   // The move at s0 with noise row v, before the guard. In a silhouette edge's zone
   // it blends toward that edge's long wave at the edge's own amplitude, so the
   // whole edge moves as one piece.
   const move = (a: number, s0: number, v: number) => {
     const d = E(s0) * scaleAt(s0) * raw(a, v)
-    const { w, jd } = darkAt(s0)
+    darkInto(s0)
+    const w = darkW
+    const jd = darkJ
     if (jd < 0) return d
     return d + (E(tr[jd].at) * scale[jd] * pieceRaw(a, jd) - d) * w
   }
   const edgeMove = (a: number, j: number) => guard(a) * move(a, tr[j].at, transitionV[j])
+  const warp = (a: number, s0: number) => guard(a) * move(a, s0, T.v(s0))
+  const softNoise = (a: number, m: number, w: number, calm: number) => {
+    if (!(r.soft.amount > 0)) return 1
+    const amount = r.soft.wRef > 0 && w > r.soft.wRef ? (r.soft.amount * r.soft.wRef) / w : r.soft.amount
+    const n = Math.min(2.5, Math.max(-2.5, noise(a / r.soft.scale + 5.1, m / r.soft.ly + 2.3, seedInt + 577) / NOISE_RMS))
+    return Math.exp(amount * calm * n)
+  }
   const softFor = (a: number, j: number) => {
     const k = dark[j].k
     const s = softNoise(a, tr[j].at, tr[j].width, 1 - DARK_SOFT_CALM * k)
@@ -624,144 +703,8 @@ export function calibrateBoundary(params: BoundaryParams, aspect: number, seed: 
     const crest = Math.min(2.5, Math.max(0, crestScale[j] * edgeMove(a, j)))
     return s * Math.exp(DARK_CREST * k * (crest - crestMean[j]))
   }
-  const warp = (a: number, s0: number) => guard(a) * move(a, s0, T.v(s0))
-  // crest of a silhouette edge: how far its dark side reaches into the light side, in spreads
-  const updateCrests = () => {
-    for (let j = 0; j < nT; j++) {
-      if (!(dark[j].k > 0)) continue
-      const d = columns.map((a) => edgeMove(a, j))
-      const m = d.reduce((s, x) => s + x, 0) / d.length
-      const sd = Math.sqrt(d.reduce((s, x) => s + (x - m) ** 2, 0) / d.length)
-      // coordinate mode: the edge sits at at - D, so a positive D lifts it; edge mode: at + D
-      const toward = (r.mode === 'edges' ? -1 : 1) * Math.sign(tr[j].contrast)
-      crestScale[j] = sd > 1e-9 ? toward / sd : 0
-      crestMean[j] = d.reduce((s, x) => s + Math.min(2.5, Math.max(0, crestScale[j] * x)), 0) / d.length
-    }
-  }
-  // the 50% line of transition j (or the line through knot k when there are no transitions) across the frame
-  const isoline = (a: number, level: number) => {
-    let s0 = level
-    for (let it = 0; it < 12; it++) s0 = level - warp(a, s0)
-    if (Math.abs(s0 + warp(a, s0) - level) < 1e-6) return s0
-    let lo = level - 0.5
-    let hi = level + 0.5
-    for (let it = 0; it < 40; it++) {
-      const mid = (lo + hi) / 2
-      if (mid + warp(a, mid) < level) lo = mid
-      else hi = mid
-    }
-    return (lo + hi) / 2
-  }
-  const lineOf = (j: number) => bumpColumns.map((a) => (r.mode === 'edges' ? tr[j].at + edgeMove(a, j) : isoline(a, tr[j].at)))
-  const knotLine = (k: number) => bumpColumns.map((a) => isoline(a, knots[k][0]))
-  const bumpsOf = (y: number[]) => boundaryBumps(y, 2 * halfW, frameHeight)
-  const steepFor = (j: number) => BOUNDARY_BUMPS.steep + (BOUNDARY_BUMPS.steepDark - BOUNDARY_BUMPS.steep) * dark[j].k
-  const need = (b: BoundaryBumps, steep: number) => Math.min(1, b.aspect / BOUNDARY_BUMPS.aspect, b.flank / BOUNDARY_BUMPS.flank, b.steep / steep)
 
-  // 3. the fold guard: how much each column must be calmed for the current amplitudes
-  const envGrid = Array.from({ length: NS + 1 }, (_, k) => sMin + ((sMax - sMin) * k) / NS)
-  const darkGrid = envGrid.map(darkAt)
-  const regularGrid = r.mode === 'edges' ? null : columns.map((a) => envGrid.map((s0) => raw(a, T.v(s0))))
-  const pieceGrid = r.mode === 'edges' ? null : columns.map((a) => darkGrid.map(({ jd }) => (jd < 0 ? 0 : pieceRaw(a, jd))))
-  // the move on the grid, before the guard, for the current amplitudes
-  const moveGrid = (i: number, amp: number[]) =>
-    envGrid.map((_, k) => {
-      const d = amp[k] * regularGrid![i][k]
-      const { w, jd } = darkGrid[k]
-      return jd < 0 ? d : d + (E(tr[jd].at) * scale[jd] * pieceGrid![i][k] - d) * w
-    })
-  const foldGuard = (): number[] => {
-    const needCol = new Array<number>(NA).fill(1)
-    if (r.mode === 'edges') {
-      // neighbouring edges keep at least minGap of their mean width between them
-      for (let j = 0; j + 1 < nT; j++) {
-        const e0 = tr[j]
-        const e1 = tr[j + 1]
-        const gap0 = e1.at - e0.at
-        const minGap = (r.minGap * (e0.width + e1.width)) / 2
-        for (let i = 0; i < NA; i++) {
-          const a = columns[i]
-          const closing = move(a, e0.at, transitionV[j]) - move(a, e1.at, transitionV[j + 1])
-          if (closing > 0 && gap0 - closing < minGap) needCol[i] = Math.min(needCol[i], Math.max(0, (gap0 - minGap) / closing))
-        }
-      }
-    } else {
-      // the steepest negative dD/ds0 in each column stays at or above -0.9 * slopeBudget
-      const ds = (sMax - sMin) / NS
-      const amp = envGrid.map((s0) => E(s0) * scaleAt(s0))
-      for (let i = 0; i < NA; i++) {
-        const g = moveGrid(i, amp)
-        let lowest = 0
-        for (let k = 1; k <= NS; k++) lowest = Math.min(lowest, (g[k] - g[k - 1]) / ds)
-        if (-lowest > 0.9 * r.slopeBudget) needCol[i] = (0.9 * r.slopeBudget) / -lowest
-      }
-    }
-    // each sample takes the lowest need within GUARD_REACH lattices, so the guard
-    // only dips over a stretch as long as a wave and never cuts out a single bump
-    const sampleAt = (k: number) => -halfW + (2 * halfW * k) / (G - 1)
-    const reach = Math.max((2 * halfW) / (G - 1), GUARD_REACH * r.scale)
-    const s = Array.from({ length: G }, (_, k) => {
-      let m = 1
-      for (let i = 0; i < NA; i++) if (Math.abs(columns[i] - sampleAt(k)) <= reach) m = Math.min(m, needCol[i])
-      return m
-    })
-    // the smooth curve through the samples can overshoot between them; lower the
-    // samples around any column it exceeds until it holds everywhere
-    for (let iter = 0; iter < 40; iter++) {
-      let ok = true
-      for (let i = 0; i < NA; i++) {
-        const g = guardAt(s, -halfW, halfW, columns[i])
-        if (g <= needCol[i] * 1.0001) continue
-        ok = false
-        const x = ((columns[i] + halfW) / (2 * halfW)) * (G - 1)
-        const k0 = Math.max(0, Math.floor(x) - 1)
-        const k1 = Math.min(G - 1, Math.ceil(x) + 1)
-        for (let k = k0; k <= k1; k++) s[k] *= Math.max(0.5, (needCol[i] / g) * 0.98)
-      }
-      if (ok) break
-    }
-    return s
-  }
-
-  // 4. the bump rule and the guard, until both hold: lower each transition's
-  // amplitude until its 50% line's bumps are long enough in the frame, then
-  // recompute the guard for the new amplitudes
-  const knotScale = new Array<number>(knots.length).fill(1)
-  const applyKnotScale = () => knots.forEach((kn, k) => (kn[1] *= knotScale[k]))
-  for (let round = 0; round < 4; round++) {
-    let lowered = false
-    for (let pass = 0; pass < 6; pass++) {
-      updateCrests()
-      let changed = false
-      if (nT > 0) {
-        for (let j = 0; j < nT; j++) {
-          const f = need(bumpsOf(lineOf(j)), steepFor(j))
-          if (f < 0.999) {
-            scale[j] *= f * 0.97
-            changed = true
-          }
-        }
-      } else {
-        knotScale.fill(1)
-        for (let k = 0; k < knots.length; k++) {
-          if (knots[k][0] < sMin || knots[k][0] > sMax) continue
-          const f = need(bumpsOf(knotLine(k)), BOUNDARY_BUMPS.steep)
-          if (f < 0.999) {
-            knotScale[k] = f * 0.97
-            changed = true
-          }
-        }
-        if (changed) applyKnotScale()
-      }
-      if (!changed) break
-      lowered = true
-    }
-    const next = foldGuard()
-    const moved = next.some((v, k) => Math.abs(v - samples[k]) > 0.005)
-    samples = next
-    if (!moved && !lowered && round > 0) break
-  }
-  updateCrests()
+  const { wanted, realized, worst, guardValues, bumps } = rules()
 
   // 5. feather: its slope is amount * 9.5 / ly whatever the width; keep it under 0.5
   const featherWorst = (Math.abs(r.feather.amount) * NOISE_SLOPE_MAX) / Math.max(1e-6, r.feather.ly)
@@ -775,39 +718,12 @@ export function calibrateBoundary(params: BoundaryParams, aspect: number, seed: 
     feather(a, s, j) {
       if (!(featherAmount > 0)) return 0
       const t = tr[j]
-      const n = gradientNoise(a / r.feather.scale + 9.7 + 3.3 * j, (s - t.at) / (r.feather.ly * t.width) + 4.1, seedInt + 733 + 17 * j) / NOISE_RMS
+      const n = noise(a / r.feather.scale + 9.7 + 3.3 * j, (s - t.at) / (r.feather.ly * t.width) + 4.1, seedInt + 733 + 17 * j) / NOISE_RMS
       return featherAmount * t.width * n
     },
     v: T.v,
     guard,
   }
-
-  // report
-  const realized = wanted.map(([s0]) => spread((a) => field.warp(a, s0), columns).sd)
-  let worst = 0
-  if (r.mode === 'edges') {
-    worst = Infinity
-    for (let j = 0; j + 1 < nT; j++) {
-      const minGap = (r.minGap * (tr[j].width + tr[j + 1].width)) / 2
-      for (const a of columns) worst = Math.min(worst, (tr[j + 1].at + field.edge(a, j + 1) - tr[j].at - field.edge(a, j)) / minGap)
-    }
-    if (!Number.isFinite(worst)) worst = 0
-  } else {
-    const ds = (sMax - sMin) / NS
-    const amp = envGrid.map((s0) => E(s0) * scaleAt(s0))
-    for (let i = 0; i < NA; i++) {
-      const g = guard(columns[i])
-      const m = moveGrid(i, amp)
-      for (let k = 1; k <= NS; k++) worst = Math.min(worst, (g * (m[k] - m[k - 1])) / ds)
-    }
-  }
-  const guardValues = columns.map(guard)
-  const lines = nT > 0 ? tr.map((_, j) => lineOf(j)) : knots.map((_, k) => knotLine(k))
-  const bumps = lines.map(bumpsOf).reduce((m, b) => ({ aspect: Math.min(m.aspect, b.aspect), flank: Math.min(m.flank, b.flank), steep: Math.min(m.steep, b.steep) }), {
-    aspect: Infinity,
-    flank: Infinity,
-    steep: Infinity,
-  })
 
   const knotsFlat = Array.from({ length: BOUNDARY_MAX_KNOTS }, (_, k) => knots[Math.min(k, knots.length - 1)] ?? [0, 0]).flat()
   const trans = Array.from({ length: BOUNDARY_MAX_TRANSITIONS }, (_, j) => {
@@ -842,6 +758,362 @@ export function calibrateBoundary(params: BoundaryParams, aspect: number, seed: 
       scale: scale.slice(),
       bumps,
     },
+  }
+
+  // Steps 1 to 4 and the report's numbers, on columns and grids that live only here.
+  function rules() {
+    const columns = Array.from({ length: NA }, (_, i) => -halfW + (2 * halfW * (i + 0.5)) / NA)
+    const bumpColumns = Array.from({ length: NB }, (_, i) => -halfW + (2 * halfW * (i + 0.5)) / NB)
+    // The calibration window is at least calWidth wide, centered on the frame, so a
+    // tall frame shows the middle of the same pattern instead of a squeezed copy.
+    const halfCal = Math.max(halfW, r.calWidth / 2)
+    const window = Array.from({ length: NA }, (_, i) => -halfCal + (2 * halfCal * (i + 0.5)) / NA)
+    const spreadOf = (v: readonly number[]) => {
+      const m = v.reduce((s, x) => s + x, 0) / v.length
+      return { mean: m, sd: Math.sqrt(v.reduce((s, x) => s + (x - m) ** 2, 0) / v.length) }
+    }
+
+    // The three sets of columns the rules read, each column with its shared and
+    // along terms and one noise column per octave of the 2D term: the same values as
+    // T.S, T.M and T.I, worked out once per column instead of at every row.
+    const columnsOf = (at: readonly number[]) =>
+      at.map((a) => {
+        const I: NoiseColumn[] = []
+        let fx = 1 / r.scale
+        for (let o = 0; o < r.octaves; o++) {
+          I.push(new NoiseColumn(a * fx + 1.7 * o + 0.13, seedInt + 131 * (o + 1)))
+          fx *= 2
+        }
+        return { a, S: T.S(a), M: T.M(a), I }
+      })
+    const windowCols = columnsOf(window)
+    const frameCols = columnsOf(columns)
+    const bumpCols = columnsOf(bumpColumns)
+    type Col = (typeof frameCols)[number]
+    // each octave's amplitude, vertical frequency and offset, made as T.I makes them
+    const octaves = r.octaves
+    const amps: number[] = []
+    const fys: number[] = []
+    const rowOffsets: number[] = []
+    for (let o = 0, amp = 1, fy = 1 / r.ly; o < octaves; o++, amp *= r.gain, fy *= 1.5) {
+      amps.push(amp)
+      fys.push(fy)
+      rowOffsets.push(3.3 * o)
+    }
+    const iAt = (col: Col, v: number) => {
+      let sum = 0
+      for (let o = 0; o < octaves; o++) sum += amps[o] * col.I[o].at(v * fys[o] + rowOffsets[o] + 0.71)
+      return sum / NOISE_RMS
+    }
+    const clipAt = r.clip
+
+    // 1. unit spread of each term over the window
+    const sharedStats = spreadOf(windowCols.map((c) => c.S))
+    let iVar = 0
+    let rows = 0
+    for (let j = 0; j < 32; j++) {
+      const v = T.v(sMin + ((sMax - sMin) * (j + 0.5)) / 32)
+      iVar += spreadOf(windowCols.map((c) => iAt(c, v))).sd ** 2
+      rows++
+    }
+    cS = Math.sqrt(r.share) / Math.max(0.33, sharedStats.sd)
+    cI = Math.sqrt(1 - r.share) / Math.max(0.33, Math.sqrt(iVar / rows))
+    sMean = sharedStats.mean
+    const rawCol = (col: Col, v: number) => {
+      const x = cS * (col.S - sMean) + cI * iAt(col, v)
+      return col.M * (clipAt > 0 ? clipAt * Math.tanh(x / clipAt) : x)
+    }
+    // the silhouette edges' long waves per column of a set
+    const piecesOf = (cols: Col[]) => tr.map((_, j) => (dark[j].k > 0 ? cols.map((c) => pieceRaw(c.a, j)) : null))
+    const windowPieces = piecesOf(windowCols)
+    const framePieces = piecesOf(frameCols)
+    const bumpPieces = piecesOf(bumpCols)
+    // unit-amplitude field for the knot calibration, on the window's columns
+    const rawAtCol = (i: number, s0: number) => {
+      darkInto(s0)
+      const w = darkW
+      const jd = darkJ
+      const d = rawCol(windowCols[i], T.v(s0))
+      return jd < 0 ? d : d + (windowPieces[jd]![i] - d) * w
+    }
+
+    // 2. knots: the request, lowered on very wide transitions, then scaled so the
+    // window shows that spread
+    const wideFactor = (s0: number) => {
+      if (!(r.wideWidth > 0) || nT === 0) return 1
+      let near = tr[0]
+      for (const t of tr) if (Math.abs(s0 - t.at) / t.width < Math.abs(s0 - near.at) / near.width) near = t
+      return Math.min(1, r.wideWidth / near.width)
+    }
+    const wanted = params.wander.slice(0, BOUNDARY_MAX_KNOTS).map(([s0, sd]) => [s0, Math.max(0, sd) * wideFactor(s0)] as [number, number])
+    wanted.sort((x, y) => x[0] - y[0])
+    knots = wanted.map(([s0, sd]) => {
+      const got = spreadOf(windowCols.map((_, i) => rawAtCol(i, s0))).sd
+      return [s0, got > 1e-9 ? sd / got : 0] as [number, number]
+    })
+
+    // the guard at the frame's and the bump measure's columns, and a count that goes up
+    // whenever the amplitudes or the guard change (lines measured before are then stale)
+    let state = 0
+    let guardFrame = columns.map(guard)
+    let guardBump = bumpColumns.map(guard)
+    const setGuard = (next: number[]) => {
+      if (next.every((v, k) => v === samples[k])) return
+      samples = next
+      guardFrame = columns.map(guard)
+      guardBump = bumpColumns.map(guard)
+      state++
+    }
+    // each silhouette edge's amplitude E(at) * scale, for the current state
+    const pieceAmp = new Float64Array(nT)
+    let pieceAmpState = -1
+    const pieceAmps = () => {
+      if (pieceAmpState !== state) {
+        for (let j = 0; j < nT; j++) pieceAmp[j] = E(tr[j].at) * scale[j]
+        pieceAmpState = state
+      }
+      return pieceAmp
+    }
+    // the move on a set's column i
+    const moveCol = (cols: Col[], pieces: Array<number[] | null>, i: number, s0: number, v: number) => {
+      const d = E(s0) * scaleAt(s0) * rawCol(cols[i], v)
+      darkInto(s0)
+      const w = darkW
+      const jd = darkJ
+      if (jd < 0) return d
+      return d + (pieceAmps()[jd] * pieces[jd]![i] - d) * w
+    }
+    const edgeFrame = (i: number, j: number) => guardFrame[i] * moveCol(frameCols, framePieces, i, tr[j].at, transitionV[j])
+    const warpFrame = (i: number, s0: number) => guardFrame[i] * moveCol(frameCols, framePieces, i, s0, T.v(s0))
+    const warpBump = (i: number, s0: number) => guardBump[i] * moveCol(bumpCols, bumpPieces, i, s0, T.v(s0))
+    // crest of a silhouette edge: how far its dark side reaches into the light side, in spreads
+    const updateCrests = () => {
+      for (let j = 0; j < nT; j++) {
+        if (!(dark[j].k > 0)) continue
+        const d = columns.map((_, i) => edgeFrame(i, j))
+        const m = d.reduce((s, x) => s + x, 0) / d.length
+        const sd = Math.sqrt(d.reduce((s, x) => s + (x - m) ** 2, 0) / d.length)
+        // coordinate mode: the edge sits at at - D, so a positive D lifts it; edge mode: at + D
+        const toward = (r.mode === 'edges' ? -1 : 1) * Math.sign(tr[j].contrast)
+        crestScale[j] = sd > 1e-9 ? toward / sd : 0
+        crestMean[j] = d.reduce((s, x) => s + Math.min(2.5, Math.max(0, crestScale[j] * x)), 0) / d.length
+      }
+    }
+    // the 50% line of transition j (or the line through knot k when there are no transitions) across the frame
+    const isoline = (i: number, level: number) => {
+      let s0 = level
+      // twelve steps; once a step returns the same value, so would every later one
+      for (let it = 0; it < 12; it++) {
+        const next = level - warpBump(i, s0)
+        if (next === s0) break
+        s0 = next
+      }
+      if (Math.abs(s0 + warpBump(i, s0) - level) < 1e-6) return s0
+      let lo = level - 0.5
+      let hi = level + 0.5
+      for (let it = 0; it < 40; it++) {
+        const mid = (lo + hi) / 2
+        if (mid + warpBump(i, mid) < level) lo = mid
+        else hi = mid
+      }
+      return (lo + hi) / 2
+    }
+    const edgeBump = (i: number, j: number) => guardBump[i] * moveCol(bumpCols, bumpPieces, i, tr[j].at, transitionV[j])
+    const lineOf = (j: number) => bumpColumns.map((_, i) => (r.mode === 'edges' ? tr[j].at + edgeBump(i, j) : isoline(i, tr[j].at)))
+    const knotLine = (k: number) => bumpColumns.map((_, i) => isoline(i, knots[k][0]))
+    // a line is measured again only when the amplitudes or the guard changed since
+    const measured = new Map<number, { state: number; bumps: BoundaryBumps }>()
+    const measure = (key: number, lineAt: () => number[]) => {
+      const hit = measured.get(key)
+      if (hit && hit.state === state) return hit.bumps
+      const bumps = boundaryBumps(lineAt(), 2 * halfW, frameHeight)
+      measured.set(key, { state, bumps })
+      return bumps
+    }
+    const transitionBumps = (j: number) => measure(j, () => lineOf(j))
+    const knotBumps = (k: number) => measure(-1 - k, () => knotLine(k))
+    const steepFor = (j: number) => BOUNDARY_BUMPS.steep + (BOUNDARY_BUMPS.steepDark - BOUNDARY_BUMPS.steep) * dark[j].k
+    const need = (b: BoundaryBumps, steep: number) => Math.min(1, b.aspect / BOUNDARY_BUMPS.aspect, b.flank / BOUNDARY_BUMPS.flank, b.steep / steep)
+
+    // 3. the fold guard: how much each column must be calmed for the current amplitudes
+    const envGrid = Array.from({ length: NS + 1 }, (_, k) => sMin + ((sMax - sMin) * k) / NS)
+    const darkWGrid = new Float64Array(NS + 1)
+    const darkJGrid = new Int32Array(NS + 1)
+    envGrid.forEach((s0, k) => {
+      darkInto(s0)
+      darkWGrid[k] = darkW
+      darkJGrid[k] = darkJ
+    })
+    const vGrid = envGrid.map((s0) => T.v(s0))
+    // rawCol on the grid; a row's noise cell, offset and fade are the same in every column
+    const regularGrid =
+      r.mode === 'edges'
+        ? null
+        : (() => {
+            const rowsOf = Array.from({ length: octaves }, (_, o) => {
+              const iy = new Float64Array(NS + 1)
+              const fy = new Float64Array(NS + 1)
+              const uy = new Float64Array(NS + 1)
+              for (let k = 0; k <= NS; k++) {
+                const py = vGrid[k] * fys[o] + rowOffsets[o] + 0.71
+                iy[k] = Math.floor(py)
+                fy[k] = py - iy[k]
+                uy[k] = quintic(fy[k])
+              }
+              return { iy, fy, uy }
+            })
+            // one octave down the whole column at a time: the same sums, added in the same order
+            const sum = new Float64Array(NS + 1)
+            return frameCols.map((c) => {
+              sum.fill(0)
+              for (let o = 0; o < octaves; o++) {
+                const q = rowsOf[o]
+                const col = c.I[o]
+                const amp = amps[o]
+                for (let k = 0; k <= NS; k++) sum[k] += amp * col.atCell(q.iy[k], q.fy[k], q.uy[k])
+              }
+              const row = new Float64Array(NS + 1)
+              const base = cS * (c.S - sMean)
+              for (let k = 0; k <= NS; k++) {
+                const x = base + cI * (sum[k] / NOISE_RMS)
+                row[k] = c.M * (clipAt > 0 ? clipAt * Math.tanh(x / clipAt) : x)
+              }
+              return row
+            })
+          })()
+    // the move on the grid, before the guard, for the current amplitudes, into one buffer
+    const moved = new Float64Array(NS + 1)
+    const moveGrid = (i: number, amp: Float64Array) => {
+      const row = regularGrid![i]
+      const pa = pieceAmps()
+      for (let k = 0; k <= NS; k++) {
+        const d = amp[k] * row[k]
+        const jd = darkJGrid[k]
+        moved[k] = jd < 0 ? d : d + (pa[jd] * framePieces[jd]![i] - d) * darkWGrid[k]
+      }
+      return moved
+    }
+    const ampGrid = () => Float64Array.from(envGrid, (s0) => E(s0) * scaleAt(s0))
+    const foldGuard = (): number[] => {
+      const needCol = new Array<number>(NA).fill(1)
+      if (r.mode === 'edges') {
+        // neighbouring edges keep at least minGap of their mean width between them
+        for (let j = 0; j + 1 < nT; j++) {
+          const e0 = tr[j]
+          const e1 = tr[j + 1]
+          const gap0 = e1.at - e0.at
+          const minGap = (r.minGap * (e0.width + e1.width)) / 2
+          for (let i = 0; i < NA; i++) {
+            const closing = moveCol(frameCols, framePieces, i, e0.at, transitionV[j]) - moveCol(frameCols, framePieces, i, e1.at, transitionV[j + 1])
+            if (closing > 0 && gap0 - closing < minGap) needCol[i] = Math.min(needCol[i], Math.max(0, (gap0 - minGap) / closing))
+          }
+        }
+      } else {
+        // the steepest negative dD/ds0 in each column stays at or above -0.9 * slopeBudget
+        const ds = (sMax - sMin) / NS
+        const amp = ampGrid()
+        for (let i = 0; i < NA; i++) {
+          const g = moveGrid(i, amp)
+          let lowest = 0
+          for (let k = 1; k <= NS; k++) lowest = Math.min(lowest, (g[k] - g[k - 1]) / ds)
+          if (-lowest > 0.9 * r.slopeBudget) needCol[i] = (0.9 * r.slopeBudget) / -lowest
+        }
+      }
+      // each sample takes the lowest need within GUARD_REACH lattices, so the guard
+      // only dips over a stretch as long as a wave and never cuts out a single bump
+      const sampleAt = (k: number) => -halfW + (2 * halfW * k) / (G - 1)
+      const reach = Math.max((2 * halfW) / (G - 1), GUARD_REACH * r.scale)
+      const s = Array.from({ length: G }, (_, k) => {
+        let m = 1
+        for (let i = 0; i < NA; i++) if (Math.abs(columns[i] - sampleAt(k)) <= reach) m = Math.min(m, needCol[i])
+        return m
+      })
+      // the smooth curve through the samples can overshoot between them; lower the
+      // samples around any column it exceeds until it holds everywhere
+      for (let iter = 0; iter < 40; iter++) {
+        let ok = true
+        for (let i = 0; i < NA; i++) {
+          const g = guardAt(s, -halfW, halfW, columns[i])
+          if (g <= needCol[i] * 1.0001) continue
+          ok = false
+          const x = ((columns[i] + halfW) / (2 * halfW)) * (G - 1)
+          const k0 = Math.max(0, Math.floor(x) - 1)
+          const k1 = Math.min(G - 1, Math.ceil(x) + 1)
+          for (let k = k0; k <= k1; k++) s[k] *= Math.max(0.5, (needCol[i] / g) * 0.98)
+        }
+        if (ok) break
+      }
+      return s
+    }
+
+    // 4. the bump rule and the guard, until both hold: lower each transition's
+    // amplitude until its 50% line's bumps are long enough in the frame, then
+    // recompute the guard for the new amplitudes
+    const knotScale = new Array<number>(knots.length).fill(1)
+    for (let round = 0; round < 4; round++) {
+      let lowered = false
+      for (let pass = 0; pass < 6; pass++) {
+        let changed = false
+        if (nT > 0) {
+          for (let j = 0; j < nT; j++) {
+            const f = need(transitionBumps(j), steepFor(j))
+            if (f < 0.999) {
+              scale[j] *= f * 0.97
+              state++
+              changed = true
+            }
+          }
+        } else {
+          knotScale.fill(1)
+          for (let k = 0; k < knots.length; k++) {
+            if (knots[k][0] < sMin || knots[k][0] > sMax) continue
+            const f = need(knotBumps(k), BOUNDARY_BUMPS.steep)
+            if (f < 0.999) {
+              knotScale[k] = f * 0.97
+              changed = true
+            }
+          }
+          if (changed) {
+            knots.forEach((kn, k) => (kn[1] *= knotScale[k]))
+            state++
+          }
+        }
+        if (!changed) break
+        lowered = true
+      }
+      const next = foldGuard()
+      const shifted = next.some((v, k) => Math.abs(v - samples[k]) > 0.005)
+      setGuard(next)
+      if (!shifted && !lowered && round > 0) break
+    }
+    updateCrests()
+
+    // the report's numbers
+    const realized = wanted.map(([s0]) => spreadOf(columns.map((_, i) => warpFrame(i, s0))).sd)
+    let worst = 0
+    if (r.mode === 'edges') {
+      worst = Infinity
+      for (let j = 0; j + 1 < nT; j++) {
+        const minGap = (r.minGap * (tr[j].width + tr[j + 1].width)) / 2
+        for (let i = 0; i < NA; i++) worst = Math.min(worst, (tr[j + 1].at + edgeFrame(i, j + 1) - tr[j].at - edgeFrame(i, j)) / minGap)
+      }
+      if (!Number.isFinite(worst)) worst = 0
+    } else {
+      const ds = (sMax - sMin) / NS
+      const amp = ampGrid()
+      for (let i = 0; i < NA; i++) {
+        const g = guardFrame[i]
+        const m = moveGrid(i, amp)
+        for (let k = 1; k <= NS; k++) worst = Math.min(worst, (g * (m[k] - m[k - 1])) / ds)
+      }
+    }
+    const lineBumps = nT > 0 ? tr.map((_, j) => transitionBumps(j)) : knots.map((_, k) => knotBumps(k))
+    const bumps = lineBumps.reduce((m, b) => ({ aspect: Math.min(m.aspect, b.aspect), flank: Math.min(m.flank, b.flank), steep: Math.min(m.steep, b.steep) }), {
+      aspect: Infinity,
+      flank: Infinity,
+      steep: Infinity,
+    })
+    return { wanted, realized, worst, guardValues: guardFrame, bumps }
   }
 }
 
