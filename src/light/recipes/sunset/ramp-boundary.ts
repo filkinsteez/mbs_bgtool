@@ -14,7 +14,7 @@ export interface RampMark {
   contrast: number
   /** The ramp edge it is, or -1. */
   edge: number
-  /** 0: the glow's upper side, 1: its lower side, -1: neither (a stop edge or the glow's peak). */
+  /** 0: the glow's upper side, 1: its lower side, -1: neither (a stop edge). */
   glow: number
 }
 
@@ -219,20 +219,20 @@ export function rampBoundary(ctx: RecipeContext, u: RampUniforms): RampBoundary 
   for (let j = 0; j < edges; j++) marks.push({ at: at[j], width: width[j], edge: j, glow: -1 })
   if (list(u, 'uGlowWeight')[0] > 0) {
     marks.push({ at: glowLine - 1.2 * tau[0], width: 1.6 * tau[0], edge: -1, glow: 0 })
-    marks.push({ at: glowLine, width: 0.8 * tau[0], edge: -1, glow: -1 })
     const deepens = glowLine + 0.6 * tau[1]
     if (horizonEdge < 0) marks.push({ at: deepens, width: 1.2 * tau[1], edge: -1, glow: 1 })
   }
   // Every mark stays in the list, inside the frame or not and on a stop edge or not: an edge's noise
   // row counts the marks above it, so a mark leaving the list would reshape every edge below it at
-  // one step of a control.
+  // one step of a control. The glow's peak has no mark: it is not an edge between two areas, and it
+  // sat on the sky's edge in some seeds, where the two traded places in the list.
   const kept = [...marks].sort((p, q) => p.at - q.at).slice(0, BOUNDARY_MAX_TRANSITIONS)
 
-  // Contrast from the light on either side, averaged over the frame's width. The glow's peak is
-  // not an edge between two areas. Only the first of consecutive darker steps is an edge over a
-  // darker ground; the ones below it are inside that ground, and two such edges close together
-  // make the fold guard calm the whole frame. How far an edge is inside that ground grows smoothly
-  // with the contrast above it, so no control step switches it.
+  // Contrast from the light on either side, averaged over the frame's width. Only the first of
+  // consecutive darker steps is an edge over a darker ground; the ones below it are inside that
+  // ground, and two such edges close together make the fold guard calm the whole frame. How far an
+  // edge is inside that ground grows smoothly with the contrast above it, so no control step
+  // switches it.
   const offset = f.anchor[0] * f.cos - f.anchor[1] * f.sin
   const columns = [-0.7, -0.35, 0, 0.35, 0.7].map((c) => c * f.halfW - offset)
   const lumAt = (s: number) => {
@@ -241,8 +241,7 @@ export function rampBoundary(ctx: RecipeContext, u: RampUniforms): RampBoundary 
   }
   let ground = 0
   const withContrast: RampMark[] = kept.map((m) => {
-    const peak = m.edge < 0 && m.glow < 0
-    const contrast = peak ? 0 : boundaryContrast(lumAt(m.at - 0.5 * m.width), lumAt(m.at + 0.5 * m.width))
+    const contrast = boundaryContrast(lumAt(m.at - 0.5 * m.width), lumAt(m.at + 0.5 * m.width))
     const own = contrast + (Math.min(contrast, 0) - contrast) * ground
     ground = Math.max(ground, smoothstep(DARK_FROM - 0.1, DARK_FROM + 0.1, contrast))
     return { ...m, contrast: own }

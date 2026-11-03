@@ -584,6 +584,8 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     low[0] = Math.max(highest, Math.min(low[0], -(under + 0.3 * skyScale)))
   }
   const gains = midSky ? [zenithGain, midGain, lowGain] : [zenithGain, lowGain]
+  // The band the water around the sun's path mirrors: part way from the glow up to the low sky's edge.
+  const pathBand = Math.min(0.3, Math.max(0.05, 0.7 * (-edges[edges.length - 1][0] - glowRise)))
   // The dusk band's edge sits just under the glow's line, hiding the glow's lower part; the band is
   // the sky's own light, so it gains with daylight like the low sky. Its edge is about as soft as
   // land's: the lens softens it, and a wider one mixes the two sides into a third hue.
@@ -697,12 +699,14 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // The path mirrors the glow's line, which sits above most of the far bank.
     // Each variant has its own water: a near mirror with a medium path, deep dark water with a
     // strong path, or between with a faint one.
-    sunPath: [water ? look.sunPath * [0.7, 1, 0.45][variant] : 0, 0.02, 0.45, glowRise + 1.2 * bankHeight],
+    sunPath: [water ? look.sunPath * [0.7, 1, 0.45][variant] : 0, 0.02, 0.6, glowRise + 1.2 * bankHeight],
+    // A tall water area keeps its path further down.
+    sunLight: [Math.max(0.3, 0.6 * (0.5 * tall - lineAt)), pathBand],
     // The strip under the line is thin and bright, so it still shows after the lens.
     water: [1.25, lerp(look.waterDegrees[0], look.waterDegrees[1], ridgePick) * [0.6, 1.6, 1][variant], 0.12, 1.5],
     waterMirror: water ? look.waterMirror : 1,
     groundHaze: [look.landHaze, (land ? 0.1 : 0.05) * tall],
-    landLit: [ground ? look.landLit : 0, lerp(0.3, 0.5, widthPick) * frameWidth, land ? 0.6 : water ? 0.35 : 0],
+    landLit: [ground ? look.landLit : 0, lerp(0.3, 0.5, widthPick) * frameWidth, ground ? 0.6 : 0],
     groundTopGain: look.landTop[1] * groundGain,
     groundBottomGain: look.landBottom[1] * groundGain,
     waterGain: look.water[1] * groundGain,
