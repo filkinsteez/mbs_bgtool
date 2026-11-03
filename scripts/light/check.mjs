@@ -80,7 +80,7 @@ const harness = await startHarness()
 try {
   await mkdir(outDir, { recursive: true })
   const { PACKS } = await harness.ssr('/src/light/color/packs.ts')
-  const { hexToBytes, hexToLinear, linearToSrgb } = await harness.ssr('/src/light/color/srgb.ts')
+  const { hexToBytes, hexToLinear, linearToSrgb, srgbToLinear } = await harness.ssr('/src/light/color/srgb.ts')
   const { toneCurve, TONE_TIE_BAND } = await harness.ssr('/src/light/engine/output.ts')
   const { compareImages, bandingScore, buildMask } = await harness.ssr('/src/light/audit/index.ts')
   const { linearToOklch, linearToOklab } = await harness.ssr('/src/light/color/oklab.ts')
@@ -734,6 +734,56 @@ try {
       `added red light, the same lights at 4x: ${all.added[0].toFixed(5)} on black, ${bright.added[0].toFixed(5)} on a 0.6 grey background (${((bright.added[0] / all.added[0]) * 100).toFixed(0)} %)`,
     )
     record('lens images written', true, path.relative(ROOT, path.join(outDir, 'lens.png')))
+
+    // Vignette: a flat grey at strength 1 keeps its center and falls to a quarter (two stops) in the corners.
+    const grey = '#808080'
+    const greyLinear = hexToLinear(grey)[0]
+    const frame = { width: 960, height: 540 }
+    const vignetted = await harness.render({ scene: { program: 'test.flat', colors: [grey], lens: { ...noLens, vignette: 1 }, output: { grain: 0 } }, ...frame, dither: false })
+    const ratioAt = (x, y) => srgbToLinear(vignetted.data[(y * frame.width + x) * 4] / 255) / greyLinear
+    const axes = [frame.width, frame.height].map((v) => v / Math.min(frame.width, frame.height))
+    const expectedAt = (x, y) => {
+      const q = [((2 * (x + 0.5)) / frame.width - 1) * axes[0], ((2 * (y + 0.5)) / frame.height - 1) * axes[1]]
+      return (1 + (q[0] ** 2 + q[1] ** 2) / (axes[0] ** 2 + axes[1] ** 2)) ** -2
+    }
+    const points = [
+      [frame.width / 2, frame.height / 2],
+      [0, 0],
+      [frame.width - 1, frame.height - 1],
+      [frame.width / 2, 0],
+      [0, frame.height / 2],
+    ]
+    const worstVignette = Math.max(...points.map(([x, y]) => Math.abs(ratioAt(x, y) / expectedAt(x, y) - 1)))
+    let falls = true
+    let previous = Infinity
+    for (let t = 0; t <= 1; t += 0.01) {
+      const value = vignetted.data[(Math.round((frame.height - 1) * (0.5 + 0.5 * t)) * frame.width + Math.round((frame.width - 1) * (0.5 + 0.5 * t))) * 4]
+      if (value > previous) falls = false
+      previous = value
+    }
+    const vignetteScene = { program: 'test.glows', lens: { ...noLens, vignette: 1 }, output: { grain: 0 } }
+    const vignetteSmall = await harness.render({ scene: vignetteScene, width: 925, height: 1002, dither: false })
+    const vignetteLarge = await harness.render({ scene: vignetteScene, width: 3546, height: 3840, dither: false })
+    const vignetteMatch = compareImages(vignetteSmall, await resizeRgba(vignetteLarge, 925, 1002, 'lanczos3'), buildMask(925, 1002, [], 0)).metrics.deltaE
+    record(
+      'vignette: two stops in the corners at 1, the center untouched, a smooth fall, the same at every output size',
+      worstVignette < 0.03 && Math.abs(ratioAt(points[0][0], points[0][1]) - 1) < 0.01 && falls && vignetteMatch.mean < 0.004,
+      `flat ${grey} at 960x540: center ${ratioAt(...points[0]).toFixed(3)}, corners ${ratioAt(...points[1]).toFixed(3)} and ${ratioAt(...points[2]).toFixed(3)}, ` +
+        `long-edge middle ${ratioAt(...points[3]).toFixed(3)}, short-edge middle ${ratioAt(...points[4]).toFixed(3)} of the grey (worst off the formula ${(worstVignette * 100).toFixed(1)} %); ` +
+        `${falls ? 'falls without a step along the diagonal' : 'rises somewhere along the diagonal'}; 925 px vs 3840 px mean ${vignetteMatch.mean.toFixed(4)}`,
+    )
+    const vignetteRows = [{ scene: { program: 'test.flat', colors: [grey], output: { grain: 0 } }, label: `flat ${grey}` }]
+    const rampScene = { recipe: 'sunset.ramp', seed: 3 }
+    if (loads(rampScene)) vignetteRows.push({ scene: rampScene, label: 'sunset.ramp defaults' })
+    for (const [index, { scene, label }] of vignetteRows.entries()) {
+      const panels = []
+      for (const vignette of [0, 0.5, 1]) {
+        const image = await harness.render({ scene: { ...scene, lens: { ...(scene.lens ?? {}), vignette } }, width: 640, height: 360 })
+        panels.push({ image, caption: `${label}, vignette ${vignette}` })
+      }
+      await composeRow(path.join(outDir, `lens-vignette-${index}.png`), panels)
+    }
+    record('vignette images written', true, `lens-vignette-0.png (flat grey), lens-vignette-1.png (sunset.ramp) at vignette 0, 0.5 and 1`)
   }
 } finally {
   await harness.close()

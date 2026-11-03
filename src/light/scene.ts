@@ -95,6 +95,13 @@ export interface LensSettings {
   halationTint: string
   /** Green sits narrower than red by this x 1.5 pyramid levels (0.67 is one level), blue by twice that. 0..1. */
   halationSpread: number
+  /**
+   * Soft darkening toward the frame corners, 0..1, in linear light before
+   * the tone curve: light is multiplied by (1 + d^2)^(-2 vignette), with d
+   * the distance from the center that is 1 at the corners (a lens's cos^4
+   * falloff). 1 is two stops darker in the corners, 0.5 one stop; 0 is off.
+   */
+  vignette: number
 }
 
 export interface OutputSettings {
@@ -127,6 +134,7 @@ export const DEFAULT_LENS: LensSettings = {
   halationRadius: 0.06,
   halationTint: '#FF9500',
   halationSpread: 0.67,
+  vignette: 0,
 }
 
 export const DEFAULT_OUTPUT: OutputSettings = {
@@ -154,6 +162,7 @@ export const LENS_NUMBERS: readonly NumericSetting<NumericKeys<LensSettings>>[] 
   { key: 'halationThreshold', label: 'Halation threshold', min: 0, max: 4, step: 0.01 },
   { key: 'halationRadius', label: 'Halation radius', min: 0.005, max: 0.4, step: 0.005 },
   { key: 'halationSpread', label: 'Halation spread', min: 0, max: 1, step: 0.01 },
+  { key: 'vignette', label: 'Vignette', min: 0, max: 1, step: 0.01 },
 ]
 
 export const LENS_COLORS: readonly { key: StringKeys<LensSettings>; label: string }[] = [

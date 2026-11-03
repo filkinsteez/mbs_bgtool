@@ -216,7 +216,7 @@ describe('scene resolution', () => {
 
 describe('lens weights', () => {
   it('bloom levels keep total luminance and halation channels sum to 1', () => {
-    const lens = { bloom: 0.2, bloomRadius: 0.4, bloomWidth: 1.2, bloomTint: '#FF8040', halation: 1, halationThreshold: 1, halationRadius: 0.05, halationTint: '#FF5A1F', halationSpread: 0.5 }
+    const lens = { ...DEFAULT_LENS, bloom: 0.2, bloomRadius: 0.4, bloomWidth: 1.2, bloomTint: '#FF8040', halation: 1, halationRadius: 0.05, halationTint: '#FF5A1F', halationSpread: 0.5 }
     const bloom = bloomLevelFactors(lens)
     expect(bloom.reduce((sum, f) => sum + luminance(f), 0)).toBeCloseTo(1, 6)
     const halation = halationLevelFactors(lens)

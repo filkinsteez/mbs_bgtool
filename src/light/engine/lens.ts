@@ -199,6 +199,8 @@ uniform float uBloomMix;
 uniform float uHalation;
 uniform vec3 uHalationTint;
 uniform float uExposure;
+uniform float uLensVignette;
+uniform vec2 uLensVignetteAxes; // frame proportions scaled so the corners are at distance 1
 
 vec3 lensAndTone(vec3 radiance, vec2 uv) {
   vec3 c = radiance;
@@ -213,6 +215,10 @@ vec3 lensAndTone(vec3 radiance, vec2 uv) {
     float fade = 1.0 / (1.0 + max(luminance(c) - 1.0, 0.0));
     float hold = 1.0 / (1.0 + 4.0 * max(sampleSmooth(uHalationSurround, uv).r - 0.15, 0.0));
     c += uHalation * uHalationTint * sampleSmooth(uHalationTex, uv) * fade * hold;
+  }
+  if (uLensVignette > 0.0) {
+    vec2 q = (2.0 * uv - 1.0) * uLensVignetteAxes;
+    c *= pow(1.0 + dot(q, q), -2.0 * uLensVignette);
   }
   return toneCurve(c);
 }

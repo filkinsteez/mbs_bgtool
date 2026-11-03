@@ -206,6 +206,8 @@ export class ProgramRenderer {
       uHalationTint: hexToLinear(resolved.lens.halationTint),
       uExposure: resolved.output.exposure,
       uToe: resolved.output.toe,
+      uLensVignette: resolved.lens.vignette,
+      uLensVignetteAxes: frameInShorts.map((v) => v / Math.hypot(frameInShorts[0], frameInShorts[1])),
     }
     const lensTextures: Record<string, Target> = {
       uBloomTex: lens.bloom ?? this.black,
