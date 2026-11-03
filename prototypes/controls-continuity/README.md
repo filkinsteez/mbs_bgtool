@@ -52,8 +52,15 @@ Seen in the working tree at 08:23: Ramp Elemental seed 3, 9:16, the water under 
 
 Per look: Rim Softness does little at 0.00-0.40 and a lot at 0.70-1.00; Halo Light is three times faster at 0.70-1.00 than at 0.00-0.30; Beam Light stops at the right edge for 0.90-1.00 on seed 1; Light reads as brightness to a non-designer in every Contour look, which Intensity already does; Streaks looks almost the same in Bold and Elemental; Rim seed 1 is a small sliver in a corner, so all its controls change only that corner.
 
+## Round 2 (2026-11-03, 09:38 to 09:55)
+
+- Contour's mood control shows as "Light position" (7dfb51e); the panel key is `light position`, the URL still writes `light=`, so old links keep their value. Checked in the tool on the dev server: a `light=0.3` link shows Light position 0.30, switching Mood from Sunset shows Light position 0.50 and writes `light=0.5`, an arrow key moves it to 0.51, and Sunset still shows Horizon. Panel shot: `out/label/panel-contour.jpg`.
+- `--rev` and `--patch` runs now make their own copy of the code and delete it at the end (1c9c0c2).
+- Quick sweep at 7dfb51e of the looks committed since 582259c (Bands 7f6ef58, Rim and Halo b616d1a, Beam and Streaks 9d58cb6; seeds 1-6, 16:9): Bands Softness up to ΔE 0.208 at 0.51-0.98 and Horizon up to 0.219 at 0.25-0.86 (same causes, now `bands-compose.ts` 251, 266, 287, 313-330); Streaks Light up to 0.191 at 0.44-0.57 in every sweep (patch not applied yet); a new Halo Light jump; Rim, Beam and Bands Intensity none. Ramp and Blooms have no commits since 582259c.
+- New: Halo, Light, seed 3 in every pack, 0.81-0.85, ΔE 0.043-0.047 (32-34x). `halo.ts` 228 sets the light's direction with `normalNear(path, hot)` (`curveCompose.ts` 360-368), which takes the chord between the samples two either side of the nearest sample; where seed 3's logo crop turns a corner the direction swings 105 degrees in one step (`light1Angle` 16.5 to 121.5). Fix direction: take the direction from the curve over a fixed length around the hot spot, for example the chord between `pointAlong(path, along - d)` and `pointAlong(path, along + d)`, so it turns through the corner over several steps. This is critic item 8.
+
 ### Next round
 
-- Check the Bands patch in a frozen copy once the Bands agent commits.
-- Re-sweep the routed patches when they land; re-check Ramp's Elemental water at the far bank.
+- Full re-audit once the owners commit their fixes; check each routed patch where it lands.
+- Re-check Ramp's Elemental water at the far bank and the boundary-model flicks.
 - 9:16 contact sheets for the critic (the round 1 run failed on a sheet-size bug, fixed).
