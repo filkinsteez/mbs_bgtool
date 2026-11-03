@@ -91,6 +91,29 @@ Where a recipe's render time goes. Each recipe renders its compose scene (the pa
 
 `--save <dir>` writes a 1080p 1x preview and a 4K 2x export of each scene (no grain, no dither) and prints preview vs export ΔE. `--against <dir>` renders again and prints ΔE against images saved earlier, which shows whether a speedup changed the image.
 
+### Palette check
+
+```sh
+node scripts/light/palette-check.mjs --look <ramp|bands|blooms|rim|halo|beam|streaks|all>[,...]
+  [--from <dir> | --dev [--url http://localhost:3000]] [--seeds 8] [--portrait 4] [--maps] [--label text] [--out dir]
+```
+
+Checks that every frame reads as its pack: the three packs at seeds 1-8 (16:9) and 1-4 (9:16). Without `--from` or `--dev` it renders the tool's scene (controls at 0.5) with the harness from the checkout the script sits in; to check committed code, run it from a frozen copy of HEAD (`git archive HEAD src scripts public package.json tsconfig.json | tar -x -C <dir>`, with `node_modules` linked), which also gives it each frame's `scene.colors`. `--dev` shoots the dev server (one page at a time, the uncommitted working tree; say so and give the time in `--label`), and `--from` reads `<look>-<pack>-s<seed>-<16x9|9x16>.png` from a folder. It writes `<out>/<recipe>.png` (packs as rows, seeds as columns, a bar under each tile with each pack color's share, clean mixes, pale bridges, white, the dark base and outside colors, failing tiles framed in red), `summary.md` (the failing frames and why), `palette.json`, and with `--maps` a map per frame of what each pixel counted as. Default `--out` is `artifacts/palette-check/<label>`.
+
+How a pixel counts:
+
+- As a pack color when, at its Oklab lightness, it has the color's hue (within 20°) on the color's light path: the color under less light (the tone curve is the identity below nominal) up to its overexposed version through the engine's tone curve. Below nominal it may be at most 35% greyer than the path; pale tints (lighter and greyer, cream for Yellow) count down to L 0.78. Warm colors count down to 1 stop under nominal (Orange-red 1.5 stops), because dimmer they read as olive and brown (`docs/light/research/perception-additive-light.md` 1.4 and 4.5). Dark colors (L under 0.5) count up to 1 stop over nominal, because brighter they read as another color (Forest aquamarine, Plum hot pink). Atmospheric's Ice, Steel, Slate and Near-black share one hue and are told apart by lightness.
+- As a clean mix only for the pairs that stay clean in linear light (the same doc, section 5): Meta Blue with Cyan, Forest, Plum or Ice, Yellow with Orange-red, and Atmospheric's greys. Every other pair goes grey, invents a hue (magenta, mint) or turns olive, khaki or brown.
+- As a pale bridge at L 0.78 or more and chroma 0.05 or less, as the dark base below L 0.1, and otherwise as an outside color, named in plain words (pink, magenta, mauve, lavender, salmon, brick, brown, grey-brown, khaki, olive, mint, teal, grey and so on). Only wide outside areas count: whatever is thinner than 6% of the short side (a bridge, a tail) is removed first.
+
+A frame fails when:
+
+- one wide outside area covers 8% of the frame or more, or wide outside areas cover 15% or more;
+- Sunset: fewer than three pack colors each cover 5% of the frame, there is no Meta Blue sky, there is no warm color (Bold, Elemental), or Bold shows both Yellow and Orange-red at their own brightness (Yellow's deep tones and Orange-red's pale ones overlap, so they count as one warm light otherwise; Elemental's Lime with Tan is noted as open question 7);
+- Contour: 30% of the dark base or 20% of the lit area is outside the pack, or, when the scene is known, 25% of the lit area is a pack color the scene does not light with.
+
+Contour also checks each pack across seeds 1-8 at 16:9: every light color the pack offers (pack colors at L 0.5 or more; for Atmospheric, Meta Blue and Ice) must be a frame's main light at least once. The thresholds (`T` at the top of the script) were set by eye on the coordinator's shots in `artifacts/coordinator/bands-bug`, `palette-now` and `palette-now-contour`.
+
 ## Metrics (`metrics.json`)
 
 All ΔE values are plain Euclidean Oklab distances (L on 0..1; about 0.02 is one just-noticeable difference). The roadmap's starting targets are mean under 0.03 and p95 under 0.06. Ignore rects and rounded corners are masked everywhere.
