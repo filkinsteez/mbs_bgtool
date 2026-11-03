@@ -430,7 +430,8 @@ float bloom(vec2 P, vec2 warp, vec2 center, vec4 axis, vec2 stretch, float beta,
     float a = dot(P, axis.xy) * shortUnit;
     float minorShort = shortUnit / scaleAxes.y;
     float fade = 1.0 / (1.0 + across * across * 0.25);
-    across += boundaryWarp(a, across * BLOOM_MINOR_REF + float(index) * BLOOM_ROW) * fade * inversesqrt(BLOOM_MINOR_REF * max(BLOOM_MINOR_REF, minorShort));
+    float row = float(min(index, GLOW_COUNT)) * BLOOM_ROW;
+    across += boundaryWarp(a, across * BLOOM_MINOR_REF + row) * fade * inversesqrt(BLOOM_MINOR_REF * max(BLOOM_MINOR_REF, minorShort));
     soft = boundarySoftAt(a, float(index), 0.0);
   }
   float alongNoise = noise1x3(along * edge.y + edge.z, uSeed + 101 + 7 * index).y;
@@ -467,12 +468,17 @@ vec3 radiance(vec2 uv, vec2 p) {
     lobe[j] = uZenithLobe[j];
     falloff[j] = uZenithLobeFalloff[j];
   }
-  float z = min(1.0, uZenithShape.z * bloom(P, warp, (uZenithShape.xy - 0.5) * frame, uZenithAxis, vec2(shortUnit), uZenithShape.w, vec3(0.5, 1.1, 2.3), 0.0, 9, 0.0, lobe, falloff));
+  // The deep area's edge drifts like a glow's, on the field row after the glows'.
+  float z = min(1.0, uZenithShape.z * bloom(P, warp, (uZenithShape.xy - 0.5) * frame, uZenithAxis, vec2(shortUnit), uZenithShape.w, vec3(0.5, 1.1, 2.3), 0.0, 9, shortUnit, lobe, falloff));
   vec3 sky = mix(uSky, uDeep, z);
   // The sky keeps changing up to the top edge: it is its exact hex along a mid-sky line (tilted, and
   // bent by the shared warp) and above it gets darker without changing hue. It also varies slowly
   // in brightness, with the hex at the mean.
   float vSky = uv.y + uSkyRamp.z * (uv.x - 0.5) + warp.y / frame.y;
+  // The line drifts like a glow edge, on the field row after the deep area's, and its lighter and
+  // darker levels drift apart, so the darker top has no ruled edge and no parallel steps.
+  float fromLine = (vSky - uSkyRamp.y) * frame.y * shortUnit;
+  vSky += boundaryWarp(P.x * shortUnit, fromLine + float(GLOW_COUNT + 1) * BLOOM_ROW) / (shortUnit * frame.y);
   float above = clamp((uSkyRamp.y - vSky) / max(uSkyRamp.y, 0.05), 0.0, 1.0);
   float topLight = exp2(-uSkyRamp.x * pow(above, 1.4));
   sky *= topLight * exp(uSkyRamp.w * 3.0 * noise2x2(P * 2.6 + vec2(7.1, 2.3), uSeed + 23).x);

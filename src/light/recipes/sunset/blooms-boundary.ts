@@ -19,6 +19,8 @@ export const BLOOM_ROW = 6 * BLOOM_MINOR_REF
  * Along the glow the lattice is long (bumps at least 10 times wider than they
  * are deep): a glow's faint outer light shows every bump, and shorter ones
  * read as clouds or hills. The edge softness changes slowly along the arc.
+ * The deep area's edge reads the row after the last glow's, and the line
+ * above which the sky gets darker the row after that.
  */
 export const BLOOM_BOUNDARY: BoundaryParams = {
   wander: [[0, 0.1 * BLOOM_MINOR_REF]],
@@ -28,7 +30,7 @@ export const BLOOM_BOUNDARY: BoundaryParams = {
   sharedScale: 0.8,
   gain: 0.4,
   soft: { amount: 0.1, scale: 1.0, ly: 1, wRef: 0 },
-  range: [-3 * BLOOM_MINOR_REF, 3 * BLOOM_MINOR_REF + (GLOW_COUNT - 1) * BLOOM_ROW],
+  range: [-3 * BLOOM_MINOR_REF, 3 * BLOOM_MINOR_REF + (GLOW_COUNT + 1) * BLOOM_ROW],
 }
 
 const CACHE_SIZE = 32
