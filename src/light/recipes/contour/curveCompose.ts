@@ -61,6 +61,18 @@ export function pickLight(pack: ColorPack, rand: () => number): PackColor {
   )
 }
 
+/**
+ * Paper toe for a light color: warm lights (Oklab hue 20 to 140 degrees with
+ * real chroma: Orange-red, Tan, Yellow, Lime) get 0.85, which keeps their dim
+ * light amber instead of brick, brown or olive. Cool lights get 0: the toe
+ * turns dim Cyan blue and pushes dim Meta Blue toward ultramarine.
+ */
+export function warmToe(hex: string): number {
+  const [, a, b] = linearToOklab(hexToLinear(hex))
+  const hue = (Math.atan2(b, a) * 180) / Math.PI
+  return Math.hypot(a, b) > 0.04 && hue >= 20 && hue <= 140 ? 0.85 : 0
+}
+
 /** Oklab lightness of a base: dark enough that text set on it reads, light enough to tell from black. */
 const BASE_LIGHTNESS = 0.1
 

@@ -18,6 +18,7 @@ import {
   toFrame,
   visiblePath,
   visibleRuns,
+  warmToe,
 } from './curveCompose'
 import {
   buildShape,
@@ -345,7 +346,7 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
       halationRadius: round4(0.035 * soften),
       halationTint: light.hex,
     },
-    output: { grain: 0 },
+    output: { grain: 0, toe: warmToe(light.hex) },
   }
 }
 
