@@ -1,6 +1,7 @@
 import type { ColorPack } from '../../color/packs'
 import type { Rgb } from '../../color/srgb'
 import type { NumberParam, ParamSpec, RecipeContext, RecipeDefinition, UniformMap, VectorParam } from '../../scene'
+import { rampBoundary, type RampUniforms } from './ramp-boundary'
 import { composeRamp, rampPackColors } from './ramp-compose'
 import { GLOW_LAYERS, RAMP_COLORS, RAMP_EDGES, RAMP_FRAGMENT, SUN_LAYERS } from './ramp-shader'
 
@@ -36,6 +37,7 @@ const PARAMS: ParamSpec[] = [
   ...EDGE_WIDTH.map((value, i) => num(`width${i + 1}`, `Edge ${i + 1} width`, 0.004, 2, 0.001, value)),
   ...Array.from({ length: RAMP_COLORS }, (_, i) => num(`gain${i + 1}`, `Stop ${i + 1} gain`, 0, 4, 0.005, 1)),
   num('horizonEdge', 'Horizon edge (0: the anchor line)', 0, RAMP_EDGES, 1, 0),
+  vec('zenithShade', 'First stop light: change per short side down the ramp, where it is 1, change across the frame, where it is 0', -2, 2, 0.0005, [0, 0, 0, 0]),
   num('warp', 'Horizon warp', 0, 1.5, 0.001, 0.02),
   num('warpScale', 'Horizon warp scale', 0.05, 8, 0.01, 1.4),
   num('warpPhase', 'Horizon warp phase', -20, 20, 0.01, 0),
@@ -48,6 +50,9 @@ const PARAMS: ParamSpec[] = [
   num('drift', 'Edge drift', 0, 0.6, 0.001, 0.06),
   num('driftScale', 'Edge drift scale', 0.1, 8, 0.01, 1.4),
   num('vary', 'Edge width change', 0, 1.5, 0.005, 0.25),
+  vec('boundaryWander', 'Shared boundary wander at the sky edge, the glow, the horizon and the ground (all 0: off)', 0, 0.1, 0.0005, [0, 0, 0, 0]),
+  vec('boundaryNoise', 'Shared boundary noise: share, lattice, octave gain, rows per lattice', 0, 4, 0.005, [0.35, 0.4, 0.25, 2]),
+  vec('boundarySoft', 'Shared boundary softness change: amount, lattice, rows, width above which it shrinks', 0, 2, 0.005, [0.15, 0.5, 0.25, 0.15]),
   num('softness', 'Extra softness', 0, 0.4, 0.001, 0),
   num('hazeScale', 'Haze scale', 0.2, 10, 0.01, 2),
   num('hazeStretch', 'Haze stretch', 0.3, 8, 0.01, 3),
@@ -60,6 +65,7 @@ const PARAMS: ParamSpec[] = [
   num('sunlightWarmth', 'Sunlight warmth', 0, 1, 0.005, 1),
   num('falloff', 'Sideways falloff exponent', 0.8, 4, 0.01, 1.6),
   num('widen', 'Sideways widening with height', 0, 12, 0.01, 1),
+  num('falloffRound', 'Share of the sideways width over which the falloff top is round (0: pointed)', 0, 2, 0.01, 0),
   num('lightTop', 'Sun light fades out by this height (0: no limit)', 0, 4, 0.001, 0),
   num('glow', 'Glow', 0, 8, 0.005, 0.6),
   num('glowOffset', 'Glow line offset', -1.5, 1, 0.001, -0.04),
@@ -82,6 +88,7 @@ const PARAMS: ParamSpec[] = [
   num('reddenUp', 'Paler above the glow', 0, 0.95, 0.005, 0),
   num('reddenSide', 'Deeper away from the sun', 0, 4, 0.005, 0),
   num('glowPath', 'Glow color path at the glow line', -0.95, 4, 0.005, 0),
+  num('reddenEase', 'Path change starts gently at the glow line (0: at full rate)', 0, 1, 0.01, 0),
   num('sunGlow', 'Sun glow', 0, 6, 0.005, 0),
   ...[1, 2].flatMap((i) => [
     num(`sunGlow${i}Radius`, `Sun glow layer ${i} radius`, 0, 3, 0.001, i === 1 ? 0.12 : 0.45),
@@ -148,7 +155,7 @@ function uniforms(ctx: RecipeContext): UniformMap {
   const tilt = (ctx.num('angle') * Math.PI) / 180
   const glowIntensity = ctx.num('glow')
   const sunIntensity = ctx.num('sunGlow')
-  return {
+  const u: RampUniforms = {
     uStop: Array.from({ length: RAMP_COLORS }, (_, i) => scale(ctx.colors[i], ctx.num(`gain${i + 1}`))).flat(),
     uEdgeAt: at,
     uEdgeWidth: Array.from({ length: RAMP_EDGES }, (_, i) => ctx.num(`width${i + 1}`)),
@@ -156,6 +163,7 @@ function uniforms(ctx: RecipeContext): UniformMap {
     uEdgeSoft: near(ctx.num('softReach')),
     uEdges: edges,
     uHorizonEdge: horizonEdge,
+    uZenithShade: ctx.vec('zenithShade'),
     uAnchor: ctx.vec('anchor'),
     uAxis: [Math.sin(tilt), Math.cos(tilt)],
     uDrop: ctx.num('drop'),
@@ -168,7 +176,7 @@ function uniforms(ctx: RecipeContext): UniformMap {
     uSunAt: ctx.vec('sunAt'),
     uSunlight: sunTint.map((v) => ctx.num('sunlight') * (1 + (v - 1) * warmth)),
     uSunlightShape: [ctx.num('sunlightWidth'), ctx.num('sunlightHeight')],
-    uLateral: [ctx.num('falloff'), ctx.num('widen')],
+    uLateral: [ctx.num('falloff'), ctx.num('widen'), ctx.num('falloffRound')],
     uLightTop: ctx.num('lightTop'),
     uGlowColor: [...scale(ctx.color('glow1'), glowIntensity), ...scale(ctx.color('glow2'), glowIntensity)],
     uGlowWeight: [ctx.num('glow1Weight'), ctx.num('glow2Weight')].slice(0, GLOW_LAYERS),
@@ -180,6 +188,7 @@ function uniforms(ctx: RecipeContext): UniformMap {
     uHorizonDim: [ctx.num('horizonDim'), ctx.num('horizonDimHeight')],
     uDimBelow: ctx.num('dimBelow'),
     uRedden: [ctx.num('reddenDown'), ctx.num('reddenUp'), ctx.num('reddenSide'), ctx.num('glowPath')],
+    uReddenEase: ctx.num('reddenEase'),
     uSunGlowColor: Array.from({ length: SUN_LAYERS }, (_, i) =>
       scale(ctx.color('sunGlow'), sunIntensity * ctx.num(`sunGlow${i + 1}Weight`)),
     ).flat(),
@@ -196,6 +205,7 @@ function uniforms(ctx: RecipeContext): UniformMap {
     uLandLightColor: scale(ctx.color('landLight'), ctx.num('landLight')),
     uLandLight: [ctx.num('landLightWidth'), ctx.num('landLightDepth')],
   }
+  return { ...u, ...rampBoundary(ctx, u).uniforms }
 }
 
 /**

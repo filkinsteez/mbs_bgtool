@@ -1,3 +1,5 @@
+import { BOUNDARY_GLSL } from './boundary'
+
 export const RAMP_COLORS = 8
 export const RAMP_EDGES = RAMP_COLORS - 1
 export const GLOW_LAYERS = 2
@@ -12,6 +14,7 @@ export const SUN_LAYERS = 2
  * bridge pale. An optional land layer sits in front of everything.
  */
 export const RAMP_FRAGMENT = /* glsl */ `
+${BOUNDARY_GLSL}
 #define RAMP_COLORS ${RAMP_COLORS}
 #define RAMP_EDGES ${RAMP_EDGES}
 #define GLOW_LAYERS ${GLOW_LAYERS}
@@ -24,6 +27,11 @@ uniform float uEdgeWarp[RAMP_EDGES];
 uniform float uEdgeSoft[RAMP_EDGES];
 uniform int uEdges;
 uniform int uHorizonEdge;    // -1: the anchor line is the horizon
+uniform vec4 uZenithShade;   // the first stop's light: change per short side down the ramp, where it is 1, change across the frame, where it is 0
+
+uniform int uBndOn;               // 1: the shared boundary model moves the edges and the glow; 0: the warp and drift below
+uniform int uEdgeBnd[RAMP_EDGES]; // each edge's transition in the boundary model, -1 none
+uniform int uGlowTopBnd;          // the transition whose softness the glow's upward decay length follows, -1 none
 
 uniform vec2 uAnchor;
 uniform vec2 uAxis;          // sin and cos of the tilt; (0, 1) points straight down
@@ -38,7 +46,7 @@ uniform vec4 uHaze;          // cycles per short side, stretch along the horizon
 uniform vec2 uSunAt;
 uniform vec3 uSunlight;      // tint times gain
 uniform vec2 uSunlightShape; // sideways width, decay length with height (0: none)
-uniform vec2 uLateral;       // sideways falloff exponent, widening per short side of height
+uniform vec3 uLateral;       // sideways falloff exponent, widening per short side of height, share of the width over which its top is round
 uniform float uLightTop;     // height above the horizon where the sun's added light and gain have faded out (0: no limit)
 
 uniform vec3 uGlowColor[GLOW_LAYERS];
@@ -53,6 +61,7 @@ uniform float uExtinction;
 uniform vec2 uHorizonDim;    // how much skylight dims toward the horizon, and over what height
 uniform float uDimBelow;     // share of that dimming on the stops below a horizon edge (ground is not skylight)
 uniform vec4 uRedden;        // deeper below the glow line, paler above it, deeper away from the sun, path at the line
+uniform float uReddenEase;   // 0: the path changes at full rate from the glow line; 1: it starts gently (no crease at the line)
 
 uniform vec3 uSunGlowColor[SUN_LAYERS];
 uniform float uSunGlowRadius[SUN_LAYERS];
@@ -81,11 +90,28 @@ float sideFalloff(float d, float width, float power) {
   return 1.0 / (1.0 + pow(abs(d) / max(width, 1e-5), power));
 }
 
+// The same falloff with a round top: an exponent below 2 makes a pointed peak toward the sun,
+// which shows as a tent of light.
+float roundFalloff(float d, float width, float power) {
+  float r = uLateral.z * width;
+  return sideFalloff(sqrt(d * d + r * r) - r, width, power);
+}
+
 // Flat-topped exponential: rounded over half a decay length, then exp(-|d| / tau).
 float softExp(float d, float tau) {
   float t = max(tau, 1e-5);
   float eps = 0.5 * t;
   return exp(-(sqrt(d * d + eps * eps) - eps) / t);
+}
+
+// 0 at the glow line, rising to 1 over the decay length tau. ease 1 starts at zero rate (a
+// gamma-2 rise with the same half point), so the color has no crease at the line.
+float pathRise(float d, float tau, float ease) {
+  float t = max(tau, 1e-5);
+  float sharp = 1.0 - exp(-d / t);
+  if (ease <= 0.0) return sharp;
+  float x = d / (0.413 * t);
+  return mix(sharp, 1.0 - (1.0 + x) * exp(-x), ease);
 }
 
 // The same light after a longer (k > 0) or shorter (k < 0) path: Beer-Lambert powers of its unit-peak color.
@@ -191,6 +217,9 @@ vec3 radiance(vec2 uv, vec2 p) {
   float along = dot(d, uAxis);
   float across = d.x * uAxis.y - d.y * uAxis.x;
   float s = along - uDrop * across * across / (halfWidth * halfWidth);
+  // Along the boundaries, from the frame center.
+  float a = p.x * uAxis.y - p.y * uAxis.x;
+  if (uBndOn != 0) s += boundaryWarp(a, s);
 
   vec2 sun = (uSunAt - 0.5) * uFrameAspect - anchor;
   float sunAlong = dot(sun, uAxis);
@@ -219,6 +248,7 @@ vec3 radiance(vec2 uv, vec2 p) {
       m += uDrift.x * uEdgeWidth[j] * fbm(q + vec2(5.2, 1.7), 2, uSeed + 503);
       w *= exp(uDrift.z * fbm(q * vec2(0.8, 1.0) + vec2(-3.1, 8.4), 2, uSeed + 509));
     }
+    if (uBndOn != 0 && uEdgeBnd[j] >= 0) w *= boundarySoft(a, uEdgeBnd[j]);
     if (j == uHorizonEdge) horizon = m;
     level[j] = rise(s - m, sqrt(w * w + uBlur * uBlur));
   }
@@ -227,7 +257,7 @@ vec3 radiance(vec2 uv, vec2 p) {
   float widen = 1.0 + uLateral.y * height;
   float lightReach = uLightTop > 0.0 ? 1.0 - smoothstep(0.45 * uLightTop, uLightTop, height) : 1.0;
 
-  float sunlit = sideFalloff(across - sunAcross, uSunlightShape.x * widen, uLateral.x);
+  float sunlit = roundFalloff(across - sunAcross, uSunlightShape.x * widen, uLateral.x);
   if (uSunlightShape.y > 0.0) sunlit *= exp(-height / uSunlightShape.y);
   vec3 gain = vec3(1.0) + uSunlight * (sunlit * lightReach);
 
@@ -235,19 +265,20 @@ vec3 radiance(vec2 uv, vec2 p) {
   vec3 glow = vec3(0.0);
   float glowDepth = 0.0;
   float dh = s - horizon - uGlowOffset;
-  float side = sideFalloff(across - sunAcross, uGlowSpread.y * widen, uLateral.x);
+  float side = roundFalloff(across - sunAcross, uGlowSpread.y * widen, uLateral.x);
   float far = 1.0 - uGlowSpread.x;
   if (uGlowSpread.z > 0.0) far *= 1.0 - exp(-height / uGlowSpread.z);
   float spread = (far + (1.0 - far) * side) * lightReach;
   float reach = uGlowVary.x != 0.0 ? exp(uGlowVary.x * edgeFbm(across * uGlowVary.y + 31.7, uSeed + 601, 2)) : 1.0;
   reach *= 1.0 + uGlowVary.z * side;
+  // How far the glow reaches up changes slowly along it. Its downward reach stays even: over that
+  // long tail any change shows as soft columns.
+  if (uBndOn != 0 && uGlowTopBnd >= 0) reach *= boundarySoftAt(a, uBndTrans[uGlowTopBnd].x, uBndTrans[uGlowTopBnd].y);
   for (int k = 0; k < GLOW_LAYERS; k++) {
     if (uGlowWeight[k] <= 0.0) continue;
     vec2 tau = uGlowTau[k] * vec2(reach, 1.0);
     float f = spread * uGlowWeight[k] * softExp(dh, dh < 0.0 ? tau.x : tau.y);
-    float path = dh > 0.0
-      ? uRedden.x * (1.0 - exp(-dh / max(tau.y, 1e-5)))
-      : -uRedden.y * (1.0 - exp(dh / max(tau.x, 1e-5)));
+    float path = dh > 0.0 ? uRedden.x * pathRise(dh, tau.y, uReddenEase) : -uRedden.y * pathRise(-dh, tau.x, uReddenEase);
     vec3 c = pathColor(uGlowColor[k], uRedden.w + path + uRedden.z * (1.0 - side)) * f;
     glow += c;
     glowDepth += f;
@@ -271,10 +302,11 @@ vec3 radiance(vec2 uv, vec2 p) {
   if (uHorizonEdge >= 0) dim *= mix(1.0, uDimBelow, level[uHorizonEdge]);
   vec3 skyGain = gain * exp(-uExtinction * glowDepth - dim);
   vec3 sky = vec3(0.0);
+  float zenithShade = clamp(1.0 + uZenithShade.x * (s - uZenithShade.y) + uZenithShade.z * (a / halfWidth - uZenithShade.w), 0.8, 1.2);
   for (int k = 0; k < RAMP_COLORS; k++) {
     if (k > uEdges) break;
     float w = (k == 0 ? 1.0 : level[k - 1]) - (k < uEdges ? level[k] : 0.0);
-    sky += w * uStop[k];
+    sky += w * uStop[k] * (k == 0 ? zenithShade : 1.0);
   }
   sky = max(sky, vec3(0.0)) * skyGain;
   gather(mixed, sky);
