@@ -478,6 +478,17 @@ export function metaLogo(): Shape {
   return logoCache
 }
 
+/**
+ * Points of the logo (units and placement of metaLogo) that together make it
+ * read as the whole logo: the crossing in the middle and the tops of the left
+ * and right loops.
+ */
+export const META_LOGO_LANDMARKS: readonly Vec2[] = [
+  [1762, 1340],
+  [1432.41, 1000],
+  [2080, 1000],
+].map(([x, y]) => [(x - 1752.4136) / 1000, (y - 1500) / 1000] as Vec2)
+
 /** Only the outer contour of the Meta logo (no holes), same units and placement as metaLogo. */
 export function metaLogoEdge(): Shape {
   return { contours: [metaLogo().contours[0]] }

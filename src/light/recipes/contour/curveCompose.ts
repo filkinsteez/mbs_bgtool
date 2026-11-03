@@ -100,6 +100,72 @@ export function visiblePath(shape: Shape, anchor: Vec2, aspect: number, margin =
   return points
 }
 
+/**
+ * The shape's pieces inside the frame, each an ordered run of points from one
+ * frame crossing to the next. A closed contour is read from a point outside
+ * the frame, so a piece is never split where the contour starts.
+ */
+export function visibleRuns(shape: Shape, anchor: Vec2, aspect: number, margin = 0.02): Vec2[][] {
+  const [fw, fh] = frameSize(aspect)
+  const placed = transformShape(shape, { translate: anchor })
+  const runs: Vec2[][] = []
+  for (const contour of placed.contours) {
+    const points: Vec2[] = []
+    for (const p of contour.primitives) {
+      const steps = Math.max(2, Math.ceil(primitiveLength(p) / 0.01))
+      for (let i = 0; i < steps; i++) points.push(primitivePoint(p, i / steps))
+    }
+    const inFrame = (v: Vec2) => Math.abs(v[0]) <= fw / 2 - margin && Math.abs(v[1]) <= fh / 2 - margin
+    const firstOut = points.findIndex((v) => !inFrame(v))
+    const ordered = contour.closed && firstOut > 0 ? [...points.slice(firstOut), ...points.slice(0, firstOut)] : points
+    let run: Vec2[] = []
+    for (const v of ordered) {
+      if (inFrame(v)) run.push(v)
+      else if (run.length) {
+        runs.push(run)
+        run = []
+      }
+    }
+    if (run.length) runs.push(run)
+  }
+  return runs
+}
+
+/**
+ * How many of a shape's own points land within `margin` of the frame once the
+ * shape is scaled by `size`, mirrored, rotated by `rotate` degrees and moved to
+ * `anchor` (the order buildShape and the shader use).
+ */
+export function pointsNearFrame(points: readonly Vec2[], size: number, rotate: number, flip: boolean, anchor: Vec2, aspect: number, margin: number): number {
+  const [fw, fh] = frameSize(aspect)
+  const a = (rotate * Math.PI) / 180
+  return points.filter(([x, y]) => {
+    const sx = x * size
+    const sy = (flip ? -y : y) * size
+    const px = sx * Math.cos(a) - sy * Math.sin(a) + anchor[0]
+    const py = sx * Math.sin(a) + sy * Math.cos(a) + anchor[1]
+    return Math.abs(px) <= fw / 2 + margin && Math.abs(py) <= fh / 2 + margin
+  }).length
+}
+
+/** Total turning of a run of points (radians): how far its direction rotates along it, both ways counted. */
+export function turning(run: readonly Vec2[]): number {
+  let total = 0
+  for (let i = 2; i < run.length; i++) {
+    const a = Math.atan2(run[i - 1][1] - run[i - 2][1], run[i - 1][0] - run[i - 2][0])
+    const b = Math.atan2(run[i][1] - run[i - 1][1], run[i][0] - run[i - 1][0])
+    let d = b - a
+    d -= 2 * Math.PI * Math.round(d / (2 * Math.PI))
+    total += Math.abs(d)
+  }
+  return total
+}
+
+/** The longest run (by point count, which follows length). */
+export function longestRun(runs: readonly Vec2[][]): Vec2[] {
+  return runs.reduce<Vec2[]>((best, run) => (run.length > best.length ? run : best), [])
+}
+
 /** The point at fraction t of a path's length (the path is treated as ordered samples). */
 export function pointAlong(points: readonly Vec2[], t: number): Vec2 | null {
   if (points.length === 0) return null
@@ -135,10 +201,6 @@ export interface ProductionLight {
   fan?: number
   /** Colors split across the line: red and blue glow offset to opposite sides by this much. */
   spread?: number
-  /** Light on the other side of the edge, as a far part (replaces the face). */
-  outer?: number
-  /** Glow on both sides, with scattered light filling the inside (replaces the face and outer light). */
-  both?: boolean
 }
 
 /**
@@ -151,7 +213,8 @@ export interface ProductionLight {
  * along the curve, light field 2 the hot spot.
  */
 export function productionParts(prefix: string, light: ProductionLight): Record<string, number | number[]> {
-  const widths = hueWidths(light.hex, 0.35).map(round4)
+  // Kept small so the falloff stays in the light's own color family (a wider strongest channel turns Cyan blue).
+  const widths = hueWidths(light.hex, 0.15).map(round4)
   const spread = light.spread ?? 0
   const parts: Record<string, number | number[]> = {
     n1Weight: 1.1,
@@ -188,25 +251,62 @@ export function productionParts(prefix: string, light: ProductionLight): Record<
     f2Light: 2,
     f2LightGamma: 1,
   }
-  if (light.both) {
-    // Every part spreads to both sides; the concave side still gets more because the curve's light converges there.
-    Object.assign(parts, {
-      n2Side: 0,
-      f1Side: 0,
-      f1Weight: 0.2,
-      f1Width: round6(light.haze ?? 0.07),
-      f2Weight: 0.06,
-      f2Width: 0.045,
-      f3Weight: 0.05,
-      f3Width: 0.2,
-      f3Side: 0,
-      f3Light: 1,
-      f3LightGamma: 0.7,
-    })
-  } else if (light.outer !== undefined) {
-    Object.assign(parts, { f3Weight: round4(light.outer), f3Width: 0.07, f3Side: light.side === 1 ? 2 : 1, f3Light: 1, f3LightGamma: 1.5 })
-  } else {
-    Object.assign(parts, { f3Weight: round4(light.face), f3Width: 0.18, f3Side: 1, f3Light: 2, f3LightGamma: 0.6 })
+  Object.assign(parts, { f3Weight: round4(light.face), f3Width: 0.18, f3Side: 1, f3Light: 2, f3LightGamma: 0.6 })
+  return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
+}
+
+const prefixed = (prefix: string, values: Record<string, number | number[]>) =>
+  Object.fromEntries(Object.entries(values).map(([key, value]) => [`${prefix}${key}`, value]))
+
+/**
+ * A halo's point-spread function under a key prefix, laid out like a 22 degree
+ * halo: dark inside, a fairly sharp rise at the curve, a crest band 0.035
+ * outside it (near part 1, the pack color, wider where the light is strong)
+ * and a long fade outward (far part 2, outside only, half at about 0.15 to 0.19
+ * from the crest and close to the base by 0.5), paler toward its end because
+ * the light's strongest channel spreads least. The inside keeps the base level
+ * past the crest's inner side. All parts follow light field 1.
+ */
+export function haloParts(prefix: string, hex: string): Record<string, number | number[]> {
+  // Kept small: a light with a near-zero channel (Meta Blue's red, Orange-red's green) would change hue, not pale.
+  const paler = hueWidths(hex, -0.2).map(round4)
+  const outside = { Side: 2, Light: 1, LightGamma: 1, ChWidth: paler, MaskSoft: 0.015 }
+  const parts: Record<string, number | number[]> = {
+    ...prefixed('n1', { Weight: 0.25, Width: 0.026, Shape: 8, Side: 0, Offset: -0.035, Light: 1, LightGamma: 1, Grow: 1, GrowBy: [0.5, 1.5] }),
+    n2Weight: 0,
+    n3Weight: 0,
+    f1Weight: 0,
+    ...prefixed('f2', { ...outside, Weight: 0.75, Width: 0.27 }),
+    f3Weight: 0,
   }
   return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
+}
+
+/**
+ * Radius of a power-falloff light field at `hot` (exponent `power`) that is
+ * `factor` times dimmer at the farthest point of the visible path, so the
+ * light falls by that much along the curve inside the frame.
+ */
+export function falloffRadius(path: readonly Vec2[], hot: Vec2, factor: number, power: number, stretch?: { direction: Vec2; by: number }): number {
+  // Distances as the light field measures them: along `direction` they count 1 / by as much.
+  const distance = (v: Vec2) => {
+    const d: Vec2 = [v[0] - hot[0], v[1] - hot[1]]
+    if (!stretch) return Math.hypot(d[0], d[1])
+    const u = (d[0] * stretch.direction[0] + d[1] * stretch.direction[1]) / stretch.by
+    const w = d[0] * -stretch.direction[1] + d[1] * stretch.direction[0]
+    return Math.hypot(u, w)
+  }
+  const far = Math.max(0.05, ...path.map(distance))
+  return far / Math.sqrt(Math.max(1e-6, factor ** (2 / power) - 1))
+}
+
+/** Unit normal of a run of points at the sample nearest to p. */
+export function normalNear(points: readonly Vec2[], p: Vec2): Vec2 {
+  if (points.length < 2) return [0, 1]
+  let k = 0
+  for (let i = 1; i < points.length; i++) if (Math.hypot(points[i][0] - p[0], points[i][1] - p[1]) < Math.hypot(points[k][0] - p[0], points[k][1] - p[1])) k = i
+  const a = points[Math.max(0, k - 2)]
+  const b = points[Math.min(points.length - 1, k + 2)]
+  const length = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1
+  return [-(b[1] - a[1]) / length, (b[0] - a[0]) / length]
 }

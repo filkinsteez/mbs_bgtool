@@ -1,18 +1,22 @@
 import type { ColorPack } from '../../color/packs'
 import type { ComposeInput, Composition, ParamSpec, ParamValue, RecipeContext, RecipeDefinition } from '../../scene'
 import {
+  falloffRadius,
   frameSize,
   geo,
   lerp,
+  longestRun,
   pickBase,
   pickLight,
   pickWeighted,
   pointAlong,
+  pointsNearFrame,
   productionParts,
   round4,
   seededRandom,
   toFrame,
   visiblePath,
+  visibleRuns,
 } from './curveCompose'
 import {
   buildShape,
@@ -30,16 +34,17 @@ import {
   slotColor,
   type CurveLightLayout,
   type EmissionStop,
+  type EmitterSettings,
   type ShapeKind,
   type ShapeSettings,
 } from './curveLight'
-import type { Vec2 } from './shapes'
+import { META_LOGO_LANDMARKS, type Vec2 } from './shapes'
 
 const COLORS = 8
 const STOPS = 6
 // The whole Meta logo outline (104 pieces, 3 contours) plus a cut at every stop in each contour must fit:
 // pieces past the limit are dropped, and the inside test then flips inside and outside in horizontal bands.
-const LAYOUT: CurveLightLayout = { emitters: 1, primitives: 128, near: 3, far: 3 }
+export const RIM_LAYOUT: CurveLightLayout = { emitters: 1, primitives: 128, near: 3, far: 3 }
 
 const params: ParamSpec[] = [
   { kind: 'number', key: 'shape', label: 'Shape (1 line, 2 corner, 3 arc, 4 S-curve, 5 logo, 6 ring)', min: 1, max: 6, step: 1, default: 2 },
@@ -102,6 +107,15 @@ const rotate = (v: Vec2, degrees: number): Vec2 => {
   return [v[0] * Math.cos(a) - v[1] * Math.sin(a), v[0] * Math.sin(a) + v[1] * Math.cos(a)]
 }
 
+/**
+ * Logo landmarks (the crossing, the two loop tops) that show: a loop reads from
+ * the curve around its top, so a landmark counts once it is within 0.15 of the
+ * logo's height (plus 0.05) of the frame.
+ */
+function logoLandmarksShown(shape: ShapeSettings, anchor: Vec2, aspect: number): number {
+  return pointsNearFrame(META_LOGO_LANDMARKS, shape.size, shape.rotate, shape.flip, anchor, aspect, 0.05 + 0.15 * shape.size)
+}
+
 interface RimLayout {
   shape: ShapeSettings
   /** Shape origin, short-side units from the frame center. */
@@ -113,6 +127,31 @@ interface RimLayout {
 /** Where the shape goes for this seed and frame; the light keeps to one part of the frame so the rest stays dark. */
 type RimKind = Exclude<ShapeKind, 'logoEdge'>
 
+/** A rounded corner whose vertex sits at or just past a frame edge: one leg runs into the frame, the other leaves it. */
+function cornerLayout(rand: () => number, aspect: number): RimLayout {
+  const [fw, fh] = frameSize(aspect)
+  const edge = pickWeighted(rand, (aspect >= 1
+    ? [[0, 3], [1, 2], [2, 1.2], [3, 1.2]]
+    : [[2, 2], [3, 2], [0, 1.5], [1, 1]]) as readonly (readonly [number, number])[])
+  const inward: Vec2 = ([[0, 1], [0, -1], [1, 0], [-1, 0]] as const)[edge] as Vec2
+  const tangent: Vec2 = inward[0] === 0 ? [rand() < 0.5 ? 1 : -1, 0] : [0, rand() < 0.5 ? 1 : -1]
+  const extent = inward[0] === 0 ? fw : fh
+  const along = lerp(-0.35, 0.35, rand()) * extent
+  const past = lerp(-0.01, 0.08, rand())
+  const toEdge = (inward[0] === 0 ? fh : fw) / 2 + past
+  const vertex: Vec2 = [tangent[0] * along - inward[0] * toEdge, tangent[1] * along - inward[1] * toEdge]
+  const angle = lerp(48, 100, rand())
+  // Degrees from the frame edge toward the inside: the inner leg, then the bisector (the outer leg is at legIn - angle).
+  const legIn = lerp(20, Math.min(80, angle - 8), rand())
+  const bisector = ((legIn - angle / 2) * Math.PI) / 180
+  const direction: Vec2 = [tangent[0] * Math.cos(bisector) + inward[0] * Math.sin(bisector), tangent[1] * Math.cos(bisector) + inward[1] * Math.sin(bisector)]
+  return {
+    shape: { kind: 'corner', size: lerp(0.03, 0.14, rand()), angle, aspect: 1, rotate: (Math.atan2(direction[1], direction[0]) * 180) / Math.PI, flip: false },
+    anchor: vertex,
+    oneSided: true,
+  }
+}
+
 function rimLayout(kind: RimKind, rand: () => number, aspect: number): RimLayout {
   const [fw, fh] = frameSize(aspect)
   const right = rand() < 0.5
@@ -122,17 +161,18 @@ function rimLayout(kind: RimKind, rand: () => number, aspect: number): RimLayout
   const long = Math.max(fw, fh)
   switch (kind) {
     case 'corner': {
-      const angle = lerp(48, 100, rand())
-      const along = lerp(-8, 8, rand())
-      const first = (right ? 180 : 0) + along
-      const turn = (right ? -1 : 1) * (top ? 1 : -1)
-      const second = first + turn * angle
-      const vertex: Vec2 = [sx * fw * lerp(0.14, 0.32, rand()), sy * fh * lerp(0.18, 0.36, rand())]
-      return {
-        shape: { kind, size: lerp(0.03, 0.14, rand()), angle, aspect: 1, rotate: (first + second) / 2, flip: false },
-        anchor: vertex,
-        oneSided: true,
+      // A few tries keep the first layout whose inner leg shows for at least 0.6 of the short side.
+      let best: RimLayout | null = null
+      let bestLength = -1
+      for (let attempt = 0; attempt < 8 && bestLength < 0.6 * Math.min(fw, fh); attempt++) {
+        const candidate = cornerLayout(rand, aspect)
+        const length = longestRun(visibleRuns(buildShape(candidate.shape), candidate.anchor, aspect)).length * 0.01
+        if (length > bestLength) {
+          best = candidate
+          bestLength = length
+        }
       }
+      return best as RimLayout
     }
     case 'line': {
       const vertical = aspect >= 1 ? rand() < 0.75 : rand() < 0.35
@@ -178,17 +218,20 @@ function rimLayout(kind: RimKind, rand: () => number, aspect: number): RimLayout
       const feature = pickWeighted(rand, LOGO_FEATURES)
       const size = lerp(1.6, 2.8, rand())
       const turn = pickWeighted(rand, [[0, 3], [180, 1], [90, 1], [-90, 1]] as const) + lerp(-12, 12, rand())
-      const local = rotate([((feature[0] - LOGO_CENTER[0]) / 1000) * size, ((feature[1] - LOGO_CENTER[1]) / 1000) * size], turn)
+      const unit = rotate([(feature[0] - LOGO_CENTER[0]) / 1000, (feature[1] - LOGO_CENTER[1]) / 1000], turn)
       // Put the feature toward the side where the logo's body lies, so the body runs off the frame.
-      const toBody: Vec2 = [-local[0], -local[1]]
-      const norm = Math.hypot(toBody[0], toBody[1]) || 1
+      const norm = Math.hypot(unit[0], unit[1]) || 1
       const reachOut = lerp(0.04, 0.2, rand())
-      const target: Vec2 = [(toBody[0] / norm) * fw * reachOut, (toBody[1] / norm) * fh * reachOut]
-      return {
-        shape: { kind, size, angle: 90, aspect: 1, rotate: turn, flip: false },
-        anchor: [target[0] - local[0], target[1] - local[1]],
+      const target: Vec2 = [(-unit[0] / norm) * fw * reachOut, (-unit[1] / norm) * fh * reachOut]
+      const place = (scale: number): RimLayout => ({
+        shape: { kind, size: size * scale, angle: 90, aspect: 1, rotate: turn, flip: false },
+        anchor: [target[0] - unit[0] * size * scale, target[1] - unit[1] * size * scale],
         oneSided: true,
-      }
+      })
+      // Never the whole logo: at most one of the crossing and the two loop tops shows; a larger logo keeps the rest out.
+      let layout = place(1)
+      for (let scale = 1.2; scale < 12 && logoLandmarksShown(layout.shape, layout.anchor, aspect) > 1; scale *= 1.2) layout = place(scale)
+      return layout
     }
     case 'ring': {
       const radius = lerp(0.7, 1.4, rand())
@@ -216,6 +259,8 @@ function lineExit(path: readonly Vec2[], fromStart: boolean, shift: number): Vec
   return [exit[0] + (dx / length) * shift, exit[1] + (dy / length) * shift]
 }
 
+const dist = (a: Vec2, b: Vec2) => Math.hypot(a[0] - b[0], a[1] - b[1])
+
 function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition {
   const rand = seededRandom(seed, 7)
   const light = pickLight(pack, rand)
@@ -233,15 +278,26 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   const path = visiblePath(shape, layout.anchor, aspect)
   // The Light control runs the hot spot from where the curve leaves the frame (0) to its middle (1).
   const fromStart = rand() < 0.5
-  const along = fromStart ? lerp(0, 0.5, controls.mood) : lerp(1, 0.5, controls.mood)
   const line = layout.shape.kind === 'line'
   const logo = layout.shape.kind === 'logo'
+  const corner = layout.shape.kind === 'corner'
+  // Other shapes follow the longest piece inside the frame; a corner's hot spot starts at its vertex end.
+  const run = line ? path : longestRun(visibleRuns(shape, layout.anchor, aspect))
+  const vertexFirst = run.length > 1 && dist(run[0], layout.anchor) <= dist(run[run.length - 1], layout.anchor)
+  const start = corner ? vertexFirst : fromStart
+  const along = start ? lerp(0, 0.5, controls.mood) : lerp(1, 0.5, controls.mood)
   // A line is brightest where it leaves the frame; the Light control moves that end inward.
-  const hot = (line ? lineExit(path, fromStart, lerp(0.08, -0.3, controls.mood)) : pointAlong(path, along)) ?? layout.anchor
+  const hot = (line ? lineExit(path, fromStart, lerp(0.08, -0.3, controls.mood)) : pointAlong(run, along)) ?? layout.anchor
   const at: Vec2 = [hot[0] - layout.anchor[0], hot[1] - layout.anchor[1]]
   const gain = geo(controls.intensity, 0.35, 1, 2.8)
   const soften = geo(controls.softness, 0.45, 1, 2.4)
-  const reach = (line ? lerp(0.22, 0.34, rand()) : lerp(0.08, 0.16, rand())) * Math.max(fw, fh)
+  const reachDraw = rand()
+  const powerDraw = rand()
+  const hotDraw = rand()
+  // Away from a line, light field 1 falls 10 to 30 times from the hot spot to the far end of the curve in the frame
+  // (with the hot core on top, the edge ends up about 40 to 120 times dimmer there).
+  const power = line ? lerp(1.4, 2.2, powerDraw) : lerp(2, 3, powerDraw)
+  const reach = line ? lerp(0.22, 0.34, reachDraw) * Math.max(fw, fh) : falloffRadius(run, hot, lerp(10, 30, reachDraw), power)
   const toward = (Math.atan2(at[1], at[0]) * 180) / Math.PI
   const params: Record<string, ParamValue> = {
     shape: SHAPE_KINDS.indexOf(layout.shape.kind) + 1,
@@ -271,10 +327,10 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     light1Kind: 3,
     light1At: at.map(round4),
     light1Radius: round4(reach),
-    light1Power: round4(lerp(1.4, 2.2, rand())),
+    light1Power: round4(power),
     light2Kind: 1,
     light2At: at.map(round4),
-    light2Radius: round4(lerp(0.06, 0.12, rand())),
+    light2Radius: round4(lerp(0.06, 0.12, hotDraw)),
     base: base.gain > 0 ? 3 : 0,
     baseGain: base.gain,
     gain: round4(gain),
@@ -302,6 +358,32 @@ function readStops(ctx: RecipeContext): EmissionStop[] {
   return Array.from({ length: count }, (_, i) => ({ t: at[i], color: slotColor(ctx, slots[i]), gain: gains[i] }))
 }
 
+/** The rim's one emitter from its params: the shape, its emission stops and its parts. */
+export function rimEmitters(ctx: RecipeContext): EmitterSettings[] {
+  const gain = ctx.num('gain')
+  const soften = ctx.num('soften')
+  const shape = buildShape({
+    kind: shapeKindAt(ctx.num('shape')),
+    size: ctx.num('size'),
+    angle: ctx.num('angle'),
+    aspect: ctx.num('aspect'),
+    rotate: ctx.num('rotate'),
+    flip: ctx.bool('flip'),
+  })
+  return [
+    {
+      shape,
+      anchor: ctx.vec('at'),
+      stops: readStops(ctx),
+      near: [1, 2, 3].map((i) => readNear(ctx, `n${i}`, soften, gain)),
+      far: [1, 2, 3].map((i) => readFar(ctx, `f${i}`, soften, gain)),
+      maskShift: ctx.vec('maskShift'),
+      maskGrow: ctx.num('maskGrow'),
+      facing: { strength: ctx.num('facing'), angle: ctx.num('facingAngle'), power: ctx.num('facingPower') },
+    },
+  ]
+}
+
 /**
  * Light along one edge: a straight line, a rounded corner, an arc, a gentle S
  * or a crop of the Meta logo outline. The edge is a thin emitter seen through
@@ -317,42 +399,14 @@ export const contourRim: RecipeDefinition = {
   defaultColors: ['#000000', '#0064E0', '#1FCDF0', '#FFD61E', '#FF4F00', '#FFFFFF', '#000000', '#000000'],
   params,
   fragment: /* glsl */ `
-${curveLightGlsl(LAYOUT)}
+${curveLightGlsl(RIM_LAYOUT)}
 vec3 radiance(vec2 uv, vec2 p) { return vec3(0.0); }
 vec3 auxRadiance(vec2 uv, vec2 p) { return clAux(p, false); }
 vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 b0, vec3 b1, vec3 b2, vec3 b3) { return light + curveLight(p, b0, b1, b2, b3, false); }
 `,
   uniforms: (ctx) => {
-    const gain = ctx.num('gain')
-    const soften = ctx.num('soften')
-    const shape = buildShape({
-      kind: shapeKindAt(ctx.num('shape')),
-      size: ctx.num('size'),
-      angle: ctx.num('angle'),
-      aspect: ctx.num('aspect'),
-      rotate: ctx.num('rotate'),
-      flip: ctx.bool('flip'),
-    })
     const base = slotColor(ctx, ctx.num('base')).map((v) => v * ctx.num('baseGain'))
-    return curveLightUniforms(
-      LAYOUT,
-      [
-        {
-          shape,
-          anchor: ctx.vec('at'),
-          stops: readStops(ctx),
-          near: [1, 2, 3].map((i) => readNear(ctx, `n${i}`, soften, gain)),
-          far: [1, 2, 3].map((i) => readFar(ctx, `f${i}`, soften, gain)),
-          maskShift: ctx.vec('maskShift'),
-          maskGrow: ctx.num('maskGrow'),
-          facing: { strength: ctx.num('facing'), angle: ctx.num('facingAngle'), power: ctx.num('facingPower') },
-        },
-      ],
-      readLights(ctx),
-      base,
-      ctx.num('farWidth') * soften,
-      ctx.num('farStep'),
-    )
+    return curveLightUniforms(RIM_LAYOUT, rimEmitters(ctx), readLights(ctx), base, ctx.num('farWidth') * ctx.num('soften'), ctx.num('farStep'))
   },
   scatter: farScatter(
     (ctx) => ctx.num('farWidth') * ctx.num('soften'),

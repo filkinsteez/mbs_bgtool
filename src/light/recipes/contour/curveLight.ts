@@ -637,10 +637,12 @@ function cutPrimitive(p: Primitive, cuts: number[]): Primitive[] {
   return out
 }
 
-interface PackedPrimitive {
+export interface PackedPrimitive {
   primitive: Primitive
   kind: 1 | 2 | 3
   inside: number
+  /** Index of the contour; each contour's entries are consecutive and form a closed chain. */
+  contour: number
   e0: number[]
   e1: number[]
 }
@@ -687,7 +689,7 @@ function facingAt(p: Primitive, f: number, inside: number, facing: FacingSetting
   return 1 + (lit - 1) * Math.min(1, facing.strength)
 }
 
-function packShape(shape: Shape, stops: readonly EmissionStop[], capacity: number, facing?: FacingSettings): PackedPrimitive[] {
+function packShape(shape: Shape, stops: readonly EmissionStop[], facing?: FacingSettings): PackedPrimitive[] {
   const split = splitArcs(shape, ARC_PIECE)
   const out: PackedPrimitive[] = []
   const stopTimes = stops.map((s) => s.t).filter((t) => t > 0 && t < 1)
@@ -715,19 +717,40 @@ function packShape(shape: Shape, stops: readonly EmissionStop[], capacity: numbe
           primitive: piece,
           kind: piece.kind === 'segment' ? 1 : 2,
           inside,
+          contour: index,
           e0: stopAt(stops, a).map((v) => v * f0),
           e1: stopAt(stops, b).map((v) => v * f1),
         })
       }
       at += l
     }
-    for (const s of closures[index]) out.push({ primitive: s, kind: 3, inside, e0: [0, 0, 0], e1: [0, 0, 0] })
-  }
-  if (out.length > capacity) {
-    out.sort((a, b) => (a.kind === 3 ? 1 : 0) - (b.kind === 3 ? 1 : 0))
-    return out.slice(0, capacity)
+    for (const s of closures[index]) out.push({ primitive: s, kind: 3, inside, contour: index, e0: [0, 0, 0], e1: [0, 0, 0] })
   }
   return out
+}
+
+/**
+ * The packed outline that fits the layout. Contours are never cut: an outline
+ * missing pieces is open, and the inside test then swaps inside and outside in
+ * bands. If a shape ever had more pieces than slots, whole contours from the
+ * end would be left out instead (the outline tests make sure none do).
+ */
+function fitOutlines(packed: readonly PackedPrimitive[], capacity: number): PackedPrimitive[] {
+  if (packed.length <= capacity) return [...packed]
+  const out: PackedPrimitive[] = []
+  for (let i = 0; i < packed.length; ) {
+    let j = i
+    while (j < packed.length && packed[j].contour === packed[i].contour) j++
+    if (out.length + (j - i) > capacity) break
+    out.push(...packed.slice(i, j))
+    i = j
+  }
+  return out
+}
+
+/** Every primitive of a shape as packed for the shader (contours whole, open ones closed far away), before the layout's limit. */
+export function outlinePieces(settings: Pick<EmitterSettings, 'shape' | 'stops' | 'facing'>): readonly PackedPrimitive[] {
+  return settings.shape ? packShape(settings.shape, settings.stops, settings.facing) : []
 }
 
 /** Points that bound a primitive: its ends and, for arcs, the extreme points inside its sweep. */
@@ -786,7 +809,12 @@ export function curveLightUniforms(
   for (let e = 0; e < layout.emitters; e++) {
     const settings = emitters[e]
     if (!settings || !settings.shape) continue
-    const packed = packShape(settings.shape, settings.stops, layout.primitives, settings.facing)
+    const sided = [...settings.near, ...settings.far].filter((c) => c.weight > 0 && Math.round(c.side) !== 0)
+    const own = stopAt(settings.stops, 0)
+    // Past this distance from the edge every side mask is fully on or off (4 softness widths), so only the inside test matters.
+    const maskReach = Math.max(0, ...sided.map((c) => Math.abs(c.maskInset) + 4 * Math.max(c.maskSoft, MIN_MASK_SOFT))) + Math.abs(settings.maskGrow) + 1e-3
+    const packed = fitOutlines(packShape(settings.shape, settings.stops, settings.facing), layout.primitives)
+    const brightest = Math.max(1e-6, ...packed.flatMap((entry) => [...entry.e0, ...entry.e1]))
     packed.forEach((entry, i) => {
       const o = (e * layout.primitives + i) * PRIM_VEC4 * 4
       const p = entry.primitive
@@ -796,14 +824,9 @@ export function curveLightUniforms(
       prim.set([entry.e1[0], entry.e1[1], entry.e1[2], 0], o + 12)
     })
     bounds.set(chunkBounds(packed), e * chunks * 4)
-    const sided = [...settings.near, ...settings.far].filter((c) => c.weight > 0 && Math.round(c.side) !== 0)
-    const own = stopAt(settings.stops, 0)
-    // Past this distance from the edge every side mask is fully on or off (4 softness widths), so only the inside test matters.
-    const maskReach = Math.max(0, ...sided.map((c) => Math.abs(c.maskInset) + 4 * Math.max(c.maskSoft, MIN_MASK_SOFT))) + Math.abs(settings.maskGrow) + 1e-3
     emit.set([settings.anchor[0], settings.anchor[1], packed.length, sided.length > 0 ? 1 : 0], e * EMIT_VEC4 * 4)
     emit.set([settings.maskShift[0] ?? 0, settings.maskShift[1] ?? 0, settings.maskGrow, maskReach], e * EMIT_VEC4 * 4 + 4)
     emit.set([own[0], own[1], own[2], 0], e * EMIT_VEC4 * 4 + 8)
-    const brightest = Math.max(1e-6, ...packed.flatMap((entry) => [...entry.e0, ...entry.e1]))
     settings.near.slice(0, layout.near).forEach((c, k) => {
       const o = (e * layout.near + k) * NEAR_VEC4 * 4
       const p = Math.min(MAX_KERNEL_POWER, Math.max(1, Math.round(c.p)))
