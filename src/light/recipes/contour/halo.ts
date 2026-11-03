@@ -337,7 +337,7 @@ vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 b0, vec3 b1, vec3 b2, vec3 b3) { 
 `,
   uniforms: (ctx) => {
     const base = slotColor(ctx, ctx.num('base')).map((v) => v * ctx.num('baseGain'))
-    return curveLightUniforms(HALO_LAYOUT, haloEmitters(ctx), readLights(ctx), base, ctx.num('farWidth') * ctx.num('soften'), ctx.num('farStep'))
+    return curveLightUniforms(HALO_LAYOUT, haloEmitters(ctx), readLights(ctx), base, ctx.num('farWidth') * ctx.num('soften'), ctx.num('farStep'), ctx.aspect)
   },
   scatter: farScatter(
     (ctx) => ctx.num('farWidth') * ctx.num('soften'),

@@ -63,8 +63,8 @@ const NEAR_VEC4 = 6
 const FAR_VEC4 = 4
 const EMIT_VEC4 = 3
 const ARC_PIECE = Math.PI / 4
-/** Primitives per bounding circle; layouts use a multiple of it. */
-const CHUNK = 8
+/** Primitives per bounding box; layouts use a multiple of it. */
+const CHUNK = 4
 /** Side mask softness the shader never goes below (half a pixel) for frames down to about 64 px on the short side. */
 const MIN_MASK_SOFT = 0.008
 
@@ -154,8 +154,7 @@ ${declare}
   int count = int(uClEmit[e * ${EMIT_VEC4}].z + 0.5);
   for (int chunk = 0; chunk < CL_CHUNKS; chunk++) {
     if (chunk * ${CHUNK} >= count) break;
-    vec4 bound = uClChunk[e * CL_CHUNKS + chunk];
-    if (length(q - bound.xy) - bound.z > maxCut) continue;
+    if (clBoxDistance(q, uClChunk[e * CL_CHUNKS + chunk]) > maxCut) continue;
   for (int j = 0; j < ${CHUNK}; j++) {
     int i = chunk * ${CHUNK} + j;
     if (i >= count) break;
@@ -204,7 +203,7 @@ export function curveLightGlsl(layout: CurveLightLayout): string {
 // Per primitive: (ax, ay, bx, by) or (cx, cy, radius, start); (kind, sweep, inside side, length);
 // emission at the start (rgb); emission at the end (rgb). Kind 1 segment, 2 arc, 3 mask-only segment.
 uniform vec4 uClPrim[CL_E * CL_P * ${PRIM_VEC4}];
-// Bounding circle (x, y, radius) of each run of ${CHUNK} primitives.
+// Bounding box (min x, min y, max x, max y) of each run of ${CHUNK} primitives.
 uniform vec4 uClChunk[CL_E * CL_CHUNKS];
 // Per near part: (weight, sigma, p, side); (tint, offset); (channel widths, light); (channel offsets, light gamma);
 // (grow light, grow gain, grow gamma, B_p); (mask inset, mask softness, 0, brightest emission channel).
@@ -227,6 +226,8 @@ const vec4 CL_GL_W = vec4(0.3478548451374538, 0.6521451548625461, 0.652145154862
 vec2 clAnchor(int e) { return (uClEmit[e * ${EMIT_VEC4}].xy - 0.5) * uFrameAspect; }
 
 float clWrap(float a) { return a - TAU * floor((a + PI) / TAU); }
+// Distance from q to a box (min x, min y, max x, max y); 0 inside it.
+float clBoxDistance(vec2 q, vec4 box) { return length(max(max(box.xy - q, q - box.zw), 0.0)); }
 
 float clLightField(int i, vec2 q) {
   vec4 a = uClLight[2 * i];
@@ -314,21 +315,22 @@ float clPrimDistance(int base, vec2 q, float best) {
   return length(q - g.xy - ab * f);
 }
 
-// Crossing of the ray from q toward +x with an arc piece whose y only rises or only falls (angles a < b at
-// heights ya, yb; dir +1 when the path runs from a to b). Like a segment: the lower end counts, the upper not.
-float clArcPieceWinding(vec4 g, float a, float b, float ya, float yb, float dir, vec2 q) {
+// Crossing of the ray from q toward +x (toward = 1) or -x (toward = -1) with an arc piece whose y only rises or
+// only falls (angles a < b at heights ya, yb; dir +1 when the path runs from a to b). Like a segment: the lower
+// end counts, the upper not. A ray toward -x counts each crossing with the opposite sign (same winding number).
+float clArcPieceWinding(vec4 g, float a, float b, float ya, float yb, float dir, vec2 q, float toward) {
   if (q.y < min(ya, yb) || q.y >= max(ya, yb)) return 0.0;
   float dy = q.y - g.y;
   float x = g.x + sign(cos(0.5 * (a + b))) * sqrt(max(g.z * g.z - dy * dy, 0.0));
-  if (x <= q.x) return 0.0;
-  return (yb > ya ? 1.0 : -1.0) * dir;
+  if ((x - q.x) * toward <= 0.0) return 0.0;
+  return (yb > ya ? 1.0 : -1.0) * dir * toward;
 }
 
-// Winding number contribution of the ray from q toward +x. Arcs are split where their circle turns in y, so
-// every piece is crossed at most once, and their ends use the stored heights their neighbors share, so a row
+// Winding number contribution of the ray from q toward +x or -x. Arcs are split where their circle turns in y,
+// so every piece is crossed at most once, and their ends use the stored heights their neighbors share, so a row
 // through a shared end counts it once (angle comparisons rounded badly near the top and bottom of a circle and
 // left single rows with inside and outside swapped).
-float clPrimWinding(int base, vec2 q) {
+float clPrimWinding(int base, vec2 q, float toward) {
   vec4 g = uClPrim[base];
   vec4 m = uClPrim[base + 1];
   if (int(m.x + 0.5) == 2) {
@@ -337,40 +339,47 @@ float clPrimWinding(int base, vec2 q) {
     float yEnd = uClPrim[base + 3].w;
     float lo = min(g.w, g.w + m.y);
     float hi = max(g.w, g.w + m.y);
+    float k = ceil((lo - 0.5 * PI) / PI);
+    float turn = 0.5 * PI + k * PI;
+    bool turns = turn > lo && turn < hi;
+    // sin(turn) is +1 or -1; the arc's heights run from its ends to there. Rows outside them never cross it.
+    float yTurn = g.y + g.z * (mod(k, 2.0) < 0.5 ? 1.0 : -1.0);
+    float yMin = turns ? min(min(yStart, yEnd), yTurn) : min(yStart, yEnd);
+    float yMax = turns ? max(max(yStart, yEnd), yTurn) : max(yStart, yEnd);
+    if (q.y < yMin || q.y > yMax) return 0.0;
     float yLo = m.y > 0.0 ? yStart : yEnd;
     float yHi = m.y > 0.0 ? yEnd : yStart;
     float dir = m.y > 0.0 ? 1.0 : -1.0;
-    float turn = 0.5 * PI + ceil((lo - 0.5 * PI) / PI) * PI;
-    if (turn > lo && turn < hi) {
-      float yTurn = g.y + g.z * sin(turn);
-      return clArcPieceWinding(g, lo, turn, yLo, yTurn, dir, q) + clArcPieceWinding(g, turn, hi, yTurn, yHi, dir, q);
-    }
-    return clArcPieceWinding(g, lo, hi, yLo, yHi, dir, q);
+    if (turns) return clArcPieceWinding(g, lo, turn, yLo, yTurn, dir, q, toward) + clArcPieceWinding(g, turn, hi, yTurn, yHi, dir, q, toward);
+    return clArcPieceWinding(g, lo, hi, yLo, yHi, dir, q, toward);
   }
   vec2 a = g.xy;
   vec2 b = g.zw;
   if (min(a.y, b.y) > q.y || max(a.y, b.y) < q.y) return 0.0;
-  float side = (b.x - a.x) * (q.y - a.y) - (q.x - a.x) * (b.y - a.y);
-  if (a.y <= q.y) return (b.y > q.y && side > 0.0) ? 1.0 : 0.0;
-  return (b.y <= q.y && side < 0.0) ? -1.0 : 0.0;
+  // side > 0: an upward edge lies toward +x of q, a downward one toward -x.
+  float side = ((b.x - a.x) * (q.y - a.y) - (q.x - a.x) * (b.y - a.y)) * toward;
+  if (a.y <= q.y) return (b.y > q.y && side > 0.0) ? toward : 0.0;
+  return (b.y <= q.y && side < 0.0) ? -toward : 0.0;
 }
 
 // Signed distance to the emitter's shape (negative inside, nonzero winding), capped at the distance where the side masks saturate.
 float clMaskDistance(int e, vec2 q) {
   int count = int(uClEmit[e * ${EMIT_VEC4}].z + 0.5);
   float dist = max(uClEmit[e * ${EMIT_VEC4} + 1].w, 1e-4);
+  // The inside test casts its ray toward whichever side of the frame has fewer pieces of the shape.
+  float toward = uClEmit[e * ${EMIT_VEC4} + 2].w < 0.0 ? -1.0 : 1.0;
   float winding = 0.0;
   for (int chunk = 0; chunk < CL_CHUNKS; chunk++) {
     if (chunk * ${CHUNK} >= count) break;
     vec4 bound = uClChunk[e * CL_CHUNKS + chunk];
-    bool crosses = abs(q.y - bound.y) <= bound.z && bound.x + bound.z > q.x;
-    bool near = length(q - bound.xy) - bound.z < dist;
+    bool crosses = q.y >= bound.y && q.y <= bound.w && (toward > 0.0 ? bound.z > q.x : bound.x < q.x);
+    bool near = clBoxDistance(q, bound) < dist;
     if (!crosses && !near) continue;
     for (int j = 0; j < ${CHUNK}; j++) {
       int i = chunk * ${CHUNK} + j;
       if (i >= count) break;
       int base = (e * CL_P + i) * ${PRIM_VEC4};
-      if (crosses) winding += clPrimWinding(base, q);
+      if (crosses) winding += clPrimWinding(base, q, toward);
       if (near) dist = min(dist, clPrimDistance(base, q, dist));
     }
   }
@@ -421,8 +430,7 @@ vec3 clLine(int e, vec2 q, float sigma, bool ownColor) {
   vec3 acc = vec3(0.0);
   for (int chunk = 0; chunk < CL_CHUNKS; chunk++) {
     if (chunk * ${CHUNK} >= count) break;
-    vec4 bound = uClChunk[e * CL_CHUNKS + chunk];
-    if (length(q - bound.xy) - bound.z > cut) continue;
+    if (clBoxDistance(q, uClChunk[e * CL_CHUNKS + chunk]) > cut) continue;
   for (int j = 0; j < ${CHUNK}; j++) {
     int i = chunk * ${CHUNK} + j;
     if (i >= count) break;
@@ -762,6 +770,31 @@ function fitOutlines(packed: readonly PackedPrimitive[], capacity: number): Pack
   return out
 }
 
+/**
+ * Which way the inside test casts its ray (+1 toward +x, -1 toward -x): the
+ * side where, over a grid of points across the frame, the rays cross fewer
+ * groups of pieces. Both give the same winding number; a large logo crop with
+ * its body off one side of the frame tests far fewer pieces the other way.
+ */
+function rayDirection(boxes: readonly number[], aspect: number, anchor: readonly number[], shift: readonly number[]): 1 | -1 {
+  const [fw, fh] = aspect >= 1 ? [aspect, 1] : [1, 1 / aspect]
+  let right = 0
+  let left = 0
+  for (let j = 0; j < 9; j++) {
+    for (let i = 0; i < 16; i++) {
+      // Grid points in the mask's coordinates: frame position, minus the anchor and the mask shift.
+      const x = ((i + 0.5) / 16 - anchor[0]) * fw - (shift[0] ?? 0)
+      const y = ((j + 0.5) / 9 - anchor[1]) * fh - (shift[1] ?? 0)
+      for (let k = 0; k < boxes.length; k += 4) {
+        if (y < boxes[k + 1] || y > boxes[k + 3]) continue
+        if (boxes[k + 2] > x) right++
+        if (boxes[k] < x) left++
+      }
+    }
+  }
+  return left < right ? -1 : 1
+}
+
 /** Every primitive of a shape as packed for the shader (contours whole, open ones closed far away), before the layout's limit. */
 export function outlinePieces(settings: Pick<EmitterSettings, 'shape' | 'stops' | 'facing'>): readonly PackedPrimitive[] {
   return settings.shape ? packShape(settings.shape, settings.stops, settings.facing) : []
@@ -786,11 +819,9 @@ function chunkBounds(packed: readonly PackedPrimitive[]): number[] {
     const points = packed.slice(i, i + CHUNK).flatMap((entry) => primitiveExtremes(entry.primitive))
     const xs = points.map((v) => v[0])
     const ys = points.map((v) => v[1])
-    const x0 = Math.min(...xs)
-    const x1 = Math.max(...xs)
-    const y0 = Math.min(...ys)
-    const y1 = Math.max(...ys)
-    out.push((x0 + x1) / 2, (y0 + y1) / 2, Math.hypot(x1 - x0, y1 - y0) / 2 + 1e-6, 0)
+    // A box (min x, min y, max x, max y), a little wider than the pieces: a run of pieces along a large outline is long
+    // and thin, and a box rules out far more pixels than the circle around it.
+    out.push(Math.min(...xs) - 1e-6, Math.min(...ys) - 1e-6, Math.max(...xs) + 1e-6, Math.max(...ys) + 1e-6)
   }
   return out
 }
@@ -813,6 +844,8 @@ export function curveLightUniforms(
   base: readonly number[],
   rungBase: number,
   rungStep: number,
+  /** The frame's width / height, for the inside test's ray direction (it never changes the picture, only the work). */
+  aspect?: number,
 ): Record<string, Float32Array | number[]> {
   const chunks = Math.ceil(layout.primitives / CHUNK)
   const prim = new Float32Array(layout.emitters * layout.primitives * PRIM_VEC4 * 4)
@@ -838,10 +871,12 @@ export function curveLightUniforms(
       prim.set([entry.e0[0], entry.e0[1], entry.e0[2], primitivePoint(p, 0)[1]], o + 8)
       prim.set([entry.e1[0], entry.e1[1], entry.e1[2], primitivePoint(p, 1)[1]], o + 12)
     })
-    bounds.set(chunkBounds(packed), e * chunks * 4)
+    const boxes = chunkBounds(packed)
+    bounds.set(boxes, e * chunks * 4)
+    const toward = sided.length > 0 && aspect !== undefined ? rayDirection(boxes, aspect, settings.anchor, settings.maskShift) : 1
     emit.set([settings.anchor[0], settings.anchor[1], packed.length, sided.length > 0 ? 1 : 0], e * EMIT_VEC4 * 4)
     emit.set([settings.maskShift[0] ?? 0, settings.maskShift[1] ?? 0, settings.maskGrow, maskReach], e * EMIT_VEC4 * 4 + 4)
-    emit.set([own[0], own[1], own[2], 0], e * EMIT_VEC4 * 4 + 8)
+    emit.set([own[0], own[1], own[2], toward], e * EMIT_VEC4 * 4 + 8)
     settings.near.slice(0, layout.near).forEach((c, k) => {
       const o = (e * layout.near + k) * NEAR_VEC4 * 4
       const p = Math.min(MAX_KERNEL_POWER, Math.max(1, Math.round(c.p)))
