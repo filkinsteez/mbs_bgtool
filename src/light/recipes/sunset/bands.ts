@@ -53,7 +53,8 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     bumps.light.push(...ctx.vec(key('BumpLight')).slice(0, BUMP_MAX))
   }
 
-  // A lighter neighbour of close hue (or a near-grey one) spills a little of its light across the shared edge.
+  // A lighter neighbour of close hue (or a near-grey one) spills a little of its light across the shared edge,
+  // more the lighter it is, so the spill grows smoothly as the light changes.
   const [spillAmount, spillReach] = ctx.vec('spill')
   const spillAbove: number[] = []
   const spillBelow: number[] = []
@@ -67,8 +68,9 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     if (spillAmount <= 0 || from >= count || into >= count) return [0, 0, 0]
     const a = lit(from)
     const b = lit(into)
-    const lighter = linearToOklch(a as [number, number, number])[0] > linearToOklch(b as [number, number, number])[0] + 0.1
-    return lighter && closeHues(a as Rgb, b as Rgb) ? a.map((v) => v * spillAmount) : [0, 0, 0]
+    const t = Math.min(1, Math.max(0, (linearToOklch(a as Rgb)[0] - linearToOklch(b as Rgb)[0] - 0.06) / 0.1))
+    const lighter = t * t * (3 - 2 * t)
+    return closeHues(a as Rgb, b as Rgb) ? a.map((v) => v * spillAmount * lighter) : [0, 0, 0]
   }
   for (let i = 0; i < BAND_MAX; i++) {
     spillAbove.push(...spillFrom(i - 1, i))

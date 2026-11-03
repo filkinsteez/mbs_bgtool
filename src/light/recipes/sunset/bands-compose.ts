@@ -62,18 +62,13 @@ function random(seed: number): Random {
 const oklch = (hex: string) => linearToOklch(hexToLinear(hex))
 const lightness = (hex: string) => oklch(hex)[0]
 const hue = (hex: string) => oklch(hex)[2]
-
-/** Hue gap in degrees between two colors with real chroma; 0 when either is near grey. */
-function hueGap(a: string, b: string): number {
-  const [, ca, ha] = oklch(a)
-  const [, cb, hb] = oklch(b)
-  if (ca < 0.06 || cb < 0.06) return 0
-  const d = Math.abs(ha - hb) % 360
-  return d > 180 ? 360 - d : d
+const oklab = (hex: string) => {
+  const [L, C, h] = oklch(hex)
+  return [L, C * Math.cos((h * Math.PI) / 180), C * Math.sin((h * Math.PI) / 180)]
 }
 
-/** The image's one light from two candidates in pack order: the first two times in three (Yellow, Lime), the second one in three (Orange-red, Tan). */
-const pickLight = (pool: readonly string[], rnd: Random) => (pool.length > 1 && rnd.chance(1 / 3) ? pool[1] : pool[0])
+/** The order of a run's choices, by pack, frame shape and run (see `stack`). */
+const runOrders = new Map<string, number[]>()
 
 /** A band of the scene, from its top edge down to below the frame. */
 interface Band {
@@ -110,7 +105,8 @@ interface Patch {
 /**
  * Every band stays thick at every point: at least 2 lens radii, and 3.2 for a
  * band darker than both neighbours (a thin dark band through the lens is a
- * dirty seam). The sky above the first band counts too. Where a band is too
+ * dirty seam). The sky above the first band counts too, at a lens radius and a
+ * twentieth of the frame since it has one edge in the frame. Where a band is too
  * thin, the shapes of its two edges are scaled toward their base heights until
  * it holds.
  */
@@ -124,7 +120,7 @@ function keepThick(bands: Band[], R: number, frameW: number, frameH: number, see
   }
   for (let it = 0; it < 16; it++) {
     let ok = true
-    if (bands.length > 0 && Math.min(...xs.map((x) => at(0, x))) < (2 * R) / frameH) {
+    if (bands.length > 0 && Math.min(...xs.map((x) => at(0, x))) < R / frameH + 0.05) {
       ok = false
       scales[0] *= 0.8
     }
@@ -217,93 +213,149 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   const place = placeHorizon(0.5, seed, aspect)
   const [sky, ...rest] = pack.colors.map((c) => c.hex)
 
-  // One warm color and one light per image, from the seed alone.
-  const drops = random(seed * 3571 + pack.id.length * 13 + 11)
-  const warms = rest.filter((hex) => isWarm(hexToLinear(hex)))
-  const warm = warms.length > 1 ? pickLight(warms, rnd) : warms[0]
-  let picked = rest.filter((hex) => !isWarm(hexToLinear(hex)) || hex === warm)
-  const lights = picked.filter((hex) => isLightColor(hexToLinear(hex)))
-  if (lights.length > 1) {
-    const keep = pickLight(lights, rnd)
-    picked = picked.filter((hex) => !isLightColor(hexToLinear(hex)) || hex === keep)
+  const lights = rest.filter((hex) => isLightColor(hexToLinear(hex)))
+  const darks = rest.filter((hex) => lightness(hex) < 0.45)
+  // A frame's colors: one light (if the pack has one) and the pack's other colors; two dark colors show one, the
+  // other or both. A pack with no dark color (Bold) may end with a color again under less light: Meta Blue, or
+  // Orange-red itself, since Meta Blue right below Orange-red meets it through the lens as magenta. Orange-red
+  // keeps most of its light: much dimmer it reads as brick.
+  const build = (chosenLight: string | undefined, chosenDarks: readonly string[], base: boolean): Entry[] => {
+    const picked = rest.filter((hex) => (lights.includes(hex) ? hex === chosenLight : darks.includes(hex) ? chosenDarks.includes(hex) : true))
+    const list: Entry[] = [{ hex: sky, under: 1 }, ...picked.map((hex) => ({ hex, under: 1 }))]
+    if (base && chosenLight) list.push(hue(chosenLight) < 60 ? { hex: chosenLight, under: 0.68 } : { hex: sky, under: 0.5 })
+    return list
   }
-  // The image's light: its warm or light color, else the brightest after the sky (Ice).
-  const light = picked.find((hex) => isLightColor(hexToLinear(hex))) ?? picked.reduce((a, b) => (lightness(b) > lightness(a) ? b : a), picked[0])
-  const entries: Entry[] = [{ hex: sky, under: 1 }, ...picked.map((hex) => ({ hex, under: 1 }))]
   const shown = (e: Entry) => lightness(e.hex) * Math.cbrt(e.under)
   const dark = (e: Entry) => shown(e) < 0.45
-  // A pack with no dark color (Bold) ends with a color again under less light: Meta Blue, or Orange-red itself,
-  // since Meta Blue right below Orange-red meets it through the lens as magenta. Orange-red keeps most of its
-  // light: much dimmer it reads as brick.
-  if (!entries.some(dark)) {
-    const red = hue(light) < 60
-    entries.push({ hex: red ? light : sky, under: red ? 0.68 : 0.5 })
+  // Each band's least height in frame heights for a lens of radius r: 2 lens radii, 3.2 for a band darker than
+  // both neighbours, and at least an eighth of the frame, so that in a tall frame its color still shows after the
+  // lens. The sky and the last band have one edge in the frame, so they may be thinner: the lens's blur of that
+  // edge and a twentieth of the frame more, so that their own color still covers that much.
+  const leastOf = (list: readonly Entry[], r: number) =>
+    list.map((e, i) => {
+      if (i === 0 || i === list.length - 1) return Math.max(r / frameH + 0.05, 0.1)
+      const darker = shown(e) < Math.min(shown(list[i - 1]), shown(list[i + 1])) - 0.1
+      return Math.max(((darker ? 3.2 : 2) * r) / frameH, 0.125)
+    })
+  // A band's light at the middle Intensity: a deep band is a color under less light, and a cool band next to one
+  // of similar lightness gets less light, so neighbours contrast.
+  const baseLight = (list: readonly Entry[], i: number) => {
+    const e = list[i]
+    if (e.under < 1) return e.under
+    const similar = [list[i - 1], list[i + 1]].some((o) => o && Math.abs(lightness(o.hex) - lightness(e.hex)) < 0.1)
+    return similar && !isWarm(hexToLinear(e.hex)) ? 0.75 : 1
   }
+  // Shares of the spare height: the wide bands take most of it. Ice stays smaller, never a wide white band, and so
+  // does a color repeated under less light at the bottom, so it doesn't read as a second, muddier color.
+  const shareOf = (e: Entry, i: number, wide: readonly number[], draw: (lo: number, hi: number) => number) =>
+    (wide.includes(i) ? (wide.length > 1 ? draw(2.5, 3.5) : draw(3.5, 5)) : draw(0.15, 0.6) * (e.under < 1 ? 0.6 : 1)) * (lightness(e.hex) > 0.95 ? 0.5 : 1)
 
-  // Only a second dark color or the color added again may go, and never when its going brings two far-apart
-  // hues together.
-  const droppable = () =>
-    entries
-      .map((_, i) => i)
-      .filter((i) => {
-        const e = entries[i]
-        if (i === 0 || !(e.under < 1 || (dark(e) && entries.filter(dark).length > 1))) return false
-        return !(i + 1 < entries.length && hueGap(entries[i - 1].hex, entries[i + 1].hex) > 120)
-      })
-  if (drops.chance(0.45)) {
-    const d = droppable()
-    if (d.length) entries.splice(d[drops.int(0, d.length - 1)], 1)
+  // The seed's choices: the colors, one or two wide bands (near-white Ice only half as wide), and whether the sky
+  // darkens toward the top. Every combination is listed, the second light (Orange-red, Tan) in about a third of
+  // them.
+  type Choice = { light: string | undefined; darks: readonly string[]; base: boolean; wide: readonly number[]; zenith: number }
+  const choices: Choice[] = []
+  for (const [li, l] of (lights.length ? lights : [undefined]).entries()) {
+    for (const d of darks.length > 1 ? [[darks[0]], [darks[1]], darks] : [darks]) {
+      for (const base of darks.length ? [false] : [true, false]) {
+        const can = build(l, d, base).map((_, i) => i)
+        const wides = [...can.map((i) => [i]), ...can.flatMap((i, k) => can.slice(k + 1).map((j) => [i, j]))]
+        wides.forEach((wide, k) => {
+          if (li > 0 && k % 2 === 1) return
+          for (const zenith of [0, 1.1]) choices.push({ light: l, darks: d, base, wide, zenith })
+        })
+      }
+    }
   }
+  // Each run of seeds as long as the list takes every choice once: from a seeded first one, each next choice is
+  // the one whose look is farthest from the last seven, so any eight seeds in a row look different.
+  const n0 = seed - 1
+  const run = Math.floor(n0 / choices.length)
+  const key = `${pack.id}|${aspect.toFixed(4)}|${run}`
+  let order = runOrders.get(key)
+  if (!order) {
+    // A choice's look: its colors down the frame at the middle of each share, sampled at 16 heights in Oklab.
+    const look = (c: Choice) => {
+      const list = build(c.light, c.darks, c.base)
+      const least = leastOf(list, R0)
+      const shares = list.map((e, i) => shareOf(e, i, c.wide, (lo, hi) => (lo + hi) / 2))
+      const spare = Math.max(0, 1 - least.reduce((s, v) => s + v, 0))
+      const total = shares.reduce((s, v) => s + v, 0)
+      const ends = least.map((v, i) => v + (spare * shares[i]) / total).map((_, i, h) => h.slice(0, i + 1).reduce((s, v) => s + v, 0))
+      return Array.from({ length: 16 }, (_, k) => {
+        const y = (k + 0.5) / 16
+        const at = ends.findIndex((end) => y < end)
+        const e = list[at < 0 ? list.length - 1 : at]
+        const i = at < 0 ? list.length - 1 : at
+        const sky = i === 0 ? 2 ** (-c.zenith * Math.max(0, 0.5 - y)) : 1
+        return oklab(e.hex).map((v) => v * Math.cbrt((i === 0 ? 1 : baseLight(list, i) * iceCap(e.hex, 1)) * sky))
+      })
+    }
+    const looks = choices.map(look)
+    const apart = (a: number, b: number) => looks[a].reduce((s, p, k) => s + Math.hypot(p[0] - looks[b][k][0], p[1] - looks[b][k][1], p[2] - looks[b][k][2]), 0)
+    const runRnd = random(run * 7919 + pack.id.length * 31 + 17)
+    const made = [runRnd.int(0, choices.length - 1)]
+    const left = new Set(choices.map((_, i) => i).filter((i) => i !== made[0]))
+    while (left.size) {
+      let best = -1
+      let bestScore = -1
+      for (const i of left) {
+        const score = Math.min(...made.slice(-7).map((o) => apart(i, o))) + 1e-6 * runRnd.next()
+        if (score > bestScore) {
+          best = i
+          bestScore = score
+        }
+      }
+      made.push(best)
+      left.delete(best)
+    }
+    order = made
+    runOrders.set(key, order)
+  }
+  const choice = choices[order[((n0 % choices.length) + choices.length) % choices.length]]
+  const entries = build(choice.light, choice.darks, choice.base)
+  const wideEntries = choice.wide.map((i) => entries[i])
+  // The image's light: its warm or light color, else the brightest after the sky (Ice).
+  const light = choice.light ?? entries.slice(1).reduce((a, b) => (lightness(b.hex) > lightness(a.hex) ? b : a)).hex
 
   // The lowest boundary: where the seed's horizon has water or land in the frame, the last (dark) band is land, a
   // ridge or bank from the line down. (Water is left out: mirrored, a stack reads as stripes, and the mirrored
   // bridges go pink.)
   let below: 'open' | 'land' = place.y < 1 && place.below !== 'open' && dark(entries[entries.length - 1]) ? 'land' : 'open'
-  // Each band's least height in frame heights for a lens of radius r. The sky leads: it keeps the most room of the
-  // end bands, a little less above land.
-  const floorsAt = (r: number) =>
-    entries.map((e, i) => {
-      const last = i === entries.length - 1
-      const darker = i > 0 && !last && shown(e) < Math.min(shown(entries[i - 1]), shown(entries[i + 1])) - 0.1
-      return ((i === 0 ? (below === 'open' ? 2.8 : 2.4) : last ? (below === 'land' ? 2.2 : 2.3) : darker ? 3.5 : 2.5) * r) / frameH
-    })
-  const fits = () => {
-    const f = floorsAt(R0)
-    const above = f.slice(0, -1).reduce((s, v) => s + v, 0)
-    return below === 'open' ? above + f[f.length - 1] <= 0.97 : above <= 0.97 * place.y && 1 - place.y >= f[f.length - 1]
-  }
-  // When the bands don't fit, land goes first, then the color added again, then a second dark color: the pack's
-  // colors stay.
+  const leastAt = (r: number) => leastOf(entries, r)
+  const fits = () => leastAt(R0).reduce((s, v) => s + v, 0) <= 0.97
+  // When the bands don't fit, the color added again goes first, then a second dark color: the pack's colors stay.
   while (!fits()) {
-    if (below !== 'open') {
-      below = 'open'
-      continue
-    }
     const added = entries.findIndex((e) => e.under < 1)
-    const d = added >= 0 ? [added] : droppable()
-    if (!d.length || entries.length <= 3) break
-    entries.splice(d[drops.int(0, d.length - 1)], 1)
+    const darkAt = entries.map((e, i) => (dark(e) ? i : -1)).filter((i) => i >= 0)
+    const drop = added >= 0 ? added : darkAt.length > 1 ? darkAt[darkAt.length - 1] : -1
+    if (drop < 0 || entries.length <= 3) break
+    entries.splice(drop, 1)
   }
   if (below !== 'open' && !dark(entries[entries.length - 1])) below = 'open'
 
-  // The seed's heights: unequal, each over its floor; above land they share the room down to the line. When even
-  // the pack's own colors don't fit their floors, all of them shrink together rather than one going.
+  // The seed's heights, land included: the wide bands take most of the spare height, so the light sits low, in the
+  // middle or high, and the others stay near their least heights. When even the least heights don't fit, all
+  // bands shrink together.
   const list = entries
   const n = list.length
-  const f0 = floorsAt(R0)
-  const shared = below === 'land' ? n - 1 : n
-  // Ice is close to white, so its band stays smaller: never a wide white band. A color repeated under less light
-  // at the bottom stays smaller too, so it doesn't read as a second, muddier color.
-  const weights = list.slice(0, shared).map((e) => rnd.between(0.45, 1.9) * (lightness(e.hex) > 0.95 ? 0.35 : 1) * (e.under < 1 ? 0.55 : 1))
-  const room = below === 'open' ? 1 : place.y
-  const floorSum = f0.slice(0, shared).reduce((s, v) => s + v, 0)
-  const extra = Math.max(0, room - floorSum)
-  const squeeze = Math.min(1, room / floorSum)
+  const kept = wideEntries.map((e) => list.indexOf(e)).filter((i) => i >= 0)
+  const wide = kept.length ? kept : [n - 1]
+  const weights = list.map((e, i) => shareOf(e, i, wide, (lo, hi) => rnd.between(lo, hi)))
+  const l0 = leastAt(R0)
+  const leastSum = l0.reduce((s, v) => s + v, 0)
+  const extra = Math.max(0, 1 - leastSum)
+  const squeeze = Math.min(1, 1 / leastSum)
   const weightSum = weights.reduce((s, v) => s + v, 0)
-  const spans = weights.map((w, i) => f0[i] * squeeze + (extra * w) / weightSum)
+  const spans = weights.map((w, i) => l0[i] * squeeze + (extra * w) / weightSum)
+  // The whole stack leans one way or the other, every edge curves more or less, and every other seed's sky
+  // darkens toward the top.
+  const stackTilt = (rnd.between(-0.06, 0.06) * frameW) / frameH
+  const curve = rnd.between(0.8, 1.8)
+  const zenith = choice.zenith
   // Each band's top edge in the seed's layout: the sky's is the frame's top, and the last band's is the lowest
   // boundary.
-  const tops = list.map((_, i) => (below === 'land' && i === n - 1 ? place.y : spans.slice(0, i).reduce((s, v) => s + v, 0)))
+  const tops = list.map((_, i) => spans.slice(0, i).reduce((s, v) => s + v, 0))
 
   const bands: Band[] = []
   const under: number[] = []
@@ -317,8 +369,8 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     const warmOnDark = outline && (warmHex(upper.hex) || warmHex(e.hex))
     const bridge = !outline && needsBridge(hexToLinear(upper.hex), hexToLinear(e.hex))
     // Every band draws the same random numbers, land or not, so no other edge depends on whether there is land.
-    let tilt = (rnd.between(-0.05, 0.05) * frameW) / frameH
-    let wave = (0.016 * rnd.between(0.7, 1.3)) / frameH
+    let tilt = stackTilt + (rnd.between(-0.05, 0.05) * frameW) / frameH
+    let wave = (0.016 * curve * rnd.between(0.7, 1.3)) / frameH
     const side = rnd.sign()
     const ridge = rnd.chance(0.5)
     const count = rnd.int(1, 2)
@@ -340,7 +392,7 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
       // Broad, low lobes (from a few lens radii up to the frame width), so no edge reads as a hill, a tree line
       // or a cloud.
       for (const [at, width, sign, shift] of draws.slice(0, count)) {
-        lobes.push([lerp(0.05, 0.95, at), Math.max(3 * R0, lerp(0.45, 0.9, width)) / frameW, (sign * lerp(0.015, 0.035, shift)) / frameH])
+        lobes.push([lerp(0.05, 0.95, at), Math.max(3 * R0, lerp(0.45, 0.9, width)) / frameW, (sign * curve * lerp(0.015, 0.035, shift)) / frameH])
       }
     }
     const darker = i + 1 < list.length && shown(e) < Math.min(shown(upper), shown(list[i + 1])) - 0.1
@@ -367,14 +419,15 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     const dome: Bump = [rnd.between(0.15, 0.85), rnd.between(0.4, 0.7) / frameW, -rnd.between(0.035, 0.06) / frameH]
     b.edge = { ...b.edge, bumps: [...b.edge.bumps, dome].slice(0, BUMP_MAX) }
   }
-  // A dark mass: the darkest band swells into the band above on one side, broadly.
-  const darkest = bands.reduce((m, b, i) => (lightness(b.color) < lightness(bands[m].color) ? i : m), 0)
-  if (darkest !== landBand && lightness(bands[darkest].color) < 0.45 && rnd.chance(0.6)) {
-    const b = bands[darkest]
-    const side = rnd.chance(0.5) ? rnd.between(0.0, 0.25) : rnd.between(0.75, 1.0)
-    const swell: Bump = [side, rnd.between(0.45, 0.8) / frameW, -rnd.between(0.025, 0.045) / frameH]
-    b.edge = { ...b.edge, bumps: [...b.edge.bumps, swell].slice(0, BUMP_MAX) }
-  }
+  // A dark mass: every dark band's top edge swells broadly into the band above on one side, or dips; every band
+  // draws the same random numbers.
+  bands.forEach((b, i) => {
+    const side = rnd.chance(0.5) ? rnd.between(0.0, 0.3) : rnd.between(0.7, 1.0)
+    const width = rnd.between(0.4, 0.75)
+    const shift = (rnd.chance(0.7) ? -1 : 1) * curve * rnd.between(0.025, 0.045)
+    if (i === landBand || lightness(b.color) * Math.cbrt(under[i]) >= 0.45) return
+    b.edge = { ...b.edge, bumps: [...b.edge.bumps, [side, width / frameW, shift / frameH] as Bump].slice(0, BUMP_MAX) }
+  })
   keepThick(bands, R0, frameW, frameH, edgeSeed(seed))
 
   // Softness and Horizon move and resize the seed's bands. Every band is at least as tall as the lens rule asks
@@ -384,15 +437,10 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   // for the last band at 0, the seed's own share at 0.5, all of it at 1. A lens wider than the middle one raises
   // every least height, and the spare height shrinks; when none is left, all bands shrink together. Edges
   // flatten as their bands shrink.
-  const least = (r: number) =>
-    list.map((e, i) => {
-      const darker = i > 0 && i < n - 1 && shown(e) < Math.min(shown(list[i - 1]), shown(list[i + 1])) - 0.1
-      return Math.max(((darker ? 3.2 : 2) * r) / frameH, 0.125)
-    })
   const was = list.map((_, i) => (i + 1 < n ? tops[i + 1] : 1) - tops[i])
-  const leastSeed = least(R0)
+  const leastSeed = leastAt(R0)
   const spareSeed = was.map((w, i) => Math.max(0, w - leastSeed[i]))
-  const leastNow = least(Math.max(R, R0))
+  const leastNow = leastAt(Math.max(R, R0))
   const spare = 1 - leastNow.reduce((s, v) => s + v, 0)
   const spareSeedSum = Math.max(1e-9, spareSeed.reduce((s, v) => s + v, 0))
   const lastSeed = (spareSeed[n - 1] * Math.max(spare, 0)) / spareSeedSum
@@ -420,14 +468,11 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   const darkAt = (j: number) => j >= 0 && j < bands.length && lightness(bands[j].color) * Math.cbrt(under[j]) < 0.45
   const warmAt = (j: number) => j >= 0 && j < bands.length && warmHex(bands[j].color)
   bands.forEach((b, i) => {
-    const near = [i === 0 ? sky : bands[i - 1].color, bands[i + 1]?.color].filter((c): c is string => !!c)
-    const similar = near.some((o) => Math.abs(lightness(o) - lightness(b.color)) < 0.1)
     const isLight = b.color === light && under[i] === 1
     const warmLight = warmAt(i)
     const holds = warmLight || (darkAt(i) && (warmAt(i - 1) || warmAt(i + 1)))
-    const base = under[i] < 1 ? under[i] : similar && !isWarm(hexToLinear(b.color)) ? 0.75 : 1
     const lift = level >= 1 ? level ** (isLight ? 1.6 : 0.8) : 1
-    b.light = base * (level >= 1 ? lift : level ** (holds ? 0 : 0.8)) * iceCap(b.color, level)
+    b.light = baseLight(list, i + 1) * (level >= 1 ? lift : level ** (holds ? 0 : 0.8)) * iceCap(b.color, level)
     b.sun = 1 - 1 / lift
     if (warmLight && (darkAt(i - 1) || darkAt(i + 1))) b.vary = 0.5
   })
@@ -457,7 +502,7 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   const lightVary = rnd.between(0.1, 0.17)
   // The light's column: where Intensity above the middle gathers its extra light.
   const sun: [number, number] = [rnd.between(0.2, 0.8), rnd.between(0.22, 0.35)]
-  return { sky, bands, lights: lightTerms, patches, sun, lightVary, skyFall: 4.5 * Math.max(0, 1 - level), skyLift: 1.2 * Math.max(0, level - 1) }
+  return { sky, bands, lights: lightTerms, patches, sun, lightVary, skyFall: zenith + 4.5 * Math.max(0, 1 - level), skyLift: 1.2 * Math.max(0, level - 1) }
 }
 
 /** Ice is close to white: below white at the default Intensity. */
