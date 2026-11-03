@@ -5,6 +5,11 @@ import { edgeFbm } from './ramp-noise'
 
 const clamp01 = (t: number) => Math.min(1, Math.max(0, t))
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
+/** 0 at `from`, 1 at `to` (either may be the larger), with no kink at either end. */
+const smoothstep = (from: number, to: number, t: number) => {
+  const x = clamp01((t - from) / (to - from))
+  return x * x * (3 - 2 * x)
+}
 /** 2 to the power of `stops` times (t - 0.5): 1 at the middle of a control. */
 const stops2 = (t: number, stops: number) => 2 ** ((t - 0.5) * stops)
 /** Width of a 16:9 frame in short sides. */
@@ -152,8 +157,9 @@ interface PackLook {
   downReach: number
   /** How much deeper the light gets away from the sun. */
   sideDeeper: number
-  /** How far the glow reaches above its line, relative to the default. */
+  /** How far the glow reaches above its line, and how high its line sits over water and land, relative to the default. */
   glowUp: number
+  glowRise: number
   /** Sun glow strength relative to the default, and at the arcs' center; a pale light makes a white spot sooner. */
   sunGlow: number
   core: number
@@ -170,6 +176,11 @@ interface PackLook {
    * where the two mix (pink, mauve or lavender) stays thin.
    */
   waterDegrees: [number, number]
+  /** Share of calm water's reflectance kept, and the highest share of the visible sky the water mirrors. */
+  waterMirror: number
+  mirrorReach: number
+  /** Share of the sky's light in the air in front of far land: warm light over a dark land of another hue mixes to purple or mauve. */
+  landHaze: number
 }
 
 /**
@@ -196,20 +207,25 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, ra
     minFloor: 0,
     minLift: 0,
     waterDegrees: [8, 12] as [number, number],
+    // Dimmed, the pale bridges in the reflection turn salmon or khaki; a little dimming only.
+    waterMirror: 0.9,
+    mirrorReach: 1,
+    landHaze: 0.75,
     glowUp: 1,
+    glowRise: 1,
   }
   switch (packId) {
     case 'bold': {
       const [cyan, yellow, orangeRed] = rest
-      const dark = { landTop: [metaBlue, 0.45] as Tone, landBottom: [metaBlue, 0.16] as Tone, water: [metaBlue, 0.3] as Tone }
+      const dark = { landTop: [metaBlue, 0.32] as Tone, landBottom: [metaBlue, 0.16] as Tone, water: [metaBlue, 0.3] as Tone }
       // Orange-red over a Cyan low sky: the two add up to a pale neutral, which keeps its bridge
       // at low light too. It lights every water and land frame: reflected in water or spilled
       // over land, Yellow turns khaki.
       if (ground || (pickLight < 0.55 && (structure === 'open' || structure === 'corner'))) {
         // Where Orange-red meets the Cyan and blue sky the bridge is a pale peach-cream, not the
         // pink or mauve the two make when mixed; under the glow line the skylight fades out, so
-        // the glow's body is Orange-red itself. A compact glow leaves a band of Cyan above it.
-        return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.6, horizonGain: 0.42, skyEdge: [0.78, 0.75], light: orangeRed, coreColor: orangeRed, glow: 1.2, glowUp: 0.6, path: [-0.15, 0.55, 0.45], hue: [-0.25, 0.2], bridge: 0.9, bridgeLift: 0.5, bridgeWarmth: 0.8, bridgeFloor: 0.1, haze: 0.3, downReach: 1.5, sideDeeper: 0.3, waterDegrees: [4, 6] }
+        // the glow's body is Orange-red itself. A compact, low glow leaves a band of Cyan above it.
+        return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 2.2, horizonGain: 0.42, skyEdge: [0.97, 0.75], light: orangeRed, coreColor: orangeRed, glow: 1.2, glowUp: 0.25, glowRise: 0.35, path: [-0.15, 0.55, 0.45], hue: [-0.25, 0.2], bridge: 0.9, bridgeLift: 0.5, bridgeWarmth: 0.8, bridgeFloor: 0.1, haze: 0.3, downReach: 1.5, sideDeeper: 0.3, waterDegrees: [4, 6], landHaze: 0.1 }
       }
       const cyanSky = pickSky < 0.5
       const low = cyanSky ? { lowSky: cyan, lowSkyGain: 0.85, skyEdge: [0.42, 1.1] as [number, number] } : {}
@@ -221,17 +237,21 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, ra
       // Lime or Tan is the one light. Lime pales into Meta Blue through added light; it lights some
       // open skies and the Forest land, never water, where its dim reflection turns olive.
       const limeLight = { light: lime, coreColor: lime, glow: 1.0, path: [-0.2, 0, 0.35], hue: [-0.15, 0.1], bridge: 0.8, bridgeLift: 0.3, haze: 0.8, sideDeeper: 0, core: 1 } satisfies Partial<PackLook>
-      if (structure === 'land' && darkAlt) return { ...sky, ...dark, ...limeLight, landTop: [forest, 1.8], landBottom: [forest, 1.0] }
+      if (structure === 'land' && darkAlt) return { ...sky, ...dark, ...limeLight, landTop: [forest, 1.8], landBottom: [forest, 1.0], landHaze: 0.3 }
       if (!ground && pickLight < 0.4) return { ...sky, ...dark, ...limeLight }
-      // Tan meets Meta Blue through pale cream; mixed, the two make lavender. Under the glow line
-      // the skylight fades out, so the glow's body is Tan itself.
-      return { ...sky, ...dark, horizonGain: 0.42, light: tan, coreColor: tan, glow: 1.6, path: [0.1, 0.3, 0.4], hue: [-0.3, 0.1], bridge: 0.9, bridgeLift: 0.5, bridgeWarmth: 0.85, haze: 0.8, sideDeeper: 0.1, waterDegrees: [25, 30] }
+      // Tan meets Meta Blue through pale cream; mixed, the two make lavender or grey. Under the glow
+      // line the skylight fades out, so the glow's body is Tan itself and the bridge acts only where
+      // the two meet. Water mirrors only the Tan part of the sky and little of its own Plum: the
+      // blue sky over Plum is violet, Tan over Plum mauve.
+      // Deepened, Tan turns brown, so it barely deepens toward the horizon or away from the sun.
+      return { ...sky, ...dark, horizonGain: 0.42, landHaze: 0.35, light: tan, coreColor: tan, glow: 1.6, path: [0.1, 0.1, 0.4], hue: [-0.3, 0.1], bridge: 1.8, bridgeLift: 0.5, bridgeWarmth: 1, bridgeFloor: 0.1, haze: 0.8, sideDeeper: 0, waterDegrees: [8, 10], waterMirror: 0.95, mirrorReach: 0.35 }
     }
     case 'atmospheric': {
       const [ice, steel, slate, nearBlack] = rest
       // Ice makes a white spot wherever its light is concentrated, so it gets no sun glow and a wide, flat band.
       const dark = { landTop: [steel, 0.75] as Tone, landBottom: darkAlt ? ([nearBlack, 1.0] as Tone) : ([slate, 1.0] as Tone), water: [slate, 1.2] as Tone }
-      return { ...sky, ...dark, lowSkyGain: 1.2, light: ice, coreColor: ice, glow: 0.34, path: [0, 0, 0], hue: [0, 0], bridge: 0.3, haze: 0.8, sideDeeper: 0, sunGlow: 0, core: 0, minFloor: 0.5, minLift: 0.08 }
+      // The band is bright enough near its line to read as Ice; under it the light fades to Steel.
+      return { ...sky, ...dark, lowSkyGain: 1.2, horizonGain: 0.5, light: ice, coreColor: ice, glow: 0.62, path: [0, 0, 0], hue: [0, 0], bridge: 0.3, haze: 0.8, downReach: 0.8, sideDeeper: 0, sunGlow: 0, core: 0, minFloor: 0.5, minLift: 0.08 }
     }
     default: {
       const unknown: never = packId
@@ -260,8 +280,8 @@ export function rampPackColors(packId: PackId, seed: number): string[] {
   return slotColors(packLook(packId, structure, darkAlternate(seed), seeded(seed)), hasMidSky(seed))
 }
 
-/** Every other pair of runs takes the pack's other ground. */
-const darkAlternate = (seed: number) => Math.floor(seedRun(seed) / 2) % 2 !== 0
+/** Every other run takes the pack's other ground, so both show within the first eight seeds. */
+const darkAlternate = (seed: number) => seedRun(seed) % 2 !== 0
 
 /**
  * A Sunset ramp scene for a pack, the tool controls, a seed and the frame's width over height.
@@ -338,9 +358,10 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
       bandAt = lerp(band, 1, 0.5) + 0.03 * shift
       sunIn = lerp(-0.2, 0.08, sunPick)
       tilt = side * lerp(4, 14, tiltPick)
-      // Bent enough that the diagonal never reads as a ruled line.
+      // Bent enough that the diagonal never reads as a ruled line. Enough of the glow stays far
+      // from the sun that the horizon there does not go dark.
       dome = lerp(0.025, 0.06, bendPick) * frameWidth
-      floor = lerp(0.02, 0.15, floorPick)
+      floor = lerp(0.25, 0.4, floorPick)
       lateral = lerp(0.6, 1.1, widthPick)
       sunlight = 0.55
       break
@@ -383,31 +404,46 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const turn = (tilt * Math.PI) / 180
 
   // The ground's outline. Water is level and nearly still. Land is one ridge climbing toward the
-  // light, or a low bank when the line is near the bottom; with the line high in the frame it is
-  // a far bank over water, so land never fills more than about half the frame.
-  const shore = land && place.y < 0.42
-  const ridge = land && !shore && place.y <= 0.8
-  const groundKind = water || shore ? 1 : land ? 2 : 0
+  // light. The ridge grows out of a low bank as the line rises from the bottom edge; above the
+  // middle of the frame it flattens, then water comes up from the bottom edge until the land is a
+  // far bank over it, so land never fills more than about half the frame. Each change runs over a
+  // wide range of line heights, so no step of the Horizon control switches the ground.
+  const flat = smoothstep(0.6, 0.52, place.y)
+  const ridge = land ? smoothstep(1.02, 0.8, place.y) * (1 - flat) : 0
+  const flood = land ? smoothstep(0.52, 0.27, place.y) : 0
+  // Land draws as a bank over water once water shows; until then the bank reaches past the bottom
+  // edge and draws the same pixels as land.
+  const groundKind = water || flood > 0 ? 1 : land ? 2 : 0
   const lineAt = (place.y - 0.5) * tall
   const outline: Outline = {
     at: lineAt,
-    slope: Math.tan(((ridge ? place.tilt : Math.max(-2, Math.min(2, place.tilt))) * Math.PI) / 180),
-    wave: groundKind === 2 ? lerp(0.005, 0.012, ridgePick) * tall : 0.0015,
-    rise: ridge ? lerp(0.1, 0.25, ridgePick) * tall : 0,
+    slope: Math.tan((lerp(Math.max(-2, Math.min(2, place.tilt)), place.tilt, ridge) * Math.PI) / 180),
+    wave: land ? lerp(lerp(0.005, 0.012, ridgePick) * tall, 0.0015, flat) : 0.0015,
+    rise: ridge * lerp(0.1, 0.25, ridgePick) * tall,
     toward: side,
-    bowl: ridge ? lerp(0, 0.06, bowlPick) * tall : 0,
+    bowl: ridge * lerp(0, 0.06, bowlPick) * tall,
     waveLength: lerp(0.5, 0.9, bowlPick) * frameWidth,
   }
   const lineOf = (x: number) => outlineAt(outline, half, x, seed)
   let lowest = -Infinity
-  for (let i = 0; i <= 32; i++) lowest = Math.max(lowest, lineOf(-half + (i / 32) * frameWidth))
+  let highest = Infinity
+  for (let i = 0; i <= 32; i++) {
+    const at = lineOf(-half + (i / 32) * frameWidth)
+    lowest = Math.max(lowest, at)
+    highest = Math.min(highest, at)
+  }
+  // The water's line rises from just below the whole bottom edge to the shared line, and the far
+  // bank on it ends a little above the shared line.
+  const bankHeight = lerp(0.03, 0.06, bowlPick) * tall
+  const waterLine = lerp(0.5 * tall + lineAt - highest + 0.005, lineAt, flood)
+  const bank = waterLine - (lineAt - bankHeight * flood)
 
   // The ramp's anchor: just below the frame for open skies, on the water's line, or just under the
   // land's lowest point, where the sky behind it meets its own horizon.
   const anchorX = arcs ? (sunX - 0.5) * frameWidth : 0
   // The bend is set by how far the farther side edge drops.
   const drop = dome * (half / (half + Math.abs(anchorX))) ** 2
-  const anchorY = !ground ? anchorBelow(frame, { anchorX, turn, drop }, 0.02) : groundKind === 2 ? lowest + 0.03 : lineAt
+  const anchorY = !ground ? anchorBelow(frame, { anchorX, turn, drop }, 0.02) : land ? lerp(lowest + 0.03, lineAt, flood) : lineAt
   const horizonY = anchorY / tall + 0.5
   const axis: RampAxis = { anchorX, anchorY, turn, drop }
   const skyHeight = Math.max(0.2, horizonY * tall)
@@ -434,7 +470,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // the brightest band, over water and land 25 to 45% of the sky's height, higher in haze.
   const openRise = anchorY - (bandAt - 0.5) * tall
   const glowRise = ground
-    ? lerp(0.25, 0.45, risePick) * skyHeight * stops2(softness, 0.3) * Math.sqrt(day)
+    ? lerp(0.25, 0.45, risePick) * skyHeight * stops2(softness, 0.3) * Math.sqrt(day) * look.glowRise
     : Math.max(0.03, Math.max(openRise, look.minLift) * Math.sqrt(day) * stops2(softness, 0.3))
 
   // The least height above the horizon along the top edge: the sky's edges and the sun's light
@@ -481,9 +517,11 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
         [skyEdgeAt * lerp(0.5, 0.7, depthPick), 0.45 * skyEdgeWidth],
       ]
     : [[skyEdgeAt, skyEdgeWidth]]
-  // The highest edge's upper tail stays out of the top quarter of the frame, where Meta Blue is the mean.
+  // The highest edge's upper tail stays out of the top quarter of the frame, where Meta Blue is the
+  // mean. A low sky much brighter than the zenith shows further up its tail.
   const [topAt, topWidth] = edges[0]
-  const room = (topHeight - 0.25 * tall) / (Math.abs(topAt) + 0.5 * topWidth)
+  const tail = 0.5 * (1 + 0.5 * Math.max(0, Math.log2((midSky ? midGain : lowGain) / zenithGain)))
+  const room = (topHeight - 0.25 * tall) / (Math.abs(topAt) + tail * topWidth)
   if (room < 1) edges.forEach((edge) => (edge[0] *= Math.max(0.3, room)))
   edges[0][1] *= Math.max(0.3, Math.min(1, room))
   const gains = midSky ? [zenithGain, midGain, lowGain] : [zenithGain, lowGain]
@@ -495,7 +533,8 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   gains.forEach((gain, k) => (stopParams[`gain${k + 1}`] = gain))
 
   // Over land the sun sits just above the crest at its x; over water just under the line.
-  const sunY = groundKind === 2 ? (lineOf((sunX - 0.5) * frameWidth) / tall + 0.5) - lerp(0.03, 0.1, crestPick) : horizonY + (arcs ? 0 : 0.03 / tall)
+  const underLine = horizonY + (arcs ? 0 : 0.03 / tall)
+  const sunY = land ? lerp(lineOf((sunX - 0.5) * frameWidth) / tall + 0.5 - lerp(0.03, 0.1, crestPick), underLine, flood) : underLine
 
   const params: Record<string, ParamValue> = {
     anchor: [anchorX / frameWidth + 0.5, horizonY],
@@ -540,12 +579,13 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     glow2Down: 0.08 * glowHaze,
     extinction: 1.2,
     // Skylight fades toward the horizon, so under the glow line the light is the glow's own.
-    horizonDim: (1 - look.horizonGain) * 12 * stops2(softness, -0.6),
+    // A corner's horizon far from the sun keeps more skylight and deepens less, or it goes dark.
+    horizonDim: (1 - look.horizonGain) * 12 * stops2(softness, -0.6) * (structure === 'corner' ? 0.5 : 1),
     horizonDimHeight: 0.7 * glowRise + 0.02,
     dimBelow: 1,
     // Over water the light just above the line deepens less, or it reads as a dark stripe between
     // the sky and its reflection; a raised open band deepens less toward the bottom edge.
-    reddenDown: deeper * stops2(1 - intensity, 1.1) * stops2(1 - softness, 0.6) * (groundKind === 1 ? 0.3 : ground ? 1 : 1 - 0.45 * clamp01((0.97 - band) / 0.3)),
+    reddenDown: deeper * stops2(1 - intensity, 1.1) * stops2(1 - softness, 0.6) * (water ? 0.3 : land ? lerp(1, 0.3, flood) : structure === 'corner' ? 0.4 : 1 - 0.45 * clamp01((0.97 - band) / 0.3)),
     reddenEase: 1,
     reddenUp: paler > 0 ? clamp01(paler + (intensity - 0.5) * 0.35) * 0.9 : 0,
     reddenSide: look.sideDeeper,
@@ -570,17 +610,16 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // Patches of light in the sky, a third to half of the frame across.
     skyPatch: [0.08, lerp(0.33, 0.5, patchPick) * frameWidth, 1.6],
     ground: groundKind,
-    groundAt: place.y,
+    groundAt: groundKind === 1 && land ? waterLine / tall + 0.5 : place.y,
     groundTilt: (Math.atan(outline.slope) * 180) / Math.PI,
     groundWave: outline.wave,
     ridge: [outline.rise, outline.toward, outline.bowl, outline.waveLength],
-    shore: shore ? [lerp(0.03, 0.06, bowlPick) * tall, 0.5] : [0, 0],
+    shore: groundKind === 1 && land ? [bank, (0.5 * bankHeight * flood) / bank] : [0, 0],
     // The strip under the line is thin and bright, so it still shows after the lens.
     water: [1.25, lerp(look.waterDegrees[0], look.waterDegrees[1], ridgePick), 0.12, 1.5],
-    // Water a little darker than the sky it mirrors, as a rough sea is.
-    waterMirror: groundKind === 1 ? 0.72 : 1,
-    glitter: groundKind === 1 ? [(look.sunGlow > 0 ? 0.3 : 0.12) * sunGain, lerp(0.06, 0.12, widthPick) * frameWidth, lerp(0.2, 0.35, widthPick) * frameWidth] : [0, 0.1, 0.35],
-    groundHaze: [0.75, (groundKind === 2 ? 0.1 : 0.05) * tall],
+    waterMirror: groundKind === 1 ? look.waterMirror : 1,
+    mirrorReach: look.mirrorReach,
+    groundHaze: [look.landHaze, (land ? lerp(0.1, 0.05, flood) : 0.05) * tall],
     groundTopGain: look.landTop[1] * groundGain,
     groundBottomGain: look.landBottom[1] * groundGain,
     waterGain: look.water[1] * groundGain,

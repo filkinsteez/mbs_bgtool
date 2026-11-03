@@ -82,7 +82,6 @@ uniform vec4 uWater;         // squeeze, degrees below the horizon at the bottom
 uniform vec3 uWaterOwn;      // the water's own light, seen where the reflection weakens
 uniform float uWaterMirror;  // share of calm water's reflectance that a rough sea keeps
 uniform float uMirrorReach;  // the highest share of the visible sky the water mirrors (1: up to the top edge)
-uniform vec3 uGlitter;       // the sun's path on the water: strength, width at the line, width at the bottom edge
 uniform vec3 uGroundTop;     // land right under its outline
 uniform vec3 uGroundBottom;  // land at the bottom edge
 uniform vec2 uGroundHaze;    // share of the sky's light in far land, and the depth over which it fades
@@ -344,7 +343,7 @@ vec3 rampSky(vec2 p) {
   if (uBridge.x > 0.0) {
     float y = luminance(light);
     float bright = uBridge.z > 0.0 ? smoothstep(0.5 * uBridge.z, 1.5 * uBridge.z, y) : 1.0;
-    float pull = min(1.0, uBridge.x * hueSpread(mixed) / 0.25) * bright;
+    float pull = min(1.0, uBridge.x * hueSpread(mixed) / 0.25) * bright * lightReach;
     float lifted = max(y, 1.0 - (1.0 - y) * (1.0 - uBridge.y));
     light += pull * (lifted * uBridgeTint - light);
   }
@@ -419,8 +418,8 @@ const float AIR_ABOVE = 0.02;
 // stretched the sky would stretch its edges' waves too. Its reflectance is that of water seen
 // with a long lens (the bottom edge
 // uWater.y degrees below the horizon), and its own light shows where the reflection weakens. A
-// soft lighter strip under the line changes along it, and ripples spread the sun's light into a
-// wide, faint path under it that widens toward the viewer.
+// soft lighter strip under the line changes along it. There is no path of sunlight on the water:
+// warm light added over the mirrored blue sky turns purple.
 vec3 rampScene(vec2 p) {
   vec2 q = p;
   // 0 sky, 1 land, 2 water, 3 water mirroring the far bank.
@@ -445,8 +444,11 @@ vec3 rampScene(vec2 p) {
         uint texel = uint(gl_FragCoord.x) * 0x9e3779b1u ^ uint(gl_FragCoord.y) * 0x85ebca6bu;
         float ripple = 2.0 * rampUnit(texel, uSeed + 977) - 1.0;
         float up = max(uWater.x * depth * (1.0 + uWater.z * ripple), 0.002);
+        // Past the reach the mirror still climbs, a quarter as fast: held at one height, each column
+        // would mirror its own color all the way down.
         float reach = uMirrorReach * max(0.0, line + 0.5 * uFrameAspect.y);
-        mirrored = vec2(p.x, max(line - min(up, reach), -0.5 * uFrameAspect.y));
+        float climb = min(up, reach) + 0.25 * max(0.0, up - reach);
+        mirrored = vec2(p.x, max(line - climb, -0.5 * uFrameAspect.y));
         q = mirrored;
         if (uShore.x > 0.0 && mirrored.y > top) {
           kind = 3;
@@ -464,11 +466,6 @@ vec3 rampScene(vec2 p) {
   if (uWater.w > 0.0 && depth < 0.05) {
     float along = 0.7 + 0.3 * edgeFbm(p.x * 1.1 + 1.3, uSeed + 953, 2);
     water += uWater.w * along * exp(-0.5 * (depth / 0.008) * (depth / 0.008)) * mirror;
-  }
-  if (uGlitter.x > 0.0) {
-    float toBottom = depth / max(0.05, 0.5 * uFrameAspect.y - line);
-    float across = (p.x - (uSunAt.x - 0.5) * uFrameAspect.x) / mix(uGlitter.y, uGlitter.z, toBottom);
-    water += uGlitter.x * (1.0 - 0.7 * toBottom) * exp(-0.5 * across * across) * uGlowColor[0];
   }
   return water;
 }
