@@ -12,6 +12,19 @@ import { buildRecipeShader } from './recipeShader'
 const MIN_BLUR_PIXELS = 4
 const MIN_SHORT_SIDE = 256
 const MAX_SHORT_SIDE = 1024
+/** Short sides a recipe may ask for with ScatterBlur.size. */
+const MIN_SIZED_SIDE = 8
+const MAX_SIZED_SIDE = 2048
+
+/** One source render: which light, at which short side, with how many samples per texel axis. */
+interface SourceSpec {
+  key: string
+  kind: ScatterBlur['source']
+  short: number
+  width: number
+  height: number
+  subsamples: number
+}
 
 export type EngineUniforms = (width: number, height: number, origin: number[], pixel: number, subsamples: number) => UniformMap
 
@@ -43,29 +56,45 @@ export function runScatter(
     if (!Number.isFinite(radius) || radius < 0) throw new LightEngineError(`${program.id} scatter radius ${radius} is not a finite number >= 0.`)
     return radius
   })
-  const positive = radii.filter((r) => r > 0)
-  const smallest = positive.length > 0 ? Math.min(...positive) : 1
+  const sized = blurs.map((blur) => {
+    if (!blur.size) return null
+    const asked = blur.size(ctx)
+    if (!Number.isFinite(asked) || asked <= 0) throw new LightEngineError(`${program.id} scatter size ${asked} is not a finite number > 0.`)
+    return Math.min(MAX_SIZED_SIDE, Math.max(MIN_SIZED_SIDE, Math.round(asked)))
+  })
+  const shared = radii.filter((radius, i) => sized[i] === null && radius > 0)
+  const smallest = shared.length > 0 ? Math.min(...shared) : 1
   const renderShort = Math.min(renderWidth, renderHeight)
-  const short = Math.min(renderShort, Math.min(MAX_SHORT_SIDE, Math.max(MIN_SHORT_SIDE, Math.ceil(MIN_BLUR_PIXELS / smallest))))
-  const width = Math.max(1, Math.round((renderWidth * short) / renderShort))
-  const height = Math.max(1, Math.round((renderHeight * short) / renderShort))
-  const subsamples = renderShort > short ? 2 : 1
+  const sharedShort = Math.min(renderShort, Math.min(MAX_SHORT_SIDE, Math.max(MIN_SHORT_SIDE, Math.ceil(MIN_BLUR_PIXELS / smallest))))
+  const spec = (kind: ScatterBlur['source'], short: number, subsamples: number): SourceSpec => ({
+    key: `${kind} ${short} ${subsamples}`,
+    kind,
+    short,
+    width: Math.max(1, Math.round((renderWidth * short) / renderShort)),
+    height: Math.max(1, Math.round((renderHeight * short) / renderShort)),
+    subsamples,
+  })
+  const specs = blurs.map((blur, i) => {
+    const size = sized[i]
+    return size === null ? spec(blur.source, sharedShort, renderShort > sharedShort ? 2 : 1) : spec(blur.source, size, 1)
+  })
 
-  const sources = new Map<ScatterBlur['source'], Target>()
-  for (const { source } of blurs) {
-    if (sources.has(source)) continue
+  const sources = new Map<string, Target>()
+  for (const { key, kind, short, width, height, subsamples } of specs) {
+    if (sources.has(key)) continue
     const target = gpu.acquire(width, height)
-    gpu.draw(gpu.program(buildRecipeShader(program, source === 'radiance' ? 'source' : 'aux')), target, {
+    gpu.draw(gpu.program(buildRecipeShader(program, kind === 'radiance' ? 'source' : 'aux')), target, {
       uniforms: engine(width, height, [0, 0], 1 / (short * subsamples), subsamples),
     })
     profiler.mark('scatter sources', target)
-    sources.set(source, target)
+    sources.set(key, target)
   }
 
   // Wide blurs run on halvings of the source and keep that size. Past the frame edges each repeats the texels of its
   // edge level: the halvings up to that level are plain, the rest are of a copy extended there. The shaders read
   // the blurred copies through uvMap.
-  const plans = radii.map((radius) => {
+  const plans = radii.map((radius, i) => {
+    const { short, width, height } = specs[i]
     const blur = radius * short
     const at = samplingLevel(blur, width, height)
     return { blur, ...at, edge: Math.min(at.level, edgeLevel(blur, width, height)) }
@@ -73,20 +102,20 @@ export function runScatter(
   const owned: Target[] = []
   const textures: Record<string, Target> = {}
   const uniforms: UniformMap = {}
-  for (const [kind, source] of sources) {
+  for (const [key, source] of sources) {
     const plain = [source]
     const plainLevel = (j: number): Target => {
       while (plain.length <= j) plain.push(halve(gpu, plain[plain.length - 1]))
       return plain[j]
     }
     const deepest = new Map<number, number>()
-    blurs.forEach((blur, i) => {
+    blurs.forEach((_, i) => {
       const plan = plans[i]
-      if (blur.source === kind && plan.blur > 0.05 && plan.level > 0) deepest.set(plan.edge, Math.max(deepest.get(plan.edge) ?? 0, plan.level))
+      if (specs[i].key === key && plan.blur > 0.05 && plan.level > 0) deepest.set(plan.edge, Math.max(deepest.get(plan.edge) ?? 0, plan.level))
     })
     const chains = new Map<number, Halvings>()
-    blurs.forEach((blur, i) => {
-      if (blur.source !== kind) return
+    blurs.forEach((_, i) => {
+      if (specs[i].key !== key) return
       const plan = plans[i]
       let target = source
       let uvMap: readonly number[] = IDENTITY_MAP

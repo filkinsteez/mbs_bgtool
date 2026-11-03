@@ -422,6 +422,29 @@ try {
       outsideSame && insideB[0] > insideBOff[0] + 10,
       `outside both discs ${at(on, 20, 20).join(',')} with and without scatter; inside disc B ${insideBOff.join(',')} -> ${insideB.join(',')}; images in scatter.png`,
     )
+    // An unblurred scatter source at a size the recipe picks: a slow smooth layer rendered once at 128 px, read back in combine.
+    const still = { lens: noLens, output: { grain: 0 } }
+    const cacheSize = { width: 925, height: 1002 }
+    const cached = await harness.render({ scene: { program: 'test.cache', ...still }, ...cacheSize, dither: false })
+    const direct = await harness.render({ scene: { program: 'test.cache.direct', ...still }, ...cacheSize, dither: false })
+    const cachedLarge = await harness.render({ scene: { program: 'test.cache', ...still }, width: 3546, height: 3840, dither: false })
+    const cacheMask = buildMask(cacheSize.width, cacheSize.height, [], 0)
+    const vsDirect = compareImages(direct, cached, cacheMask).metrics.deltaE
+    const vsLarge = compareImages(cached, await resizeRgba(cachedLarge, cacheSize.width, cacheSize.height, 'lanczos3'), cacheMask).metrics.deltaE
+    const timing = {}
+    for (const program of ['test.cache', 'test.cache.direct']) {
+      timing[program] = (await harness.call('profile', { scene: { program, ...still }, width: 1920, height: 1080, supersample: 1, runs: 3 })).burst
+    }
+    await composeRow(path.join(outDir, 'scatter-cache.png'), [
+      { image: direct, caption: 'slow layer at every pixel' },
+      { image: cached, caption: 'from a 128 px cache' },
+    ])
+    record(
+      'scatter cache: an unblurred source at the size the recipe picks gives back the layer, the same at every output size',
+      vsDirect.mean < 0.002 && vsLarge.mean < 0.001,
+      `128 px cache vs every pixel: mean ${vsDirect.mean.toFixed(4)} p95 ${vsDirect.p95.toFixed(4)}; 925 px vs 3840 px shrunk: mean ${vsLarge.mean.toFixed(4)}; ` +
+        `1920x1080 1x back to back: ${timing['test.cache.direct'].toFixed(1)} ms at every pixel, ${timing['test.cache'].toFixed(1)} ms cached; images in scatter-cache.png`,
+    )
   }
 
   if (wanted('export') && Object.keys(recipeErrors).length > 0) {

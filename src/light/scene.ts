@@ -238,6 +238,16 @@ export type PostPass =
 export interface ScatterBlur {
   source: 'radiance' | 'aux'
   radius: (ctx: RecipeContext) => number
+  /**
+   * Short side in pixels for this entry's source, instead of the working size
+   * the other entries share. Like that size it does not depend on the output
+   * size, so previews and exports read the same light. A sized source takes
+   * one sample per texel, so it suits layers that are smooth at that size;
+   * with radius 0 it is not blurred at all: an expensive layer (a sky, a haze)
+   * rendered once at low resolution and read back in `combine`, with a cubic
+   * filter. 8 to 2048.
+   */
+  size?: (ctx: RecipeContext) => number
 }
 
 export const MAX_SCATTER_BLURS = 4

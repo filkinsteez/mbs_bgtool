@@ -170,6 +170,45 @@ vec3 radiance(vec2 uv, vec2 p) {
   }),
 }
 
+// A smooth layer made slow on purpose: 160 long waves, the kind of sky a recipe would rather render once.
+const SLOW_LAYER_GLSL = /* glsl */ `
+vec3 slowLayer(vec2 p) {
+  float s = 0.0;
+  for (int i = 0; i < 160; i++) {
+    float a = float(i) * 2.399;
+    s += sin((0.6 + 0.015 * float(i)) * (p.x * cos(a) + p.y * sin(a)) + float(i)) / 160.0;
+  }
+  return vec3(0.35 + 2.0 * s, 0.25 + 1.5 * s, 0.6 - 1.2 * s);
+}
+`
+
+/** The slow layer through an unblurred scatter cache at `size` px on the short side, read back in combine. */
+export const cacheProgram: RecipeProgram = {
+  id: 'test.cache',
+  colorSlots: [],
+  defaultColors: [],
+  params: [{ kind: 'number', key: 'size', label: 'Cache short side', min: 8, max: 2048, step: 1, default: 128 }],
+  fragment:
+    SLOW_LAYER_GLSL +
+    /* glsl */ `
+vec3 radiance(vec2 uv, vec2 p) { return vec3(0.0); }
+vec3 auxRadiance(vec2 uv, vec2 p) { return slowLayer(p); }
+vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 cached) { return light + cached; }
+`,
+  uniforms: () => ({}),
+  scatter: [{ source: 'aux', radius: () => 0, size: (ctx) => ctx.num('size') }],
+}
+
+/** The same slow layer evaluated at every pixel. */
+export const cacheDirectProgram: RecipeProgram = {
+  id: 'test.cache.direct',
+  colorSlots: [],
+  defaultColors: [],
+  params: [],
+  fragment: SLOW_LAYER_GLSL + /* glsl */ `vec3 radiance(vec2 uv, vec2 p) { return slowLayer(p); }\n`,
+  uniforms: () => ({}),
+}
+
 /** Rows of the dim-light sheet: a warm pack color as light over a base (a dark pack color, a dim Meta Blue, or black). */
 export const DIM_ROWS = [
   { light: '#FFD61E', base: '#000000', baseLevel: 0 },
@@ -431,6 +470,8 @@ export const TEST_PROGRAMS: Record<string, RecipeProgram> = {
   [glowsProgram.id]: glowsProgram,
   [toneTiesProgram.id]: toneTiesProgram,
   [dimRampsProgram.id]: dimRampsProgram,
+  [cacheProgram.id]: cacheProgram,
+  [cacheDirectProgram.id]: cacheDirectProgram,
   [scatterProgram.id]: scatterProgram,
   [scatterFlatProgram.id]: scatterFlatProgram,
   [postProgram.id]: postProgram,
