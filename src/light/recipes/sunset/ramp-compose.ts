@@ -187,6 +187,10 @@ interface PackLook {
   landLit: number
   /** A dark band low in the sky in front of the glow, in a dark pack color, with its gain. */
   dusk: Tone | null
+  /** Height in short sides of a far bank of land on the water's horizon, in the land's colors (0: none). */
+  bank: number
+  /** Strength of the sun's path on water, the glow mirrored down toward the viewer. */
+  sunPath: number
   /** How much the glow's haze hides the sky behind it. */
   extinction: number
 }
@@ -221,6 +225,8 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, ra
     landHaze: 0.75,
     landLit: 0.5,
     dusk: null as Tone | null,
+    bank: 0,
+    sunPath: 0.85,
     extinction: 1.2,
     glowUp: 1,
     glowRise: 1,
@@ -258,7 +264,9 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, ra
       // the two meet; the glow's dense haze hides the sky behind it. Water is nearly a mirror over
       // dark blue: seen through Plum, the mirrored Tan and cream turn mauve and grey, the blue violet.
       // Deepened, Tan turns brown, so it barely deepens toward the horizon or away from the sun.
-      return { ...sky, ...dark, extinction: 3, glowUp: 0.5, glowRise: 0.4, horizonGain: 0.42, landHaze: 0.05, landLit: 0.25, light: tan, coreColor: tan, glow: 1.6, path: [0.1, 0.1, 0.4], hue: [-0.3, 0.1], bridge: 1.8, bridgeLift: 0.5, bridgeWarmth: 1, bridgeFloor: 0.1, haze: 0.8, sideDeeper: 0, waterDegrees: [1, 1.5], waterMirror: 1, ...dusk([plum, 1.0]) }
+      // Water has a far bank of Forest or Plum land on its horizon.
+      const bank = structure === 'water' ? { bank: 0.17, ...(pickLight < 0.5 ? { landTop: [forest, 1.8] as Tone, landBottom: [forest, 1.0] as Tone } : {}) } : {}
+      return { ...sky, ...dark, ...bank, extinction: 3, glowUp: 0.5, glowRise: 0.4, horizonGain: 0.42, landHaze: 0.05, landLit: 0.25, light: tan, coreColor: tan, glow: 1.6, path: [0.1, 0.1, 0.4], hue: [-0.3, 0.1], bridge: 1.8, bridgeLift: 0.5, bridgeWarmth: 1, bridgeFloor: 0.1, haze: 0.8, sideDeeper: 0, waterDegrees: [1, 1.5], waterMirror: 1, ...dusk([plum, 1.0]) }
     }
     case 'atmospheric': {
       const [ice, steel, slate, nearBlack] = rest
@@ -344,6 +352,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const patchPick = random()
   const crestPick = random()
   const duskPick = random()
+  const bankPick = random()
 
   // Open skies keep their horizon just below the frame; over the control's whole range the Horizon
   // control raises their brightest band from the bottom edge to mid-frame. Water and land put the
@@ -419,8 +428,9 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     }
   }
   floor = Math.max(floor, look.minFloor)
-  // An open sky with a dusk band raises its glow, leaving the band room under it.
-  if (look.dusk) bandAt -= 0.12
+  // An open sky with a dusk band raises its glow, leaving the band room under it; a corner's glow
+  // sits lower, so it rises more.
+  if (look.dusk) bandAt -= structure === 'corner' ? 0.22 : 0.12
   const sunX = sunRight ? 1 - sunIn : sunIn
   const turn = (tilt * Math.PI) / 180
 
@@ -444,13 +454,15 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const lineOf = (x: number) => outlineAt(outline, half, x, seed)
   let lowest = -Infinity
   for (let i = 0; i <= 32; i++) lowest = Math.max(lowest, lineOf(-half + (i / 32) * frameWidth))
+  // A far bank on the water's line; it lowers as a high line leaves less sky above it.
+  const bankHeight = water ? look.bank * lerp(0.8, 1.3, bankPick) * clamp01((lineAt + 0.5 * tall) / 0.6) : 0
 
-  // The ramp's anchor: just below the frame for open skies, on the water's line, or just under the
-  // land's lowest point, where the sky behind it meets its own horizon.
+  // The ramp's anchor: just below the frame for open skies, on the water's line or near the top of
+  // its far bank, or just under the land's lowest point, where the sky behind it meets its own horizon.
   const anchorX = arcs ? (sunX - 0.5) * frameWidth : 0
   // The bend is set by how far the farther side edge drops.
   const drop = dome * (half / (half + Math.abs(anchorX))) ** 2
-  const anchorY = !ground ? anchorBelow(frame, { anchorX, turn, drop }, 0.02) : land ? lowest + 0.03 : lineAt
+  const anchorY = !ground ? anchorBelow(frame, { anchorX, turn, drop }, 0.02) : land ? lowest + 0.03 : lineAt - 1.2 * bankHeight
   const horizonY = anchorY / tall + 0.5
   const axis: RampAxis = { anchorX, anchorY, turn, drop }
   const skyHeight = Math.max(0.2, horizonY * tall)
@@ -554,10 +566,16 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // The dusk band's edge sits just under the glow's line, hiding the glow's lower part; the band is
   // the sky's own light, so it gains with daylight like the low sky. Its edge is about as soft as
   // land's: the lens softens it, and a wider one mixes the two sides into a third hue.
+  // The sky's lowest edge moves up out of the band's way, as far as the top fifth allows.
   if (look.dusk) {
-    const [lastAt, lastWidth] = edges[edges.length - 1]
+    const last = edges[edges.length - 1]
     const duskWidth = 0.04 * Math.sqrt(haze) * skyScale
-    edges.push([Math.max(-lerp(0.75, 0.9, duskPick) * glowRise, lastAt + 0.3 * (lastWidth + duskWidth)), duskWidth])
+    const duskAt = -lerp(0.75, 0.9, duskPick) * glowRise
+    const margin = 0.3 * (last[1] + duskWidth)
+    const above = edges.length > 1 ? edges[edges.length - 2] : null
+    const ceiling = Math.max(-(topHeight - 0.2 * tall - tail * last[1]), above ? above[0] + 0.3 * (above[1] + last[1]) : -Infinity)
+    last[0] = Math.min(last[0], Math.max(ceiling, duskAt - margin))
+    edges.push([Math.max(duskAt, last[0] + margin), duskWidth])
     gains.push(look.dusk[1] * lowGain)
   }
   const stopParams: Record<string, number> = {}
@@ -654,11 +672,14 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     groundTilt: (Math.atan(outline.slope) * 180) / Math.PI,
     groundWave: outline.wave,
     ridge: [outline.rise, outline.toward, outline.bowl, outline.waveLength],
+    shore: [bankHeight, 0.5],
+    // The path mirrors the glow's line, which sits above most of the far bank.
+    sunPath: [water ? look.sunPath : 0, 0.02, 0.45, glowRise + 1.2 * bankHeight],
     // The strip under the line is thin and bright, so it still shows after the lens.
     water: [1.25, lerp(look.waterDegrees[0], look.waterDegrees[1], ridgePick), 0.12, 1.5],
     waterMirror: water ? look.waterMirror : 1,
     groundHaze: [look.landHaze, (land ? 0.1 : 0.05) * tall],
-    landLit: [ground ? look.landLit : 0, lerp(0.3, 0.5, widthPick) * frameWidth],
+    landLit: [ground ? look.landLit : 0, lerp(0.3, 0.5, widthPick) * frameWidth, land ? 0.35 : 0],
     groundTopGain: look.landTop[1] * groundGain,
     groundBottomGain: look.landBottom[1] * groundGain,
     waterGain: look.water[1] * groundGain,
