@@ -272,11 +272,16 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, va
     case 'atmospheric': {
       const [ice, steel, slate, nearBlack] = rest
       // Ice makes a white spot wherever its light is concentrated, so it gets no sun glow and a wide, flat band.
-      const dark = { landTop: [steel, 0.75] as Tone, landBottom: darkAlt ? ([nearBlack, 1.0] as Tone) : ([slate, 1.0] as Tone), water: [slate, 1.2] as Tone }
+      // Each variant shows the greys in its own shares: a bright band over light Steel ground and
+      // water, a dim band under a Steel low sky over Slate and Near-black, or a band over dark ground.
+      const grounds: { landTop: Tone; landBottom: Tone; water: Tone }[] = [
+        { landTop: [steel, 1.0], landBottom: [slate, 1.0], water: [steel, 1.0] },
+        { landTop: [steel, 0.75], landBottom: [nearBlack, 1.0], water: [slate, 1.2] },
+        { landTop: [slate, 1.0], landBottom: darkAlt ? [nearBlack, 1.0] : [slate, 0.7], water: [nearBlack, 1.5] },
+      ]
       // The band is bright enough near its line to read as Ice; under it the light fades to Steel,
       // and open skies end in a Slate dusk band.
-      // Each variant has its own band: bright, dim under a Steel low sky, or between.
-      return { ...sky, ...dark, ...(variant === 1 ? { lowSky: steel } : {}), lowSkyGain: 1.2, horizonGain: 0.5, light: ice, coreColor: ice, glow: 0.62 * [1.2, 0.85, 1][variant], path: [0, 0, 0], hue: [0, 0], bridge: 0.3, haze: 0.8, downReach: 0.8, sideDeeper: 0, sunGlow: 0, core: 0, minFloor: 0.5, minLift: 0.08, ...(ground ? {} : { dusk: [slate, 1.0] as Tone, downReach: 0.45 }) }
+      return { ...sky, ...grounds[variant], ...(variant === 1 ? { lowSky: steel } : {}), lowSkyGain: 1.2, horizonGain: 0.5, light: ice, coreColor: ice, glow: 0.62 * [1.3, 0.85, 1][variant], path: [0, 0, 0], hue: [0, 0], bridge: 0.3, haze: 0.8, downReach: 0.8, sideDeeper: 0, sunGlow: 0, core: 0, minFloor: 0.5, minLift: 0.08, ...(ground ? {} : { dusk: [slate, 1.0] as Tone, downReach: 0.45 }) }
     }
     default: {
       const unknown: never = packId
