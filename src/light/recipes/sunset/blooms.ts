@@ -230,8 +230,11 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
   const slot = (index: number) => colors[clamp(Math.round(index), 0, SLOT_COUNT - 1)]
   const sky = colors[SLOT.sky]
   const skyPale = skyPaleTint(sky)
+  const deep = slot(layout.zenith.color)
+  const deepHue = luminance(deep) > 1e-5 ? scale(deep, 1 / luminance(deep)) : skyPale
   const glowColor: number[] = []
   const glowTail: number[] = []
+  const glowDeepTail: number[] = []
   const glowShape: number[] = []
   const glowAxis: number[] = []
   const glowEdge: number[] = []
@@ -249,6 +252,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     if (!glow) {
       glowColor.push(0, 0, 0)
       glowTail.push(0, 0, 0)
+      glowDeepTail.push(0, 0, 0)
       glowShape.push(0, 0, 2, 0)
       glowAxis.push(1, 0, 1, 1)
       glowEdge.push(0, 1, 0, 0)
@@ -268,10 +272,11 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     const y = luminance(light) * gain
     const tailShare = bridgeGate(sky, light)
     glowTail.push(...light.map((c, ch) => c * gain * (1 - tailShare) + skyPale[ch] * y * tailShare))
+    glowDeepTail.push(...scale(deepHue, y))
     glowShape.push(glow.at[0], glow.at[1], glow.beta, haze)
     glowAxis.push(...axis(glow.radius * reach, glow.aniso, glow.angle))
     glowEdge.push(glow.vary, 1.15, 1.7 * i + 0.3, front)
-    glowDeepFade.push(deepFade(sky, slot(layout.zenith.color), light))
+    glowDeepFade.push(deepFade(sky, deep, light))
     const tint = bridgeTint(light)
     const amount = front * layout.bridge * bridgeLight(sky, light, tint, haze, intensity, skyGain, gain)
     glowBridge.push(...scale(tint, amount))
@@ -290,6 +295,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     uGlowCount: layout.glows.length,
     uGlowColor: glowColor,
     uGlowTail: glowTail,
+    uGlowDeepTail: glowDeepTail,
     uGlowDeepFade: glowDeepFade,
     uGlowShape: glowShape,
     uGlowAxis: glowAxis,
@@ -355,7 +361,8 @@ uniform float uZenithLobeFalloff[LOBES];
 uniform int uGlowCount;
 uniform vec3 uGlowColor[GLOW_COUNT];
 uniform vec3 uGlowTail[GLOW_COUNT];   // color of the faint outer light
-uniform float uGlowDeepFade[GLOW_COUNT]; // how much the glow fades over the deepened sky
+uniform vec3 uGlowDeepTail[GLOW_COUNT]; // the same light in the deep color's hue
+uniform float uGlowDeepFade[GLOW_COUNT]; // how far the glow's hue is from the deepened sky's, 0..1
 uniform vec4 uGlowShape[GLOW_COUNT];  // center (frame fractions), falloff exponent, haze
 uniform vec4 uGlowAxis[GLOW_COUNT];   // cos, sin, 1 / long radius, 1 / short radius
 uniform vec4 uGlowEdge[GLOW_COUNT];   // edge variation, its frequency, its phase, in front 0..1
@@ -462,7 +469,6 @@ vec3 radiance(vec2 uv, vec2 p) {
   }
   float z = min(1.0, uZenithShape.z * bloom(P, warp, (uZenithShape.xy - 0.5) * frame, uZenithAxis, vec2(shortUnit), uZenithShape.w, vec3(0.5, 1.1, 2.3), 0.0, 9, 0.0, lobe, falloff));
   vec3 sky = mix(uSky, uDeep, z);
-  float deepArea = z * z;
   // The sky keeps changing up to the top edge: it is its exact hex along a mid-sky line (tilted, and
   // bent by the shared warp) and above it gets darker without changing hue. It also varies slowly
   // in brightness, with the hex at the mean.
@@ -491,15 +497,18 @@ vec3 radiance(vec2 uv, vec2 p) {
   vec3 bridge = vec3(0.0);
   for (int i = 0; i < GLOW_COUNT; i++) {
     if (i >= uGlowCount) break;
-    // Where the sky is deep, light that would grey it dims as the sky does, so dim warm light never
-    // lingers over a dark area as grey-brown; light of the deep area's own hue stays and deepens it.
-    float ill = mix(1.0, uDeepLight, deepArea * uGlowDeepFade[i]) * mix(1.0, topLight, uGlowDeepFade[i]);
-    vec3 light = mix(uGlowTail[i], uGlowColor[i], smoothstep(0.05, 0.4, k[i])) * (k[i] * ill);
+    // Over a deep area, the faint light of a glow of another hue takes the deep area's hue at the
+    // same luminance, so it lightens the dark area in its own color instead of greying it (a sunset's
+    // outer light turns violet and blue the same way). The pale bridge light dims there instead.
+    float far = z * z * z * uGlowDeepFade[i];
+    float ill = mix(1.0, topLight, uGlowDeepFade[i]);
+    vec3 tail = mix(uGlowTail[i], uGlowDeepTail[i], far);
+    vec3 light = mix(tail, uGlowColor[i], smoothstep(0.05, 0.4, k[i])) * (k[i] * ill);
     float f = uGlowEdge[i].w;
     behind += (1.0 - f) * light;
     front += f * light;
     lit += f * k[i];
-    bridge += uGlowBridge[i] * (k[i] * ill);
+    bridge += uGlowBridge[i] * (k[i] * ill * mix(1.0, uDeepLight, far));
   }
   // Pale light where the glows and the sky weigh about the same, reaching further out on the sky
   // side, where faint warm light over blue would read as a lavender ring; zero at both ends, and

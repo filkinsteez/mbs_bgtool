@@ -65,11 +65,11 @@ function balancePoint(haze: number): number {
 }
 
 /**
- * How much a glow's light fades over the deepened sky, 0..1: 1 for light
- * that would grey it (a hue far from the deep area's, or near-neutral
- * light), 0 for light of the deep area's own hue, which only deepens its
- * color. The deep area's color is the sky three quarters of the way to the
- * deep color.
+ * How far a glow's light is from the deepened sky, 0..1: 1 for light that
+ * would grey it (a hue far from the deep area's, or near-neutral light), 0
+ * for light of the deep area's own hue, which only deepens its color. Over
+ * the deep area, the faint part of far light takes the deep hue. The deep
+ * area's color is the sky three quarters of the way to the deep color.
  */
 export function deepFade(sky: Rgb, deep: Rgb, glow: Rgb): number {
   const area: Rgb = [0.25 * sky[0] + 0.75 * deep[0], 0.25 * sky[1] + 0.75 * deep[1], 0.25 * sky[2] + 0.75 * deep[2]]
