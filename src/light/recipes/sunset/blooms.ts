@@ -62,6 +62,10 @@ const PARAMS: readonly ParamSpec[] = [
   num('warp', 'Warp', 0, 0.3, 0.002, 0.07),
   num('warpScale', 'Warp scale', 0.2, 4, 0.05, 1.1),
   num('bridge', 'Bridge', 0, 3, 0.01, 1),
+  num('skyTop', 'Sky stops darker at the top', 0, 3, 0.01, 0),
+  num('skyMid', 'Sky exact hex height', 0, 1, 0.005, 0.5),
+  num('skyTilt', 'Sky darkening tilt', -1, 1, 0.005, 0),
+  num('skyVary', 'Sky light variation', 0, 0.1, 0.001, 0),
 ]
 
 function readLayout(ctx: RecipeContext): BloomsLayout {
@@ -94,6 +98,7 @@ function readLayout(ctx: RecipeContext): BloomsLayout {
       amount: ctx.num('zenithAmount'),
       falloff: ctx.num('zenithFalloff'),
     },
+    sky: { top: ctx.num('skyTop'), mid: ctx.num('skyMid'), tilt: ctx.num('skyTilt'), vary: ctx.num('skyVary') },
     warp: ctx.num('warp'),
     warpScale: ctx.num('warpScale'),
     bridge: ctx.num('bridge'),
@@ -113,6 +118,10 @@ function layoutParams(layout: BloomsLayout): Record<string, ParamValue> {
     zenithAngle: layout.zenith.angle,
     zenithAmount: layout.zenith.amount,
     zenithFalloff: layout.zenith.falloff,
+    skyTop: layout.sky.top,
+    skyMid: layout.sky.mid,
+    skyTilt: layout.sky.tilt,
+    skyVary: layout.sky.vary,
     warp: layout.warp,
     warpScale: layout.warpScale,
     bridge: layout.bridge,
@@ -185,6 +194,8 @@ function inFront(haze: number): number {
 
 /** Share of the glow's extra lightness above the default Intensity that its bridge light may follow. */
 const BRIDGE_RISE = 0.3
+/** Highest Oklab L a bridge aims for, so the bridge to a very light glow (Lime) stays pale and colored, not white. */
+const BRIDGE_MAX_L = 0.9
 
 /**
  * Bridge light for one glow, per unit of its tint, solved at this Intensity's
@@ -196,8 +207,8 @@ function bridgeLight(sky: Rgb, light: Rgb, tint: Rgb, haze: number, intensity: n
   const lighter = (s: Rgb, g: Rgb) => Math.max(linearToOklab(s)[0], linearToOklab(g)[0])
   const litSky = scale(sky, skyGain)
   const litGlow = scale(light, glowGain)
-  if (intensity <= 0.5) return bridgeAmount(litSky, litGlow, tint, haze)
-  const atDefault = lighter(sky, light)
+  if (intensity <= 0.5) return bridgeAmount(litSky, litGlow, tint, haze, BRIDGE_MAX_L)
+  const atDefault = Math.min(lighter(sky, light), BRIDGE_MAX_L)
   const maxL = atDefault + BRIDGE_RISE * Math.max(0, lighter(litSky, litGlow) - atDefault)
   return bridgeAmount(litSky, litGlow, tint, haze, maxL)
 }
@@ -271,6 +282,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     uSky: scale(sky, skyGain),
     uDeep: scale(slot(z.color), skyGain),
     uDeepLight: clamp(luminance(slot(z.color)) / Math.max(luminance(sky), 1e-4), 0, 1),
+    uSkyRamp: [layout.sky.top, layout.sky.mid, layout.sky.tilt, layout.sky.vary],
     uZenithShape: [z.at[0], z.at[1], clamp(z.amount, 0, 1), z.falloff],
     uZenithAxis: axis(z.radius, z.aniso, z.angle),
     uZenithLobe: zenithLobes.shape,
@@ -335,6 +347,7 @@ export const sunsetBlooms: RecipeDefinition = {
 uniform vec3 uSky;
 uniform vec3 uDeep;
 uniform float uDeepLight;             // luminance of the deep color over the sky's, 0..1
+uniform vec4 uSkyRamp;                // stops darker at the top, height of the exact hex, tilt, light variation
 uniform vec4 uZenithShape;           // center (frame fractions), amount, falloff exponent
 uniform vec4 uZenithAxis;            // cos, sin, 1 / long radius, 1 / short radius
 uniform vec4 uZenithLobe[LOBES];     // offset along and across (in radii), 1 / size, weight
@@ -450,6 +463,13 @@ vec3 radiance(vec2 uv, vec2 p) {
   float z = min(1.0, uZenithShape.z * bloom(P, warp, (uZenithShape.xy - 0.5) * frame, uZenithAxis, vec2(shortUnit), uZenithShape.w, vec3(0.5, 1.1, 2.3), 0.0, 9, 0.0, lobe, falloff));
   vec3 sky = mix(uSky, uDeep, z);
   float deepArea = z * z;
+  // The sky keeps changing up to the top edge: it is its exact hex along a mid-sky line (tilted, and
+  // bent by the shared warp) and above it gets darker without changing hue. It also varies slowly
+  // in brightness, with the hex at the mean.
+  float vSky = uv.y + uSkyRamp.z * (uv.x - 0.5) + warp.y / frame.y;
+  float above = clamp((uSkyRamp.y - vSky) / max(uSkyRamp.y, 0.05), 0.0, 1.0);
+  float topLight = exp2(-uSkyRamp.x * pow(above, 1.4));
+  sky *= topLight * exp(uSkyRamp.w * 3.0 * noise2x2(P * 2.6 + vec2(7.1, 2.3), uSeed + 23).x);
 
   float k[GLOW_COUNT];
   float ext = 0.0;
@@ -473,7 +493,7 @@ vec3 radiance(vec2 uv, vec2 p) {
     if (i >= uGlowCount) break;
     // Where the sky is deep, light that would grey it dims as the sky does, so dim warm light never
     // lingers over a dark area as grey-brown; light of the deep area's own hue stays and deepens it.
-    float ill = mix(1.0, uDeepLight, deepArea * uGlowDeepFade[i]);
+    float ill = mix(1.0, uDeepLight, deepArea * uGlowDeepFade[i]) * mix(1.0, topLight, uGlowDeepFade[i]);
     vec3 light = mix(uGlowTail[i], uGlowColor[i], smoothstep(0.05, 0.4, k[i])) * (k[i] * ill);
     float f = uGlowEdge[i].w;
     behind += (1.0 - f) * light;

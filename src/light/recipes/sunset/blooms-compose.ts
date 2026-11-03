@@ -40,9 +40,24 @@ export interface ZenithSpec {
   falloff: number
 }
 
+/**
+ * The sky above mid-sky. It is its exact hex at frame height `mid` and gets
+ * `top` stops darker toward the top edge, without changing hue; `tilt` (frame
+ * heights per frame width) lowers that line on one side, so the side away
+ * from the light is deeper. `vary` is slow light variation over the whole sky
+ * (one standard deviation, a share of luminance) with the hex at its mean.
+ */
+export interface SkySpec {
+  top: number
+  mid: number
+  tilt: number
+  vary: number
+}
+
 export interface BloomsLayout {
   glows: GlowSpec[]
   zenith: ZenithSpec
+  sky: SkySpec
   /** Domain warp: amount in units of sqrt(width * height), and frequency in cycles per unit. */
   warp: number
   warpScale: number
@@ -84,6 +99,12 @@ export function lightGain(c: Rgb): number {
 export function isGreen(c: Rgb): boolean {
   const [, chroma, hue] = linearToOklch(c)
   return chroma > 0.04 && hue > 105 && hue < 200
+}
+
+/** Cyan-like light; along the bottom edge it reads as a horizon, so it comes from a side. */
+function isCyan(c: Rgb): boolean {
+  const [, chroma, hue] = linearToOklch(c)
+  return chroma > 0.04 && hue >= 200 && hue < 250
 }
 
 function hashSeed(seed: number): number {
@@ -138,7 +159,7 @@ function pickLead(colors: readonly Rgb[], u: number): { lead: number; other: num
   if (warmA !== warmB) {
     const warm = warmA ? a : b
     const cool = warmA ? b : a
-    const coolOdds = isGreen(colors[cool]) ? 0.3 : 0.45
+    const coolOdds = isGreen(colors[cool]) ? 0.25 : 0.35
     return u < 1 - coolOdds ? { lead: warm, other: cool } : { lead: cool, other: warm }
   }
   const lighter = luminance(colors[a]) >= luminance(colors[b]) ? a : b
@@ -148,22 +169,25 @@ function pickLead(colors: readonly Rgb[], u: number): { lead: number; other: num
 
 /**
  * The pack composition: one dominant light from off-frame (below the bottom
- * edge, beyond a lower corner, or beyond a side), up to three more glows on
- * the same horizon (a smaller lobe of the same light, a second light of the
- * same color on the other side, a weaker light of the other color or a paler
- * patch of sky at the far edge), and the sky deepening in the corner away
- * from the light. Seeds pick the kind, side, height, sizes, glow count and
- * which light leads; Softness widens and softens; Rise lifts the light.
- * A cool lead never gets a warm light on the far side: that would be a
- * second light direction.
+ * edge, beyond a lower corner, or beyond a side; cyan only from a side), a
+ * fainter and wider bloom higher on the same side with its center inside the
+ * frame, and sometimes a second light of the same color, a weaker light of
+ * the other color or a paler patch of sky on the far side, or a smaller lobe
+ * of the lead. The sky is its exact hex in mid-sky and darkens toward the
+ * top edge, most in the corner away from the light. Seeds pick the kind,
+ * side, height, sizes, glow count and which light leads; Softness widens and
+ * softens; Rise lifts the light. A cool lead never gets a warm light: that
+ * would be a second light direction.
  */
 export function composeLayout(colors: readonly Rgb[], seed: number, controls: BloomsControls): BloomsLayout {
   const r = random(seed)
   const soft = clamp(controls.softness, 0, 1)
   const rise = clamp(controls.rise, 0, 1)
-  const kind = pick(KINDS, r())
-  const side = r() < 0.5 ? -1 : 1
   const { lead, other } = pickLead(colors, r())
+  // A cyan light along the bottom edge reads as a horizon (a sea), so it comes from a side, higher up.
+  const cyanLead = isCyan(colors[lead])
+  const kind: Kind = cyanLead ? 'side' : pick(KINDS, r())
+  const side = r() < 0.5 ? -1 : 1
 
   // Softness changes how the light falls off, not how far it reaches: the radius is scaled so the
   // half-brightness extent stays put while the tail gets longer. Rise lifts and widens the light.
@@ -192,10 +216,15 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
       aniso = lerp(3.9, 4.9, r())
       break
     case 'side':
-      at = [0.5 + side * (lerp(0.7, 0.58, rise) + lerp(0, 0.05, r())), lerp(0.94, 0.66, rise) + lerp(-0.1, 0.08, r())]
-      tilt = lerp(-3, 7, r())
+      at = [
+        0.5 + side * (lerp(0.7, 0.58, rise) + lerp(0, 0.05, r())),
+        cyanLead ? lerp(0.72, 0.5, rise) + lerp(-0.06, 0.06, r()) : lerp(0.94, 0.66, rise) + lerp(-0.1, 0.08, r()),
+      ]
+      // A cyan light from a side comes in on a slant and rounder, so in a narrow frame it does not
+      // cross the whole width as a band.
+      tilt = cyanLead ? lerp(18, 32, r()) : lerp(-3, 7, r())
       radius = lerp(0.52, 0.62, r())
-      aniso = lerp(3.8, 4.8, r())
+      aniso = cyanLead ? lerp(2.6, 3.4, r()) : lerp(3.8, 4.8, r())
       break
     case 'pair':
       at = [0.5 + side * lerp(0.22, 0.34, r()), Math.max(1.01, lerp(1.15, 1.0, rise) + lerp(-0.02, 0.02, r()))]
@@ -234,26 +263,25 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     })
   }
 
-  // Near the light: a smaller, weaker lobe of the same light further along the same edge
-  // (at a side light, in the bottom corner below it), so the light is not one ellipse.
-  if (r() < 0.45) {
-    const lobeAt: [number, number] =
-      kind === 'side'
-        ? [0.5 + side * lerp(0.3, 0.46, r()), lerp(1.06, 1.14, r())]
-        : [at[0] - side * lerp(0.3, 0.42, r()), Math.max(1.03, at[1] + lerp(0.03, 0.08, r()))]
-    glows.push({
-      color: lead,
-      at: lobeAt,
-      radius: radius * lerp(0.5, 0.68, r()),
-      aniso: lerp(3.8, 5.2, r()),
-      angle: angle + lerp(-10, 10, r()),
-      gain: leadGain * lerp(0.35, 0.55, r()),
-      beta,
-      haze: lerp(0.6, 1.0, r()),
-      vary: lerp(0.4, 0.8, r()),
-      bend: bend(),
-    })
-  }
+  // Higher on the same side, a fainter and wider bloom with its center inside the frame, so the
+  // light is a few blooms at different heights and sizes, not one glow on an edge. It changes the
+  // sky's color more than its brightness where a light can do that faintly: a cyan light (the lead
+  // or the other one). Otherwise it is a slightly paler patch of sky: faint green or grey light
+  // over blue turns grey-teal or grey, and a warm bloom above a cool light would be a second
+  // light direction.
+  const innerColor = isCyan(colors[lead]) ? lead : isCyan(colors[other]) ? other : SLOT.sky
+  glows.push({
+    color: innerColor,
+    at: [0.5 + side * lerp(0.05, 0.3, r()), lerp(0.42, 0.28, rise) + lerp(-0.05, 0.05, r())],
+    radius: radius * lerp(0.9, 1.15, r()),
+    aniso: lerp(2.8, 3.8, r()),
+    angle: -side * lerp(-4, 12, r()),
+    gain: innerColor === SLOT.sky ? lerp(0.25, 0.4, r()) : lightGain(colors[innerColor]) * lerp(0.16, 0.28, r()),
+    beta: beta * lerp(0.75, 0.9, r()),
+    haze: 0,
+    vary: lerp(0.4, 0.8, r()),
+    bend: bend(),
+  })
 
   // The far edge: a smaller light of the other color, or a paler patch of sky, with blue sky
   // between it and the lead. It sits on the opposite side, clearly higher than the lead; when the
@@ -261,7 +289,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // A dim green light over the blue turns grey-teal, so a green far light becomes a paler patch of sky.
   const coolLeadWarmOther = !isWarm(colors[lead]) && isWarm(colors[other])
   const far = pick<'none' | 'other' | 'sky'>(
-    coolLeadWarmOther ? [['none', 0.45], ['sky', 0.55]] : [['none', 0.25], ['other', 0.55], ['sky', 0.2]],
+    coolLeadWarmOther ? [['none', 0.55], ['sky', 0.45]] : [['none', 0.4], ['other', 0.4], ['sky', 0.2]],
     r(),
   )
   if (far !== 'none' && glows.length < GLOW_COUNT) {
@@ -304,8 +332,38 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     }
   }
 
-  // The sky deepens broadly toward the top, most in the upper corner away from the light
-  // (for a pair, either one). It lies along the top edge so it never parallels a tilted glow.
+  // Near the light: a smaller, weaker lobe of the same light further along the same edge
+  // (at a side light, in the bottom corner below it), so the light is not one ellipse. A cyan
+  // light gets none, since that would put cyan on the bottom edge.
+  if (!cyanLead && r() < 0.3) {
+    const lobeAt: [number, number] =
+      kind === 'side'
+        ? [0.5 + side * lerp(0.3, 0.46, r()), lerp(1.06, 1.14, r())]
+        : [at[0] - side * lerp(0.3, 0.42, r()), Math.max(1.03, at[1] + lerp(0.03, 0.08, r()))]
+    glows.push({
+      color: lead,
+      at: lobeAt,
+      radius: radius * lerp(0.5, 0.68, r()),
+      aniso: lerp(3.8, 5.2, r()),
+      angle: angle + lerp(-10, 10, r()),
+      gain: leadGain * lerp(0.35, 0.55, r()),
+      beta,
+      haze: lerp(0.6, 1.0, r()),
+      vary: lerp(0.4, 0.8, r()),
+      bend: bend(),
+    })
+  }
+
+  // The sky keeps changing up to the top edge: its exact hex sits in mid-sky and above it the
+  // sky gets 1 to 1.5 stops darker, deeper on the side away from the light, and it varies
+  // slowly by about 4 % everywhere. The darkest corner, away from the light (for a pair,
+  // either one), deepens a little more.
+  const sky: SkySpec = {
+    top: lerp(1.0, 1.5, r()),
+    mid: lerp(0.52, 0.38, rise) + lerp(-0.05, 0.05, r()),
+    tilt: side * lerp(0.15, 0.35, r()),
+    vary: lerp(0.03, 0.05, r()),
+  }
   const deep = r() < 0.5 ? SLOT.deep1 : SLOT.deep2
   const zSide = kind === 'pair' ? (r() < 0.5 ? -1 : 1) : -side
   const zenith: ZenithSpec = {
@@ -314,13 +372,14 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     radius: lerp(0.48, 0.64, r()) * lerp(0.92, 1.12, soft),
     aniso: lerp(1.5, 2.1, r()),
     angle: lerp(-8, 8, r()),
-    amount: lerp(0.32, 0.5, r()),
+    amount: lerp(0.18, 0.32, r()),
     falloff: 2.2,
   }
 
   return {
     glows: glows.slice(0, GLOW_COUNT),
     zenith,
+    sky,
     warp: lerp(0.05, 0.085, r()),
     warpScale: lerp(0.9, 1.35, r()),
     bridge: lerp(0.85, 1.2, soft),
