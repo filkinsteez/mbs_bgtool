@@ -57,7 +57,7 @@ const PARAMS: readonly ParamSpec[] = [
   num('zenithRadius', 'Zenith radius', 0.1, 3, 0.005, 0.48),
   num('zenithAniso', 'Zenith width / height', 1, 8, 0.05, 1.9),
   num('zenithAngle', 'Zenith tilt', -60, 60, 0.5, -16),
-  num('zenithAmount', 'Zenith amount', 0, 1, 0.01, 0.6),
+  num('zenithAmount', 'Zenith amount', 0, 2, 0.01, 0.6),
   num('zenithFalloff', 'Zenith falloff', 1, 5, 0.01, 2.6),
   num('warp', 'Warp', 0, 0.3, 0.002, 0.07),
   num('warpScale', 'Warp scale', 0.2, 4, 0.05, 1.1),
@@ -192,16 +192,20 @@ function inFront(haze: number): number {
   return t * t * (3 - 2 * t)
 }
 
-/** Share of the glow's extra lightness above the default Intensity that its bridge light may follow. */
-const BRIDGE_RISE = 0.3
+/**
+ * Share of the glow's extra lightness above the default Intensity that its bridge light may follow.
+ * None: a bridge as light as the whitening core reads as a white rim around it.
+ */
+const BRIDGE_RISE = 0
 /** Highest Oklab L a bridge aims for, so the bridge to a very light glow (Lime) stays pale and colored, not white. */
 const BRIDGE_MAX_L = 0.9
 
 /**
  * Bridge light for one glow, per unit of its tint, solved at this Intensity's
  * sky and glow, so the blend stays pale on a dusk sky too. Above the default
- * Intensity the blend midpoint gets only a share of the extra lightness, so
- * the bridge stays pale and colored and only the glow core goes white.
+ * Intensity the blend midpoint gets at most BRIDGE_RISE of the extra
+ * lightness, so the bridge stays pale and colored and only the glow core goes
+ * white.
  */
 function bridgeLight(sky: Rgb, light: Rgb, tint: Rgb, haze: number, intensity: number, skyGain: number, glowGain: number): number {
   const lighter = (s: Rgb, g: Rgb) => Math.max(linearToOklab(s)[0], linearToOklab(g)[0])
@@ -227,6 +231,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
   const lightGain = 2 ** ((intensity - 0.5) * (intensity < 0.5 ? 0.5 : 0.8))
   const reach = 1 - 0.14 * Math.max(0, 1 - 2 * intensity) - 0.08 * Math.max(0, 2 * intensity - 1)
   const depth = 1 + 0.8 * Math.max(0, 0.5 - intensity)
+  const paleLight = 1 - 0.45 * Math.max(0, 2 * intensity - 1)
   const slot = (index: number) => colors[clamp(Math.round(index), 0, SLOT_COUNT - 1)]
   const sky = colors[SLOT.sky]
   const skyPale = skyPaleTint(sky)
@@ -265,14 +270,19 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     const light = scale(isWarm(base) ? deepen(base, depth) : base, glow.gain)
     // A glow's haze may hide at most as much sky light as the glow itself adds, so haze does not darken
     // the frame; only below the glow's center, where the light crosses more air, it hides a little more.
-    const haze = Math.min(glow.haze, luminance(light) / Math.max(luminance(sky), 1e-4))
+    // Both at this Intensity's gains: with more daylight the sky gains more than the glows, and a core
+    // whose haze hid more sky than it adds would sit darker than its own rim. A light brighter than the
+    // sky may hide all of it; a dimmer one only as much as it adds: 1 - exp(-haze) <= its share.
     const front = inFront(glow.haze)
     const gain = skyGain + (lightGain - skyGain) * front
+    const share = (luminance(light) * gain) / Math.max(luminance(sky) * skyGain, 1e-4)
+    const haze = share >= 0.99 ? glow.haze : Math.min(glow.haze, -Math.log(1 - share))
     glowColor.push(...scale(light, gain))
     // Where the sky still shows through, the light of a glow whose hue is far from the sky's (or of
     // near-white light) pales the sky without turning its hue, at the same luminance, so a warm or
-    // white glow meets blue through pale blue, not a lavender ring.
-    const y = luminance(light) * gain
+    // white glow meets blue through pale blue, not a lavender ring. Above the default Intensity the
+    // sky is already light there, and that much pale light would whiten into a rim around the core.
+    const y = luminance(light) * gain * paleLight
     const tailShare = otherHue(sky, light)
     glowTail.push(...light.map((c, ch) => c * gain * (1 - tailShare) + skyPale[ch] * y * tailShare))
     glowLow.push(...scale(deepMember(light), gain))
@@ -291,7 +301,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     uSky: scale(sky, skyGain),
     uDeep: scale(slot(z.color), skyGain),
     uSkyRamp: [layout.sky.top, layout.sky.mid, layout.sky.tilt, layout.sky.vary],
-    uZenithShape: [z.at[0], z.at[1], clamp(z.amount, 0, 1), z.falloff],
+    uZenithShape: [z.at[0], z.at[1], clamp(z.amount, 0, 2), z.falloff],
     uZenithAxis: axis(z.radius, z.aniso, z.angle),
     uZenithLobe: zenithLobes.shape,
     uZenithLobeFalloff: zenithLobes.falloff,
@@ -312,19 +322,23 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
   }
 }
 
+/** Pack colors darker than this Oklab L are grounds the sky deepens toward, not lights. */
+const DARK_L = 0.45
+
 /**
- * The colors by role: Meta Blue for the sky, and the two lightest other
- * colors as lights. The sky deepens toward no light (black), so it gets
- * darker without changing hue; the pack's dark colors are not lights and do
- * not tint the sky.
+ * The colors by role: Meta Blue for the sky, the pack's dark colors (in pack
+ * order) as the colors the sky deepens toward, and the two lightest other
+ * colors as lights. A pack with no dark colors deepens toward no light
+ * (black), so its sky only gets darker.
  */
 function rolesFromPack(pack: ColorPack): string[] {
   const [sky, ...rest] = pack.colors.map((c) => c.hex)
   const lightness = (hex: string) => linearToOklab(hexToLinear(hex))[0]
-  const byLightness = [...rest].sort((a, b) => lightness(a) - lightness(b))
-  const light1 = byLightness[byLightness.length - 1] ?? sky
-  const light2 = byLightness[byLightness.length - 2] ?? light1
-  return [sky, NO_LIGHT, NO_LIGHT, light1, light2]
+  const dark = rest.filter((hex) => lightness(hex) < DARK_L)
+  const lights = rest.filter((hex) => lightness(hex) >= DARK_L).sort((a, b) => lightness(b) - lightness(a))
+  const light1 = lights[0] ?? sky
+  const light2 = lights[1] ?? light1
+  return [sky, dark[0] ?? NO_LIGHT, dark[1] ?? dark[0] ?? NO_LIGHT, light1, light2]
 }
 
 /**
@@ -477,8 +491,9 @@ vec3 radiance(vec2 uv, vec2 p) {
   float z = min(1.0, uZenithShape.z * bloom(P, warp, (uZenithShape.xy - 0.5) * frame, uZenithAxis, vec2(shortUnit), uZenithShape.w, vec3(0.5, 1.1, 2.3), 0.0, 9, shortUnit, lobe, falloff));
   vec3 sky = mix(uSky, uDeep, z);
   // The sky keeps changing up to the top edge: it is its exact hex along a mid-sky line (tilted, and
-  // bent by the shared warp) and above it gets darker without changing hue. It also varies slowly
-  // in brightness, with the hex at the mean.
+  // bent by the shared warp) and above it gets darker without changing hue; a dark pack color comes in
+  // only where it is already dark, so blue and it meet without a lighter purple or teal band between.
+  // It also varies slowly in brightness, with the hex at the mean.
   float vSky = uv.y + uSkyRamp.z * (uv.x - 0.5) + warp.y / frame.y;
   // The line drifts like a glow edge, on the field row after the deep area's, and its lighter and
   // darker levels drift apart, so the darker top has no ruled edge and no parallel steps.
