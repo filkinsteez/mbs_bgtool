@@ -378,7 +378,8 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   keepThick(bands, R0, frameW, frameH, edgeSeed(seed))
 
   // Softness and Horizon move and resize the seed's bands. Every band is at least as tall as the lens rule asks
-  // (2 lens radii, 3.2 for a band darker than both neighbours); the height above that is spare. Horizon moves
+  // (2 lens radii, 3.2 for a band darker than both neighbours) and at least an eighth of the frame, so that in a
+  // tall frame its color still shows after the lens; the height above that is spare. Horizon moves
   // spare height between the last band (land, or the band running off the frame) and the bands above it: none
   // for the last band at 0, the seed's own share at 0.5, all of it at 1. A lens wider than the middle one raises
   // every least height, and the spare height shrinks; when none is left, all bands shrink together. Edges
@@ -386,7 +387,7 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   const least = (r: number) =>
     list.map((e, i) => {
       const darker = i > 0 && i < n - 1 && shown(e) < Math.min(shown(list[i - 1]), shown(list[i + 1])) - 0.1
-      return ((darker ? 3.2 : 2) * r) / frameH
+      return Math.max(((darker ? 3.2 : 2) * r) / frameH, 0.125)
     })
   const was = list.map((_, i) => (i + 1 < n ? tops[i + 1] : 1) - tops[i])
   const leastSeed = least(R0)
