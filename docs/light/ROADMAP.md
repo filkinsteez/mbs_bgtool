@@ -13,7 +13,7 @@ We are replacing the old app with a tool that makes background images out of sim
 | 3. Contour 1:1 | Six Contour references recreated from light parameters | planned |
 | 4. Production recipes | Pack-colored recipes on three sliders plus seed, and a preset library | planned |
 | 5. The app | The tool non-designers use: Role → Mood → Recipe → Filter → Intensity/Softness → Export | planned |
-| 6. Filters | Grain, then ASCII, then Pixel | planned |
+| 6. Filters | Grain, then Riso, then ASCII (Pixel dropped for now) | researched |
 | 7. Warp Speed | The third mood | later |
 
 ## How an image is made
@@ -179,11 +179,18 @@ Risks: there is no list of roles yet. Preview speed at 2x on laptops. Export mem
 
 ## Phase 6: filters
 
-Deliverables, in this order:
+Deliverables, in this order. The owner asked on 2026-11-02 for grain, risograph and ASCII, kept simple, with the light staying the focus. The research is in [`research/filters.md`](research/filters.md) (f389655, sheets in `prototypes/filters-research/results/`).
 
-1. Grain, settled first: fine film grain at 1 to 2 percent, added at output size so it never scales with the image, stronger or weaker with brightness, doubling as dither. Off by default until settled.
-2. ASCII: the render redrawn as a character grid, pack-colored text on the dark base.
-3. Pixel: the render quantized to a coarse grid like an LED wall seen up close, with low contrast.
+1. Grain, settled first: fine film grain at 1 to 2 percent, added at output size so it never scales with the image, stronger or weaker with brightness, doubling as dither. Off by default until settled. The engine's `grain.ts` already does this; it needs the strength slider in the tool.
+2. Riso: the same grain pass with its coarse riso-end settings at every strength, so strength 1 looks like the moodboard prints. No ink separation, dot screens or misregistration; at our export sizes riso dots are smaller than a pixel.
+3. ASCII: one character per cell, 64 rows on the short side, each pixel keeping its own color. A cell's bright part (the character in dark cells, the background in bright cells) and dim part are weighted so the cell's average light is unchanged. Characters are picked by density only, mixed between neighbours so rows of the same character don't form stripes over a vertical gradient. Strength sets contrast only. The 5×7 pixel font needs no asset. Contour's near-black base and the hottest cores stay free of characters.
+4. Pixel: dropped for now. Flat cells turn thin lines into rows of squares, and keeping each pixel's own color still reads as a grid. It can come back as a setting of the ASCII cell pass.
+
+Defaults chosen by the coordinator (easy to reverse; the owner decides at the filter checkpoint):
+- Grain stops at fine film grain, and the coarse end belongs to Riso.
+- ASCII keeps the exact mean color, so text is dark over Sunset skies and light over Contour's dark base.
+- The filter and its strength go in the URL and the file name next to the seed.
+- Open for the owner when ASCII is built: whether ASCII is offered on Contour, given the brief's "not a science-fiction interface" rule.
 
 The owner sees: each filter at strength 0, 50 and 100 on each mood, plus 4K crops.
 
