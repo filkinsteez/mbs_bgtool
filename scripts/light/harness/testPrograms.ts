@@ -1,6 +1,6 @@
 import { packHexes, PACKS } from '../../../src/light/color/packs'
 import { hexToLinear } from '../../../src/light/color/srgb'
-import type { RecipeProgram } from '../../../src/light/scene'
+import type { RecipeContext, RecipeProgram, ScatterBlur } from '../../../src/light/scene'
 
 /** A flat field of one color at a given gain. */
 export const flatProgram: RecipeProgram = {
@@ -207,6 +207,79 @@ export const cacheDirectProgram: RecipeProgram = {
   params: [],
   fragment: SLOW_LAYER_GLSL + /* glsl */ `vec3 radiance(vec2 uv, vec2 p) { return slowLayer(p); }\n`,
   uniforms: () => ({}),
+}
+
+/** Lens radius range for the scatter lens checks (Sunset's Softness range) and its default. */
+export const LENS_TEST_RADII = [0.045, 0.0825, 0.12]
+
+// Sharp bands for the lens: wavy outlines, a Yellow band exactly 3 R tall from y = 0.06, a thin Ice line in the sky.
+const LENS_BANDS_GLSL = /* glsl */ `
+uniform float uLensR;
+uniform vec3 uMetaBlue;
+uniform vec3 uCyan;
+uniform vec3 uYellow;
+uniform vec3 uOrangeRed;
+uniform vec3 uIce;
+vec3 lensBands(vec2 p) {
+  float top = -0.24 + 0.04 * sin(4.3 * p.x + 0.7) + 0.012 * sin(11.0 * p.x - 0.3);
+  float mid = -0.02 + 0.03 * sin(2.9 * p.x - 1.1);
+  float bandBottom = 0.06 + 3.0 * uLensR;
+  vec3 c = p.y < top ? uMetaBlue : p.y < mid ? uCyan : p.y < 0.06 ? uOrangeRed : p.y < bandBottom ? uYellow : 0.5 * uMetaBlue;
+  if (p.y < top && abs(p.y + 0.36 - 0.25 * p.x) < 0.003) c = uIce;
+  return c;
+}
+`
+
+const lensBandsUniforms = (ctx: RecipeContext) => ({
+  uLensR: ctx.num('R'),
+  uMetaBlue: hexToLinear('#0064E0'),
+  uCyan: hexToLinear('#1FCDF0'),
+  uYellow: hexToLinear('#FFD61E'),
+  uOrangeRed: hexToLinear('#FF4F00'),
+  uIce: hexToLinear('#F2F4F7'),
+})
+
+const lensParams: RecipeProgram['params'] = [{ kind: 'number', key: 'R', label: 'Lens radius', min: 0.01, max: 0.2, step: 0.0005, default: 0.0825 }]
+
+/** The sharp band scene through a scatter entry (or none), whose result combine returns as the whole frame. */
+function lensBandsProgram(id: string, blur: ScatterBlur | null, radiance = 'lensBands(p)', combine = 'blurred0'): RecipeProgram {
+  return {
+    id,
+    colorSlots: [],
+    defaultColors: [],
+    params: lensParams,
+    fragment:
+      SLOW_LAYER_GLSL +
+      LENS_BANDS_GLSL +
+      `vec3 radiance(vec2 uv, vec2 p) { return ${radiance}; }\n` +
+      (blur ? `vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 blurred0) { return ${combine}; }\n` : ''),
+    uniforms: lensBandsUniforms,
+    ...(blur ? { scatter: [blur] } : {}),
+  }
+}
+
+const lensEntry: ScatterBlur = { source: 'radiance', radius: (ctx) => ctx.num('R'), shape: 'lens' }
+export const lensBandsSharp = lensBandsProgram('test.scatterlens.none', null)
+export const lensBandsGauss = lensBandsProgram('test.scatterlens.gauss', { source: 'radiance', radius: (ctx) => 0.53 * ctx.num('R') })
+export const lensBandsLens = lensBandsProgram('test.scatterlens', lensEntry)
+/** The same lens over a slow scene; combine reads only the lens, then also the unblurred scene at every pixel. */
+export const lensBandsSlow = lensBandsProgram('test.scatterlens.slow', lensEntry, 'lensBands(p) + 0.001 * slowLayer(p)')
+export const lensBandsSlowLight = lensBandsProgram('test.scatterlens.slow.light', lensEntry, 'lensBands(p) + 0.001 * slowLayer(p)', 'blurred0 + 0.001 * light')
+
+/** A horizontal edge through the middle (Yellow above Meta Blue) through the lens, for its 10-90 width. */
+export const lensEdge: RecipeProgram = {
+  id: 'test.scatterlens.edge',
+  colorSlots: [],
+  defaultColors: [],
+  params: lensParams,
+  fragment: /* glsl */ `
+uniform vec3 uYellow;
+uniform vec3 uMetaBlue;
+vec3 radiance(vec2 uv, vec2 p) { return p.y < 0.0 ? uYellow : uMetaBlue; }
+vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 blurred0) { return blurred0; }
+`,
+  uniforms: () => ({ uYellow: hexToLinear('#FFD61E'), uMetaBlue: hexToLinear('#0064E0') }),
+  scatter: [lensEntry],
 }
 
 /** Rows of the dim-light sheet: a warm pack color as light over a base (a dark pack color, a dim Meta Blue, or black). */
@@ -472,6 +545,12 @@ export const TEST_PROGRAMS: Record<string, RecipeProgram> = {
   [dimRampsProgram.id]: dimRampsProgram,
   [cacheProgram.id]: cacheProgram,
   [cacheDirectProgram.id]: cacheDirectProgram,
+  [lensBandsSharp.id]: lensBandsSharp,
+  [lensBandsGauss.id]: lensBandsGauss,
+  [lensBandsLens.id]: lensBandsLens,
+  [lensBandsSlow.id]: lensBandsSlow,
+  [lensBandsSlowLight.id]: lensBandsSlowLight,
+  [lensEdge.id]: lensEdge,
   [scatterProgram.id]: scatterProgram,
   [scatterFlatProgram.id]: scatterFlatProgram,
   [postProgram.id]: postProgram,

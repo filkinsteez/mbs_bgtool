@@ -140,6 +140,52 @@ void main() {
 }
 `
 
+/** The out-of-focus lens of ScatterBlur shape 'lens': rim share, horizontal stretch, and grid texels per radius. */
+export const LENS_RIM = 0.35
+export const LENS_STRETCH = 1.1
+export const LENS_GRID_TEXELS = 6
+
+const LENS_GATHER_SHADER =
+  GLSL_HEADER +
+  /* glsl */ `
+uniform sampler2D uSrc;
+uniform float uRadius;
+uniform int uReach;
+out vec4 fragColor;
+// (1 - rim) of a disc of radius uRadius texels, with a one-texel rim, plus rim of a gaussian of sigma uRadius / 2;
+// both stretched horizontally, each normalized by its area, the sum by the taps actually taken. Edges repeat.
+void main() {
+  ivec2 size = textureSize(uSrc, 0);
+  ivec2 px = ivec2(gl_FragCoord.xy);
+  float sigma = 0.5 * uRadius;
+  float discArea = 3.14159265 * uRadius * uRadius * ${LENS_STRETCH.toFixed(2)};
+  float gaussArea = 6.28318531 * sigma * sigma * ${LENS_STRETCH.toFixed(2)};
+  vec4 sum = vec4(0.0);
+  float total = 0.0;
+  for (int dy = -uReach; dy <= uReach; dy++) {
+    for (int dx = -uReach; dx <= uReach; dx++) {
+      float ex = float(dx) / ${LENS_STRETCH.toFixed(2)};
+      float d = sqrt(ex * ex + float(dy * dy));
+      float w = ${(1 - LENS_RIM).toFixed(2)} * clamp(uRadius + 0.5 - d, 0.0, 1.0) / discArea
+              + ${LENS_RIM.toFixed(2)} * exp(-d * d / (2.0 * sigma * sigma)) / gaussArea;
+      sum += w * texelFetch(uSrc, clamp(px + ivec2(dx, dy), ivec2(0), size - 1), 0);
+      total += w;
+    }
+  }
+  fragColor = sum / total;
+}
+`
+
+/** The lens (see LENS_GATHER_SHADER) over `input`, radius in its texels, at its size; caller releases the result. */
+export function lensGather(gpu: Gpu, input: Target, radius: number): Target {
+  const out = gpu.acquire(input.width, input.height)
+  gpu.draw(gpu.program(LENS_GATHER_SHADER), out, {
+    textures: { uSrc: input },
+    uniforms: { uRadius: radius, uReach: Math.ceil(1.5 * radius * LENS_STRETCH) + 2 },
+  })
+  return out
+}
+
 const PAD_SHADER =
   GLSL_HEADER +
   /* glsl */ `

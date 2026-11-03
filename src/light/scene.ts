@@ -257,6 +257,19 @@ export interface ScatterBlur {
    * filter. 8 to 2048.
    */
   size?: (ctx: RecipeContext) => number
+  /**
+   * 'gaussian' (the default) blurs with a gaussian of sigma `radius`.
+   * 'lens' is one out-of-focus lens: `radius` is the disc radius R in
+   * short-side units (Sunset uses 0.045 to 0.12), and the kernel is 65 % a
+   * disc of radius R plus 35 % a gaussian of sigma R / 2, 10 % wider than
+   * tall, in linear light. It is gathered on a grid where R is about 6
+   * texels, 16 samples per texel so sharp outlines do not alias, and read
+   * back with a cubic filter. Edges come out about 1.37 R wide (10 to 90 %,
+   * across a horizontal edge), and a band needs about 3 R to keep its exact
+   * color in the middle. The grid follows R, not the output size. `size` does
+   * not apply.
+   */
+  shape?: 'gaussian' | 'lens'
 }
 
 export const MAX_SCATTER_BLURS = 4

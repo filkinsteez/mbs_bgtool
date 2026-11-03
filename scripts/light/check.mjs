@@ -1,5 +1,5 @@
 // Engine checks in the real browser. Writes images to artifacts/light-check/ and prints a pass/fail table.
-// Usage: node scripts/light/check.mjs [--only hex,determinism,resolution,banding,tone,grain,scatter,speed,context,export,aspect,lens] [--out dir]
+// Usage: node scripts/light/check.mjs [--only hex,determinism,resolution,banding,tone,grain,scatter,lensscatter,speed,context,export,aspect,lens] [--out dir]
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
@@ -7,6 +7,7 @@ import { list, parseArgs } from './lib/args.mjs'
 import { ROOT, startHarness } from './lib/harness.mjs'
 import { composeRow, cropRgba, loadRgba, resizeRgba, savePng, zoom } from './lib/images.mjs'
 import { loadReferences } from './lib/references.mjs'
+import { lensBlur, lensKernel } from '../../prototypes/organic-principle/lib/lens.mjs'
 
 const args = parseArgs()
 const only = new Set(list(args.only))
@@ -34,6 +35,76 @@ function oklabLightness(image, linearToOklab) {
     out[p] = linearToOklab([SRGB_TO_LINEAR[image.data[p * 4]], SRGB_TO_LINEAR[image.data[p * 4 + 1]], SRGB_TO_LINEAR[image.data[p * 4 + 2]]])[0]
   }
   return out
+}
+
+/** Linear RGB planes ({ w, h, r, g, b }, as the organic-principle prototype uses them) of an RGBA8 image. */
+function linearPlanes(image) {
+  const n = image.width * image.height
+  const out = { w: image.width, h: image.height, r: new Float32Array(n), g: new Float32Array(n), b: new Float32Array(n) }
+  for (let p = 0; p < n; p++) {
+    out.r[p] = SRGB_TO_LINEAR[image.data[p * 4]]
+    out.g[p] = SRGB_TO_LINEAR[image.data[p * 4 + 1]]
+    out.b[p] = SRGB_TO_LINEAR[image.data[p * 4 + 2]]
+  }
+  return out
+}
+
+/** Planes reshaped pixel by pixel: `at(x, y)` gives the source index for each output pixel. */
+function remapPlanes(img, w, h, at) {
+  const out = { w, h, r: new Float32Array(w * h), g: new Float32Array(w * h), b: new Float32Array(w * h) }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const s = at(x, y)
+      out.r[y * w + x] = img.r[s]
+      out.g[y * w + x] = img.g[s]
+      out.b[y * w + x] = img.b[s]
+    }
+  }
+  return out
+}
+
+/** Averages factor x factor blocks. */
+function boxDown(img, factor) {
+  const w = Math.floor(img.w / factor)
+  const h = Math.floor(img.h / factor)
+  const out = { w, h, r: new Float32Array(w * h), g: new Float32Array(w * h), b: new Float32Array(w * h) }
+  for (let y = 0; y < h * factor; y++) {
+    for (let x = 0; x < w * factor; x++) {
+      const o = Math.floor(y / factor) * w + Math.floor(x / factor)
+      const s = y * img.w + x
+      out.r[o] += img.r[s] / (factor * factor)
+      out.g[o] += img.g[s] / (factor * factor)
+      out.b[o] += img.b[s] / (factor * factor)
+    }
+  }
+  return out
+}
+
+/** RGBA8 image (sRGB, rounded) from linear planes. */
+function rgbaFromPlanes(img, linearToSrgb) {
+  const data = new Uint8Array(img.w * img.h * 4)
+  for (let p = 0; p < img.w * img.h; p++) {
+    data[p * 4] = Math.round(Math.min(1, Math.max(0, linearToSrgb(img.r[p]))) * 255)
+    data[p * 4 + 1] = Math.round(Math.min(1, Math.max(0, linearToSrgb(img.g[p]))) * 255)
+    data[p * 4 + 2] = Math.round(Math.min(1, Math.max(0, linearToSrgb(img.b[p]))) * 255)
+    data[p * 4 + 3] = 255
+  }
+  return { width: img.w, height: img.h, data }
+}
+
+/** Mean and largest per-pixel Oklab ΔE between two RGBA8 images of one size. */
+function pixelDeltaE(a, b, linearToOklab) {
+  let sum = 0
+  let max = 0
+  const n = a.width * a.height
+  for (let p = 0; p < n; p++) {
+    const la = linearToOklab([0, 1, 2].map((k) => SRGB_TO_LINEAR[a.data[p * 4 + k]]))
+    const lb = linearToOklab([0, 1, 2].map((k) => SRGB_TO_LINEAR[b.data[p * 4 + k]]))
+    const d = Math.hypot(la[0] - lb[0], la[1] - lb[1], la[2] - lb[2])
+    sum += d
+    max = Math.max(max, d)
+  }
+  return { mean: sum / n, max }
 }
 
 /** Standard deviation of values minus their (2r+1)^2 box mean, over pixels whose whole box is inside. */
@@ -445,6 +516,125 @@ try {
       `128 px cache vs every pixel: mean ${vsDirect.mean.toFixed(4)} p95 ${vsDirect.p95.toFixed(4)}; 925 px vs 3840 px shrunk: mean ${vsLarge.mean.toFixed(4)}; ` +
         `1920x1080 1x back to back: ${timing['test.cache.direct'].toFixed(1)} ms at every pixel, ${timing['test.cache'].toFixed(1)} ms cached; images in scatter-cache.png`,
     )
+  }
+
+  if (wanted('lensscatter')) {
+    const still = { lens: noLens, output: { grain: 0 } }
+    const sceneFor = (program, R) => ({ program, params: { R }, ...still })
+    const LENS = { rim: 0.35, stretch: 1.1 }
+    // The prototype's lens over padded planes, the frame's edge pixels repeated outward as the engine's scatter does.
+    const cpuBlur = (planes, radiusPx) => {
+      const pad = Math.ceil(1.5 * radiusPx * LENS.stretch) + 4
+      const clampAt = (v, n) => Math.min(n - 1, Math.max(0, v - pad))
+      const padded = remapPlanes(planes, planes.w + 2 * pad, planes.h + 2 * pad, (x, y) => clampAt(y, planes.h) * planes.w + clampAt(x, planes.w))
+      const blurred = lensBlur(padded, radiusPx, LENS)
+      return remapPlanes(blurred, planes.w, planes.h, (x, y) => (y + pad) * blurred.w + x + pad)
+    }
+    // CPU reference: the sharp scene rendered 4x larger at one sample per pixel and averaged 4 x 4 (16 samples a pixel).
+    const cpuLens = async (R, size) => {
+      const big = await harness.render({ scene: sceneFor('test.scatterlens.none', R), width: size.width * 4, height: size.height * 4, supersample: 1, dither: false })
+      return rgbaFromPlanes(cpuBlur(boxDown(linearPlanes(big), 4), R * Math.min(size.width, size.height)), linearToSrgb)
+    }
+    const { LENS_TEST_RADII } = await harness.ssr('/scripts/light/harness/testPrograms.ts')
+    const frames = { '16x9': { width: 640, height: 360 }, '9x16': { width: 360, height: 640 } }
+    const vsCpu = []
+    for (const R of LENS_TEST_RADII) {
+      for (const [name, size] of Object.entries(frames)) {
+        const gpu = await harness.render({ scene: sceneFor('test.scatterlens', R), ...size, dither: false })
+        const cpu = await cpuLens(R, size)
+        vsCpu.push({ R, name, ...pixelDeltaE(gpu, cpu, linearToOklab) })
+        if (R === 0.0825) {
+          await composeRow(path.join(outDir, `lens-scatter-${name}.png`), [
+            { image: await harness.render({ scene: sceneFor('test.scatterlens.none', R), ...size, dither: false }), caption: `sharp scene ${name}` },
+            { image: await harness.render({ scene: sceneFor('test.scatterlens.gauss', R), ...size, dither: false }), caption: 'gaussian sigma 0.53 R' },
+            { image: gpu, caption: `lens R ${R}, engine` },
+            { image: cpu, caption: 'lens, CPU prototype' },
+          ])
+        }
+      }
+    }
+    // 10-90 width of a horizontal edge, from the green channel of the middle column (linear).
+    const edgeWidth = (planes) => {
+      const x = Math.floor(planes.w / 2)
+      const column = Array.from({ length: planes.h }, (_, y) => planes.g[y * planes.w + x])
+      const first = column[Math.floor(planes.h * 0.05)]
+      const last = column[Math.floor(planes.h * 0.95)]
+      const crossing = (share) => {
+        const target = first + (last - first) * share
+        for (let y = 1; y < planes.h; y++) {
+          const a = column[y - 1]
+          const b = column[y]
+          if ((a - target) * (b - target) <= 0 && a !== b) return y - 1 + (target - a) / (b - a)
+        }
+        return Number.NaN
+      }
+      return Math.abs(crossing(0.9) - crossing(0.1))
+    }
+    // The prototype kernel's own 10-90 width across a horizontal edge: the share of its rows above each offset.
+    const cpuEdgeWidth = (radiusPx) => {
+      const kernel = lensKernel(radiusPx, LENS)
+      const reach = Math.ceil(1.5 * radiusPx * LENS.stretch) + 2
+      const rows = []
+      for (let dy = -reach; dy <= reach; dy++) {
+        let sum = 0
+        for (let dx = -reach; dx <= reach; dx++) sum += kernel(dx, dy)
+        rows.push(sum)
+      }
+      const total = rows.reduce((a, b) => a + b, 0)
+      let running = 0
+      const shares = rows.map((v) => (running += v / total))
+      const crossing = (share) => {
+        for (let i = 1; i < shares.length; i++) if (shares[i - 1] < share && shares[i] >= share) return i - 1 + (share - shares[i - 1]) / (shares[i] - shares[i - 1])
+        return Number.NaN
+      }
+      return crossing(0.9) - crossing(0.1)
+    }
+    const edgeFrame = { width: 1920, height: 1080 }
+    const edges = []
+    const bands = []
+    for (const R of LENS_TEST_RADII) {
+      const shortPx = R * edgeFrame.height
+      const gpuEdge = await harness.render({ scene: sceneFor('test.scatterlens.edge', R), ...edgeFrame, dither: false })
+      edges.push({ R, gpu: edgeWidth(linearPlanes(gpuEdge)) / shortPx, cpu: cpuEdgeWidth(shortPx) / shortPx })
+      const lensed = await harness.render({ scene: sceneFor('test.scatterlens', R), ...edgeFrame, dither: false })
+      const y = Math.round((0.5 + 0.06 + 1.5 * R) * edgeFrame.height - 0.5)
+      const i = (y * edgeFrame.width + edgeFrame.width / 2) * 4
+      const got = [lensed.data[i], lensed.data[i + 1], lensed.data[i + 2]]
+      bands.push({ R, got, off: Math.max(...hexToBytes('#FFD61E').map((v, k) => Math.abs(v - got[k]))) })
+    }
+    const small = await harness.render({ scene: sceneFor('test.scatterlens', 0.0825), width: 925, height: 1002, dither: false })
+    const large = await harness.render({ scene: sceneFor('test.scatterlens', 0.0825), width: 3546, height: 3840, dither: false })
+    const sizes = compareImages(small, await resizeRgba(large, 925, 1002, 'lanczos3'), buildMask(925, 1002, [], 0)).metrics.deltaE
+    const hex = (bytes) => `#${bytes.map((v) => v.toString(16).padStart(2, '0')).join('').toUpperCase()}`
+    record(
+      'scatter lens: matches the CPU prototype',
+      vsCpu.every((row) => row.mean * 100 <= 1),
+      vsCpu.map((row) => `R ${row.R} ${row.name}: mean ΔE×100 ${(row.mean * 100).toFixed(2)}, max ${(row.max * 100).toFixed(1)}`).join('; ') + '; sheets lens-scatter-16x9.png, lens-scatter-9x16.png',
+    )
+    record(
+      'scatter lens: a horizontal edge is about 1.37 R wide (10 to 90 %)',
+      edges.every((row) => Math.abs(row.gpu / row.cpu - 1) < 0.08 && row.gpu > 1.2 && row.gpu < 1.55),
+      edges.map((row) => `R ${row.R}: ${row.gpu.toFixed(3)} R (CPU ${row.cpu.toFixed(3)} R)`).join('; '),
+    )
+    record(
+      'scatter lens: a band 3 R tall keeps its exact color in the middle',
+      bands.every((row) => row.off <= 1),
+      bands.map((row) => `R ${row.R}: ${hex(row.got)} for #FFD61E`).join('; '),
+    )
+    record('scatter lens: 925 px and 3840 px renders match', sizes.mean < 0.004 && sizes.p95 < 0.01, `R 0.0825: mean ${sizes.mean.toFixed(4)} p95 ${sizes.p95.toFixed(4)}`)
+    // Cost: the cheap scene, a slow scene that combine reads only through the lens, and the slow scene read at every pixel too.
+    const timings = []
+    for (const R of LENS_TEST_RADII) {
+      const profiled = async (program) => harness.call('profile', { scene: sceneFor(program, R), width: 1920, height: 1080, supersample: 1, runs: 3 })
+      const exportMs = async (program) => (await harness.call('measure', { scene: sceneFor(program, R), width: 3840, height: 2160, supersample: 2 })).measured
+      const [cheap, slow, slowLight] = [await profiled('test.scatterlens'), await profiled('test.scatterlens.slow'), await profiled('test.scatterlens.slow.light')]
+      const split = (p) => `sources ${(p.stages['scatter sources'] ?? 0).toFixed(1)}, lens ${(p.stages['scatter blurs'] ?? 0).toFixed(1)}, composite ${(p.stages.composite ?? 0).toFixed(1)}`
+      timings.push(
+        `R ${R}: 1080p ${cheap.burst.toFixed(1)} ms [${split(cheap)}], slow scene ${slow.burst.toFixed(1)} [${split(slow)}], slow scene also read at every pixel ${slowLight.burst.toFixed(1)} [${split(slowLight)}]; ` +
+          `4K export render ${(await exportMs('test.scatterlens')).toFixed(0)} ms (slow scene ${(await exportMs('test.scatterlens.slow')).toFixed(0)})`,
+      )
+    }
+    record('scatter lens timings written', true, timings.join('; '))
   }
 
   if (wanted('export') && Object.keys(recipeErrors).length > 0) {

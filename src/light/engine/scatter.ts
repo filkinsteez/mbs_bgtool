@@ -1,6 +1,6 @@
 import { MAX_SCATTER_BLURS, type RecipeContext, type RecipeProgram, type ScatterBlur, type UniformMap } from '../scene'
 import { LightEngineError, type Gpu, type Target } from './gl'
-import { blurLevel, edgeLevel, halve, halvings, samplingLevel, type Halvings } from './passes'
+import { AREA_RESAMPLE_SHADER, blurLevel, edgeLevel, halve, halvings, LENS_GRID_TEXELS, lensGather, samplingLevel, type Halvings } from './passes'
 import { NO_PROFILE, type Profiler } from './profile'
 import { buildRecipeShader } from './recipeShader'
 
@@ -16,6 +16,12 @@ const MAX_SHORT_SIDE = 1024
 const MIN_SIZED_SIDE = 8
 const MAX_SIZED_SIDE = 2048
 
+/**
+ * A lens source renders this many pixels per grid texel along each axis, one sample each, and is averaged down
+ * to the grid: 16 samples per texel for sharp outlines, spread over enough pixels to keep the GPU busy.
+ */
+const LENS_SOURCE_SCALE = 4
+
 /** One source render: which light, at which short side, with how many samples per texel axis. */
 interface SourceSpec {
   key: string
@@ -24,6 +30,8 @@ interface SourceSpec {
   width: number
   height: number
   subsamples: number
+  /** For a lens entry: the grid the source is averaged down to before the gather. */
+  grid?: { short: number; width: number; height: number }
 }
 
 export type EngineUniforms = (width: number, height: number, origin: number[], pixel: number, subsamples: number) => UniformMap
@@ -56,7 +64,9 @@ export function runScatter(
     if (!Number.isFinite(radius) || radius < 0) throw new LightEngineError(`${program.id} scatter radius ${radius} is not a finite number >= 0.`)
     return radius
   })
-  const sized = blurs.map((blur) => {
+  const lens = blurs.map((blur, i) => blur.shape === 'lens' && radii[i] > 0)
+  const sized = blurs.map((blur, i) => {
+    if (lens[i]) return Math.min(MAX_SIZED_SIDE, Math.max(MIN_SIZED_SIDE, Math.ceil(LENS_GRID_TEXELS / radii[i])))
     if (!blur.size) return null
     const asked = blur.size(ctx)
     if (!Number.isFinite(asked) || asked <= 0) throw new LightEngineError(`${program.id} scatter size ${asked} is not a finite number > 0.`)
@@ -74,9 +84,13 @@ export function runScatter(
     height: Math.max(1, Math.round((renderHeight * short) / renderShort)),
     subsamples,
   })
-  const specs = blurs.map((blur, i) => {
+  const specs = blurs.map((blur, i): SourceSpec => {
     const size = sized[i]
-    return size === null ? spec(blur.source, sharedShort, renderShort > sharedShort ? 2 : 1) : spec(blur.source, size, 1)
+    if (size === null) return spec(blur.source, sharedShort, renderShort > sharedShort ? 2 : 1)
+    if (!lens[i]) return spec(blur.source, size, 1)
+    const grid = spec(blur.source, size, 1)
+    const s = LENS_SOURCE_SCALE
+    return { key: `${blur.source} lens ${size}`, kind: blur.source, short: s * size, width: s * grid.width, height: s * grid.height, subsamples: 1, grid }
   })
 
   const sources = new Map<string, Target>()
@@ -111,7 +125,7 @@ export function runScatter(
     const deepest = new Map<number, number>()
     blurs.forEach((_, i) => {
       const plan = plans[i]
-      if (specs[i].key === key && plan.blur > 0.05 && plan.level > 0) deepest.set(plan.edge, Math.max(deepest.get(plan.edge) ?? 0, plan.level))
+      if (specs[i].key === key && !lens[i] && plan.blur > 0.05 && plan.level > 0) deepest.set(plan.edge, Math.max(deepest.get(plan.edge) ?? 0, plan.level))
     })
     const chains = new Map<number, Halvings>()
     blurs.forEach((_, i) => {
@@ -119,7 +133,16 @@ export function runScatter(
       const plan = plans[i]
       let target = source
       let uvMap: readonly number[] = IDENTITY_MAP
-      if (plan.blur > 0.05 && plan.level === 0) {
+      const grid = specs[i].grid
+      if (lens[i] && grid) {
+        const averaged = gpu.acquire(grid.width, grid.height)
+        gpu.draw(gpu.program(AREA_RESAMPLE_SHADER), averaged, {
+          textures: { uSrc: source },
+          uniforms: { uDstSize: [grid.width, grid.height], uTaps: LENS_SOURCE_SCALE },
+        })
+        target = lensGather(gpu, averaged, radii[i] * grid.short)
+        gpu.release(averaged)
+      } else if (plan.blur > 0.05 && plan.level === 0) {
         target = blurLevel(gpu, source, plan.sigma, false)
       } else if (plan.blur > 0.05) {
         let chain = chains.get(plan.edge)
