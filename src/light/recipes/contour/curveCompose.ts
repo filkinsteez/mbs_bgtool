@@ -52,13 +52,26 @@ export function toFrame(point: Vec2, aspect: number): [number, number] {
 
 const lightness = (hex: string) => linearToOklab(hexToLinear(hex))[0]
 
-/** Pack colors bright enough to be a light, Meta Blue first and most likely. */
-export function pickLight(pack: ColorPack, rand: () => number): PackColor {
+/**
+ * The light color for a seed, from the pack colors bright enough to be a light.
+ * In every block of 8 seeds (1-8, 9-16, ...) each of them is the light at least
+ * once; the spare places go to Meta Blue twice as often as to the others, and
+ * the order is shuffled per block (salt keeps the looks' orders apart). It
+ * still takes one draw from rand, so the rest of the composition draws the same
+ * numbers as before.
+ */
+export function pickLight(pack: ColorPack, rand: () => number, seed: number, salt: number): PackColor {
+  rand()
   const lights = pack.colors.filter((c) => lightness(c.hex) > 0.5)
-  return pickWeighted(
-    rand,
-    lights.map((c, i) => [c, i === 0 ? 2 : 1] as const),
-  )
+  const s = Math.round(seed)
+  const order = seededRandom(Math.floor((s - 1) / 8), salt)
+  const slots = [...lights]
+  while (slots.length < 8) slots.push(pickWeighted(order, lights.map((c, i) => [c, i === 0 ? 2 : 1] as const)))
+  for (let i = slots.length - 1; i > 0; i--) {
+    const j = Math.floor(order() * (i + 1))
+    ;[slots[i], slots[j]] = [slots[j], slots[i]]
+  }
+  return slots[(((s - 1) % 8) + 8) % 8]
 }
 
 /**
@@ -71,6 +84,43 @@ export function warmToe(hex: string): number {
   const [, a, b] = linearToOklab(hexToLinear(hex))
   const hue = (Math.atan2(b, a) * 180) / Math.PI
   return Math.hypot(a, b) > 0.04 && hue >= 20 && hue <= 140 ? 0.85 : 0
+}
+
+const AMBER = hexToLinear('#FFB000')
+const ORANGE_RED = hexToLinear('#FF4F00')
+const FOREST = hexToLinear('#0F3D33')
+
+/** Where a warm light's dim tail drifts: Lime (the greenest warm light) toward Forest's deep green, the others toward amber. */
+export type LimeTail = 'forest' | 'amber'
+
+/**
+ * Channel widths for a warm light's glow and haze that move its dim tail toward
+ * a target color as it fades, so dim Yellow reads amber instead of olive and
+ * dim Tan amber instead of grey-brown. Each channel's width is set so that four
+ * widths out, where the light is down to about 0.03%, the channels stand in the
+ * target's ratios; past that the light is too dark to read, so the tail never
+ * shows running past the target (Orange-red's green turning the far tail green).
+ * The luminance-weighted channel keeps width 1, so the glow keeps its size.
+ * Returns null for lights that are not warm, which keep their own color family
+ * as they dim.
+ */
+export function warmTailWidths(hex: string, limeTail: LimeTail = 'forest'): number[] | null {
+  if (warmToe(hex) === 0) return null
+  const light = hexToLinear(hex)
+  const [, a, b] = linearToOklab(light)
+  const hue = (Math.atan2(b, a) * 180) / Math.PI
+  // Yellow drifts through amber toward Orange-red (their mix is clean in Bold), Lime into Forest, the others to amber.
+  const target = hue > 110 && limeTail === 'forest' ? FOREST : hue > 85 ? ORANGE_RED : AMBER
+  const soft = (v: readonly number[]) => {
+    const m = Math.max(...v, 1e-6)
+    return v.map((x) => x / m + 0.08)
+  }
+  const [l, t] = [soft(light), soft(target)]
+  const logs = l.map((x, k) => Math.max(-1.6, Math.min(1.6, Math.log(t[k] / x))))
+  const weights = [0.2126, 0.7152, 0.0722].map((w, k) => w * light[k])
+  const mean = logs.reduce((s, g, k) => s + weights[k] * g, 0) / Math.max(1e-6, weights.reduce((s, w) => s + w, 0))
+  // A channel of width w gains exp(8 (1 - 1 / w^2)) on a width-1 channel four widths out.
+  return logs.map((g) => Math.min(1.35, Math.max(0.75, 1 / Math.sqrt(Math.max(0.3, 1 - (g - mean) / 8)))))
 }
 
 /** Oklab lightness of a base: dark enough that text set on it reads, light enough to tell from black. */
@@ -88,13 +138,17 @@ export function pickBase(pack: ColorPack, rand: () => number): { hex: string; ga
   return pickWeighted(rand, options)
 }
 
-/** Channel widths that let the light's strongest channel spread a little wider, so its falloff deepens in its own hue. */
-export function hueWidths(hex: string, amount: number): number[] {
-  const c = hexToLinear(hex)
-  const m = Math.max(c[0], c[1], c[2], 1e-6)
-  return c.map((v) => 1 + amount * (v / m - 0.6))
+/**
+ * Channel widths scaled so the widest is 1. A far part's channel wider than the
+ * part takes a little of the next, three times wider scatter blur, whose long
+ * tail then turns the far edge of the glow that channel's color (Meta Blue's
+ * green, Orange-red's green); at 1 or less every channel stays on the part's
+ * own blurs.
+ */
+export function widestAtOne(widths: readonly number[]): number[] {
+  const most = Math.max(...widths, 1e-6)
+  return widths.map((w) => w / most)
 }
-
 /** Points along the emitting contours that fall inside the frame (with a margin), in short-side units from the frame center. */
 export function visiblePath(shape: Shape, anchor: Vec2, aspect: number, margin = 0.02): Vec2[] {
   const [fw, fh] = frameSize(aspect)
@@ -236,8 +290,8 @@ export interface ProductionLight {
  * along the curve, light field 2 the hot spot.
  */
 export function productionParts(prefix: string, light: ProductionLight): Record<string, number | number[]> {
-  // Kept small so the falloff stays in the light's own color family (a wider strongest channel turns Cyan blue).
-  const widths = hueWidths(light.hex, 0.15).map(round4)
+  // Cool lights keep their hue all the way down; warm ones drift toward amber (Lime toward Forest) as they dim.
+  const widths = widestAtOne(warmTailWidths(light.hex) ?? [1, 1, 1]).map(round4)
   const spread = light.spread ?? 0
   const parts: Record<string, number | number[]> = {
     n1Weight: 1.1,
@@ -286,14 +340,13 @@ const prefixed = (prefix: string, values: Record<string, number | number[]>) =>
  * halo: dark inside, a fairly sharp rise at the curve, a crest band 0.035
  * outside it (near part 1, the pack color, wider where the light is strong)
  * and a long fade outward (far part 2, outside only, half at about 0.15 to 0.19
- * from the crest and close to the base by 0.5), paler toward its end because
- * the light's strongest channel spreads least. The inside keeps the base level
- * past the crest's inner side. All parts follow light field 1.
+ * from the crest and close to the base by 0.5). A cool light keeps its hue as it
+ * fades; a warm one drifts toward amber (Lime toward Forest). The inside keeps
+ * the base level past the crest's inner side. All parts follow light field 1.
  */
 export function haloParts(prefix: string, hex: string): Record<string, number | number[]> {
-  // Kept small: a light with a near-zero channel (Meta Blue's red, Orange-red's green) would change hue, not pale.
-  const paler = hueWidths(hex, -0.2).map(round4)
-  const outside = { Side: 2, Light: 1, LightGamma: 1, ChWidth: paler, MaskSoft: 0.015 }
+  const widths = widestAtOne(warmTailWidths(hex) ?? [1, 1, 1]).map(round4)
+  const outside = { Side: 2, Light: 1, LightGamma: 1, ChWidth: widths, MaskSoft: 0.015 }
   const parts: Record<string, number | number[]> = {
     ...prefixed('n1', { Weight: 0.25, Width: 0.026, Shape: 8, Side: 0, Offset: -0.035, Light: 1, LightGamma: 1, Grow: 1, GrowBy: [0.5, 1.5] }),
     n2Weight: 0,
@@ -323,13 +376,13 @@ export function falloffRadius(path: readonly Vec2[], hot: Vec2, factor: number, 
   return far / Math.sqrt(Math.max(1e-6, factor ** (2 / power) - 1))
 }
 
-/** Unit normal of a run of points at the sample nearest to p. */
-export function normalNear(points: readonly Vec2[], p: Vec2): Vec2 {
+/** Unit normal of a run of points at the sample nearest to p, from the samples `span` either side (wider is smoother). */
+export function normalNear(points: readonly Vec2[], p: Vec2, span = 2): Vec2 {
   if (points.length < 2) return [0, 1]
   let k = 0
   for (let i = 1; i < points.length; i++) if (Math.hypot(points[i][0] - p[0], points[i][1] - p[1]) < Math.hypot(points[k][0] - p[0], points[k][1] - p[1])) k = i
-  const a = points[Math.max(0, k - 2)]
-  const b = points[Math.min(points.length - 1, k + 2)]
+  const a = points[Math.max(0, k - span)]
+  const b = points[Math.min(points.length - 1, k + span)]
   const length = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1
   return [-(b[1] - a[1]) / length, (b[0] - a[0]) / length]
 }

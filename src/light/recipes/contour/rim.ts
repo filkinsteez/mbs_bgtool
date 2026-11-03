@@ -145,7 +145,7 @@ function cornerLayout(rand: () => number, aspect: number): RimLayout {
   const inward: Vec2 = ([[0, 1], [0, -1], [1, 0], [-1, 0]] as const)[edge] as Vec2
   const tangent: Vec2 = inward[0] === 0 ? [rand() < 0.5 ? 1 : -1, 0] : [0, rand() < 0.5 ? 1 : -1]
   const extent = inward[0] === 0 ? fw : fh
-  const along = lerp(-0.35, 0.35, rand()) * extent
+  const along = lerp(-0.28, 0.28, rand()) * extent
   const past = lerp(-0.01, 0.08, rand())
   const toEdge = (inward[0] === 0 ? fh : fw) / 2 + past
   const vertex: Vec2 = [tangent[0] * along - inward[0] * toEdge, tangent[1] * along - inward[1] * toEdge]
@@ -170,10 +170,11 @@ function rimLayout(kind: RimKind, rand: () => number, aspect: number): RimLayout
   const long = Math.max(fw, fh)
   switch (kind) {
     case 'corner': {
-      // A few tries keep the first layout whose inner leg shows for at least 0.6 of the short side.
+      // A few tries keep the first layout whose inner leg crosses at least 0.9 of the short side, so the corner
+      // never clips just one corner of the frame.
       let best: RimLayout | null = null
       let bestLength = -1
-      for (let attempt = 0; attempt < 8 && bestLength < 0.6 * Math.min(fw, fh); attempt++) {
+      for (let attempt = 0; attempt < 12 && bestLength < 0.9 * Math.min(fw, fh); attempt++) {
         const candidate = cornerLayout(rand, aspect)
         const length = longestRun(visibleRuns(buildShape(candidate.shape), candidate.anchor, aspect)).length * 0.01
         if (length > bestLength) {
@@ -264,7 +265,7 @@ const dist = (a: Vec2, b: Vec2) => Math.hypot(a[0] - b[0], a[1] - b[1])
 
 function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition {
   const rand = seededRandom(seed, 7)
-  const light = pickLight(pack, rand)
+  const light = pickLight(pack, rand, seed, 61)
   const base = pickBase(pack, rand)
   const kind = pickWeighted<RimKind>(rand, [
     ['corner', 4],
@@ -285,19 +286,23 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   const run = line ? path : longestRun(visibleRuns(shape, layout.anchor, aspect))
   const vertexFirst = run.length > 1 && dist(run[0], layout.anchor) <= dist(run[run.length - 1], layout.anchor)
   const start = corner ? vertexFirst : fromStart
-  const along = start ? lerp(0, 0.5, controls.mood) : lerp(1, 0.5, controls.mood)
+  const along = (mood: number) => (start ? lerp(0, 0.5, mood) : lerp(1, 0.5, mood))
   // A line is brightest where it leaves the frame; the Light control moves that end inward.
-  const hot = (line ? lineExit(path, fromStart, lerp(0.08, -0.3, controls.mood)) : pointAlong(run, along)) ?? layout.anchor
+  const hot = (line ? lineExit(path, fromStart, lerp(0.08, -0.3, controls.mood)) : pointAlong(run, along(controls.mood))) ?? layout.anchor
+  const home = pointAlong(run, along(0.5)) ?? layout.anchor
   const at: Vec2 = [hot[0] - layout.anchor[0], hot[1] - layout.anchor[1]]
   const gain = geo(controls.intensity, 0.35, 1, 2.8)
-  const soften = geo(controls.softness, 0.45, 1, 2.4)
+  // Softness from 0.3 to 1.7 (1 at the default): wider glows change more of the frame per step, so the top
+  // half of the range spans less than the bottom half and each step changes the picture by about as much.
+  const soften = geo(controls.softness, 0.3, 1, 1.7)
   const reachDraw = rand()
   const powerDraw = rand()
   const hotDraw = rand()
   // Away from a line, light field 1 falls 10 to 30 times from the hot spot to the far end of the curve in the frame
-  // (with the hot core on top, the edge ends up about 40 to 120 times dimmer there).
+  // (with the hot core on top, the edge ends up about 40 to 120 times dimmer there). It is sized at the default hot
+  // spot, so the Light control moves the light without resizing it.
   const power = line ? lerp(1.4, 2.2, powerDraw) : lerp(2, 3, powerDraw)
-  const reach = line ? lerp(0.22, 0.34, reachDraw) * Math.max(fw, fh) : falloffRadius(run, hot, lerp(10, 30, reachDraw), power)
+  const reach = line ? lerp(0.22, 0.34, reachDraw) * Math.max(fw, fh) : falloffRadius(run, home, lerp(10, 30, reachDraw), power)
   const toward = (Math.atan2(at[1], at[0]) * 180) / Math.PI
   const params: Record<string, ParamValue> = {
     shape: SHAPE_KINDS.indexOf(layout.shape.kind) + 1,

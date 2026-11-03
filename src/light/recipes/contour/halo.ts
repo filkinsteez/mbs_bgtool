@@ -87,12 +87,19 @@ const params: ParamSpec[] = [
   { kind: 'number', key: 'soften', label: 'Overall width', min: 0.05, max: 8, step: 0.001, default: 1 },
 ]
 
-/** Outer-contour points of the logo (logo units) a tight halo crop centers on: the two loop ends and where the loops meet above (the notch) and below. */
+/**
+ * Outer-contour points of the logo (logo units) a tight halo crop centers on:
+ * the convex parts only (loop ends, loop tops, the bottoms). The halo lights
+ * the outside of the curve, so at the notch or where the loops meet below the
+ * light would fill the gap between two arms as a wedge with a sharp corner.
+ */
 const LOGO_EDGE_FEATURES: readonly (readonly [Vec2, number])[] = [
   [[1000, 1655.86], 2],
   [[2504.83, 1649.66], 2],
-  [[1772.84, 1210.99], 3],
-  [[1752.79, 1471.26], 2],
+  [[1432.41, 1000], 1],
+  [[2080, 1000], 1],
+  [[1273.1, 2000], 1],
+  [[2245.5, 2000], 1],
 ]
 const LOGO_CENTER: Vec2 = [1752.4136, 1500]
 
@@ -206,7 +213,7 @@ function haloLayout(kind: 'ring' | 'ellipse' | 'logoEdge', rand: () => number, a
  */
 function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Composition {
   const rand = seededRandom(seed, 13)
-  const light = pickLight(pack, rand)
+  const light = pickLight(pack, rand, seed, 67)
   const base = pickBase(pack, rand)
   const kind = pickWeighted(seededRandom(seed, 29), [
     ['ring', 2],
@@ -217,16 +224,23 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   // The hot spot and the falloff follow the longest piece of the curve inside the frame.
   const path = longestRun(visibleRuns(buildShape(layout.shape), layout.anchor, aspect))
   const fromStart = rand() < 0.5
-  const along = fromStart ? lerp(0, 0.5, controls.mood) : lerp(1, 0.5, controls.mood)
-  const hot = pointAlong(path, along) ?? layout.anchor
+  // The Light control runs the hot spot from where the curve leaves the frame toward its middle, eased so equal
+  // steps of the slider change the picture by about the same amount (it moves half as fast near the middle).
+  const along = (mood: number) => {
+    const eased = (4 * mood - mood * mood) / 3
+    return fromStart ? lerp(0, 0.5, eased) : lerp(1, 0.5, eased)
+  }
+  const hot = pointAlong(path, along(controls.mood)) ?? layout.anchor
+  const home = pointAlong(path, along(0.5)) ?? layout.anchor
   const at: Vec2 = [hot[0] - layout.anchor[0], hot[1] - layout.anchor[1]]
   const gain = geo(controls.intensity, 0.35, 1, 2.8)
   const soften = geo(controls.softness, 0.45, 1, 2.4)
-  // Light falls 20 to 60 times from the hot spot to the far end of the visible curve. The light field is six
-  // times longer across the curve, so the glow keeps its long fade outward near the hot spot.
+  // Light falls 20 to 60 times from the hot spot to the far end of the visible curve (sized at the default
+  // hot spot, so the Light control moves the light without resizing it). The light field is six times longer
+  // across the curve, so the glow keeps its long fade outward near the hot spot.
   const power = lerp(2, 3, rand())
-  const across = normalNear(path, hot)
-  const radius = falloffRadius(path, hot, lerp(20, 60, rand()), power, { direction: across, by: 6 })
+  const across = normalNear(path, hot, 12)
+  const radius = falloffRadius(path, home, lerp(20, 60, rand()), power, { direction: normalNear(path, home, 12), by: 6 })
   const params: Record<string, ParamValue> = {
     ring1On: true,
     ring1Shape: SHAPE_KINDS.indexOf(layout.shape.kind) + 1,
