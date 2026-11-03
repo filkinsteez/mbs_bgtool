@@ -35,6 +35,15 @@ const T = {
   lensEdge: 0.165, // new rule: a lens-blurred edge between two pack colors may be this share of the short side wide
   // (the full blur of the disc lens, 2 x R with R = 0.0825 at Softness 0.5; R runs 0.045 to 0.12 with Softness)
   mixTolerance: 0.03, // new rule: Oklab distance from the linear-light mix of two pack colors that still counts as it
+  // Warm tails (SHARED.md, decided 2026-11-03 9:40 AM): below nominal, a warm light that drifts toward deep red or
+  // amber (Lime: toward Forest's deep green) as it dims, and stays at least this pure (chroma / lightness), is still
+  // that light. Olive, brown and grey tails are not. `--tails strict` turns this off.
+  tails: {
+    'Orange-red': { hue: [15, 45], ratio: 0.3 },
+    Yellow: { hue: [45, 80], ratio: 0.18 },
+    Tan: { hue: [40, 65], ratio: 0.12 },
+    Lime: { hue: [135, 180], ratio: 0.15 },
+  },
 }
 // Hues that are neither neighbour, so a lens edge never excuses them (SHARED.md palette rules).
 const THIRD_HUES = new Set(['pink', 'salmon', 'mauve', 'lavender', 'purple', 'magenta', 'mauve-grey'])
@@ -67,6 +76,17 @@ const maps = Boolean(args.maps)
 // old: every off-pack area thicker than a thin bridge counts; new (default, 2026-11-03): lens edges between two pack
 // colors count as edges up to the lens's own width.
 const rule = args.rule === 'old' ? 'old' : 'new'
+const tailRule = args.tails === 'strict' ? 'strict' : 'drift'
+// Control values for the render (--at intensity=1,softness=0,horizon=0.3; horizon or light is the mood control).
+const controls = { intensity: 0.5, softness: 0.5, mood: 0.5 }
+for (const pair of list(args.at)) {
+  const [key, value] = pair.split('=')
+  const name = key === 'horizon' || key === 'light' ? 'mood' : key
+  if (!(name in controls) || Number.isNaN(Number(value))) throw new Error(`--at takes intensity, softness and horizon or light: ${pair}`)
+  controls[name] = Number(value)
+}
+// The lens's radius follows Softness: R = 0.045 to 0.12 of the short side; a lens edge may be 2R wide.
+T.lensEdge = 2 * (0.045 + 0.075 * controls.softness)
 if (typeof args['lens-edge'] === 'string') T.lensEdge = Number(args['lens-edge'])
 const startedAt = new Date()
 const hhmm = startedAt.toTimeString().slice(0, 5)
@@ -201,6 +221,14 @@ try {
       }
     })
     if (fam >= 0) return { fam, bridge: -1 }
+    if (tailRule === 'drift') {
+      for (let i = 0; i < k.colors.length; i++) {
+        const c = k.colors[i]
+        const tail = c.warm && T.tails[c.name]
+        if (!tail || L >= c.path.L0 || C / Math.max(L, 1e-6) < tail.ratio) continue
+        if (h >= tail.hue[0] && h <= tail.hue[1]) return { fam: i, bridge: -1 }
+      }
+    }
     let bridge = -1
     best = Infinity
     k.pairs.forEach(([i, j], n) => {
@@ -609,7 +637,9 @@ try {
       page = await (await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 })).newPage()
     }
     const [mood, short] = look.split('.')
-    await page.goto(`${devUrl}/?mood=${mood}&look=${short}&pack=${f.pack}&seed=${f.seed}&format=${f.format}`, { waitUntil: 'load', timeout: 90000 })
+    const moodParam = mood === 'sunset' ? 'horizon' : 'light'
+    const query = `intensity=${controls.intensity}&softness=${controls.softness}&${moodParam}=${controls.mood}`
+    await page.goto(`${devUrl}/?mood=${mood}&look=${short}&pack=${f.pack}&seed=${f.seed}&format=${f.format}&${query}`, { waitUntil: 'load', timeout: 90000 })
     const settled = () => page.waitForSelector('canvas[data-settled="true"]', { timeout: 20000 }).then(() => true, () => false)
     if (await settled()) {
       await page.waitForTimeout(1200)
@@ -629,7 +659,7 @@ try {
   await fs.mkdir(path.join(outDir, 'renders'), { recursive: true })
   if (maps) await fs.mkdir(path.join(outDir, 'maps'), { recursive: true })
   const report = { source: sourceLabel, startedAt: startedAt.toISOString(), thresholds: T, looks: {} }
-  const summary = [`# Palette check: ${sourceLabel}`, '', `Started ${startedAt.toISOString()}. Rule: ${rule}${rule === 'new' ? `, lens edges up to ${T.lensEdge} of the short side` : ''}. Thresholds in \`palette-check.mjs\` (T).`, '']
+  const summary = [`# Palette check: ${sourceLabel}`, '', `Started ${startedAt.toISOString()}. Controls: intensity ${controls.intensity}, softness ${controls.softness}, mood ${controls.mood}. Rule: ${rule}${rule === 'new' ? `, lens edges up to ${T.lensEdge} of the short side` : ''}; warm tails: ${tailRule}. Thresholds in \`palette-check.mjs\` (T).`, '']
   for (const look of looks) {
     const frames = frameList(look)
     for (const f of frames) {
@@ -643,7 +673,7 @@ try {
         continue
       }
       const exportSize = EXPORT_SIZES[f.format.replace('x', ':')]
-      const scene = buildScene(look, getPack(f.pack), f.seed, { intensity: 0.5, softness: 0.5, mood: 0.5 }, exportSize.width / exportSize.height)
+      const scene = buildScene(look, getPack(f.pack), f.seed, controls, exportSize.width / exportSize.height)
       f.sceneHexes = scene.colors
       await savePng(f.file, await harness.render({ scene, ...RENDER[f.format], supersample: 2 }))
     }
