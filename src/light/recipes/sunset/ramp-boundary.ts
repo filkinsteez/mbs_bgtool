@@ -143,14 +143,20 @@ function lightLuminance(u: RampUniforms, f: Frame, across: number, s: number): n
   let dim = dimAmount * Math.exp(-height / Math.max(dimHeight, 1e-4))
   if (horizonEdge >= 0) dim *= 1 + (num(u, 'uDimBelow') - 1) * level[horizonEdge]
   const stops = list(u, 'uStop')
+  const duskStop = num(u, 'uDuskStop')
   const sky: Vec3 = [0, 0, 0]
+  const dusk: Vec3 = [0, 0, 0]
+  let duskCover = 0
   for (let k = 0; k <= edges; k++) {
     const w = (k === 0 ? 1 : level[k - 1]) - (k < edges ? level[k] : 0)
     const c = rgb(stops, k)
-    for (let i = 0; i < 3; i++) sky[i] += w * c[i]
+    const into = k === duskStop ? dusk : sky
+    if (k === duskStop) duskCover += w
+    for (let i = 0; i < 3; i++) into[i] += w * c[i]
   }
-  const fade = Math.exp(-num(u, 'uExtinction') * depth - dim)
-  return luminance(sky.map((v, i) => Math.max(v, 0) * gain[i] * fade + glow[i]))
+  const fade = Math.exp(-(num(u, 'uExtinction') * depth + dim) * lightReach)
+  const behind = 1 - Math.min(1, Math.max(0, duskCover))
+  return luminance(sky.map((v, i) => (Math.max(v, 0) * fade + Math.max(dusk[i], 0)) * gain[i] + glow[i] * behind))
 }
 
 /** Contrast at which the boundary model starts to treat an edge as one over a darker ground. */

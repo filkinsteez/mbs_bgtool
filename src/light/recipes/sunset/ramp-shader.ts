@@ -70,6 +70,7 @@ uniform vec2 uOcclude;       // how much the land hides the sun glow, and the wi
 
 uniform vec3 uBridge;        // amount, lift toward white, luminance below which it fades out
 uniform vec3 uBridgeTint;    // luminance 1
+uniform int uDuskStop;       // a dark dusk band low in the sky that the bridge leaves alone (-1: none)
 
 uniform vec4 uSkyPatch;      // light change inside the sky: amount, 1 / patch size, mean over the top fifth (removed), width over height
 
@@ -78,13 +79,13 @@ uniform int uGround;         // what fills the frame below the line: 0 more sky,
 uniform vec3 uGroundLine;    // the line's height at the frame center (p.y), its slope, the amplitude of its long low waves
 uniform vec4 uRidge;         // land's climb toward the light across the frame, the side it climbs to (+1 right), broad bowl depth, wave length
 uniform vec2 uShore;         // a far bank on the water's horizon: height, change along it (0: none)
-uniform vec4 uWater;         // squeeze, degrees below the horizon at the bottom edge, ripple smear per unit of depth, strip strength
+uniform vec4 uWater;         // squeeze, degrees below the horizon half a short side under the line, ripple smear per unit of depth, strip strength
 uniform vec3 uWaterOwn;      // the water's own light, seen where the reflection weakens
 uniform float uWaterMirror;  // share of calm water's reflectance that a rough sea keeps
-uniform float uMirrorReach;  // the highest share of the visible sky the water mirrors (1: up to the top edge)
 uniform vec3 uGroundTop;     // land right under its outline
 uniform vec3 uGroundBottom;  // land at the bottom edge
 uniform vec2 uGroundHaze;    // share of the sky's light in far land, and the depth over which it fades
+uniform vec2 uLandLit;       // land's and the water's own light on their side toward the sun: extra light there, and the width of that side
 
 uniform vec4 uLand;          // coverage, height at the center, slope, drop at the side edges
 uniform vec4 uLandWarp;      // amplitude, cycles per short side, phase, octaves
@@ -226,7 +227,8 @@ float hueSpread(LightMix mixed) {
 }
 
 // The sky's light, glow included, changes slowly in patches wider than they are tall, like haze,
-// with zero mean over the top fifth of the frame.
+// with zero mean over the top fifth of the frame. The haze is in front of land and water too, so
+// it follows the pixel, not the sky a point mirrors.
 float skyPatch(vec2 p) {
   if (uSkyPatch.x <= 0.0) return 1.0;
   vec2 q = vec2(p.x / uSkyPatch.w, p.y) * uSkyPatch.y;
@@ -329,25 +331,40 @@ vec3 rampSky(vec2 p) {
   if (uHorizonEdge >= 0) dim *= mix(1.0, uDimBelow, level[uHorizonEdge]);
   vec3 skyGain = gain * exp(-(uExtinction * glowDepth + dim) * lightReach);
   vec3 sky = vec3(0.0);
+  vec3 dusk = vec3(0.0);
+  float duskCover = 0.0;
   float zenithShade = clamp(1.0 + uZenithShade.x * (s - uZenithShade.y) + uZenithShade.z * (a / halfWidth - uZenithShade.w), 0.8, 1.2);
   for (int k = 0; k < RAMP_COLORS; k++) {
     if (k > uEdges) break;
     float w = (k == 0 ? 1.0 : level[k - 1]) - (k < uEdges ? level[k] : 0.0);
-    sky += w * uStop[k] * (k == 0 ? zenithShade : 1.0);
+    vec3 c = w * uStop[k] * (k == 0 ? zenithShade : 1.0);
+    if (k == uDuskStop) {
+      dusk += c;
+      duskCover += w;
+    } else {
+      sky += c;
+    }
   }
   sky = max(sky, vec3(0.0)) * skyGain;
+  // The dusk band is a low bank of the sky's shadowed light in front of the glow and hides the
+  // light behind it, so the two meet in one soft edge: the glow's light added over it would mix
+  // into a third hue. Dimmed toward the horizon or by the glow's haze too, it goes black or vanishes.
+  dusk = max(dusk, vec3(0.0)) * gain;
+  float behind = 1.0 - clamp(duskCover, 0.0, 1.0);
   gather(mixed, sky);
 
-  vec3 light = sky + glow + sunGlow;
+  vec3 light = sky + (glow + sunGlow) * behind;
 
   if (uBridge.x > 0.0) {
     float y = luminance(light);
     float bright = uBridge.z > 0.0 ? smoothstep(0.5 * uBridge.z, 1.5 * uBridge.z, y) : 1.0;
-    float pull = min(1.0, uBridge.x * hueSpread(mixed) / 0.25) * bright * lightReach;
+    float pull = min(1.0, uBridge.x * hueSpread(mixed) / 0.25) * bright * lightReach * behind;
     float lifted = max(y, 1.0 - (1.0 - y) * (1.0 - uBridge.y));
     light += pull * (lifted * uBridgeTint - light);
   }
-  return light * hazeLight * skyPatch(p);
+  // The bridge leaves the dusk band alone: lifted where the glow meets it, the band would draw a
+  // pale line between the two.
+  return (light + dusk) * hazeLight;
 }
 
 // The 1:1 presets' land layer in front of the sky.
@@ -397,12 +414,19 @@ float bankTop(float x, float line) {
   return line - uShore.x * (1.0 + uShore.y * edgeFbm(x * 0.8 + 2.2, uSeed + 929, 2));
 }
 
+// Land and the water's own light are lighter on their side toward the sun.
+float litSide(float x) {
+  if (uLandLit.x <= 0.0) return 1.0;
+  float toward = (x - (uSunAt.x - 0.5) * uFrameAspect.x) / max(uLandLit.y, 1e-3);
+  return 1.0 + uLandLit.x * exp(-0.5 * toward * toward);
+}
+
 // Land lit by the sky, darker toward the bottom; far land is seen through more air, so near its
 // outline it takes on the light of the sky just above it (air).
 vec3 landLight(vec2 p, float outline, vec3 air) {
   float d = max(0.0, p.y - outline);
   float room = max(0.1, 0.5 * uFrameAspect.y - outline);
-  vec3 own = mix(uGroundTop, uGroundBottom, smoothstep(0.0, 1.0, d / room));
+  vec3 own = mix(uGroundTop, uGroundBottom, smoothstep(0.0, 1.0, d / room)) * litSide(p.x);
   return mix(own, air * uGroundHaze.x, exp(-d / max(uGroundHaze.y, 1e-3)));
 }
 
@@ -413,11 +437,11 @@ const float AIR_ABOVE = 0.02;
 // rampSky is called once, at the one point each pixel needs (more call sites make the shader
 // take tens of seconds to compile): the pixel itself, the air just above the land's outline, or
 // what the water mirrors.
-// Water mirrors the sky uWater.x times higher than it lies below the line, no higher than the
-// top edge, jittered up and down by ripples (the lens averages the jitter). A reflection that
-// stretched the sky would stretch its edges' waves too. Its reflectance is that of water seen
-// with a long lens (the bottom edge
-// uWater.y degrees below the horizon), and its own light shows where the reflection weakens. A
+// Water mirrors the sky uWater.x times higher than it lies below the line, jittered up and down
+// by ripples (the lens averages the jitter); deep water mirrors the zenith above the frame. A
+// reflection that stretched the sky would stretch its edges' waves too. Its reflectance is that of water seen
+// with a long lens (half a short side under the line is uWater.y degrees below the horizon, at
+// any height of the line), and its own light shows where the reflection weakens. A
 // soft lighter strip under the line changes along it. There is no path of sunlight on the water:
 // warm light added over the mirrored blue sky turns purple.
 vec3 rampScene(vec2 p) {
@@ -439,16 +463,12 @@ vec3 rampScene(vec2 p) {
       } else {
         kind = 2;
         depth = p.y - line;
-        float below = uWater.y * depth / max(0.05, 0.5 * uFrameAspect.y - line);
+        float below = uWater.y * depth / 0.5;
         r = waterFresnel(below);
         uint texel = uint(gl_FragCoord.x) * 0x9e3779b1u ^ uint(gl_FragCoord.y) * 0x85ebca6bu;
         float ripple = 2.0 * rampUnit(texel, uSeed + 977) - 1.0;
         float up = max(uWater.x * depth * (1.0 + uWater.z * ripple), 0.002);
-        // Past the reach the mirror still climbs, a quarter as fast: held at one height, each column
-        // would mirror its own color all the way down.
-        float reach = uMirrorReach * max(0.0, line + 0.5 * uFrameAspect.y);
-        float climb = min(up, reach) + 0.25 * max(0.0, up - reach);
-        mirrored = vec2(p.x, max(line - climb, -0.5 * uFrameAspect.y));
+        mirrored = vec2(p.x, line - up);
         q = mirrored;
         if (uShore.x > 0.0 && mirrored.y > top) {
           kind = 3;
@@ -457,12 +477,12 @@ vec3 rampScene(vec2 p) {
       }
     }
   }
-  vec3 seen = rampSky(q);
+  vec3 seen = rampSky(q) * skyPatch(p);
   if (kind == 0) return seen;
   if (kind == 1) return landLight(p, top, seen);
   vec3 mirror = kind == 3 ? landLight(mirrored, top, seen) : seen;
   // A rough sea dims the reflection; it does not show more of the water's own light.
-  vec3 water = uWaterMirror * r * mirror + (1.0 - r) * uWaterOwn;
+  vec3 water = uWaterMirror * r * mirror + (1.0 - r) * uWaterOwn * litSide(p.x);
   if (uWater.w > 0.0 && depth < 0.05) {
     float along = 0.7 + 0.3 * edgeFbm(p.x * 1.1 + 1.3, uSeed + 953, 2);
     water += uWater.w * along * exp(-0.5 * (depth / 0.008) * (depth / 0.008)) * mirror;
@@ -473,7 +493,7 @@ vec3 rampScene(vec2 p) {
 // With the lens on, the scene is drawn into the aux source, blurred there by one lens (the
 // scatter blur) and read back in combine; radiance itself then has nothing to draw.
 vec3 radiance(vec2 uv, vec2 p) {
-  return uLens > 0.0 ? vec3(0.0) : presetLand(p, rampSky(p));
+  return uLens > 0.0 ? vec3(0.0) : presetLand(p, rampSky(p) * skyPatch(p));
 }
 
 vec3 auxRadiance(vec2 uv, vec2 p) {
