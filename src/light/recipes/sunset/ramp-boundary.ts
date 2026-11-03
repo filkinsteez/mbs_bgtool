@@ -221,39 +221,38 @@ export function rampBoundary(ctx: RecipeContext, u: RampUniforms): RampBoundary 
     marks.push({ at: glowLine - 1.2 * tau[0], width: 1.6 * tau[0], edge: -1, glow: 0 })
     marks.push({ at: glowLine, width: 0.8 * tau[0], edge: -1, glow: -1 })
     const deepens = glowLine + 0.6 * tau[1]
-    if (horizonEdge < 0 && deepens < sMax) marks.push({ at: deepens, width: 1.2 * tau[1], edge: -1, glow: 1 })
+    if (horizonEdge < 0) marks.push({ at: deepens, width: 1.2 * tau[1], edge: -1, glow: 1 })
   }
-  // A glow mark on a stop edge adds nothing but a fast change of noise row; marks outside the frame nothing at all.
-  const kept = marks
-    .filter((m) => m.at + m.width > sMin && m.at - m.width < sMax)
-    .filter((m) => m.edge >= 0 || !marks.some((e) => e.edge >= 0 && Math.abs(e.at - m.at) < 0.1 * (e.width + m.width)))
-    .sort((p, q) => p.at - q.at)
-    .slice(0, BOUNDARY_MAX_TRANSITIONS)
+  // Every mark stays in the list, inside the frame or not and on a stop edge or not: an edge's noise
+  // row counts the marks above it, so a mark leaving the list would reshape every edge below it at
+  // one step of a control.
+  const kept = [...marks].sort((p, q) => p.at - q.at).slice(0, BOUNDARY_MAX_TRANSITIONS)
 
   // Contrast from the light on either side, averaged over the frame's width. The glow's peak is
   // not an edge between two areas. Only the first of consecutive darker steps is an edge over a
   // darker ground; the ones below it are inside that ground, and two such edges close together
-  // make the fold guard calm the whole frame.
+  // make the fold guard calm the whole frame. How far an edge is inside that ground grows smoothly
+  // with the contrast above it, so no control step switches it.
   const offset = f.anchor[0] * f.cos - f.anchor[1] * f.sin
   const columns = [-0.7, -0.35, 0, 0.35, 0.7].map((c) => c * f.halfW - offset)
   const lumAt = (s: number) => {
     const inFrame = Math.min(sMax, Math.max(sMin, s))
     return columns.reduce((sum, across) => sum + lightLuminance(u, f, across, inFrame), 0) / columns.length
   }
-  let ground = false
+  let ground = 0
   const withContrast: RampMark[] = kept.map((m) => {
     const peak = m.edge < 0 && m.glow < 0
     const contrast = peak ? 0 : boundaryContrast(lumAt(m.at - 0.5 * m.width), lumAt(m.at + 0.5 * m.width))
-    const first = !ground
-    ground ||= contrast >= DARK_FROM
-    return { ...m, contrast: first ? contrast : Math.min(contrast, 0) }
+    const own = contrast + (Math.min(contrast, 0) - contrast) * ground
+    ground = Math.max(ground, smoothstep(DARK_FROM - 0.1, DARK_FROM + 0.1, contrast))
+    return { ...m, contrast: own }
   })
 
   const lowest = withContrast.find((m) => m.glow === 1)
   const knots: [number, number][] = []
   if (edges > 0 && at[0] < horizon) knots.push([at[0], wanderSky])
   knots.push([glowLine, wanderGlow])
-  knots.push([horizonEdge >= 0 ? horizon : (lowest?.at ?? sMax), wanderHorizon])
+  knots.push([horizonEdge >= 0 ? horizon : Math.min(lowest?.at ?? sMax, sMax), wanderHorizon])
   if (horizonEdge >= 0 && horizonEdge + 1 < edges) knots.push([at[edges - 1], wanderGround])
 
   const params: BoundaryParams = {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { HORIZON_BELOW, horizonScene, placeHorizon } from './horizon'
+import { HORIZON_BELOW, horizonRise, horizonScene, placeHorizon } from './horizon'
 
 const SEEDS = Array.from({ length: 300 }, (_, i) => i + 1)
 const ASPECTS = [16 / 9, 9 / 16, 1, 4 / 5]
@@ -67,6 +67,17 @@ describe('placeHorizon', () => {
       const { y } = placeHorizon(control, 7, 16 / 9)
       expect(y).toBeGreaterThanOrEqual(0.27 - 1e-9)
       expect(y).toBeLessThanOrEqual(1.06 + 1e-9)
+    }
+  })
+})
+
+describe('horizonRise', () => {
+  it('runs from 0 at Horizon 0 to 1 at Horizon 1 and rises with the control for every seed', () => {
+    for (const seed of SEEDS) {
+      const rises = Array.from({ length: 101 }, (_, i) => horizonRise(placeHorizon(i / 100, seed, 16 / 9).y))
+      expect(rises[0]).toBeCloseTo(0, 9)
+      expect(rises[100]).toBeCloseTo(1, 9)
+      for (let i = 1; i <= 100; i++) expect(rises[i]).toBeGreaterThan(rises[i - 1])
     }
   })
 })

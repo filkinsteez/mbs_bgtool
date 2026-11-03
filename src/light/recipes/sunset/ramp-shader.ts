@@ -421,12 +421,14 @@ float litSide(float x) {
   return 1.0 + uLandLit.x * exp(-0.5 * toward * toward);
 }
 
-// Land lit by the sky, darker toward the bottom; far land is seen through more air, so near its
-// outline it takes on the light of the sky just above it (air).
+// Land lit by the low sun: lightest at the far land near its outline, darkening fastest just under
+// it, so a large ground brightens toward the horizon. Far land is seen through more air, so near
+// its outline it takes on the light of the sky just above it (air).
 vec3 landLight(vec2 p, float outline, vec3 air) {
   float d = max(0.0, p.y - outline);
   float room = max(0.1, 0.5 * uFrameAspect.y - outline);
-  vec3 own = mix(uGroundTop, uGroundBottom, smoothstep(0.0, 1.0, d / room)) * litSide(p.x);
+  float t = clamp(d / room, 0.0, 1.0);
+  vec3 own = mix(uGroundTop, uGroundBottom, t * (2.0 - t)) * litSide(p.x);
   return mix(own, air * uGroundHaze.x, exp(-d / max(uGroundHaze.y, 1e-3)));
 }
 

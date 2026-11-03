@@ -46,6 +46,11 @@ function seeded(state: number): () => number {
 const clamp01 = (t: number) => Math.min(1, Math.max(0, t))
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
 
+/** How far a line height lies from Horizon 0's height toward Horizon 1's, from 0 to 1. */
+export function horizonRise(y: number): number {
+  return clamp01((Y_LOW - y) / (Y_LOW - Y_HIGH))
+}
+
 /** Seeds come in runs of three, and each run holds every scene once in a seeded order. */
 export function horizonScene(seed: number): HorizonBelow {
   const n = Math.round(seed) - 1
