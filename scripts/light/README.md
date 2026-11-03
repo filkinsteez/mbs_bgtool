@@ -107,9 +107,9 @@ How a pixel counts:
 - As a clean mix only for the pairs that stay clean in linear light (the same doc, section 5): Meta Blue with Cyan, Forest, Plum or Ice, Yellow with Orange-red, and Atmospheric's greys. Every other pair goes grey, invents a hue (magenta, mint) or turns olive, khaki or brown.
 - As a lens edge (the default rule, `--rule new`, from the palette rules in SHARED.md, 2026-11-03): an off-pack pixel on the linear-light mix of two pack colors that both show as areas near their own brightness, which is what the lens makes of an edge between them. It is fine where the band is no wider than the lens's own blur, 2R = 0.165 of the short side at Softness 0.5 (`--lens-edge`; R runs 0.045 to 0.12 with Softness); wider parts count as outside. Third hues (pink, salmon, mauve, mauve-grey, lavender, violet, magenta) are never lens edges, and in Contour the frame's dark base is never one side of one, so a light's tail over the base is still judged as a tail (C-025). `--rule old` turns lens edges off.
 - As a warm light's tail (the default, `--tails drift`, from the 9:40 AM decision in SHARED.md): below nominal, an Orange-red, Yellow or Tan light that drifts toward deep red or amber as it dims, or a Lime light that drifts toward Forest's deep green, still counts as that light if it stays at least as pure (hues and chroma-to-lightness limits in `T.tails`). Olive, brown and grey tails are still outside. `--tails strict` turns this off.
+- As a pale bridge at L 0.78 or more and chroma 0.05 or less, as the dark base below L 0.1, and otherwise as an outside color, named in plain words (pink, magenta, mauve, lavender, salmon, brick, brown, grey-brown, khaki, olive, mint, teal, grey and so on). Only wide outside areas count: whatever is thinner than 6% of the short side (a bridge, a tail) is removed first.
 
 `--at` renders other control values (`horizon` or `light` is the mood control); the lens-edge width then follows Softness (2R with R = 0.045 + 0.075 × Softness of the short side).
-- As a pale bridge at L 0.78 or more and chroma 0.05 or less, as the dark base below L 0.1, and otherwise as an outside color, named in plain words (pink, magenta, mauve, lavender, salmon, brick, brown, grey-brown, khaki, olive, mint, teal, grey and so on). Only wide outside areas count: whatever is thinner than 6% of the short side (a bridge, a tail) is removed first.
 
 A frame fails when:
 
@@ -118,6 +118,13 @@ A frame fails when:
 - Contour: 30% of the dark base or 20% of the lit area is outside the pack, or, when the scene is known, 25% of the lit area is a pack color the scene does not light with (counting pixels with Oklab chroma 0.05 or more: a near-grey is no color).
 
 Contour also checks each pack across seeds 1-8 at 16:9: every light color the pack offers (pack colors at L 0.5 or more; for Atmospheric, Meta Blue and Ice) must be a frame's main light at least once. The thresholds (`T` at the top of the script) were set by eye on the coordinator's shots in `artifacts/coordinator/bands-bug`, `palette-now` and `palette-now-contour`.
+
+Every look also checks seed variety (SHARED.md, 10:15 AM: no two of seeds 1-8 in one pack may look like the same frame at thumbnail size). Each pair of seeds 1-8 at 16:9 gets two numbers:
+
+- layout, where the light sits: Oklab L at 40x23, blurred by 1 px and stretched to 0-1 per frame, compared as the summed difference over the summed lightness of both, so the shared black of two Contour frames does not make them alike;
+- mix, which pack colors show and how much of each: half the summed difference of the color shares outside the dark base.
+
+A pair with layout 0.2 or less and mix 0.3 or less looks alike, and the summary, `palette.json` (`rows.<pack>.alike`) and the sheet list it. Set by eye in compare round 9: Bands Bold seeds 1 and 2 at `6c86ad2` (layout 0.07, mix 0.08) and Beam Bold seeds 1 and 5 at `9784f4d` (0.16, 0.00) look alike; the pairs that clearly differ were at layout 0.25 or more or mix 0.47 or more. A plain mean ΔE of 160x90 frames did not work: it rates two Contour frames with different lines as alike (0.014) because both are mostly black, and two same-color beams shifted by a tenth of the frame as different.
 
 ## Metrics (`metrics.json`)
 

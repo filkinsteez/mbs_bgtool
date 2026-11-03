@@ -44,6 +44,13 @@ const T = {
     Tan: { hue: [40, 65], ratio: 0.12 },
     Lime: { hue: [135, 180], ratio: 0.15 },
   },
+  // Seed variety (SHARED.md, decided 2026-11-03 10:15 AM): two of seeds 1-8 (16:9) look like the same frame when the
+  // light sits in the same places (layout) and the pack colors cover about the same shares (mix). Layout: Oklab L at
+  // 40x23, blurred by 1 px and stretched to 0-1 per frame, compared as sum |a - b| / sum (a + b), so a dark frame's
+  // shared black does not count as alike. Mix: half the summed difference of the color shares outside the dark base.
+  // Set by eye in round 9 of the compare agent: Bands Bold seeds 1 and 2 at 6c86ad2 (0.07, 0.08) and Beam Bold seeds
+  // 1 and 5 at 9784f4d (0.16, 0.00) look alike; pairs that clearly differ were at layout 0.25+ or mix 0.47+.
+  variety: { layout: 0.2, mix: 0.3 },
 }
 // Hues that are neither neighbour, so a lens edge never excuses them (SHARED.md palette rules).
 const THIRD_HUES = new Set(['pink', 'salmon', 'mauve', 'lavender', 'purple', 'magenta', 'mauve-grey'])
@@ -693,7 +700,7 @@ try {
       const mains = frames.filter((f) => f.pack === pack && f.format === '16x9' && f.m).map((f) => f.m.mainLight && asLight(f.m.mainLight)).filter(Boolean)
       const counts = Object.fromEntries(offered.map((name) => [name, mains.filter((x) => x === name).length]))
       const missing = look.startsWith('contour.') ? offered.filter((name) => !counts[name]) : []
-      rows[pack] = { offered, counts, missing }
+      rows[pack] = { offered, counts, missing, alike: await alikePairs(frames.filter((f) => f.pack === pack && f.format === '16x9' && f.m)) }
     }
     await drawSheet(look, frames, rows)
     report.looks[look] = { frames: frames.map(({ file, sceneHexes, ...f }) => ({ ...f, file: path.relative(process.cwd(), file) })), rows }
@@ -702,7 +709,7 @@ try {
       const failing = frames.filter((f) => f.pack === pack && f.fails?.length)
       const row = rows[pack]
       const across = look.startsWith('contour.') ? ` Main light across seeds 1-${seeds}: ${Object.entries(row.counts).map(([nm, c]) => `${nm} ${c}`).join(', ')}${row.missing.length ? `; never ${row.missing.join(', ')}: FAIL` : ''}.` : ''
-      summary.push(`- ${pack}: ${failing.length} of ${frames.filter((f) => f.pack === pack && !f.missing).length} frames fail.${across}`)
+      summary.push(`- ${pack}: ${failing.length} of ${frames.filter((f) => f.pack === pack && !f.missing).length} frames fail.${across} ${varietyLine(row.alike)}`)
       for (const f of failing) summary.push(`  - ${f.id}: ${f.fails.join('; ')}${f.notes.length ? ` (also ${f.notes.join('; ')})` : ''}`)
     }
     summary.push('')
@@ -711,6 +718,45 @@ try {
   await fs.writeFile(path.join(outDir, 'palette.json'), JSON.stringify(report, null, 1))
   await fs.writeFile(path.join(outDir, 'summary.md'), `${summary.join('\n')}\n`)
   console.log(`summary: ${path.relative(process.cwd(), path.join(outDir, 'summary.md'))}`)
+
+  // --- seed variety: which seeds of one pack look like the same frame at thumbnail size ---
+  async function layoutMap(file) {
+    const { data } = await sharp(file).removeAlpha().resize(40, 23, { fit: 'fill' }).blur(1).raw().toBuffer({ resolveWithObject: true })
+    const L = Array.from({ length: 40 * 23 }, (_, i) => linearToOklab([0, 1, 2].map((c) => SRGB_TO_LINEAR[data[3 * i + c]]))[0])
+    const lo = Math.min(...L)
+    const span = Math.max(Math.max(...L) - lo, 1e-6)
+    return L.map((v) => (v - lo) / span)
+  }
+  function colorMix(m) {
+    const v = { ...m.shares, white: m.white, pale: m.pale, outside: m.outsideShare, edge: m.edge ?? 0, mixes: Object.values(m.bridges).reduce((s, x) => s + x, 0) }
+    const total = Object.values(v).reduce((s, x) => s + x, 0) || 1
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, x / total]))
+  }
+  async function alikePairs(list) {
+    const items = []
+    for (const f of [...list].sort((a, b) => a.seed - b.seed)) items.push({ seed: f.seed, layout: await layoutMap(f.file), mix: colorMix(f.m) })
+    const pairs = []
+    for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        const [a, b] = [items[i], items[j]]
+        let num = 0
+        let den = 0
+        for (let p = 0; p < a.layout.length; p++) {
+          num += Math.abs(a.layout[p] - b.layout[p])
+          den += a.layout[p] + b.layout[p]
+        }
+        const layout = den ? num / den : 0
+        const keys = new Set([...Object.keys(a.mix), ...Object.keys(b.mix)])
+        const mix = [...keys].reduce((s, k) => s + Math.abs((a.mix[k] ?? 0) - (b.mix[k] ?? 0)), 0) / 2
+        if (layout <= T.variety.layout && mix <= T.variety.mix) pairs.push({ seeds: [a.seed, b.seed], layout: +layout.toFixed(3), mix: +mix.toFixed(3) })
+      }
+    }
+    return pairs
+  }
+  function varietyLine(alike) {
+    if (!alike.length) return `No two of seeds 1-${seeds} look alike.`
+    return `Seeds that look alike (layout, mix): ${alike.map((p) => `s${p.seeds[0]}/s${p.seeds[1]} (${p.layout}, ${p.mix})`).join(', ')}: FAIL.`
+  }
 
   // --- the sheet: packs as rows, seeds as columns, a share bar and the verdict under each tile ---
   async function drawSheet(look, frames, rows) {
@@ -721,7 +767,7 @@ try {
     const LEFT = 96
     const BAR = 10
     const TEXT = 30
-    const ROWH = 18 + TH + 4 + BAR + TEXT + 22
+    const ROWH = 18 + TH + 4 + BAR + TEXT + 40
     const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     const textSvg = (lines, w, h, size = 11, color = '#ddd') =>
       Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">${lines.map((l, i) => `<text x="1" y="${(i + 1) * (size + 3)}" font-family="Helvetica" font-size="${size}" fill="${l.color ?? color}">${esc(l.text ?? l)}</text>`).join('')}</svg>`)
@@ -758,6 +804,8 @@ try {
       const row = rows[pack]
       const counts = look.startsWith('contour.') ? `Main light per seed (16:9): ${Object.entries(row.counts).map(([nm, c]) => `${nm} ${c}`).join(', ')}${row.missing.length ? `. Never lit with ${row.missing.join(', ')}: FAIL` : '. Every light color used.'}` : ''
       if (counts) comp.push({ input: textSvg([{ text: counts, color: row.missing.length ? '#ff7070' : '#8c8' }], width - LEFT, 18, 11), left: LEFT, top: top + 18 + TH + 4 + BAR + TEXT })
+      const variety = varietyLine(row.alike)
+      comp.push({ input: textSvg([{ text: variety.length > 230 ? `${variety.slice(0, 227)}...` : variety, color: row.alike.length ? '#ff7070' : '#8c8' }], width - LEFT, 18, 11), left: LEFT, top: top + 18 + TH + 4 + BAR + TEXT + (counts ? 18 : 0) })
     }
     await sharp({ create: { width, height, channels: 3, background: '#161616' } }).composite(comp).png().toFile(path.join(outDir, `${look}.png`))
   }
