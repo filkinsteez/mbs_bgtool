@@ -243,7 +243,7 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, ra
         // pink or mauve the two make when mixed; under the glow line and inside the glow's dense
         // haze the skylight fades out, so the glow's body is Orange-red itself. A compact, low glow
         // leaves a band of Cyan above it.
-        return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.3, horizonGain: 0.42, skyEdge: [0.95, 0.4, 0.15], light: orangeRed, coreColor: yellow, glow: 1.2, glowUp: 0.25, glowRise: structure === 'land' ? 0.4 : 0.25, path: [-0.15, 0.55, 0.45], hue: [-0.25, 0.2], bridge: 0.9, bridgeLift: 0.5, bridgeWarmth: 0.8, bridgeFloor: 0.1, haze: 0.3, downReach: 1.5, sideDeeper: 0.3, waterDegrees: [6, 9], landHaze: 0.03, extinction: 3 }
+        return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.3, horizonGain: 0.42, skyEdge: [0.95, 0.4, 0.15], light: orangeRed, coreColor: yellow, glow: 1.2, glowUp: 0.25, glowRise: structure === 'land' ? 0.5 : 0.25, path: [-0.15, 0.55, 0.45], hue: [-0.25, 0.2], bridge: 0.9, bridgeLift: 0.5, bridgeWarmth: 0.8, bridgeFloor: 0.1, haze: 0.3, downReach: 1.5, sideDeeper: 0.3, waterDegrees: [6, 9], landHaze: 0.03, extinction: 3 }
       }
       // Yellow under a band of Cyan, so Meta Blue, Cyan and the warm light all show.
       return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.1, skyEdge: [0.97, 0.75, 0.3], light: yellow, coreColor: yellow, glow: 0.7, glowUp: 0.5, path: [0.5, 1, 0.45], hue: [-0.3, 0.35], bridge: 0.5, haze: 0.5, sideDeeper: 0.4, core: 2 }
@@ -415,7 +415,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
       break
     case 'land':
       // The light just above the ridge's high end, on the sun's side.
-      sunIn = lerp(0.04, 0.22, sunPick)
+      sunIn = lerp(0.08, 0.3, sunPick)
       tilt = side * lerp(0, 3, tiltPick)
       dome = lerp(-0.01, 0.01, bendPick)
       floor = lerp(0.3, 0.6, floorPick)
@@ -453,7 +453,12 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   }
   const lineOf = (x: number) => outlineAt(outline, half, x, seed)
   let lowest = -Infinity
-  for (let i = 0; i <= 32; i++) lowest = Math.max(lowest, lineOf(-half + (i / 32) * frameWidth))
+  let crest = Infinity
+  for (let i = 0; i <= 32; i++) {
+    const at = lineOf(-half + (i / 32) * frameWidth)
+    lowest = Math.max(lowest, at)
+    crest = Math.min(crest, at)
+  }
   // A far bank on the water's line; it lowers as a high line leaves less sky above it.
   const bankHeight = water ? look.bank * lerp(0.8, 1.3, bankPick) * clamp01((lineAt + 0.5 * tall) / 0.6) : 0
 
@@ -555,12 +560,13 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const squeeze = Math.max(0.3, Math.min(1, room))
   edges[0][1] *= squeeze
   if (midSky) edges[1][1] *= lerp(squeeze, 1, midAmount)
-  // A low sky of its own color shows as a band above the glow instead of under it, as far as the
-  // top fifth allows.
+  // A low sky of its own color shows as a band above the glow and the ridge's crest instead of
+  // under them, as far as the top fifth allows.
   if (look.lowSky !== look.zenith) {
     const low = edges[edges.length - 1]
     const highest = -(topHeight - 0.2 * tall - tail * low[1])
-    low[0] = Math.max(highest, Math.min(low[0], -(glowRise + 0.2 * skyScale)))
+    const under = Math.max(glowRise, land ? anchorY - crest : 0)
+    low[0] = Math.max(highest, Math.min(low[0], -(under + 0.3 * skyScale)))
   }
   const gains = midSky ? [zenithGain, midGain, lowGain] : [zenithGain, lowGain]
   // The dusk band's edge sits just under the glow's line, hiding the glow's lower part; the band is
