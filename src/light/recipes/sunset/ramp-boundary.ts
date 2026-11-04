@@ -160,8 +160,10 @@ function lightLuminance(u: RampUniforms, f: Frame, across: number, s: number): n
   }
   const fade = Math.exp(-(num(u, 'uExtinction') * depth + dim) * lightReach)
   const behind = 1 - Math.min(1, Math.max(0, duskCover))
-  const [veilTop, veilLow, veilHeight] = list(u, 'uVeil')
-  const veil = (veilTop + veilLow * Math.exp(-height / Math.max(veilHeight, 1e-4))) * behind
+  const [veilMain, veilLow, veilHeight] = list(u, 'uVeil')
+  const [farFrom, farTo] = list(u, 'uVeilFar')
+  const farBand = farTo > farFrom ? 1 - smoothstep(farFrom, farTo, height) : 1
+  const veil = (veilMain + veilLow * Math.exp(-height / Math.max(veilHeight, 1e-4))) * farBand * behind
   for (let i = 0; i < 3; i++) sky[i] += veil
   return luminance(sky.map((v, i) => (Math.max(v, 0) * fade + Math.max(dusk[i], 0)) * gain[i] + glow[i] * behind))
 }

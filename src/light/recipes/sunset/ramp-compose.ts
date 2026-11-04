@@ -209,8 +209,11 @@ interface PackLook {
   sunPath: number
   /** How much the glow's haze hides the sky behind it. */
   extinction: number
-  /** White light scattered over the sky low down, at the default Intensity (linear light). */
-  veil: number
+  /**
+   * White light scattered over the sky under its far band of full Meta Blue, and more of it low
+   * down, at the default Intensity (linear light).
+   */
+  veil: [main: number, low: number]
 }
 
 /**
@@ -248,7 +251,7 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, va
     extinction: 1.2,
     glowUp: 1,
     glowRise: 1,
-    veil: 0.12,
+    veil: [0.22, 0.12] as [number, number],
   }
   switch (packId) {
     case 'bold': {
@@ -262,10 +265,10 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, va
         // pink or mauve the two make when mixed; under the glow line and inside the glow's dense
         // haze the skylight fades out, so the glow's body is Orange-red itself. A compact, low glow
         // leaves a band of Cyan above it.
-        return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.8, horizonGain: 0.42, skyEdge: [0.95, 0.9, 0.15], veil: 0.04, light: orangeRed, coreColor: yellow, glow: 1.2, glowUp: 0.25, glowRise: structure === 'land' ? 0.62 : 0.25, path: [-0.15, 0.55, 0.45], hue: [-0.25, 0.2], bridge: 0.9, bridgeLift: 0.5, bridgeWarmth: 0.8, bridgeFloor: 0.1, haze: 0.3, downReach: 1.5, sideDeeper: 0.3, waterDegrees: [6, 9], landHaze: 0.03, extinction: 3 }
+        return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.8, horizonGain: 0.42, skyEdge: [0.95, 0.9, 0.15], veil: [0.16, 0.04], light: orangeRed, coreColor: yellow, glow: 1.2, glowUp: 0.25, glowRise: structure === 'land' ? 0.62 : 0.25, path: [-0.15, 0.55, 0.45], hue: [-0.25, 0.2], bridge: 0.9, bridgeLift: 0.5, bridgeWarmth: 0.8, bridgeFloor: 0.1, haze: 0.3, downReach: 1.5, sideDeeper: 0.3, waterDegrees: [6, 9], landHaze: 0.03, extinction: 3 }
       }
       // Yellow under a band of Cyan, so Meta Blue, Cyan and the warm light all show.
-      return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.6, skyEdge: [0.97, 1.0, 0.3], veil: 0.04, light: yellow, coreColor: yellow, glow: 0.7, glowUp: 0.5, path: [0.5, 1, 0.45], hue: [-0.3, 0.35], bridge: 0.5, haze: 0.5, sideDeeper: 0.4, core: 2 }
+      return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.6, skyEdge: [0.97, 1.0, 0.3], veil: [0.16, 0.04], light: yellow, coreColor: yellow, glow: 0.7, glowUp: 0.5, path: [0.5, 1, 0.45], hue: [-0.3, 0.35], bridge: 0.5, haze: 0.5, sideDeeper: 0.4, core: 2 }
     }
     case 'elemental': {
       const [lime, forest, tan, plum] = rest
@@ -806,8 +809,11 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     glow: look.glow * glowGain * (arcs ? 1.2 : 1),
     glowOffset: -glowRise,
     glowEnd,
-    // Scattered daylight over the sky, denser toward the horizon.
-    veil: [0.03 * zenithGain, look.veil * zenithGain, 0.3 * Math.max(0.2, topHeight)],
+    // Scattered daylight over the sky, denser toward the horizon, mutes and pales it toward the
+    // light. A band of full Meta Blue stays at the far edge: the top twentieth of the frame, fading
+    // into the veil over the next sixth.
+    veil: [look.veil[0] * zenithGain, look.veil[1] * zenithGain, 0.3 * Math.max(0.2, topHeight)],
+    veilFar: [topHeight - 0.22 * tall, topHeight - 0.05 * tall],
     glowVary: 0,
     glowArch: 0.6,
     // More daylight gathers the glow toward the sun, so white shows only near the light.

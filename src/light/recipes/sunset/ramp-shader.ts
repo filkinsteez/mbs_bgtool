@@ -53,7 +53,8 @@ uniform vec3 uGlowColor[GLOW_LAYERS];
 uniform float uGlowWeight[GLOW_LAYERS];
 uniform vec2 uGlowTau[GLOW_LAYERS];   // decay length above and below the glow line
 uniform vec2 uGlowEnd;       // depth below the glow line where its lower side ends (0: never), and the width of that fade
-uniform vec3 uVeil;          // white light over the sky: at the top, more toward the horizon, and the height over which that extra fades
+uniform vec3 uVeil;          // white light over the sky: under the far band, more toward the horizon, and the height over which that extra fades
+uniform vec2 uVeilFar;       // heights above the horizon between which the veil fades out into the far band of full Meta Blue (0, 0: none)
 uniform float uGlowOffset;
 uniform vec3 uGlowVary;      // how much the glow's upward reach changes along its length, cycles per short side,
                              // and how much higher it reaches toward the sun (the twilight arch)
@@ -360,7 +361,13 @@ vec3 rampSky(vec2 p) {
   // A veil of scattered white light over the sky's own light, thin at the top and denser toward
   // the horizon, mutes the sky's colors and pales the middles between them. It stays off the dusk
   // band, which is in front of it.
-  if (uVeil.x > 0.0 || uVeil.y > 0.0) sky += (uVeil.x + uVeil.y * exp(-height / max(uVeil.z, 1e-4))) * (1.0 - clamp(duskCover, 0.0, 1.0));
+  // Near the horizon it takes on the warmth of the light, so the middles go beige and cream; at
+  // the edge farthest from the light it fades out, leaving a band of full Meta Blue.
+  if (uVeil.x > 0.0 || uVeil.y > 0.0) {
+    float low = exp(-height / max(uVeil.z, 1e-4));
+    float far = uVeilFar.y > uVeilFar.x ? 1.0 - smoothstep(uVeilFar.x, uVeilFar.y, height) : 1.0;
+    sky += (uVeil.x + uVeil.y * low) * far * (1.0 - clamp(duskCover, 0.0, 1.0)) * mix(vec3(1.0), uBridgeTint, low);
+  }
   sky = max(sky, vec3(0.0)) * skyGain;
   // The dusk band is a low bank of the sky's shadowed light in front of the glow and hides the
   // light behind it, so the two meet in one soft edge: the glow's light added over it would mix
