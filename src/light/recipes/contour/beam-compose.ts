@@ -122,29 +122,42 @@ export function lineInShorts(drag: NonNullable<ControlValues['drag']>, aspect: n
 /** The angle in [-pi, pi]. */
 export const wrapAngle = (a: number) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI))
 
-/** Oklab chroma over lightness of a cool light's dim haze: a pale veil of its color. */
-const VEIL_CHROMA = 0.15
+/** Oklab chroma over lightness of a cool light's haze: a pale veil of its color. */
+const VEIL_CHROMA = 0.12
 
 /** Luminance of the faint haze in a cool light's darks, about Oklab L 0.1. */
 const DARK_HAZE = 0.0012
 
 /**
- * The `veil` param [color share, full color level, band width, dark haze] for a light. A cool
- * light's haze keeps only enough of its color for chroma VEIL_CHROMA times its lightness, with
- * its full color in a band about an octave either side of 0.35 of its clipping luminance, and
- * leaves a faint haze in black darks. Warm lights keep their warm tails (a pale veil of them
- * reads brown), and so does a light over a dark of another hue, such as Meta Blue over Plum,
- * where a pale veil would mix with the dark into mauve.
+ * The `veil` param [chroma share, band level, band width, dark haze] for a light. A cool
+ * light's haze keeps only enough of its chroma for VEIL_CHROMA times its lightness (the
+ * moodboard's beams and shafts), up to twice that in a band about 1.2 octaves either side of
+ * its clipping luminance (where the moodboard's light is most colorful), and leaves a faint
+ * haze in black darks. Warm lights keep their warm tails (a pale veil of them reads brown).
  */
 export function veilParam(light: ContourLight): number[] {
   if (!veiled(light)) return [1, 1, 1, 0]
   const [l, c] = linearToOklch(hexToLinear(light.haze))
-  return [round4(Math.min(1, (VEIL_CHROMA * l) / Math.max(c, 1e-4))), 0.35, 0.8, light.base === '#000000' ? DARK_HAZE : 0]
+  return [round4(Math.min(1, (VEIL_CHROMA * l) / Math.max(c, 1e-4))), 1, 1.2, light.base === '#000000' ? DARK_HAZE : 0]
 }
 
-/** Whether a light's haze is a pale veil: a cool light over a dark that matches it. */
+/** Whether a light's haze is a pale veil: any cool light. */
 export function veiled(light: ContourLight): boolean {
-  return !light.tail && darkMatches(light)
+  return !light.tail
+}
+
+/**
+ * The `darkMeet` param for a light, given the gain on its dark base: over a dark of another
+ * hue, the light's faint tail falls off below 0.3 to 1.2 of the dark's own level and the
+ * dark is gone where the light passes 0.15 to 0.6 of it, so the two meet in near-black
+ * instead of blending into a third color (Meta Blue over Plum into indigo), and the darks
+ * keep the dark's own color. Levels are in the light's scattered units. Off ([0, 0, 0, 0])
+ * over a dark that matches the light.
+ */
+export function darkMeetParam(light: ContourLight, baseGain: number): number[] {
+  if (darkMatches(light)) return [0, 0, 0, 0]
+  const level = (baseGain * light.baseLevel * luminanceOf(light.base)) / Math.max(luminanceOf(light.haze), 1e-4)
+  return [0.3, 1.2, 0.15, 0.6].map((share) => round4(share * level))
 }
 
 /**

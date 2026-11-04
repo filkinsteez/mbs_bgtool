@@ -3,6 +3,7 @@ import type { ComposeInput, Composition, ParamValue, RecipeContext, RecipeDefini
 import {
   clipLuminanceOf,
   contourLights,
+  darkMatches,
   fallParam,
   frameHalf,
   geo,
@@ -80,7 +81,8 @@ uniform vec4 uTurn;       // a dragged line: cos and sin of the stage's turn on 
 uniform vec2 uSource;     // world heights where the beam starts and where it has all its light
 uniform float uCeilingTop; // how far above its ceiling the ceiling haze thins out (screen; 0: it doesn't)
 uniform vec2 uLaneShape;  // floor gloss lanes: weight of the finer, blotchier lanes, how fast a lane changes along its length
-uniform vec4 uVeil;       // a cool light's haze: veil color share (1: full color), level of the full color (share of the clipping luminance), band width (octaves), dark haze luminance
+uniform vec4 uVeil;       // a cool light's haze: chroma share (1: full color), level of the most color (share of the clipping luminance), band width (octaves), dark haze luminance
+uniform vec4 uDarkMeet;   // over a dark of another hue: light level its faint tail falls off below (from, to), level the dark is gone by (from, to); 0: off
 
 const int BEAM_STEPS = 16;
 
@@ -349,19 +351,30 @@ vec3 radiance(vec2 uv, vec2 screen) {
   float level = scatter + direct * lumLight / lumHaze;
   float fall = warmFall(level);
   vec3 tail = warmTail(level);
-  // A cool light's haze is a pale veil of its color, with the full color only in a band of
-  // levels; its darks are a faint haze of the veil, not black.
-  vec3 veil = mix(vec3(lumHaze), uHazeColor, uVeil.x);
+  // A cool light's haze is a pale veil of its color: its whole color path, the pale core too,
+  // keeps only a share of its chroma at the same Oklab lightness and hue, rising to twice that
+  // share in a wide band of levels; its darks are a faint blue-black haze, not black.
+  vec3 path = mix(tail, paleColor, pale);
   if (uTail.w <= 0.0 && uVeil.x < 1.0) {
     float clip = lumHaze / max(max(uHazeColor.r, uHazeColor.g), uHazeColor.b);
     float octaves = log2(max(level * lumHaze, 1e-6) / (uVeil.y * clip)) / max(uVeil.z, 0.05);
-    tail = mix(veil, uHazeColor, exp(-0.5 * octaves * octaves));
+    vec3 lab = linearToOklab(path);
+    path = oklabToLinear(vec3(lab.x, lab.yz * min(1.0, uVeil.x * (1.0 + exp(-0.5 * octaves * octaves)))));
   }
-  vec3 scattered = scatter * fall * mix(tail, paleColor, pale);
+  // Over a dark of another hue (Meta Blue over Plum) the light and the dark both dim toward
+  // black before they meet: the dark fades out where the light is, and the light's faint tail
+  // falls off faster, so they never blend into a third color over a wide fade.
+  float meet = 1.0;
+  float darkShows = 1.0;
+  if (uDarkMeet.y > 0.0) {
+    meet = smoothstep(uDarkMeet.x, uDarkMeet.y, level);
+    darkShows = 1.0 - smoothstep(uDarkMeet.z, uDarkMeet.w, level);
+  }
+  vec3 scattered = scatter * fall * meet * path;
   vec3 ownColor = uTail.w > 0.0 ? fall * tail * (lumLight / lumHaze) : uLightColor;
   vec3 directColor = mix(ownColor, uPaleTarget * lumLight, uPaleWhite * pale);
-  vec3 ambient = uBaseColor * mix(uAmbient.x * (1.0 - uAmbient.y + uAmbient.y * hazeHere), uAmbient.z, onFloor);
-  vec3 color = ambient + scattered + directColor * direct + uVeil.w * veil / lumHaze;
+  vec3 ambient = uBaseColor * darkShows * mix(uAmbient.x * (1.0 - uAmbient.y + uAmbient.y * hazeHere), uAmbient.z, onFloor);
+  vec3 color = ambient + scattered + directColor * direct + uVeil.w * uHazeColor / lumHaze;
 
   vec2 half_ = 0.5 * uFrameAspect;
   float vig = 1.0 - uVignette * dot(screen, screen) / dot(half_, half_);
@@ -442,8 +455,12 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
   const focal = lerp(1.15, 1.6, random())
   const width = either(broad, [0.08, 0.13], [0.2, 0.28])
   // Light moves the beam across a range around the seed's own place that stays inside
-  // 0.08..0.92 of the frame, so it keeps moving up to both ends of the slider.
-  const center = wide ? either(onRight, [0.18, 0.34], [0.66, 0.82]) : either(onRight, [0.26, 0.38], [0.62, 0.74])
+  // 0.08..0.92 of the frame, so it keeps moving up to both ends of the slider. A broad beam is
+  // never a cone, so its cone choice stands it near the frame's middle instead of its side.
+  const nearMiddle = broad && cone
+  const center = wide
+    ? either(onRight, nearMiddle ? [0.36, 0.44] : [0.18, 0.34], nearMiddle ? [0.56, 0.64] : [0.66, 0.82])
+    : either(onRight, nearMiddle ? [0.4, 0.46] : [0.26, 0.38], nearMiddle ? [0.54, 0.6] : [0.62, 0.74])
   const reach = Math.min(wide ? 0.3 : 0.2, 0.92 - center, center - 0.08)
   const side = controls.drag ? center : center + (mood - 0.5) * 2 * reach
   const beamAt = (side - 0.5) * 2 * halfW
@@ -476,8 +493,10 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     beamWidth: round4(width * soft(0.95, 1.05)),
     landing: round4(landing),
     tilt: tilt.map(round4),
-    // A nearly parallel column, or a cone that narrows toward the source.
-    spread: round4(either(cone, [-0.04, 0.03], [0.2, 0.3])),
+    // A nearly parallel column, or (for narrow beams) a cone that narrows toward the source. A
+    // broad beam is always a column, bright up to the frame's top as in the moodboard; a broad
+    // cone thins and dims toward the top.
+    spread: round4(either(cone && !broad ? 1 : 0, [-0.04, 0.03], [0.2, 0.3])),
     beamEdge: round4(soft(3.6, 2.2)),
     hollow: [round4(lerp(0.42, 0.58, random())), round4(lerp(0.35, 0.6, random()))],
     power: round4(Math.min(20, power)),
@@ -506,7 +525,7 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     // The color starts toward white from 0.4 of the haze's clipping level (0.3 for a veiled
     // light, all the way) and is there by 1.3 times it, so light passing nominal keeps
     // whitening at the same pace.
-    pale: veiled(light)
+    pale: veiled(light) && darkMatches(light)
       ? [Math.max(1, lerp(0.5, 0.7, random())), round4(0.3 * clipLuminanceOf(light.haze)), round4(1.3 * clipLuminanceOf(light.haze))]
       : [round4(lerp(0.5, 0.7, random())), round4(0.4 * clipLuminanceOf(light.haze)), round4(1.3 * clipLuminanceOf(light.haze))],
     paleWhite: light.light === light.haze ? 0.5 : 0.2,
@@ -514,7 +533,10 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     fall: fallParam(light, TAIL_BELOW, TAIL_FALL),
     ambient: [light.baseLevel, 0, light.baseLevel],
     vignette: round4(lerp(0.1, 0.18, random())),
-    veil: veilParam(light),
+    // A light over a dark of another hue (Meta Blue over Plum) keeps its full color: a pale
+    // veil would blend with the dark into a third color, and dimming the dark where the beam's
+    // faint glow reaches would outline the beam's shape in the dark.
+    veil: darkMatches(light) ? veilParam(light) : [1, 1, 1, 0],
   }
   if (controls.drag) Object.assign(params, beamOnLine(params, lineInShorts(controls.drag, aspect), halfH))
 
@@ -635,6 +657,7 @@ export const contourBeam: RecipeDefinition = {
     { kind: 'number', key: 'ceilingTop', label: 'Ceiling haze above', min: 0, max: 1, step: 0.005, default: 0 },
     { kind: 'vector', key: 'laneShape', label: 'Floor lane shape', min: 0, max: 1, step: 0.0005, default: [0.35, 0.08] },
     { kind: 'vector', key: 'veil', label: 'Haze veil', min: 0, max: 4, step: 0.0005, default: [1, 1, 1, 0] },
+    { kind: 'vector', key: 'darkMeet', label: 'Meeting another dark', min: 0, max: 4, step: 0.0005, default: [0, 0, 0, 0] },
   ],
   fragment: BEAM_GLSL,
   uniforms: (ctx) => {
@@ -675,6 +698,7 @@ export const contourBeam: RecipeDefinition = {
       uCeilingTop: ctx.num('ceilingTop'),
       uLaneShape: ctx.vec('laneShape'),
       uVeil: ctx.vec('veil'),
+      uDarkMeet: ctx.vec('darkMeet'),
     }
   },
   radianceScale: (ctx) => (ctx.num('edgeSoftness') >= HALF_SCALE_EDGE ? 0.5 : 1),
