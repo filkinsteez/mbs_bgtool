@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_OUTPUT, OUTPUT_NUMBERS } from '../../scene'
 import { GRAIN_FILTER, grainUniforms } from '../grain'
 import { buildOutputShader, OUTPUT_FILTER_SHADERS, OUTPUT_SHADER } from '../output'
-import { activeFilters, OUTPUT_FILTERS } from '.'
+import { activeFilters, FILTER_KEYS, filterFileTag, OUTPUT_FILTERS } from '.'
 
 describe('output filter chain', () => {
   it('starts with grain, and every stage has a strength setting', () => {
@@ -34,5 +34,19 @@ describe('output filter chain', () => {
 
   it('gives the grain stage the grain uniforms at the output size', () => {
     expect(GRAIN_FILTER.uniforms(0.5, { width: 3840, height: 2160, seed: 7 })).toEqual(grainUniforms(0.5, 3840, 2160))
+  })
+
+  it('lists every filter strength, registered or not', () => {
+    for (const stage of OUTPUT_FILTERS) expect(FILTER_KEYS).toContain(stage.key)
+    for (const key of FILTER_KEYS) expect(DEFAULT_OUTPUT[key]).toBe(0)
+  })
+
+  it('names the filters that are on for export file names', () => {
+    expect(filterFileTag(undefined)).toBe('')
+    expect(filterFileTag({})).toBe('')
+    expect(filterFileTag({ grain: 0 })).toBe('')
+    expect(filterFileTag({ grain: 0.5 })).toBe('-grain50')
+    expect(filterFileTag({ grain: 1 })).toBe('-grain100')
+    expect(filterFileTag({ grain: 0.004 })).toBe('-grain1')
   })
 })
