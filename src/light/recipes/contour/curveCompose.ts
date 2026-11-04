@@ -432,12 +432,16 @@ export function haloParts(prefix: string, hex: string): Record<string, number | 
     }
     return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
   }
+  // A pale core near the hot spot: a bright part just outside the curve that is strongest where the light is and
+  // overexposes toward white, so the full color shows in a band around it and the haze stays dimmer (in the
+  // examples, bright light goes pale and full color shows only between the core and the dark).
+  const core = { Weight: 2, Width: 0.025, Shape: 4, Side: 2, Offset: -0.03, Light: 1, LightGamma: 2, MaskSoft: 0.012, Grow: 1, GrowBy: [1, 2] }
   const parts: Record<string, number | number[]> = {
     ...prefixed('n1', crest),
-    n2Weight: 0,
+    ...prefixed('n2', core),
     n3Weight: 0,
     f1Weight: 0,
-    ...prefixed('f2', { ...outside, Weight: 0.75, Width: 0.27 }),
+    ...prefixed('f2', { ...outside, Weight: 0.525, Width: 0.27 }),
     f3Weight: 0,
   }
   return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
