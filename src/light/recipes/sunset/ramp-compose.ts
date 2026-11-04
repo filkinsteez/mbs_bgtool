@@ -335,7 +335,12 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const intensity = clamp01(controls.intensity)
   const softness = clamp01(controls.softness)
   const mood = clamp01(controls.mood)
-  const place = placeHorizon(mood, seed, aspect)
+  // A dragged point puts the line at its height, within the Horizon control's range, and the sun at
+  // its x; the seed keeps everything else. The line's ends come from the control's own ends.
+  const point = controls.point
+  const pointRise = point ? horizonRise(point[1]) : 0
+  const placed = placeHorizon(point ? pointRise : mood, seed, aspect)
+  const place = point ? { ...placed, y: lerp(placeHorizon(0, seed, aspect).y, placeHorizon(1, seed, aspect).y, pointRise) } : placed
 
   const tall = Math.max(1, 1 / aspect)
   const frameWidth = Math.max(1, aspect)
@@ -448,7 +453,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // An open sky with a dusk band raises its glow, leaving the band room under it; a corner's glow
   // sits lower, so it rises more.
   if (look.dusk) bandAt -= structure === 'corner' ? 0.22 : 0.12
-  const sunX = sunRight ? 1 - sunIn : sunIn
+  const sunX = point ? Math.min(1.15, Math.max(-0.15, point[0])) : sunRight ? 1 - sunIn : sunIn
   const turn = (tilt * Math.PI) / 180
 
   // The ground's outline. Water is level and nearly still. Land is one ridge climbing toward the
