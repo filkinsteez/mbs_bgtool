@@ -16,7 +16,10 @@ node prototypes/ascii/run.mjs crops --names v3,v4 --frame rim-bold-s1 --at 160,5
 node prototypes/ascii/glyphs.mjs                           # font glyph sheets and measurements -> out/glyphs/
 node prototypes/ascii/engine-check.mjs --strength 1 [--skip4k] [--only rim-bold-s1]   # through the engine's chain -> out/engine/s100/
 node prototypes/ascii/sheets.mjs                           # out/engine/sheet-full.jpg, sheet-crops.jpg (needs s50 and s100)
+node prototypes/ascii/density.mjs                          # the slider as density: out/density/ sheets and the 0..1 sweep
 ```
+
+Since 777788d the slider value is the density (rows on the short side, 13 x 4^value), so `--strength` in `engine-check.mjs` picks the row count too.
 
 `engine-check.mjs` renders from a copy of `src/light` at HEAD. While `programRenderer.ts` does not call `prepareOutputFilters` yet, the copy gets `artifacts/grain/programRenderer-filter-chain.patch` (the label in `artifacts/ascii/head/REV` ends in `+chain`).
 

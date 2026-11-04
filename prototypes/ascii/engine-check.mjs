@@ -128,9 +128,11 @@ try {
     const save = (img, file) => sharp(img.data, { raw: { width: img.width, height: img.height, channels: 4 } }).removeAlpha().jpeg({ quality: 92 }).toFile(path.join(dir, file))
     await save(on, `${s.name}-1080.jpg`)
     await save(off, `${s.name}-1080-off.jpg`)
-    // Color: blur both by one cell height (41.5 px at 1080) in linear light, on a 4x smaller copy.
-    const a = blur(linearDown(off.data, W, H, 4), 1080 / 26 / 4)
-    const b = blur(linearDown(on.data, W, H, 4), 1080 / 26 / 4)
+    // Color: blur both by one cell height in linear light, on a 4x smaller copy. The slider is the density: rows on the
+    // short side, 13 * 4^value (26 at 0.5).
+    const rowsOnShort = Math.round(13 * 4 ** Math.min(1, Math.max(0, strength)))
+    const a = blur(linearDown(off.data, W, H, 4), 1080 / rowsOnShort / 4)
+    const b = blur(linearDown(on.data, W, H, 4), 1080 / rowsOnShort / 4)
     const color = deltaE(a, b)
     const row = { name: s.name, msOff: +off.ms.toFixed(1), msOn: +on.ms.toFixed(1), color }
     if (!skip4k) {

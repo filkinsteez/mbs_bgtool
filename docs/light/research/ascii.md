@@ -82,7 +82,23 @@ What differs from the tile, on purpose
 - **Background.** The tile fades its sky to 35 % on white so dark text reads on a slide. Here the background keeps the pack colors.
 - **Text color.** The tile uses one fixed ink. Here the dark ink takes a trace of the pixel's hue, and light glyphs take the light's own color.
 
-## Results (engine, 2026-11-04)
+## The slider is density (2026-11-04, 777788d)
+
+The owner, trying the filters: "same with ascii maybe it should be more like density". The slider now sets how many rows of characters fit on the short side, with the full glyph treatment at every value.
+
+- Rows on the short side = round(13 x 4^value): 13 at 0, 18 at 0.25, 26 at 0.5 (the tile, the old look at strength 1), 37 at 0.75, 52 at 1.
+- On a log scale each slider step grows the row count by the same ratio. Whole rows are kept, so a 0..1 sweep in 0.01 steps changes the row count 39 times.
+- Old links keep their `strength=` value, which now means density.
+- At 1080p, 13 rows are 83 px tall (a 64 px font, 50 x 13 characters at 16:9). 52 rows are 21 px (a 16 px font, 200 x 52). At 4K the dense end is a 32 px font.
+- The engine's frame source cannot change size with the slider, so it is fixed at twice the densest grid each way, each texel the mean of 2 x 2 samples. A cell's mean, and the cell-sized box of light behind the gains, are averaged from it with bilinear reads.
+- The chain leaves a stage out at exactly 0, so a slider at 0 shows no characters until the tool keeps the value above 0.
+
+Checks (`prototypes/ascii/density.mjs`, `engine-check.mjs`), on Ramp Bold seed 1, Halo Elemental seed 2 and Beam Atmospheric seed 1:
+- Sweep 0..1 in 0.01 steps at 960 x 540: 39 row steps per look. The change per row step is even: Ramp 0.039 to 0.041, Halo 0.010 to 0.012, Beam 0.028 to 0.029 (mean linear difference). Steps without a row change change nothing (0).
+- Color, blurred by one cell height: mean 0.0025 to 0.0055 at 13 rows and 0.0012 to 0.0028 at 52 rows. At 13 rows Halo's p95 is 0.026, where big cells cross its sharp curve.
+- Sheets: `out/density/sheet-full.jpg`, `sheet-crops.jpg` (with the tile) and `sheet-4k.jpg`.
+
+## Results (engine, 2026-11-04, before the density change; strength 1 is density 0.5 now)
 
 How these were made
 - The stage is `src/light/engine/filters/ascii.ts` and `src/light/engine/glsl/ascii.ts` (dc8b193), registered in `OUTPUT_FILTERS`.
