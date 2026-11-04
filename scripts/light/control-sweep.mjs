@@ -29,6 +29,12 @@ const LOOKS = ['sunset.ramp', 'sunset.bands', 'sunset.blooms', 'contour.rim', 'c
 const PACKS = ['bold', 'elemental', 'atmospheric']
 /** The dragged line's sweeps: its start along x or y (frame units), its angle (turns) and its length (short sides). */
 const LINE_CONTROLS = ['startx', 'starty', 'angle', 'length']
+/**
+ * The mood slider with a line set: `afterdrag` moves the line with the slider as the tool does (the light should move
+ * once, by the slider's amount); `moodalone` holds the line still (a look that places its light from the line alone
+ * doesn't change at all).
+ */
+const AFTER_DRAG_CONTROLS = ['afterdrag', 'moodalone']
 const CONTROLS = ['intensity', 'softness', 'mood']
 const FORMATS = ['16x9', '9x16', '1x1', '4x5']
 /** Base lines: start x and y in frame units, angle in degrees (0 points right, -90 up), length in short sides. */
@@ -67,7 +73,9 @@ if (args.rev !== undefined || args.tree !== undefined) process.exit(await runInC
 const quick = args.quick === true
 const grid = args.grid === true
 const looks = list(args.look).length ? list(args.look).map(lookId) : LOOKS
-const controls = list(args.control).length ? list(args.control).flatMap((name) => (name === 'line' ? LINE_CONTROLS : [controlKey(name)])) : CONTROLS
+const controls = list(args.control).length
+  ? list(args.control).flatMap((name) => (name === 'line' ? LINE_CONTROLS : name === 'slider' ? AFTER_DRAG_CONTROLS : [controlKey(name)]))
+  : CONTROLS
 const packs = list(args.pack).length ? list(args.pack) : grid ? ['bold'] : PACKS
 const seeds = parseSeeds(args.seeds, grid ? range(1, 3) : quick ? range(1, 6) : [...range(1, 12), 5081])
 const formats = list(args.format).length ? list(args.format) : quick || grid ? ['16x9'] : ['16x9', '9x16']
@@ -80,6 +88,8 @@ const LINE_VALUES = {
   starty: stepsBetween(quick ? 0 : -0.25, quick ? 1 : 1.25),
   angle: stepsBetween(0, 1),
   length: stepsBetween(quick ? 0.1 : 0.05, quick ? 1 : 1.25),
+  afterdrag: stepsBetween(0, 1),
+  moodalone: stepsBetween(0, 1),
 }
 const ratioLimit = Number(args.ratio ?? 4)
 const floor = Number(args.floor ?? 0.003)
@@ -110,11 +120,12 @@ function lookId(name) {
 
 function controlKey(name) {
   if (name === 'horizon' || name === 'light' || name === 'mood') return 'mood'
-  if (name === 'intensity' || name === 'softness' || LINE_CONTROLS.includes(name)) return name
-  throw new Error(`Unknown control ${name}; use intensity, softness, horizon, light, ${LINE_CONTROLS.join(', ')}`)
+  if (name === 'intensity' || name === 'softness' || LINE_CONTROLS.includes(name) || AFTER_DRAG_CONTROLS.includes(name)) return name
+  throw new Error(`Unknown control ${name}; use intensity, softness, horizon, light, ${[...LINE_CONTROLS, ...AFTER_DRAG_CONTROLS].join(', ')}`)
 }
 
-const isLine = (control) => LINE_CONTROLS.includes(control)
+/** Sweeps with a dragged line: the line's own controls and the mood slider with a line set. */
+const isLine = (control) => LINE_CONTROLS.includes(control) || AFTER_DRAG_CONTROLS.includes(control)
 
 /** The tool's 0.01 steps from a to b. */
 function stepsBetween(a, b) {
@@ -133,6 +144,9 @@ const baseTag = (base) => `${base.from.join('_')}_${base.angle}_${base.length}`
 
 /** A sweep's name in captions, and in file names (no spaces). */
 function sweepName(sweep) {
+  const mood = controlName(sweep.look, 'mood')
+  if (sweep.control === 'afterdrag') return `${mood} after a drag (line ${baseText(sweep.base)})`
+  if (sweep.control === 'moodalone') return `${mood} with the line held (${baseText(sweep.base)})`
   return isLine(sweep.control) ? `line ${sweep.control} (${baseText(sweep.base)})` : controlName(sweep.look, sweep.control)
 }
 
@@ -162,6 +176,9 @@ function lineOf(sweep, value, aspect) {
       return lineAt(from, angle + 360 * value, length, aspect)
     case 'length':
       return lineAt(from, angle, value, aspect)
+    case 'afterdrag':
+    case 'moodalone':
+      return lineAt(from, angle, length, aspect)
     default:
       throw new Error(`Not a line control: ${sweep.control}`)
   }
@@ -471,7 +488,7 @@ const harness = await startHarness()
 let failed = false
 try {
   const info = await harness.info()
-  const { buildScene, clampDrag, controlsForDrag } = await harness.ssr('/src/tool/controls.ts')
+  const { buildScene, clampDrag, controlsForDrag, moodForPoint, moveDragWithMood } = await harness.ssr('/src/tool/controls.ts')
   const { getPack } = await harness.ssr('/src/light/color/packs.ts')
   const { EXPORT_SIZES } = await harness.ssr('/src/light/engine/frame.ts')
   const { linearToOklab } = await harness.ssr('/src/light/color/oklab.ts')
@@ -494,10 +511,24 @@ try {
     return drag ? controlsForDrag(look, getPack(pack), seed, base, frameOf(format).aspect, drag) : base
   }
   /** The tool's controls for a sweep's value: a slider at that value, or the line for that value. */
-  const controlsFor = (sweep, value) =>
-    isLine(sweep.control)
+  /**
+   * The mood slider at `value` with the base line set. `afterdrag`: the line as the tool moves it when the slider goes
+   * from the value the drag gave it (set from the line's start) to `value`. `moodalone`: the line held still.
+   */
+  const afterDragControls = (sweep, value) => {
+    const { aspect } = frameOf(sweep.format)
+    const pack = getPack(sweep.pack)
+    const line = clampDrag(lineOf(sweep, value, aspect))
+    if (sweep.control === 'moodalone') return { ...base, mood: value, drag: line }
+    const dragged = moodForPoint(sweep.look, pack, sweep.seed, aspect, line.from) ?? base.mood
+    return { ...base, mood: value, drag: moveDragWithMood(sweep.look, pack, sweep.seed, aspect, line, dragged, value) }
+  }
+  const controlsFor = (sweep, value) => {
+    if (AFTER_DRAG_CONTROLS.includes(sweep.control)) return afterDragControls(sweep, value)
+    return isLine(sweep.control)
       ? controlsForLine(sweep.look, sweep.pack, sweep.seed, sweep.format, lineOf(sweep, value, frameOf(sweep.format).aspect))
       : { ...base, [sweep.control]: value }
+  }
   const sceneFor = (sweep, value) => {
     const start = performance.now()
     const scene = buildScene(sweep.look, getPack(sweep.pack), sweep.seed, controlsFor(sweep, value), frameOf(sweep.format).aspect)
@@ -532,7 +563,10 @@ try {
     }
     return { width, height, data }
   }
-  const shownFrame = (sweep, value, image) => (isLine(sweep.control) ? withLine(image, lineOf(sweep, value, frameOf(sweep.format).aspect)) : image)
+  const shownFrame = (sweep, value, image) => {
+    const drag = isLine(sweep.control) ? controlsFor(sweep, value).drag : undefined
+    return drag ? withLine(image, drag) : image
+  }
 
   const renderFrame = async (sweep, value, size = frameOf(sweep.format).render) => {
     const scene = sceneFor(sweep, value)
@@ -638,7 +672,7 @@ try {
     Object.entries(base)
       .filter(([key]) => key !== sweep.control && !(isLine(sweep.control) && key === 'mood'))
       .map(([key, value]) => `${controlName(sweep.look, key)} ${value}`)
-      .concat(isLine(sweep.control) ? [`${controlName(sweep.look, 'mood')} set from the line's start`] : [])
+      .concat(isLine(sweep.control) && !AFTER_DRAG_CONTROLS.includes(sweep.control) ? [`${controlName(sweep.look, 'mood')} set from the line's start`] : [])
       .join(', ')
 
   /** Frames at the --frames values, with the change from the frame before; returns the frames for the contact sheet. */
