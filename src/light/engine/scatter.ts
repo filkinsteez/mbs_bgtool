@@ -1,6 +1,6 @@
 import { MAX_SCATTER_BLURS, type RecipeContext, type RecipeProgram, type ScatterBlur, type UniformMap } from '../scene'
 import { LightEngineError, type Gpu, type Target } from './gl'
-import { AREA_RESAMPLE_SHADER, blurLevel, edgeLevels, halve, halvings, LENS_GRID_TEXELS, lensGather, samplingLevel, type Halvings } from './passes'
+import { AREA_RESAMPLE_SHADER, blurLevel, edgeLevels, halve, halvings, LENS_GRID_TEXELS, lensGather, samplingLevels, type Halvings } from './passes'
 import { NO_PROFILE, type Profiler } from './profile'
 import { buildRecipeShader } from './recipeShader'
 
@@ -113,14 +113,22 @@ export function runScatter(
   // Wide blurs run on halvings of the source and keep that size. Past the frame edges each repeats the texels of its
   // edge level: the halvings up to that level are plain, the rest are of a copy extended there. The shaders read
   // the blurred copies through uvMap.
+  // Just past a switch of edge level or of halving level, a blur also runs as before the switch and the two blend
+  // (their windows never overlap: the switches are at 24 x 2^j and about 4.07 x 2^k source pixels).
   const plans = radii.map((radius, i) => {
     const { short, width, height } = specs[i]
     const blur = radius * short
-    const at = samplingLevel(blur, width, height)
+    const at = samplingLevels(blur, width, height)
     const edges = edgeLevels(blur, width, height)
     const edge = Math.min(at.level, edges.level)
     const previous = Math.min(at.level, edges.previous)
-    return { blur, ...at, edge, blend: previous < edge ? { edge: previous, mix: 1 - edges.t } : null }
+    const blend =
+      previous < edge
+        ? { edge: previous, level: at.level, sigma: at.sigma, mix: 1 - edges.t }
+        : at.previous
+          ? { edge: Math.min(at.previous.level, edges.level), level: at.previous.level, sigma: at.previous.sigma, mix: at.previous.share }
+          : null
+    return { blur, level: at.level, sigma: at.sigma, edge, blend }
   })
   const owned: Target[] = []
   const textures: Record<string, Target> = {}
@@ -161,14 +169,14 @@ export function runScatter(
         })
         target = lensGather(gpu, averaged, radii[i] * grid.short)
         gpu.release(averaged)
-      } else if (plan.blur > 0.05 && plan.level === 0) {
-        target = blurLevel(gpu, source, plan.sigma, false)
       } else if (plan.blur > 0.05) {
-        const blurred = onHalvings(plan.edge, plan.level, plan.sigma)
+        const blurOn = (edge: number, level: number, sigma: number): { target: Target; uvMap: readonly number[] } =>
+          level === 0 ? { target: blurLevel(gpu, source, sigma, false), uvMap: IDENTITY_MAP } : onHalvings(edge, level, sigma)
+        const blurred = blurOn(plan.edge, plan.level, plan.sigma)
         target = blurred.target
         uvMap = blurred.uvMap
         if (plan.blend) {
-          blend = { ...onHalvings(plan.blend.edge, plan.level, plan.sigma), mix: plan.blend.mix }
+          blend = { ...blurOn(plan.blend.edge, plan.blend.level, plan.blend.sigma), mix: plan.blend.mix }
           owned.push(blend.target)
         }
       }

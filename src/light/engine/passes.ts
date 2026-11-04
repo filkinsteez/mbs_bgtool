@@ -13,20 +13,22 @@ uniform sampler2D uSrc;
 uniform vec2 uDirection;
 uniform float uSigma;
 out vec4 fragColor;
-// Separable gaussian; pairs of taps share one bilinear fetch.
+// Separable gaussian out to 3 sigma; pairs of taps share one bilinear fetch. A pair fades in over the first quarter
+// texel of reach past where it starts, so the blur doesn't step as sigma grows.
 void main() {
   vec2 size = vec2(textureSize(uSrc, 0));
   vec2 uv = gl_FragCoord.xy / size;
   vec2 texel = uDirection / size;
-  int radius = int(ceil(3.0 * uSigma));
+  float reach = 3.0 * uSigma;
+  int radius = int(ceil(reach));
   vec4 sum = texture(uSrc, uv);
   float total = 1.0;
   for (int i = 1; i <= 96; i += 2) {
     if (i > radius) break;
     float a = exp(-0.5 * float(i * i) / (uSigma * uSigma));
     float b = exp(-0.5 * float((i + 1) * (i + 1)) / (uSigma * uSigma));
-    float w = a + b;
-    float offset = (float(i) * a + float(i + 1) * b) / w;
+    float w = (a + b) * smoothstep(0.0, 0.25, reach - float(i - 1));
+    float offset = (float(i) * a + float(i + 1) * b) / (a + b);
     sum += w * (texture(uSrc, uv + texel * offset) + texture(uSrc, uv - texel * offset));
     total += 2.0 * w;
   }
@@ -124,15 +126,17 @@ uniform ivec2 uDirection;
 uniform float uSigma;
 out vec4 fragColor;
 // Separable gaussian with every tap read exactly (no filtering); edges repeat. 3 sigma, at most 32 texels, each side.
+// A tap fades in over the first quarter texel of reach past the one before, so the blur doesn't step as sigma grows.
 void main() {
   ivec2 size = textureSize(uSrc, 0);
   ivec2 px = ivec2(gl_FragCoord.xy);
-  int radius = min(32, int(ceil(3.0 * uSigma)));
+  float reach = 3.0 * uSigma;
+  int radius = min(32, int(ceil(reach)));
   vec4 sum = texelFetch(uSrc, px, 0);
   float total = 1.0;
   for (int i = 1; i <= 32; i++) {
     if (i > radius) break;
-    float w = exp(-0.5 * float(i * i) / (uSigma * uSigma));
+    float w = exp(-0.5 * float(i * i) / (uSigma * uSigma)) * smoothstep(0.0, 0.25, reach - float(i - 1));
     sum += w * (texelFetch(uSrc, clamp(px + i * uDirection, ivec2(0), size - 1), 0) + texelFetch(uSrc, clamp(px - i * uDirection, ivec2(0), size - 1), 0));
     total += 2.0 * w;
   }
@@ -334,7 +338,6 @@ export interface SamplingLevel {
  * blur read with sampleSmooth gives: sigma² plus a third of a source pixel².
  */
 export function samplingLevel(sigma: number, width: number, height: number): SamplingLevel {
-  const total = sigma * sigma + 1 / 3
   let best: SamplingLevel = { level: 0, sigma }
   let w = width
   let h = height
@@ -342,14 +345,46 @@ export function samplingLevel(sigma: number, width: number, height: number): Sam
     w = Math.max(1, Math.round(w / 2))
     h = Math.max(1, Math.round(h / 2))
     if (Math.min(w, h) < MIN_LEVEL_SIDE) break
-    const area = 4 ** k
-    // Tent halvings add 0.75 texel² of their input level each, the cubic read a third of a texel² of this level.
-    const left = total - 0.25 * (area - 1) - area / 3
-    const s = left > 0 ? Math.sqrt(left / area) : 0
+    const s = levelSigma(sigma, k)
     if (s < MIN_LEVEL_SIGMA) break
     best = { level: k, sigma: s }
   }
   return best
+}
+
+/** The gaussian sigma, in texels of halving `level`, that gives a blur by sigma (source pixels) on that level. */
+function levelSigma(sigma: number, level: number): number {
+  if (level === 0) return sigma
+  const area = 4 ** level
+  // Tent halvings add 0.75 texel² of their input level each, the cubic read a third of a texel² of this level.
+  const left = sigma * sigma + 1 / 3 - 0.25 * (area - 1) - area / 3
+  return left > 0 ? Math.sqrt(left / area) : 0
+}
+
+/** A blur up to this many times wider than a halving level switch blends the two levels. */
+const LEVEL_BLEND_SPAN = 1.25
+
+export interface SamplingLevels extends SamplingLevel {
+  /** Just past a switch to this level: the level before, with its sigma for this blur, and its share (0..1). */
+  previous: (SamplingLevel & { share: number }) | null
+}
+
+/**
+ * samplingLevel, and for blurs up to LEVEL_BLEND_SPAN times wider than the
+ * switch to their level, the level before and its share, which falls from 1 at
+ * the switch to 0 (smoothstep over log sigma). Near the frame edges the coarser
+ * level's halvings carry the light past the edge a little differently, so a
+ * blur growing past a switch would otherwise change the image in one step there.
+ */
+export function samplingLevels(sigma: number, width: number, height: number): SamplingLevels {
+  const at = samplingLevel(sigma, width, height)
+  const before = samplingLevel(sigma / LEVEL_BLEND_SPAN, width, height)
+  if (before.level === at.level) return { ...at, previous: null }
+  const area = 4 ** at.level
+  const switchSigma = Math.sqrt(area * (MIN_LEVEL_SIGMA * MIN_LEVEL_SIGMA + 0.25 + 1 / 3) - 0.25 - 1 / 3)
+  const x = Math.min(1, Math.max(0, Math.log(sigma / switchSigma) / Math.log(LEVEL_BLEND_SPAN)))
+  const level = at.level - 1
+  return { ...at, previous: { level, sigma: levelSigma(sigma, level), share: 1 - x * x * (3 - 2 * x) } }
 }
 
 /**
