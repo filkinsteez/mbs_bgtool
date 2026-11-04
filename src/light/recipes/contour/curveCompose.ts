@@ -433,14 +433,15 @@ export function haloParts(prefix: string, hex: string): Record<string, number | 
   }
   // A broad pale arc (the yellow-halo example's, on dark): a band about a sixth of the short side wide just outside
   // the curve, bright enough to overexpose to a pale tint of the light, with the light's saturated color in a wide
-  // glow beyond it.
-  const band = { Weight: 4, Width: 0.05, Shape: 8, Side: 2, Offset: -0.05, Light: 1, LightGamma: 1, MaskSoft: 0.01, Grow: 1, GrowBy: [0.5, 1.5] }
+  // glow beyond it. The band spills past the curve, so its inner edge fades over about a tenth of the short side
+  // like the example's, instead of a hard limb.
+  const band = { Weight: 4, Width: 0.05, Shape: 8, Side: 0, Offset: -0.05, Light: 1, LightGamma: 1, Grow: 1, GrowBy: [0.5, 1.5] }
   const parts: Record<string, number | number[]> = {
     ...prefixed('n1', band),
     n2Weight: 0,
     n3Weight: 0,
     f1Weight: 0,
-    ...prefixed('f2', { ...outside, Weight: 0.8, Width: 0.22 }),
+    ...prefixed('f2', { ...outside, Weight: 0.8, Width: 0.22, MaskSoft: 0.04 }),
     f3Weight: 0,
   }
   return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
