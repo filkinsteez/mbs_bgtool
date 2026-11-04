@@ -416,6 +416,12 @@ const HALF_SCALE_EDGE = 0.012
 const NARROW_WIDTH = 0.11
 
 /**
+ * Share of the floor haze a warm light's beam gets, and (halved pale mix) so its bright base
+ * and pool stay the light's own warm color instead of a wide white area (Tan).
+ */
+const WARM_FLOOR_HAZE = 0.45
+
+/**
  * Pack output. A wide, nearly parallel beam lands on the stage's edge and is seen
  * from a low camera, so its pool is a bright line as wide as the beam. The glossy
  * floor mirrors the lit haze above the pool, and its narrow boards, each a little
@@ -504,8 +510,9 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     haze: round4(lerp(0.03, 0.045, random())),
     ceiling: [round4(lerp(1, 1.5, random())), round4(lerp(0.12, 0.2, random())), round4(-halfH - lerp(0, 0.1, random()))],
     // Denser haze just over the floor, so the column brightens toward its pool, but not so
-    // dense that its base turns into a wide white area.
-    floorHaze: [round4(lerp(1.6, 2.3, random())), round4(lerp(0.12, 0.2, random()))],
+    // dense that its base turns into a wide white area (a warm light, already near nominal
+    // over the whole beam, gets less of it).
+    floorHaze: [round4(lerp(1.6, 2.3, random()) * (light.tail ? WARM_FLOOR_HAZE : 1)), round4(lerp(0.12, 0.2, random()))],
     forward: round4(lerp(-0.1, 0.15, random())),
     // Layers of denser and thinner haze along the column, about two per short side.
     hazeNoise: [round4(lerp(0.14, 0.22, random())), round4(lerp(0.8, 1.2, random())), round4(lerp(1.8, 2.6, random()))],
@@ -527,7 +534,7 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     // whitening at the same pace.
     pale: veiled(light) && darkMatches(light)
       ? [Math.max(1, lerp(0.5, 0.7, random())), round4(0.3 * clipLuminanceOf(light.haze)), round4(1.3 * clipLuminanceOf(light.haze))]
-      : [round4(lerp(0.5, 0.7, random())), round4(0.4 * clipLuminanceOf(light.haze)), round4(1.3 * clipLuminanceOf(light.haze))],
+      : [round4(lerp(0.5, 0.7, random()) * (light.tail ? 0.5 : 1)), round4(0.4 * clipLuminanceOf(light.haze)), round4(1.3 * clipLuminanceOf(light.haze))],
     paleWhite: light.light === light.haze ? 0.5 : 0.2,
     ...tailParams(light, TAIL_BELOW),
     fall: fallParam(light, TAIL_BELOW, TAIL_FALL),
