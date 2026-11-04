@@ -37,13 +37,19 @@ const T = {
   mixTolerance: 0.03, // new rule: Oklab distance from the linear-light mix of two pack colors that still counts as it
   // Warm tails (SHARED.md, decided 2026-11-03 9:40 AM): below nominal, a warm light that drifts toward deep red or
   // amber (Lime: toward Forest's deep green) as it dims, and stays at least this pure (chroma / lightness), is still
-  // that light. Olive, brown and grey tails are not. `--tails strict` turns this off.
+  // that light. Olive, brown and grey tails are not. `--tails strict` turns this off. Yellow drifts like fire
+  // (10:40 AM): through amber to Orange-red's hue (37) at half its peak and deep red (29) below a quarter.
   tails: {
     'Orange-red': { hue: [15, 45], ratio: 0.3 },
-    Yellow: { hue: [45, 80], ratio: 0.18 },
+    Yellow: { hue: [15, 80], ratio: 0.18 },
     Tan: { hue: [40, 65], ratio: 0.12 },
     Lime: { hue: [135, 180], ratio: 0.15 },
   },
+  // The pack color a light's tail reaches as it dims (10:40 AM): in a frame lit by the key, light of this color is
+  // the key's tail, not a second light. A frame whose main light reads as the partner is the key's when the key covers
+  // at least `tailOwner` of the lit area (an Orange-red light shows no Yellow at all).
+  tailPartners: { Yellow: ['Orange-red'], Lime: ['Forest'] },
+  tailOwner: 0.25,
   // Seed variety (SHARED.md, decided 2026-11-03 10:15 AM): two of seeds 1-8 (16:9) look like the same frame when the
   // light sits in the same places (layout) and the pack colors cover about the same shares (mix). Layout: Oklab L at
   // 40x23, blurred by 1 px and stretched to 0-1 per frame, compared as sum |a - b| / sum (a + b), so a dark frame's
@@ -229,12 +235,20 @@ try {
     })
     if (fam >= 0) return { fam, bridge: -1 }
     if (tailRule === 'drift') {
+      // When two warm tails both reach this hue (Yellow's and Orange-red's deep red), it is the nearer color's.
+      let tailOf = -1
+      let gap = Infinity
       for (let i = 0; i < k.colors.length; i++) {
         const c = k.colors[i]
         const tail = c.warm && T.tails[c.name]
-        if (!tail || L >= c.path.L0 || C / Math.max(L, 1e-6) < tail.ratio) continue
-        if (h >= tail.hue[0] && h <= tail.hue[1]) return { fam: i, bridge: -1 }
+        if (!tail || L >= c.path.L0 || C / Math.max(L, 1e-6) < tail.ratio || h < tail.hue[0] || h > tail.hue[1]) continue
+        const d = Math.abs(((h - lch(c.lab)[2] + 540) % 360) - 180)
+        if (d < gap) {
+          gap = d
+          tailOf = i
+        }
       }
+      if (tailOf >= 0) return { fam: tailOf, bridge: -1 }
     }
     let bridge = -1
     best = Infinity
@@ -610,10 +624,13 @@ try {
       if (m.base.share >= 0.05 && m.base.outside >= T.baseOutside) fails.push(`base is ${m.base.names[0]?.name} (${pct(m.base.outside)} of the base)`)
       if (m.lit.share >= 0.01 && m.lit.outside >= T.litOutside) fails.push(`light goes ${m.lit.names[0]?.name} (${pct(m.lit.outside)} of the lit area)`)
       m.mainLight = m.source
+      const owner = Object.keys(T.tailPartners).find((key) => T.tailPartners[key].includes(m.source) && (m.lit.byColor[key] ?? 0) >= T.tailOwner)
+      if (tailRule === 'drift' && owner) m.mainLight = owner
       if (m.sceneColors) {
         // Atmospheric's greys are one hue named by lightness, so a grey light's falloff is never a drift.
         const neutralNames = k.neutrals.map((i) => k.colors[i].name)
-        const lightsWith = new Set(m.sceneColors.some((name) => neutralNames.includes(name)) ? [...m.sceneColors, ...neutralNames] : m.sceneColors)
+        const partners = tailRule === 'drift' ? m.sceneColors.flatMap((name) => T.tailPartners[name] ?? []) : []
+        const lightsWith = new Set([...(m.sceneColors.some((name) => neutralNames.includes(name)) ? [...m.sceneColors, ...neutralNames] : m.sceneColors), ...partners])
         const drifted = Object.entries(m.lit.chromatic).filter(([name]) => !lightsWith.has(name))
         const drift = drifted.reduce((s, [, v]) => s + v, 0)
         if (drift >= T.drift) {
