@@ -92,6 +92,9 @@ export interface BloomsControls {
   drag?: { from: readonly [number, number]; to: readonly [number, number] }
 }
 
+/** The Horizon value the layout uses while a line is set. */
+const DRAG_RISE = 0.5
+
 /** Where the lead's light has faded to about a tenth along its long axis, in long radii: the end of a dragged line. */
 const DRAG_REACH = 1.25
 /** The lead's long radius a dragged line can give it, in units of sqrt(width * height). */
@@ -455,7 +458,9 @@ const MIN_LEAD_Y = 0.22
 export function composeLayout(colors: readonly Rgb[], seed: number, controls: BloomsControls, aspect: number): BloomsLayout {
   const r = random(seed)
   const soft = clamp(controls.softness, 0, 1)
-  const rise = clamp(controls.rise, 0, 1)
+  // With a dragged line the line alone places the blooms: the tool still sets Horizon from the line's start
+  // for the slider's sake, so Horizon is read at its default here and moves nothing.
+  const rise = controls.drag ? DRAG_RISE : clamp(controls.rise, 0, 1)
   const { lead, other } = pickLead(colors, r())
   // A cyan light along the bottom edge reads as a horizon (a sea), so it sits higher and comes in level.
   const cyanLead = isCyan(colors[lead])
