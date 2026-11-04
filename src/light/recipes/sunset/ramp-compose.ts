@@ -378,7 +378,8 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // Each variant puts the line at its own height, so a structure's repeats differ in layout. The
   // shift fades out toward both ends of the Horizon control, which keep the shared heights.
   const shared = placeHorizon(mood, seed, aspect)
-  const placed = { ...shared, y: shared.y + [-0.1, 0.05, 0][variant] * Math.min(1, mood / 0.25, (1 - mood) / 0.25) }
+  const lineShift = [-0.1, 0.05, 0][variant]
+  const placed = { ...shared, y: shared.y + lineShift * Math.min(1, mood / 0.25, (1 - mood) / 0.25) }
   // A dragged line takes the Horizon control's place: the glow sits at its start, the horizon runs
   // across it, and the sky reaches the zenith's color at its end. The seed keeps everything else.
   const line = controls.drag ? rampLine(controls.drag, aspect) : null
@@ -418,7 +419,8 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // Open skies keep their horizon just below the frame; over the control's whole range the Horizon
   // control raises their brightest band from the bottom edge to mid-frame. Water and land put the
   // line at the shared height.
-  const band = lerp(0.97, 0.5, horizonRise(placed.y))
+  // Under a dragged line an open sky's glow keeps the size it has at the seed's own place.
+  const band = lerp(0.97, 0.5, horizonRise(line ? placeHorizon(0.5, seed, aspect).y + lineShift : placed.y))
   const water = structure === 'water'
   const land = structure === 'land'
   const arcs = structure === 'arcs'
@@ -579,13 +581,22 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const sunIs = sunRight ? 1 - sunIn : sunIn
   const anchorX0 = ground ? 0 : line ? line.from[0] : arcs ? (sunIs - 0.5) * frameWidth : 0
   // The bend is set by how far the farther side edge drops.
-  const drop = ground ? dome : dome * (half / (half + Math.abs(anchorX0))) ** 2
+  let drop = ground ? dome : dome * (half / (half + Math.abs(anchorX0))) ** 2
   let anchorX = ground ? groundAnchor[0] : anchorX0
   let anchorY = ground ? groundAnchor[1] : 0
   let lineRise = 0
+  // How high an open sky's glow sits above its horizon: where the Horizon control puts the
+  // brightest band, higher in haze; ownRise at the seed's own place.
+  const openRiseAt = (anchor: number) => Math.max(0.03, Math.max(anchor - (bandAt - 0.5) * tall, look.minLift) * Math.sqrt(day) * stops2(softness, 0.3))
+  const ownX = arcs ? (sunIs - 0.5) * frameWidth : 0
+  const ownAxis = { anchorX: ownX, turn: (tilt * Math.PI) / 180, drop: dome * (half / (half + Math.abs(ownX))) ** 2 }
+  const ownRise = ground ? 0 : openRiseAt(anchorBelow(frame, ownAxis, 0.02))
   if (!ground && line) {
-    const start: RampAxis = { anchorX: line.from[0], anchorY: line.from[1], turn, drop }
-    lineRise = Math.max(beyondFrame(frame, start) + 0.02, 0.03, look.minLift)
+    const riseFor = (bend: number) => Math.max(beyondFrame(frame, { anchorX: line.from[0], anchorY: line.from[1], turn, drop: bend }) + 0.02, 0.03, look.minLift)
+    // The bands bend around the sun, so with the horizon far behind the glow they bend less, and
+    // the glow and the dusk band never close into a ring around a disc.
+    drop *= Math.min(1, ownRise / riseFor(drop))
+    lineRise = riseFor(drop)
     anchorX = line.from[0] + lineRise * Math.sin(turn)
     anchorY = line.from[1] + lineRise * Math.cos(turn)
   } else if (!ground) {
@@ -632,12 +643,13 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // How high the glow's line sits above the horizon: for open skies where the Horizon control puts
   // the brightest band, over water and land 21 to 61% of the sky's height by variant and seed,
   // higher in haze; under a dragged line, at its start.
-  const openRise = anchorY - (bandAt - 0.5) * tall
-  const glowRise = line
-    ? dragRise
-    : ground
-      ? glowShare(look, variant, risePick, softness, day) * skyHeight
-      : Math.max(0.03, Math.max(openRise, look.minLift) * Math.sqrt(day) * stops2(softness, 0.3))
+  const glowRise = line ? dragRise : ground ? glowShare(look, variant, risePick, softness, day) * skyHeight : openRiseAt(anchorY)
+  // How far the glow's lower side, the dusk band and the dimming toward the horizon reach. Over an
+  // open sky a dragged line's horizon can lie far behind the glow; they keep the seed's own size
+  // there, and the low sky fills the rest. The glow's lower side ends where the seed's own frame
+  // ends below it, or at the horizon.
+  const glowReach = line && !ground ? Math.min(glowRise, ownRise) : glowRise
+  const glowEnd = line && !ground ? [glowReach, 0.5 * glowReach] : [0, 0.1]
 
   // The least height above the horizon along the top edge: the sky's edges and the sun's light
   // stay below it, so the top of the frame is the pack's Meta Blue. Under a dragged line the sky
@@ -737,7 +749,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   if (look.dusk) {
     const last = edges[edges.length - 1]
     const duskWidth = 0.04 * Math.sqrt(haze) * skyScale
-    const duskAt = -lerp(0.75, 0.9, duskPick) * glowRise
+    const duskAt = -lerp(0.75, 0.9, duskPick) * glowReach
     const margin = 0.3 * (last[1] + duskWidth)
     const above = edges.length > 1 ? edges[edges.length - 2] : null
     const ceiling = Math.max(-(topHeight - zenithRoom - tail * last[1]), above ? above[0] + 0.3 * (above[1] + last[1]) : -Infinity)
@@ -788,6 +800,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     lightTop: Math.max((line ? dragReach : topHeight - 0.2 * tall) - 2.5 * skyWander, 0.35 * topHeight) * lerp(0.85, 1.15, intensity),
     glow: look.glow * glowGain * (arcs ? 1.2 : 1),
     glowOffset: -glowRise,
+    glowEnd,
     glowVary: 0,
     glowArch: 0.6,
     // More daylight gathers the glow toward the sun, so white shows only near the light.
@@ -796,7 +809,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     shadowHeight: 0,
     glow1Weight: 1,
     glow1Up: 0.1 * glowScale * look.glowUp,
-    glow1Down: Math.min(2, Math.max((0.03 + 0.03 * glowHaze) * skyScale, look.downReach * glowRise)),
+    glow1Down: Math.min(2, Math.max((0.03 + 0.03 * glowHaze) * skyScale, look.downReach * glowReach)),
     glow2Weight: 0.2 * look.haze * lerp(0.6, 1.5, softness),
     glow2Up: 0.17 * glowScale * look.glowUp,
     glow2Down: 0.08 * glowHaze,
@@ -804,12 +817,12 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // Skylight fades toward the horizon, so under the glow line the light is the glow's own.
     // A corner's horizon far from the sun keeps more skylight and deepens less, or it goes dark.
     horizonDim: (1 - look.horizonGain) * 12 * stops2(softness, -0.6) * (structure === 'corner' ? 0.5 : 1),
-    horizonDimHeight: 0.7 * glowRise + 0.02,
+    horizonDimHeight: 0.7 * glowReach + 0.02,
     dimBelow: 1,
     // Over water the light just above the line deepens less, or it reads as a dark stripe between
     // the sky and its reflection; a raised open band deepens less toward the bottom edge.
     // Over a ridge it does not deepen: deepened at the outline, Orange-red turns red and maroon.
-    reddenDown: deeper * stops2(1 - intensity, 1.1) * stops2(1 - softness, 0.6) * (water ? 0.3 : land ? 0 : structure === 'corner' ? 0.4 : 1 - 0.45 * clamp01((0.97 - (line ? 1 - glowRise / tall : band)) / 0.3)),
+    reddenDown: deeper * stops2(1 - intensity, 1.1) * stops2(1 - softness, 0.6) * (water ? 0.3 : land ? 0 : structure === 'corner' ? 0.4 : 1 - 0.45 * clamp01((0.97 - (line ? 1 - glowReach / tall : band)) / 0.3)),
     reddenEase: 1,
     reddenUp: paler > 0 ? clamp01(paler + (intensity - 0.5) * 0.15) * 0.9 : 0,
     reddenSide: look.sideDeeper,

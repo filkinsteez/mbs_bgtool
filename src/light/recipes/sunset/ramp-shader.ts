@@ -52,6 +52,7 @@ uniform float uLightTop;     // height above the horizon where the sun's added l
 uniform vec3 uGlowColor[GLOW_LAYERS];
 uniform float uGlowWeight[GLOW_LAYERS];
 uniform vec2 uGlowTau[GLOW_LAYERS];   // decay length above and below the glow line
+uniform vec2 uGlowEnd;       // depth below the glow line where its lower side ends (0: never), and the width of that fade
 uniform float uGlowOffset;
 uniform vec3 uGlowVary;      // how much the glow's upward reach changes along its length, cycles per short side,
                              // and how much higher it reaches toward the sun (the twilight arch)
@@ -307,6 +308,7 @@ vec3 rampSky(vec2 p) {
   // How far the glow reaches up changes slowly along it. Its downward reach stays even: over that
   // long tail any change shows as soft columns.
   if (uBndOn != 0 && uGlowTopBnd >= 0) reach *= boundarySoftAt(a, uBndTrans[uGlowTopBnd].x, uBndTrans[uGlowTopBnd].y);
+  if (uGlowEnd.x > 0.0) spread *= 1.0 - smoothstep(uGlowEnd.x, uGlowEnd.x + uGlowEnd.y, dh);
   for (int k = 0; k < GLOW_LAYERS; k++) {
     if (uGlowWeight[k] <= 0.0) continue;
     vec2 tau = uGlowTau[k] * vec2(reach, 1.0);
@@ -333,7 +335,11 @@ vec3 rampSky(vec2 p) {
 
   // Like the sun's added light, the dimming toward the horizon and through the glow fade out
   // below the top fifth, which holds only the sky's own light.
-  float dim = uHorizonDim.x * exp(-height / max(uHorizonDim.y, 1e-4));
+  // Where the glow's lower side ends above the horizon, the sky dims toward that end as if the
+  // horizon lay there, and past it the low sky is not dimmed.
+  float dim = uGlowEnd.x > 0.0
+    ? uHorizonDim.x * exp(-max(0.0, uGlowEnd.x - dh) / max(uHorizonDim.y, 1e-4)) * (1.0 - smoothstep(uGlowEnd.x, uGlowEnd.x + uGlowEnd.y, dh))
+    : uHorizonDim.x * exp(-height / max(uHorizonDim.y, 1e-4));
   if (uHorizonEdge >= 0) dim *= mix(1.0, uDimBelow, level[uHorizonEdge]);
   vec3 skyGain = gain * exp(-(uExtinction * glowDepth + dim) * lightReach);
   vec3 sky = vec3(0.0);
