@@ -231,9 +231,18 @@ async function measureRenders() {
 
     // 4. Every look and pack at 1080p and 4K: grain 0, 0.5 and 1, crops of one look per mood for the sheets.
     const sheetLooks = new Set(Object.values(SHEET_LOOKS))
+    results.skipped = []
     for (const look of part('scenes') ? lookIds : []) {
       for (const pack of PACKS) {
-        const scene = await harness.call('compose', look, pack, { intensity: 0.5, softness: 0.5, mood: 0.5 }, seed, 16 / 9)
+        let scene
+        try {
+          scene = await harness.call('compose', look, pack, { intensity: 0.5, softness: 0.5, mood: 0.5 }, seed, 16 / 9)
+        } catch (error) {
+          // A recipe file can be mid-edit by its owner; skip that look and say so.
+          results.skipped.push(`${look} ${pack}: ${String(error.message ?? error).split('\n')[0]}`)
+          log(`skipped ${look} ${pack}: it did not load`)
+          continue
+        }
         for (const [sizeName, [width, height]] of Object.entries(SIZES)) {
           const grains = sheetLooks.has(look) ? [0, 0.5, 1] : sizeName === '4K' ? [0, 0.5] : []
           let window = null
