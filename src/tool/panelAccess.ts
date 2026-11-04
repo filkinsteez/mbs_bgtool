@@ -300,6 +300,34 @@ function closeListOnLeave(event: FocusEvent): void {
   }, 0)
 }
 
+/**
+ * DialKit rebuilds some controls when the panel changes (Mood rebuilds its own select). When the focused control
+ * is rebuilt, focus moves to the new one with the same path. Returns the control that has focus now.
+ */
+function keepFocus(root: HTMLElement, focused: HTMLElement | null): HTMLElement | null {
+  if (!focused || focused.isConnected) return focused
+  const active = document.activeElement
+  if (active && active !== document.body) return null
+  const path = focused.dataset.dialPath
+  const rebuilt = path ? root.querySelector<HTMLElement>(`[data-dial-path="${path}"]`) : null
+  rebuilt?.focus({ preventScroll: true })
+  return rebuilt
+}
+
+/** DialKit takes a picked option's list away, so focus would fall to the page; this puts it back on the list's select. */
+function refocusAfterPick(event: MouseEvent, root: HTMLElement): void {
+  if (!(event.target instanceof Element) || !event.target.closest('.dialkit-select-option')) return
+  const trigger = root.querySelector<HTMLElement>('.dialkit-select-trigger[data-open="true"]')
+  if (!trigger) return
+  const path = trigger.dataset.dialPath
+  setTimeout(() => {
+    const active = document.activeElement
+    if (active && active !== document.body && !active.closest('.dialkit-select-dropdown')) return
+    const current = path ? root.querySelector<HTMLElement>(`.dialkit-select-trigger[data-dial-path="${path}"]`) : null
+    ;(current ?? trigger).focus({ preventScroll: true })
+  }, 0)
+}
+
 export function usePanelAccess(rootRef: RefObject<HTMLElement | null>, access: PanelAccess): void {
   const key = useId()
   const latest = useRef(access)
@@ -315,15 +343,27 @@ export function usePanelAccess(rootRef: RefObject<HTMLElement | null>, access: P
   useEffect(() => {
     const root = rootRef.current
     if (!root) return
-    const observer = new MutationObserver(() => applyPanelAccess(root, withShared(latest.current)))
+    let focused: HTMLElement | null = null
+    const observer = new MutationObserver(() => {
+      applyPanelAccess(root, withShared(latest.current))
+      focused = keepFocus(root, focused)
+    })
     observer.observe(root, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['data-open', 'data-active'] })
     const onKeyDown = (event: KeyboardEvent) => handleKeyDown(event, latest.current)
+    const onClick = (event: MouseEvent) => refocusAfterPick(event, root)
+    const onFocusIn = (event: FocusEvent) => {
+      if (event.target instanceof HTMLElement) focused = event.target
+    }
     root.addEventListener('keydown', onKeyDown)
     root.addEventListener('focusout', closeListOnLeave)
+    root.addEventListener('focusin', onFocusIn)
+    root.addEventListener('click', onClick, true)
     return () => {
       observer.disconnect()
       root.removeEventListener('keydown', onKeyDown)
       root.removeEventListener('focusout', closeListOnLeave)
+      root.removeEventListener('focusin', onFocusIn)
+      root.removeEventListener('click', onClick, true)
     }
   }, [rootRef])
 }
