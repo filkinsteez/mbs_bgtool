@@ -21,7 +21,6 @@ import {
   isWarm,
   LOBES,
   lobes,
-  random,
   SLOT,
   SLOT_COUNT,
   TAIL_END,
@@ -379,28 +378,6 @@ function rolesFromPack(pack: ColorPack): string[] {
   return [sky, dark[0] ?? NO_LIGHT, dark[1] ?? dark[0] ?? NO_LIGHT, light1, light2]
 }
 
-/** Seeds come in runs of this many; in each run, one shows a pack's second warm light instead of its first. */
-const WARM_RUN = 4
-
-/**
- * The roles for one seed. A pack with two warm light colors (Bold: Yellow and Orange-red) shows one of
- * them per seed, never both in one frame: in each run of WARM_RUN seeds, one seed at a seeded place in
- * the run shows the darker one, so both show across any WARM_RUN seeds in a row.
- */
-function rolesForSeed(pack: ColorPack, seed: number): string[] {
-  const roles = rolesFromPack(pack)
-  const lightness = (hex: string) => linearToOklab(hexToLinear(hex))[0]
-  const warm = pack.colors
-    .slice(1)
-    .map((c) => c.hex)
-    .filter((hex) => lightness(hex) >= DARK_L && isWarm(hexToLinear(hex)))
-    .sort((a, b) => lightness(b) - lightness(a))
-  if (warm.length < 2) return roles
-  const n = Math.round(seed) - 1
-  const place = Math.floor(random(Math.floor(n / WARM_RUN) * 13 + 7)() * WARM_RUN)
-  return ((n % WARM_RUN) + WARM_RUN) % WARM_RUN === place ? roles.map((hex) => (hex === warm[0] ? warm[1] : hex)) : roles
-}
-
 /**
  * No horizon: a Meta Blue sky with up to four wide, flat glows coming from
  * off-frame and the sky deepening away from the light. Light adds in linear
@@ -663,7 +640,7 @@ vec3 combine(vec2 uv, vec2 p, vec3 direct, vec3 seen) {
   lens: { bloom: 0.12, bloomRadius: 0.75, bloomWidth: 1.5 },
   fromPack: rolesFromPack,
   compose: ({ pack, controls, seed, aspect }): Composition => {
-    const colors = rolesForSeed(pack, seed)
+    const colors = rolesFromPack(pack)
     const layout = composeLayout(
       colors.map(hexToLinear),
       seed,
