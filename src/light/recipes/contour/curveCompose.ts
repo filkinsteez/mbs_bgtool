@@ -533,9 +533,29 @@ export function ringParts(prefix: string): Record<string, number | number[]> {
 }
 
 /**
+ * A broad pale arc under a key prefix (the yellow-halo reference, on dark): a wide band on the curve bright enough
+ * that it goes pale, the light's own saturated color falling off inside it, and a short edge outside, so the full
+ * color shows only in a band between the pale arc and the dark. All parts follow light field 1.
+ */
+export function arcParts(prefix: string): Record<string, number | number[]> {
+  // The band widens where the light is strong, so its two edges spread apart along the curve instead of running
+  // parallel.
+  const band = { Shape: 8, Side: 0, Light: 1, LightGamma: 1, Grow: 1, GrowBy: [1.4, 1.5], Width: 0.025 }
+  const parts: Record<string, number | number[]> = {
+    ...prefixed('n1', { ...band, Weight: 1.5, Offset: 0 }),
+    ...prefixed('n2', { ...band, Weight: 1.1, Offset: 0.04 }),
+    n3Weight: 0,
+    ...prefixed('f1', { Weight: 0.55, Width: 0.09, Side: 1, Light: 1, LightGamma: 1, MaskSoft: 0.015 }),
+    ...prefixed('f2', { Weight: 0.12, Width: 0.03, Side: 2, Light: 1, LightGamma: 1, MaskSoft: 0.015 }),
+    f3Weight: 0,
+  }
+  return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
+}
+
+/**
  * The pack color a light's rim shifts toward around a ring: a color its light mixes with cleanly (Meta Blue and
- * Cyan, Orange-red toward Yellow, Meta Blue and Plum, the Atmospheric greys) or its own dim tail's color (Lime and
- * Forest). Null when there is none: Tan, and Yellow, whose dim rim already runs to Orange-red's hue like fire (an
+ * Cyan, Orange-red toward Yellow, the Atmospheric greys) or its own dim tail's color (Lime and Forest). Null when
+ * there is none: Tan, Meta Blue in Elemental, and Yellow, whose dim rim already runs to Orange-red's hue like fire (an
  * Orange-red stretch on top would leave too little Yellow to read as a Yellow light).
  */
 const RING_PARTNERS: Record<string, string> = {
@@ -558,8 +578,9 @@ export function suitsRings(light: PackColor): boolean {
 export function ringPartner(pack: ColorPack, light: PackColor): PackColor | null {
   const has = (hex: string) => pack.colors.find((c) => c.hex.toUpperCase() === hex) ?? null
   const hex = light.hex.toUpperCase()
-  // Meta Blue's partner is Cyan in Bold, Plum in Elemental and Ice in Atmospheric.
-  if (hex === '#0064E0') return has('#1FCDF0') ?? has('#4A0A3C') ?? has('#F2F4F7')
+  // Meta Blue's partner is Cyan in Bold and Ice in Atmospheric; in Elemental it has none (toward Plum the rim
+  // passes through indigo).
+  if (hex === '#0064E0') return has('#1FCDF0') ?? has('#F2F4F7')
   return RING_PARTNERS[hex] ? has(RING_PARTNERS[hex]) : null
 }
 

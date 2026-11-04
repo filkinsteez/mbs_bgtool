@@ -9,6 +9,7 @@ import {
   frameSize,
   geo,
   haloParts,
+  arcParts,
   ringPartner,
   ringParts,
   suitsRings,
@@ -268,6 +269,9 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   // lit and their light adding where they overlap (iridescent-rings reference); the others are a crest with a long
   // fade outward.
   const rings = plan.kind === 'ring' && suitsRings(light)
+  // Ellipse seeds are a broad pale arc with the light's saturated color inside it (yellow-halo reference, on dark).
+  // A Tan light keeps its bright bands.
+  const paleArc = plan.kind === 'ellipse' && warmTail(light.hex) !== 'bright'
   const second = rings ? crossingRing(layout, rand, aspect) : null
   const partner = rings ? ringPartner(pack, light) : null
   // The hot spot and the falloff follow the longest piece of the curve inside the frame.
@@ -297,9 +301,9 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   const powerDraw = rand()
   const power = bright ? FLAT_POWER : lerp(2, 3, powerDraw)
   const across = normalNear(path, hot, 12)
-  // Rims are lit most of the way around (3 to 5 times dimmer at the far end of the visible curve).
+  // Rims and the pale arc are lit most of the way along (3 to 5 times dimmer at the far end of the visible curve).
   const factorDraw = rand()
-  const factor = rings ? lerp(3, 5, factorDraw) : lerp(20, 60, factorDraw)
+  const factor = rings || paleArc ? lerp(3, 5, factorDraw) : lerp(20, 60, factorDraw)
   const stretch = { direction: normalNear(path, home, 12), by: 6 }
   const radius = bright ? flatRadius(path, home, factor, power, stretch) : falloffRadius(path, home, factor, power, stretch)
   const dragPower = bright ? FLAT_POWER : 2
@@ -315,7 +319,7 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     ring1Flip: layout.shape.flip,
     ring1Color: 2,
     ring1Gain: 1,
-    ...(rings ? ringParts('ring1') : haloParts('ring1', light.hex)),
+    ...(rings ? ringParts('ring1') : paleArc ? arcParts('ring1') : haloParts('ring1', light.hex)),
     ...(rings && partner ? { ring1Color2: 4 } : {}),
     ...(drift ? { ring1Drift: drift.ratios, ring1DriftShape: [drift.knee, drift.sharpness] } : {}),
     ring2On: Boolean(second),
