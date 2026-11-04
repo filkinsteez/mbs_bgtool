@@ -1,6 +1,7 @@
 import { getPack, type PackId } from '../../color/packs'
 import type { Composition, ControlValues, ParamValue } from '../../scene'
 import { horizonRise, horizonScene, placeHorizon } from './horizon'
+import { limitTilt, rampLine } from './ramp-drag'
 import { edgeFbm } from './ramp-noise'
 
 const clamp01 = (t: number) => Math.min(1, Math.max(0, t))
@@ -15,6 +16,9 @@ const smoothstep = (from: number, to: number, t: number) => {
 const stops2 = (t: number, stops: number) => 2 ** ((t - 0.5) * stops)
 /** Width of a 16:9 frame in short sides. */
 const WIDE = 16 / 9
+/** Largest tilt of the horizon, in degrees, that a dragged line gives water and land. */
+const WATER_MOST_TILT = 10
+const LAND_MOST_TILT = 18
 
 /** Deterministic random numbers in [0, 1) for one seed. */
 function seeded(seed: number): () => number {
@@ -95,6 +99,17 @@ function anchorBelow(f: Frame, r: Omit<RampAxis, 'anchorY'>, margin: number): nu
     anchorY += (lowest + margin) / Math.cos(r.turn)
   }
   return anchorY
+}
+
+/** How far down the axis the frame's lowest point lies, for any tilt: the largest base coordinate on its edges. */
+function beyondFrame(f: Frame, r: RampAxis): number {
+  let lowest = -Infinity
+  for (let i = 0; i <= 32; i++) {
+    const x = -f.half + (i / 32) * 2 * f.half
+    const y = -f.tall / 2 + (i / 32) * f.tall
+    lowest = Math.max(lowest, rampAt(f, r, x, f.tall / 2), rampAt(f, r, x, -f.tall / 2), rampAt(f, r, -f.half, y), rampAt(f, r, f.half, y))
+  }
+  return lowest
 }
 
 /** Land or water outline, as the shader's groundLine draws it: p.y at column x (short-side units, y down). */
@@ -319,6 +334,10 @@ const darkAlternate = (seed: number) => seedRun(seed) % 2 !== 0
  */
 const seedVariant = (seed: number) => seedRun(seed) % 3
 
+/** Over water and land, the glow's line's height above the horizon as a share of the sky's height. */
+const glowShare = (look: PackLook, variant: number, pick: number, softness: number, day: number) =>
+  lerp(0.25, 0.45, pick) * [0.85, 1.35, 1.05][variant] * stops2(softness, 0.3) * Math.sqrt(day) * look.glowRise
+
 /**
  * A Sunset ramp scene for a pack, the tool controls, a seed and the frame's width over height.
  * Lengths are in short-side units, about 40 degrees of sky. The seed picks the scene below the
@@ -335,12 +354,10 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const intensity = clamp01(controls.intensity)
   const softness = clamp01(controls.softness)
   const mood = clamp01(controls.mood)
-  // A dragged point puts the line at its height, within the Horizon control's range, and the sun at
-  // its x; the seed keeps everything else. The line's ends come from the control's own ends.
-  const point = controls.point
-  const pointRise = point ? horizonRise(point[1]) : 0
-  const placed = placeHorizon(point ? pointRise : mood, seed, aspect)
-  const place = point ? { ...placed, y: lerp(placeHorizon(0, seed, aspect).y, placeHorizon(1, seed, aspect).y, pointRise) } : placed
+  const placed = placeHorizon(mood, seed, aspect)
+  // A dragged line takes the Horizon control's place: the glow sits at its start, the horizon runs
+  // across it, and the sky reaches the zenith's color at its end. The seed keeps everything else.
+  const line = controls.drag ? rampLine(controls.drag, aspect) : null
 
   const tall = Math.max(1, 1 / aspect)
   const frameWidth = Math.max(1, aspect)
@@ -377,7 +394,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // Open skies keep their horizon just below the frame; over the control's whole range the Horizon
   // control raises their brightest band from the bottom edge to mid-frame. Water and land put the
   // line at the shared height.
-  const band = lerp(0.97, 0.5, horizonRise(place.y))
+  const band = lerp(0.97, 0.5, horizonRise(placed.y))
   const water = structure === 'water'
   const land = structure === 'land'
   const arcs = structure === 'arcs'
@@ -453,50 +470,122 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // An open sky with a dusk band raises its glow, leaving the band room under it; a corner's glow
   // sits lower, so it rises more.
   if (look.dusk) bandAt -= structure === 'corner' ? 0.22 : 0.12
-  const sunX = point ? Math.min(1.15, Math.max(-0.15, point[0])) : sunRight ? 1 - sunIn : sunIn
-  const turn = (tilt * Math.PI) / 180
+  const day = stops2(intensity, 0.7)
+  // Water and land follow a dragged line's tilt only so far: tilted further, the horizon no longer
+  // reads as level ground seen from the shore. Open skies follow the line all the way round. Over
+  // water and land the sky keeps its own lean against the line.
+  const lineTilt = line ? (ground ? limitTilt(line.tilt, water ? WATER_MOST_TILT : LAND_MOST_TILT) : line.tilt) : 0
+  const skyTilt = line ? lineTilt + (ground ? tilt : 0) : tilt
+  const turn = (skyTilt * Math.PI) / 180
 
   // The ground's outline. Water is level and nearly still. Land is one ridge climbing toward the
   // light. The ridge grows out of a low bank as the line rises from the bottom edge, and above the
   // middle of the frame it flattens. Each change runs over a wide range of line heights, and the
   // seed alone picks land or water, so no step of the Horizon control switches the ground.
-  const flat = smoothstep(0.6, 0.52, place.y)
-  const ridge = land ? smoothstep(1.02, 0.8, place.y) * (1 - flat) : 0
+  const groundAt = (y: number) => {
+    const flat = smoothstep(0.6, 0.52, y)
+    const ridge = land ? smoothstep(1.02, 0.8, y) * (1 - flat) : 0
+    const lineAt = (y - 0.5) * tall
+    const lineTiltAt = line && ground ? -lineTilt : lerp(Math.max(-2, Math.min(2, placed.tilt)), placed.tilt, ridge)
+    const outline: Outline = {
+      at: lineAt,
+      slope: Math.tan((lineTiltAt * Math.PI) / 180),
+      wave: land ? lerp(lerp(0.005, 0.012, ridgePick) * tall, 0.0015, flat) : 0.0015,
+      rise: ridge * lerp(0.1, 0.25, ridgePick) * tall,
+      toward: side,
+      bowl: ridge * lerp(0, 0.06, bowlPick) * tall,
+      waveLength: lerp(0.5, 0.9, bowlPick) * frameWidth,
+    }
+    let lowest = -Infinity
+    let crest = Infinity
+    for (let i = 0; i <= 32; i++) {
+      const at = outlineAt(outline, half, -half + (i / 32) * frameWidth, seed)
+      lowest = Math.max(lowest, at)
+      crest = Math.min(crest, at)
+    }
+    // A far bank on the water's line; it lowers as a high line leaves less sky above it.
+    const bankHeight = water ? look.bank * lerp(0.8, 1.3, bankPick) * clamp01((lineAt + 0.5 * tall) / 0.6) : 0
+    // The ramp's anchor: on the water's line or near the top of its far bank, or just under the
+    // land's lowest point, where the sky behind it meets its own horizon; under a tilted line,
+    // lowest along the tilted axis.
+    let anchor: [number, number] = [0, land ? lowest + 0.03 : lineAt - 1.2 * bankHeight]
+    if (line && land) {
+      const level: RampAxis = { anchorX: 0, anchorY: lineAt, turn, drop: dome }
+      let under = -Infinity
+      for (let i = 0; i <= 32; i++) {
+        const x = -half + (i / 32) * frameWidth
+        under = Math.max(under, rampAt(frame, level, x, outlineAt(outline, half, x, seed)))
+      }
+      anchor = [(under + 0.03) * Math.sin(turn), lineAt + (under + 0.03) * Math.cos(turn)]
+    }
+    return { y, flat, ridge, lineAt, outline, lowest, crest, bankHeight, anchor }
+  }
+  // Under a dragged line the ground's line goes where the seed's glow, at its own share of the
+  // sky's height above the line, passes through the line's start, within the Horizon control's
+  // range.
+  let lineY = placed.y
+  if (line && ground) {
+    // How far the line's start lies above the seed's glow for a line height, measured from the top
+    // of the water's far bank or from the middle of the land's line (land's own anchor moves
+    // unevenly as its ridge grows): it grows steadily as the line lowers, so halving the range
+    // finds the one height.
+    const share = Math.min(0.7, glowShare(look, variant, risePick, softness, day))
+    const aboveGlow = (y: number) => {
+      const lineAt = (y - 0.5) * tall
+      const anchorY = water ? groundAt(y).anchor[1] : lineAt
+      const from: RampAxis = { anchorX: 0, anchorY, turn, drop: dome }
+      return -rampAt(frame, from, line.from[0], line.from[1]) - share * Math.max(0.2, anchorY + tall / 2)
+    }
+    let high = placeHorizon(1, seed, aspect).y
+    let low = placeHorizon(0, seed, aspect).y
+    for (let k = 0; k < 24; k++) {
+      const mid = 0.5 * (high + low)
+      if (aboveGlow(mid) > 0) low = mid
+      else high = mid
+    }
+    lineY = 0.5 * (high + low)
+  }
+  const { flat, ridge, lineAt, outline, lowest, crest, bankHeight, anchor: groundAnchor } = groundAt(lineY)
   const groundKind = water ? 1 : land ? 2 : 0
-  const lineAt = (place.y - 0.5) * tall
-  const outline: Outline = {
-    at: lineAt,
-    slope: Math.tan((lerp(Math.max(-2, Math.min(2, place.tilt)), place.tilt, ridge) * Math.PI) / 180),
-    wave: land ? lerp(lerp(0.005, 0.012, ridgePick) * tall, 0.0015, flat) : 0.0015,
-    rise: ridge * lerp(0.1, 0.25, ridgePick) * tall,
-    toward: side,
-    bowl: ridge * lerp(0, 0.06, bowlPick) * tall,
-    waveLength: lerp(0.5, 0.9, bowlPick) * frameWidth,
-  }
   const lineOf = (x: number) => outlineAt(outline, half, x, seed)
-  let lowest = -Infinity
-  let crest = Infinity
-  for (let i = 0; i <= 32; i++) {
-    const at = lineOf(-half + (i / 32) * frameWidth)
-    lowest = Math.max(lowest, at)
-    crest = Math.min(crest, at)
-  }
-  // A far bank on the water's line; it lowers as a high line leaves less sky above it.
-  const bankHeight = water ? look.bank * lerp(0.8, 1.3, bankPick) * clamp01((lineAt + 0.5 * tall) / 0.6) : 0
 
-  // The ramp's anchor: just below the frame for open skies, on the water's line or near the top of
-  // its far bank, or just under the land's lowest point, where the sky behind it meets its own horizon.
-  const anchorX = arcs ? (sunX - 0.5) * frameWidth : 0
+  // Open skies anchor the ramp just below the frame. Under a dragged line the anchor lies on the
+  // line's axis, past the frame and at least a little below the line's start, where the glow sits.
+  const sunIs = sunRight ? 1 - sunIn : sunIn
+  const anchorX0 = ground ? 0 : line ? line.from[0] : arcs ? (sunIs - 0.5) * frameWidth : 0
   // The bend is set by how far the farther side edge drops.
-  const drop = dome * (half / (half + Math.abs(anchorX))) ** 2
-  const anchorY = !ground ? anchorBelow(frame, { anchorX, turn, drop }, 0.02) : land ? lowest + 0.03 : lineAt - 1.2 * bankHeight
+  const drop = ground ? dome : dome * (half / (half + Math.abs(anchorX0))) ** 2
+  let anchorX = ground ? groundAnchor[0] : anchorX0
+  let anchorY = ground ? groundAnchor[1] : 0
+  let lineRise = 0
+  if (!ground && line) {
+    const start: RampAxis = { anchorX: line.from[0], anchorY: line.from[1], turn, drop }
+    lineRise = Math.max(beyondFrame(frame, start) + 0.02, 0.03, look.minLift)
+    anchorX = line.from[0] + lineRise * Math.sin(turn)
+    anchorY = line.from[1] + lineRise * Math.cos(turn)
+  } else if (!ground) {
+    anchorY = anchorBelow(frame, { anchorX, turn, drop }, 0.02)
+  } else if (line) {
+    lineRise = -rampAt(frame, { anchorX, anchorY, turn, drop }, line.from[0], line.from[1])
+  }
   const horizonY = anchorY / tall + 0.5
   const axis: RampAxis = { anchorX, anchorY, turn, drop }
-  const skyHeight = Math.max(0.2, horizonY * tall)
+  // Under a dragged line the glow sits at its start, and the sky reaches the zenith's color at its
+  // end: that height above the horizon is the sky's reach, and the top of the sky lies the zenith's
+  // own room above it.
+  const dragRise = Math.max(0.03, lineRise)
+  const dragReach = line ? dragRise + line.length : 0
+  const dragTop = dragReach <= (0.55 * 0.2 * tall) / 0.45 ? dragReach / 0.55 : dragReach + 0.2 * tall
+  const skyHeight = Math.max(0.2, line ? dragTop : horizonY * tall)
+  // Under a dragged line the sun sits on the line's axis, just past the horizon below its start.
+  const sunBelow = line ? dragRise + (arcs ? 0 : 0.03) : 0
+  const sunX = line ? (line.from[0] + sunBelow * Math.sin(turn)) / frameWidth + 0.5 : sunIs
   // A short sky has no room for a second step: its edges would crowd and the fold guard calm them
   // all. The seed decides whether the sky has the step; it fades out as the sky gets shorter.
+  // Under a dragged line it fades over a wider range of the line's length: turning a line whose
+  // end the tool holds at the edge of its reach changes the length quickly.
   const midSky = hasMidSky(seed)
-  const midAmount = midSky ? smoothstep(0.75, 1, skyHeight) : 0
+  const midAmount = midSky ? (line ? smoothstep(0.45, 1.25, skyHeight) : smoothstep(0.75, 1, skyHeight)) : 0
 
   // Intensity is daylight: the zenith gains the most, the low sky less and the glow least;
   // the glow rises, widens and pales, and the sun's core whitens near the sun only.
@@ -505,7 +594,6 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const glowGain = stops2(intensity, 0.15)
   const sunGain = stops2(intensity, 2.4)
   const groundGain = stops2(intensity, 0.8)
-  const day = stops2(intensity, 0.7)
   const [path, deeper, paler] = look.path
 
   // Softness is haze: wider edges and glow, and a wider lens.
@@ -518,16 +606,20 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const glowScale = glowHaze * day * skyScale * air * glowSize
   // How high the glow's line sits above the horizon: for open skies where the Horizon control puts
   // the brightest band, over water and land 21 to 61% of the sky's height by variant and seed,
-  // higher in haze.
+  // higher in haze; under a dragged line, at its start.
   const openRise = anchorY - (bandAt - 0.5) * tall
-  const glowRise = ground
-    ? lerp(0.25, 0.45, risePick) * [0.85, 1.35, 1.05][variant] * skyHeight * stops2(softness, 0.3) * Math.sqrt(day) * look.glowRise
-    : Math.max(0.03, Math.max(openRise, look.minLift) * Math.sqrt(day) * stops2(softness, 0.3))
+  const glowRise = line
+    ? dragRise
+    : ground
+      ? glowShare(look, variant, risePick, softness, day) * skyHeight
+      : Math.max(0.03, Math.max(openRise, look.minLift) * Math.sqrt(day) * stops2(softness, 0.3))
 
   // The least height above the horizon along the top edge: the sky's edges and the sun's light
-  // stay below it, so the top of the frame is the pack's Meta Blue.
+  // stay below it, so the top of the frame is the pack's Meta Blue. Under a dragged line the sky
+  // ends at the line's end instead.
   let topHeight = Infinity
   for (let i = 0; i <= 32; i++) topHeight = Math.min(topHeight, -rampAt(frame, axis, -half + (i / 32) * frameWidth, -tall / 2))
+  if (line) topHeight = dragTop
   // Meta Blue holds the top fifth of the frame, or of a short sky the top 45%, which leaves the low
   // sky room for its own band between the zenith and the glow.
   const zenithRoom = Math.min(0.2 * tall, 0.45 * topHeight)
@@ -564,7 +656,12 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     }
   }
   const sRef = sSum / (9 * 17)
-  const zenithShade = [0.03 / Math.max(0.05, sRef - topSum / 17), sRef, 0.02 * side, aSum / (9 * 17)]
+  let zenithShade = [0.03 / Math.max(0.05, sRef - topSum / 17), sRef, 0.02 * side, aSum / (9 * 17)]
+  // Under a dragged line Meta Blue is the mean of the band just past the line's end instead.
+  if (line) {
+    const [x, y] = line.to
+    zenithShade = [0.03 / (0.1 * tall), rampAt(frame, axis, x, y) - 0.1 * tall, 0.02 * side, (x * Math.cos(turn) - y * Math.sin(turn)) / half]
+  }
 
   // The stop edges, top down. A second, lighter Meta Blue step splits the sky's edge in two: a
   // wide one higher up and a narrower one lower down, each with its own shape.
@@ -582,12 +679,22 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const topEdge = midSky ? edges[1].map((v, i) => lerp(v, edges[0][i], midAmount)) : edges[0]
   const [topAt, topWidth] = topEdge
   const tail = 0.5 * (1 + 0.5 * Math.max(0, Math.log2((midSky ? lerp(lowGain, midGain, midAmount) : lowGain) / zenithGain)))
-  const room = (topHeight - zenithRoom) / (Math.abs(topAt) + tail * topWidth)
-  if (room < 1) edges.forEach((edge) => (edge[0] *= Math.max(0.3, room)))
-  // The top edge narrows too; without the step, the lower edge is the top edge.
-  const squeeze = Math.max(0.3, Math.min(1, room))
-  edges[0][1] *= squeeze
-  if (midSky) edges[1][1] *= lerp(squeeze, 1, midAmount)
+  if (line) {
+    // Under a dragged line the edges stretch or shrink about the glow, widths included, so the
+    // highest edge's upper tail ends at the line's end.
+    const stretch = Math.max(0.1, (topHeight - zenithRoom - glowRise) / Math.max(0.05, Math.abs(topAt) + tail * topWidth - glowRise))
+    for (const edge of edges) {
+      edge[0] = -glowRise + (edge[0] + glowRise) * stretch
+      edge[1] *= stretch
+    }
+  } else {
+    const room = (topHeight - zenithRoom) / (Math.abs(topAt) + tail * topWidth)
+    if (room < 1) edges.forEach((edge) => (edge[0] *= Math.max(0.3, room)))
+    // The top edge narrows too; without the step, the lower edge is the top edge.
+    const squeeze = Math.max(0.3, Math.min(1, room))
+    edges[0][1] *= squeeze
+    if (midSky) edges[1][1] *= lerp(squeeze, 1, midAmount)
+  }
   // A low sky of its own color shows as a band above the glow and the ridge's crest instead of
   // under them, as far as the top fifth allows.
   if (look.lowSky !== look.zenith) {
@@ -621,12 +728,12 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   gains.forEach((gain, k) => (stopParams[`gain${k + 1}`] = gain))
 
   // Over land the sun sits just above the crest at its x; over water just under the line.
-  const underLine = horizonY + (arcs ? 0 : 0.03 / tall)
+  const underLine = line ? (line.from[1] + sunBelow * Math.cos(turn)) / tall + 0.5 : horizonY + (arcs ? 0 : 0.03 / tall)
   const sunY = land ? lineOf((sunX - 0.5) * frameWidth) / tall + 0.5 - lerp(0.03, 0.1, crestPick) : underLine
 
   const params: Record<string, ParamValue> = {
     anchor: [anchorX / frameWidth + 0.5, horizonY],
-    angle: tilt,
+    angle: skyTilt,
     drop,
     stops: gains.length,
     ...stopParams,
@@ -650,9 +757,10 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     falloff: structure === 'corner' ? 2.2 : 1.6,
     widen: arcs ? 0.3 : 1.4,
     falloffRound: 0.6,
-    // The sun's added light fades out below the top fifth, which holds only the sky's own light. A
-    // short sky still gives it a third of its height: at 0 the light would have no limit at all.
-    lightTop: Math.max(topHeight - 0.2 * tall - 2.5 * skyWander, 0.35 * topHeight) * lerp(0.85, 1.15, intensity),
+    // The sun's added light fades out below the top fifth (under a dragged line, by its end), which
+    // holds only the sky's own light. A short sky still gives it a third of its height: at 0 the
+    // light would have no limit at all.
+    lightTop: Math.max((line ? dragReach : topHeight - 0.2 * tall) - 2.5 * skyWander, 0.35 * topHeight) * lerp(0.85, 1.15, intensity),
     glow: look.glow * glowGain * (arcs ? 1.2 : 1),
     glowOffset: -glowRise,
     glowVary: 0,
@@ -676,7 +784,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // Over water the light just above the line deepens less, or it reads as a dark stripe between
     // the sky and its reflection; a raised open band deepens less toward the bottom edge.
     // Over a ridge it does not deepen: deepened at the outline, Orange-red turns red and maroon.
-    reddenDown: deeper * stops2(1 - intensity, 1.1) * stops2(1 - softness, 0.6) * (water ? 0.3 : land ? 0 : structure === 'corner' ? 0.4 : 1 - 0.45 * clamp01((0.97 - band) / 0.3)),
+    reddenDown: deeper * stops2(1 - intensity, 1.1) * stops2(1 - softness, 0.6) * (water ? 0.3 : land ? 0 : structure === 'corner' ? 0.4 : 1 - 0.45 * clamp01((0.97 - (line ? 1 - glowRise / tall : band)) / 0.3)),
     reddenEase: 1,
     reddenUp: paler > 0 ? clamp01(paler + (intensity - 0.5) * 0.15) * 0.9 : 0,
     reddenSide: look.sideDeeper,
@@ -703,7 +811,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // Patches of light in the sky, a third to half of the frame across.
     skyPatch: [0.08, lerp(0.33, 0.5, patchPick) * frameWidth, 1.6],
     ground: groundKind,
-    groundAt: place.y,
+    groundAt: lineY,
     groundTilt: (Math.atan(outline.slope) * 180) / Math.PI,
     groundWave: outline.wave,
     ridge: [outline.rise, outline.toward, outline.bowl, outline.waveLength],
