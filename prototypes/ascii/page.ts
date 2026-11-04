@@ -180,6 +180,20 @@ const api = {
     return getRamp()
   },
 
+  /** Compiles the engine's output pass with the ASCII stage (from the working tree) and returns the log. */
+  async compileEnginePass() {
+    const [{ buildOutputShader }, { ASCII_FILTER }] = await Promise.all([
+      import('../../src/light/engine/output'),
+      import('../../src/light/engine/filters/ascii'),
+    ])
+    const source = buildOutputShader([ASCII_FILTER])
+    const gl = new OffscreenCanvas(1, 1).getContext('webgl2') as WebGL2RenderingContext
+    const shader = gl.createShader(gl.FRAGMENT_SHADER) as WebGLShader
+    gl.shaderSource(shader, source)
+    gl.compileShader(shader)
+    return { ok: Boolean(gl.getShaderParameter(shader, gl.COMPILE_STATUS)), log: gl.getShaderInfoLog(shader) ?? '', lines: source.split('\n').length }
+  },
+
   /** The stage's glyphs side by side (top row first), for comparing with a font sheet. */
   async sdfGlyphs(request: { ids: number[]; em: number; cellW: number; cellH: number; baselineFromBottom: number; key: string }) {
     const sheet = getRunner().glyphs(request.ids, request.em, request.cellW, request.cellH, request.baselineFromBottom)
