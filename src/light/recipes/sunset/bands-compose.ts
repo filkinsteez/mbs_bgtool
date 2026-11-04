@@ -94,6 +94,8 @@ interface Band {
   floor: number
   /** A thin bright line in the middle of its place, between its top edge and the next band's. */
   line?: boolean
+  /** The top edge is a long ramp, its width set in frame heights rather than by the lens. */
+  ramp?: boolean
 }
 
 interface LightTerm {
@@ -282,15 +284,25 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     const similar = [list[i - 1], list[i + 1]].some((o) => o && Math.abs(lightness(o.hex) - lightness(e.hex)) < 0.1)
     return similar && !isWarm(hexToLinear(e.hex)) ? 0.75 : 1
   }
-  // Shares of the spare height: the wide bands take most of it. Ice stays smaller, never a wide white band, and so
-  // does a color repeated under less light at the bottom, so it doesn't read as a second, muddier color.
-  const shareOf = (e: Entry, i: number, wide: readonly number[], draw: (lo: number, hi: number) => number) =>
-    (wide.includes(i) ? (wide.length > 1 ? draw(2.5, 3.5) : draw(3.5, 5)) : draw(0.15, 0.6) * (e.under < 1 ? 0.6 : 1)) * (lightness(e.hex) > 0.95 ? 0.5 : 1)
+  // Shares of the spare height: the wide bands take most of it. A field takes nearly all of it and leaves the
+  // other bands as thin accents; the two bands of a ramp share it, so both have a floor of their own color beside
+  // the ramp. Ice stays smaller, never a wide white band, and so does a color repeated under less light at the
+  // bottom, so it doesn't read as a second, muddier color.
+  const shareOf = (e: Entry, i: number, wide: readonly number[], draw: (lo: number, hi: number) => number, structure: Structure = 'stack') => {
+    const white = lightness(e.hex) > 0.95 ? 0.5 : 1
+    if (structure === 'field') return (wide.includes(i) ? draw(6, 9) : draw(0.1, 0.3)) * white
+    if (structure === 'ramp') return (wide.includes(i) ? draw(2.5, 3.5) : draw(0.05, 0.2)) * white
+    return (wide.includes(i) ? (wide.length > 1 ? draw(2.5, 3.5) : draw(3.5, 5)) : draw(0.15, 0.6) * (e.under < 1 ? 0.6 : 1)) * white
+  }
 
   // The seed's choices: the colors, one or two wide bands (near-white Ice only half as wide), and whether the sky
   // darkens toward the top. Every combination is listed, the second light (Orange-red, Tan) in about a third of
   // them.
-  type Choice = { light: string | undefined; darks: readonly string[]; base: boolean; wide: readonly number[]; zenith: number; form: Form }
+  // The structure the wide bands make: one wide band is a dominant field with thin accents (Ice, never a wide
+  // white band, stays a plain stack); two light bands next to each other, in a stack of at most four, are two tall
+  // floors of color meeting in one long ramp; other pairs are a stack of bands.
+  type Structure = 'field' | 'ramp' | 'stack'
+  type Choice = { light: string | undefined; darks: readonly string[]; base: boolean; wide: readonly number[]; zenith: number; form: Form; structure: Structure }
   const choices: Choice[] = []
   const forms: Form[] = lights.length ? ['plain'] : ['plain', 'nightTop', 'lowBlue', 'iceLine']
   for (const [li, l] of (lights.length ? lights : [undefined]).entries()) {
@@ -299,13 +311,20 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
         for (const form of forms) {
           // A low blue only with one dark color: with two, the stack is too crowded for the lens.
           if (form === 'lowBlue' && d.length > 1) continue
-          const can = build(l, d, base, form)
-            .map((e, i) => (e.line ? -1 : i))
-            .filter((i) => i >= 0)
+          const list = build(l, d, base, form)
+          const can = list.map((e, i) => (e.line ? -1 : i)).filter((i) => i >= 0)
           const wides = [...can.map((i) => [i]), ...can.flatMap((i, k) => can.slice(k + 1).map((j) => [i, j]))]
+          const structureOf = (wide: number[]): Structure =>
+            wide.length === 1
+              ? lightness(list[wide[0]].hex) > 0.95
+                ? 'stack'
+                : 'field'
+              : wide[1] === wide[0] + 1 && !dark(list[wide[0]]) && !dark(list[wide[1]]) && list.length <= 4
+                ? 'ramp'
+                : 'stack'
           wides.forEach((wide, k) => {
             if (li > 0 && k % 2 === 1) return
-            for (const zenith of [0, 1.1]) choices.push({ light: l, darks: d, base, wide, zenith, form })
+            for (const zenith of [0, 1.1]) choices.push({ light: l, darks: d, base, wide, zenith, form, structure: structureOf(wide) })
           })
         }
       }
@@ -322,11 +341,16 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     return { outline, warmOnDark, bridge }
   }
   // The scene width of a band's top edge from 10 to 90%, in lens radii. A wide near-white band (Ice) has very
-  // soft edges: a glow rather than a stripe.
-  const fadeOf = (list: readonly Entry[], wide: readonly number[], i: number, draw: (lo: number, hi: number) => number) => {
+  // soft edges: a glow rather than a stripe. In a field, a light edge of the field is a long fade and a light edge
+  // between two accents is near-crisp, so one frame has both.
+  const fadeOf = (list: readonly Entry[], wide: readonly number[], i: number, draw: (lo: number, hi: number) => number, structure: Structure = 'stack') => {
     const { outline, warmOnDark, bridge } = edgeKind(list, i)
     const glow = [i - 1, i].some((j) => wide.includes(j) && lightness(list[j].hex) > 0.95) ? 1.8 : 1
-    return (warmOnDark ? draw(0.05, 0.1) : outline ? draw(0.3, 0.8) : bridge ? draw(1.2, 1.8) : draw(1.2, 2.6)) * glow
+    if (warmOnDark) return draw(0.05, 0.1) * glow
+    if (outline) return draw(0.3, 0.8) * glow
+    if (bridge) return draw(1.2, 1.8) * glow
+    if (structure === 'field') return (wide.includes(i - 1) || wide.includes(i) ? draw(2.2, 3.2) : draw(0.4, 0.9)) * glow
+    return draw(1.2, 2.6) * glow
   }
 
   // Each run of seeds as long as the list takes every choice once: from a seeded first one, each next choice is
@@ -355,16 +379,19 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     const kept = wideEntries.map((e) => list.indexOf(e)).filter((i) => i >= 0)
     const wide = kept.length ? kept : [n - 1]
     const below: 'open' | 'land' = ground && dark(list[n - 1]) ? 'land' : 'open'
-    const shares = list.map((e, i) => shareOf(e, i, wide, (lo, hi) => rnd.between(lo, hi)))
+    const shares = list.map((e, i) => shareOf(e, i, wide, (lo, hi) => rnd.between(lo, hi), c.structure))
     const least = leastOf(list, R0)
     const leastSum = least.reduce((s, v) => s + v, 0)
     const shareSum = shares.reduce((s, v) => s + v, 0)
     const spans = shares.map((v, i) => least[i] * Math.min(1, 1 / leastSum) + (Math.max(0, 1 - leastSum) * v) / shareSum)
     // Each band's top edge: the sky's is the frame's top, and the last band's is the lowest boundary.
     const tops = spans.map((_, i) => spans.slice(0, i).reduce((s, v) => s + v, 0))
-    // The whole stack leans one way or the other, and every edge curves more or less.
+    // The whole stack leans one way or the other, and every edge curves more or less; a ramp's edges are calm.
     const stackTilt = (rnd.between(-0.06, 0.06) * frameW) / frameH
-    const curve = rnd.between(0.8, 1.8)
+    const curve = rnd.between(0.8, 1.8) * (c.structure === 'ramp' ? 0.5 : 1)
+    // The long ramp between a ramp's two bands: 27 to 30 % of the frame height together with the lens.
+    const lensWidth = (1.38 * R0) / frameH
+    const ramp = Math.sqrt(Math.max(0, rnd.between(0.27, 0.3) ** 2 - lensWidth ** 2))
     const bands: Band[] = []
     const under: number[] = []
     list.forEach((e, i) => {
@@ -399,14 +426,16 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
         }
       }
       const darker = i + 1 < list.length && shown(e) < Math.min(shown(upper), shown(list[i + 1])) - 0.1
-      const fade = fadeOf(list, wide, i, (lo, hi) => rnd.between(lo, hi))
+      const fade = fadeOf(list, wide, i, (lo, hi) => rnd.between(lo, hi), c.structure)
+      const rampEdge = c.structure === 'ramp' && wide.includes(i - 1) && wide.includes(i)
       bands.push({
         color: e.hex,
         edge: { base: tops[i], tilt, bumps: lobes, wave, wavelength: 1.5, row: 2 * bands.length },
         mode: outline ? MODE_COVER : MODE_LIGHT,
         // A line is sharp in the scene, a third of a lens radius; the lens spreads it.
-        fade: ((e.line ? 0.35 : fade) * R0) / frameH,
-        fadeVary: e.line ? 0.3 : warmOnDark ? 0.5 : outline ? 0.9 : 0.35,
+        fade: rampEdge ? ramp : ((e.line ? 0.35 : fade) * R0) / frameH,
+        fadeVary: e.line ? 0.3 : rampEdge ? 0.2 : warmOnDark ? 0.5 : outline ? 0.9 : 0.35,
+        ramp: rampEdge,
         light: 1,
         lean: rnd.between(-0.15, 0.15),
         bridge: bridge && !e.line ? 1 : 0,
@@ -419,9 +448,9 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
       under.push(e.under)
     })
     const landBand = below === 'land' ? bands.length - 1 : -1
-    // A dome: a band lighter than the one above rises into it.
+    // A dome: a band lighter than the one above rises into it (not in a ramp, whose edges stay calm).
     const domes = bands.map((_, i) => i).filter((i) => i !== landBand && lightness(bands[i].color) > lightness(i === 0 ? list[0].hex : bands[i - 1].color) + 0.05)
-    if (domes.length && rnd.chance(0.75)) {
+    if (c.structure !== 'ramp' && domes.length && rnd.chance(0.75)) {
       const b = bands[domes[rnd.int(0, domes.length - 1)]]
       const dome: Bump = [rnd.between(0.15, 0.85), rnd.between(0.4, 0.7) / frameW, -rnd.between(0.035, 0.06) / frameH]
       b.edge = { ...b.edge, bumps: [...b.edge.bumps, dome].slice(0, BUMP_MAX) }
@@ -558,8 +587,8 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   // The image's light: its warm or light color, else the brightest after the sky (Ice).
   const light = choice.light ?? list.slice(1).reduce((a, b) => (lightness(b.hex) > lightness(a.hex) ? b : a)).hex
   keepThick(bands, R0, frameW, frameH, edgeSeed(seed))
-  // Edge widths scale with the lens.
-  bands.forEach((b) => (b.fade *= R / R0))
+  // Edge widths scale with the lens, except a ramp's, which is set by the frame.
+  bands.forEach((b) => (b.fade *= b.ramp ? 1 : R / R0))
 
   // Softness and Horizon move and resize the seed's bands. Every band is at least as tall as the lens rule asks
   // (2 lens radii, 3.2 for a band darker than both neighbours) and at least an eighth of the frame, so that in a
@@ -648,7 +677,8 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     })
   }
 
-  const lightVary = rnd.between(0.1, 0.17)
+  // Light changes slowly inside every band; a ramp's floors are nearly flat.
+  const lightVary = rnd.between(0.1, 0.17) * (choice.structure === 'ramp' ? 0.35 : 1)
   // The light's column: where Intensity above the middle gathers its extra light.
   const sun: [number, number] = [rnd.between(0.2, 0.8), rnd.between(0.22, 0.35)]
   return {
