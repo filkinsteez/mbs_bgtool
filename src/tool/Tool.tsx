@@ -5,14 +5,15 @@ import '@/styles/dial-panel.css'
 import '@/styles/tool.css'
 import { DialStore, useDialKitController } from 'dialkit'
 import { useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { flushSync } from 'react-dom'
 import { EXPORT_SIZES, getPack, type ExportAspect } from '@/light'
-import { buildScene } from './controls'
+import { buildScene, controlsForPoint, DEFAULT_CONTROLS, MOOD_DIAL_KEY, moodForPoint, movePointWithMood, type LightPoint } from './controls'
 import { buildDialConfig, PANEL_ID, PANEL_NAME, readToolState } from './dialConfig'
 import { exportPng } from './exportImage'
 import { panelAccessFor, usePanelAccess } from './panelAccess'
 import { Preview } from './Preview'
 import { EMPTY_SEED_HISTORY, recordShuffle, stepBack, stepForward, type SeedStep } from './seedHistory'
-import { fixLook, isMoodId, parseQuery, SEED_MAX, SEED_MIN, toQuery, type SearchParams } from './state'
+import { clampUnit, fixLook, isMoodId, parseQuery, SEED_MAX, SEED_MIN, toQuery, type SearchParams } from './state'
 import { ToolPanel } from './ToolPanel'
 
 const EXPORT_LABEL = 'Export PNG'
@@ -46,19 +47,27 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const mood = isMoodId(panelMood) ? panelMood : start.mood
   const [exportStatus, setExportStatus] = useState<ExportStatus>('idle')
   const [seedHistory, setSeedHistory] = useState(EMPTY_SEED_HISTORY)
+  const [point, setPoint] = useState(start.point)
+  const [pressed, setPressed] = useState(false)
   const exportingRef = useRef(false)
   const panelRef = useRef<HTMLElement>(null)
+  // The point and the mood control as this component last set or saw them. The panel store calls back
+  // before React renders, so these tell a slider move by the user from the drag's own updates.
+  const pointRef = useRef(start.point)
+  const moodValueRef = useRef<number | undefined>(start.moodControl)
+  const panelMoodRef = useRef(start.mood)
+  const pressEndedRef = useRef(false)
 
   const exportLabel = exportStatus === 'busy' ? EXPORTING_LABEL : exportStatus === 'failed' ? EXPORT_FAILED_LABEL : EXPORT_LABEL
   const config = useMemo(() => buildDialConfig(mood, start, exportLabel), [mood, start, exportLabel])
   const dial = useDialKitController(PANEL_NAME, config, { id: PANEL_ID, onAction: (action) => handleAction(action) })
   const { getValues, setValue } = dial
-  const state = readToolState(dial.values, mood)
+  const state = { ...readToolState(dial.values, mood), point }
   const query = toQuery(state)
   const { look, pack, seed, intensity, softness, moodControl, format } = state
   const scene = useMemo(
-    () => buildScene(look, getPack(pack), seed, { intensity, softness, mood: moodControl }, frameAspect(format)),
-    [look, pack, seed, intensity, softness, moodControl, format],
+    () => buildScene(look, getPack(pack), seed, { intensity, softness, mood: moodControl, point }, frameAspect(format)),
+    [look, pack, seed, intensity, softness, moodControl, point, format],
   )
 
   const access = useMemo(
@@ -73,12 +82,95 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     if (current !== fixed) setValue('look', fixed)
   }, [mood, getValues, setValue])
 
+  // The URL changes when a drag ends, not while the pointer is down.
   useEffect(() => {
-    const timer = setTimeout(() => {
+    if (pressed) return
+    const write = () => {
       if (window.location.search !== `?${query}`) window.history.replaceState(null, '', `?${query}`)
-    }, URL_DELAY_MS)
+    }
+    if (pressEndedRef.current) {
+      pressEndedRef.current = false
+      write()
+      return
+    }
+    const timer = setTimeout(write, URL_DELAY_MS)
     return () => clearTimeout(timer)
-  }, [query])
+  }, [query, pressed])
+
+  function placePoint(next: LightPoint | undefined) {
+    pointRef.current = next
+    setPoint(next)
+  }
+
+  function setMoodControl(value: number) {
+    moodValueRef.current = value
+    setValue(MOOD_DIAL_KEY[mood], value)
+  }
+
+  /** Puts the light at the pointer, and the mood control where it shows that place (the Horizon at its height). */
+  function dragLightTo(raw: LightPoint) {
+    const live = readToolState(getValues(), mood)
+    const controls = { intensity: live.intensity, softness: live.softness, mood: live.moodControl }
+    const next = controlsForPoint(live.look, getPack(live.pack), live.seed, controls, frameAspect(live.format), raw)
+    // One render for both: the panel store's update and the point's would otherwise render one after the other.
+    flushSync(() => {
+      placePoint(next.point)
+      if (next.mood !== live.moodControl) setMoodControl(next.mood)
+    })
+  }
+
+  /** Double-click: the light goes back to the seed's own place. */
+  function resetLight() {
+    placePoint(undefined)
+    setMoodControl(DEFAULT_CONTROLS.mood)
+  }
+
+  function handlePress(isPressed: boolean) {
+    if (!isPressed) pressEndedRef.current = true
+    setPressed(isPressed)
+  }
+
+  // Moving the mood slider after a drag carries the light on from where the drag left it. A mood change
+  // clears the point, as it resets the mood control.
+  const onPanelChange = useEffectEvent(() => {
+    const values = DialStore.getValues(PANEL_ID)
+    const panelMoodNow = values.mood
+    if (!isMoodId(panelMoodNow)) return
+    if (panelMoodNow !== panelMoodRef.current) {
+      panelMoodRef.current = panelMoodNow
+      moodValueRef.current = undefined
+      if (pointRef.current) placePoint(undefined)
+      return
+    }
+    const raw = values[MOOD_DIAL_KEY[panelMoodNow]]
+    if (raw === undefined) return
+    const next = clampUnit(raw, DEFAULT_CONTROLS.mood)
+    const previous = moodValueRef.current
+    moodValueRef.current = next
+    const current = pointRef.current
+    if (previous === undefined || previous === next || !current) return
+    const live = readToolState(values, panelMoodNow)
+    placePoint(movePointWithMood(live.look, getPack(live.pack), live.seed, frameAspect(live.format), current, previous, next))
+  })
+
+  useEffect(() => DialStore.subscribe(PANEL_ID, () => onPanelChange()), [])
+
+  // A new look, pack, seed or format keeps the light where the user put it; the mood control moves to show
+  // that place in the new scene.
+  const sceneKey = `${look}|${pack}|${seed}|${format}`
+  const sceneKeyRef = useRef(sceneKey)
+  const followScene = useEffectEvent(() => {
+    const current = pointRef.current
+    if (!current) return
+    const next = moodForPoint(look, getPack(pack), seed, frameAspect(format), current)
+    if (next !== null && next !== moodControl) setMoodControl(next)
+  })
+
+  useEffect(() => {
+    if (sceneKeyRef.current === sceneKey) return
+    sceneKeyRef.current = sceneKey
+    followScene()
+  }, [sceneKey])
 
   function shuffle() {
     setSeedHistory(recordShuffle(seedHistory, seed))
@@ -145,7 +237,14 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
 
   return (
     <main className="tool">
-      <Preview scene={scene} aspect={format} paused={exportStatus === 'busy'} />
+      <Preview
+        scene={scene}
+        aspect={format}
+        paused={exportStatus === 'busy'}
+        onPoint={dragLightTo}
+        onPress={handlePress}
+        onReset={resetLight}
+      />
       <aside ref={panelRef} className="tool-panel dial-column">
         <ToolPanel panelId={PANEL_ID} afterPath="seed" after={seedActions} />
       </aside>

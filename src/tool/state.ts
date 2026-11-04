@@ -9,7 +9,7 @@ import {
   type PackId,
   type RecipeId,
 } from '@/light'
-import { DEFAULT_CONTROLS, MOOD_CONTROL } from './controls'
+import { clampPoint, DEFAULT_CONTROLS, MOOD_CONTROL, type LightPoint } from './controls'
 
 export interface ToolState {
   mood: MoodId
@@ -21,6 +21,8 @@ export interface ToolState {
   moodControl: number
   seed: number
   format: ExportAspect
+  /** Where the user dragged the light, in frame units (`point=x,y` in the URL). Missing until they drag. */
+  point?: LightPoint
 }
 
 export const MOOD_IDS: readonly MoodId[] = ['sunset', 'contour']
@@ -64,6 +66,14 @@ export function clampSeed(value: unknown, fallback: number): number {
   return Math.min(SEED_MAX, Math.max(SEED_MIN, Math.round(n)))
 }
 
+/** A point from the URL, "x,y" in frame units; anything else is no point. */
+export function parsePoint(value: string | undefined): LightPoint | undefined {
+  const parts = value?.split(',') ?? []
+  if (parts.length !== 2 || parts.some((part) => part.trim() === '')) return undefined
+  const [x, y] = parts.map(Number)
+  return Number.isFinite(x) && Number.isFinite(y) ? clampPoint([x, y]) : undefined
+}
+
 /** A page's search params as Next.js passes them to the page. */
 export type SearchParams = Readonly<Record<string, string | string[] | undefined>>
 
@@ -86,6 +96,7 @@ export function parseQuery(query: QueryInput): ToolState {
   const lookParam = readParam(query, 'look')
   const pack = readParam(query, 'pack')
   const format = readParam(query, 'format')?.replace('x', ':')
+  const point = parsePoint(readParam(query, 'point'))
   return {
     mood,
     look: fixLook(mood, lookParam && !lookParam.includes('.') ? `${mood}.${lookParam}` : lookParam),
@@ -95,19 +106,24 @@ export function parseQuery(query: QueryInput): ToolState {
     moodControl: clampUnit(readParam(query, MOOD_CONTROL[mood]), DEFAULT_STATE.moodControl),
     seed: clampSeed(readParam(query, 'seed'), DEFAULT_STATE.seed),
     format: isExportAspect(format) ? format : DEFAULT_STATE.format,
+    ...(point ? { point } : {}),
   }
 }
 
-/** The URL query (without "?") that reproduces the state. */
+/** The URL query (without "?") that reproduces the state. The point's comma is left as it is, so the link stays readable. */
 export function toQuery(state: ToolState): string {
-  return new URLSearchParams([
+  const head = new URLSearchParams([
     ['mood', state.mood],
     ['look', shortLook(state.look)],
     ['pack', state.pack],
     ['intensity', unitToQuery(state.intensity)],
     ['softness', unitToQuery(state.softness)],
     [MOOD_CONTROL[state.mood], unitToQuery(state.moodControl)],
+  ]).toString()
+  const point = state.point ? `point=${clampPoint(state.point).join(',')}` : null
+  const tail = new URLSearchParams([
     ['seed', String(state.seed)],
     ['format', formatToQuery(state.format)],
   ]).toString()
+  return [head, point, tail].filter(Boolean).join('&')
 }

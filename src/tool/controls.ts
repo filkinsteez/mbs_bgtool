@@ -10,6 +10,7 @@ import {
   type RecipeId,
   type Scene,
 } from '@/light'
+import { placeHorizon } from '@/light/recipes/sunset/horizon'
 
 export { DEFAULT_CONTROLS, type ControlValues } from '@/light'
 
@@ -55,4 +56,260 @@ export function buildScene(recipeId: RecipeId, pack: ColorPack, seed: number, co
     lens: mapping.lens?.(controls) ?? {},
     output: mapping.output?.(controls) ?? {},
   }
+}
+
+// ---------------------------------------------------------------------------
+// Dragging the light
+
+/** The light's place in frame units: x from the left edge, y from the top edge (`ControlValues.point`). */
+export type LightPoint = readonly [number, number]
+
+/** How far past each frame edge a drag may carry the light, in frame units. */
+export const POINT_REACH = 0.25
+
+const clamp01 = (value: number) => Math.min(1, Math.max(0, value))
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t
+/** The mood control's own steps: the panel and the URL keep it to 0.01. */
+const onSliderStep = (value: number) => Math.round(clamp01(value) * 100) / 100
+
+/** The point within the drag's reach (-0.25..1.25 on each axis), rounded to 0.001 of the frame. */
+export function clampPoint(point: readonly number[]): LightPoint {
+  const axis = (value: number) => Math.round(Math.min(1 + POINT_REACH, Math.max(-POINT_REACH, value)) * 1000) / 1000 || 0
+  return [axis(point[0]), axis(point[1])]
+}
+
+/** Height of the shared Sunset horizon at the frame's middle column for a Horizon value (0 top edge, 1 bottom edge). */
+function horizonHeight(control: number, seed: number, aspect: number): number {
+  return placeHorizon(control, seed, aspect).y
+}
+
+/** The Horizon value whose line sits at height y; the line rises steadily with the control, so halving finds it. */
+function horizonFor(y: number, seed: number, aspect: number): number {
+  if (y >= horizonHeight(0, seed, aspect)) return 0
+  if (y <= horizonHeight(1, seed, aspect)) return 1
+  let low = 0
+  let high = 1
+  for (let i = 0; i < 24; i++) {
+    const middle = (low + high) / 2
+    if (horizonHeight(middle, seed, aspect) > y) low = middle
+    else high = middle
+  }
+  return (low + high) / 2
+}
+
+/** The frame's width and height in short-side units. */
+const frameShorts = (aspect: number): [number, number] => (aspect >= 1 ? [aspect, 1] : [1, 1 / aspect])
+
+const pairOf = (value: ParamValue | undefined): [number, number] | null =>
+  Array.isArray(value) && value.length >= 2 && Number.isFinite(value[0]) && Number.isFinite(value[1]) ? [value[0], value[1]] : null
+
+const numberOf = (value: ParamValue | undefined): number => (typeof value === 'number' ? value : Number.NaN)
+
+/**
+ * Where a Contour look puts its light, in frame units, read from its composed
+ * params: the hot spot of Rim and Halo, the pool where Beam's beam lands, the
+ * point where Streaks' shafts meet. Null for Sunset looks, whose light height
+ * is the shared horizon, and for params it can't read.
+ */
+export function lightPlace(scene: Scene, aspect: number): LightPoint | null {
+  const [fw, fh] = frameShorts(aspect)
+  const { params } = scene
+  switch (scene.recipe) {
+    case 'sunset.ramp':
+    case 'sunset.bands':
+    case 'sunset.blooms':
+      return null
+    case 'contour.rim':
+    case 'contour.halo': {
+      const anchor = pairOf(params[scene.recipe === 'contour.rim' ? 'at' : 'ring1At'])
+      const offset = pairOf(params.light1At)
+      return anchor && offset ? [anchor[0] + offset[0] / fw, anchor[1] + offset[1] / fh] : null
+    }
+    case 'contour.beam': {
+      // The beam lands at depth focal / (pool height - horizon), straight below where it stands on screen.
+      const horizon = numberOf(params.horizon)
+      const focal = numberOf(params.focal)
+      const edge = Math.max(numberOf(params.floorY), horizon + 0.01)
+      const k = Math.min(0.9, (numberOf(params.landing) * numberOf(params.beamWidth)) / focal)
+      const place: LightPoint = [numberOf(params.beamAt) / fw + 0.5, (horizon + (edge - horizon) * (1 - k)) / fh + 0.5]
+      return place.every(Number.isFinite) ? place : null
+    }
+    case 'contour.streaks': {
+      const center = pairOf(params.center)
+      return center ? [center[0] / fw + 0.5, center[1] / fh + 0.5] : null
+    }
+    default: {
+      const unknown: never = scene.recipe
+      throw new Error(`Unknown recipe: ${String(unknown)}`)
+    }
+  }
+}
+
+/** Places sampled along a Contour look's Light position path, evenly from 0 to 1. */
+const PATH_SAMPLES = 17
+const PATH_CACHE_SIZE = 64
+const pathCache = new Map<string, readonly LightPoint[] | null>()
+
+/**
+ * The places a Contour look's light takes as Light position runs from 0 to 1,
+ * for a pack, seed and frame aspect, without a dragged point. Intensity and
+ * Softness don't move the light, so the path is taken at their middle values.
+ */
+function lightPath(recipeId: RecipeId, pack: ColorPack, seed: number, aspect: number): readonly LightPoint[] | null {
+  const key = `${recipeId}|${pack.id}|${seed}|${aspect.toFixed(4)}`
+  const known = pathCache.get(key)
+  if (known !== undefined) return known
+  const places: LightPoint[] = []
+  for (let i = 0; i < PATH_SAMPLES; i++) {
+    const scene = buildScene(recipeId, pack, seed, { intensity: 0.5, softness: 0.5, mood: i / (PATH_SAMPLES - 1) }, aspect)
+    const place = lightPlace(scene, aspect)
+    if (!place) break
+    places.push(place)
+  }
+  const path = places.length === PATH_SAMPLES ? places : null
+  pathCache.set(key, path)
+  if (pathCache.size > PATH_CACHE_SIZE) pathCache.delete(pathCache.keys().next().value as string)
+  return path
+}
+
+/** The place at a value of the control along a sampled path. */
+function pathAt(path: readonly LightPoint[], value: number): LightPoint {
+  const last = path.length - 1
+  const at = clamp01(value) * last
+  const i = Math.min(last - 1, Math.floor(at))
+  const t = at - i
+  return [lerp(path[i][0], path[i + 1][0], t), lerp(path[i][1], path[i + 1][1], t)]
+}
+
+/**
+ * Where two separate parts of a path lie about equally near the point, the
+ * control goes between them instead of jumping from one to the other: a part
+ * this much farther (short-side units) than the nearest still counts 1 / e.
+ */
+const NEAR_WIDTH = 0.03
+
+/** The control value whose place on the path lies nearest the point. */
+function nearestOnPath(path: readonly LightPoint[], point: LightPoint, aspect: number): number {
+  const [fw, fh] = frameShorts(aspect)
+  const px = point[0] * fw
+  const py = point[1] * fh
+  const last = path.length - 1
+  const found: { value: number; distance: number }[] = []
+  for (let i = 0; i < last; i++) {
+    const ax = path[i][0] * fw
+    const ay = path[i][1] * fh
+    const dx = path[i + 1][0] * fw - ax
+    const dy = path[i + 1][1] * fh - ay
+    const length2 = dx * dx + dy * dy
+    const t = length2 > 1e-12 ? clamp01(((px - ax) * dx + (py - ay) * dy) / length2) : 0
+    found.push({ value: (i + t) / last, distance: Math.hypot(ax + t * dx - px, ay + t * dy - py) })
+  }
+  // Each part of the path that comes near the point counts once, at its nearest place.
+  const parts = found.filter(
+    (f, i) => (i === 0 || f.distance <= found[i - 1].distance) && (i === found.length - 1 || f.distance <= found[i + 1].distance),
+  )
+  const nearest = Math.min(...parts.map((f) => f.distance))
+  let sum = 0
+  let weight = 0
+  for (const f of parts) {
+    const w = Math.exp(-(f.distance - nearest) / NEAR_WIDTH)
+    sum += w * f.value
+    weight += w
+  }
+  return sum / weight
+}
+
+const moodOf = (recipeId: RecipeId): MoodId => getRecipe(recipeId).mood
+
+/**
+ * The point a drag hands to the look: within the drag's reach, and for Sunset
+ * no higher or lower than the Horizon control can put the line, so the Horizon
+ * thumb always shows the light's height.
+ */
+export function limitPoint(recipeId: RecipeId, seed: number, aspect: number, point: readonly number[]): LightPoint {
+  const [x, y] = clampPoint(point)
+  const mood = moodOf(recipeId)
+  switch (mood) {
+    case 'sunset': {
+      const top = horizonHeight(1, seed, aspect)
+      const bottom = horizonHeight(0, seed, aspect)
+      return clampPoint([x, Math.min(bottom, Math.max(top, y))])
+    }
+    case 'contour':
+      return [x, y]
+    default: {
+      const unknown: never = mood
+      throw new Error(`Unknown mood: ${String(unknown)}`)
+    }
+  }
+}
+
+/**
+ * The mood control value, on the slider's 0.01 steps, that puts the look's
+ * light nearest the point. Sunset: the Horizon whose shared line sits at the
+ * point's height. Contour: the Light position whose light lies nearest the
+ * point along the look's own path. Null when a Contour look's light can't be
+ * read from its params.
+ */
+export function moodForPoint(recipeId: RecipeId, pack: ColorPack, seed: number, aspect: number, point: LightPoint): number | null {
+  const mood = moodOf(recipeId)
+  switch (mood) {
+    case 'sunset':
+      return onSliderStep(horizonFor(point[1], seed, aspect))
+    case 'contour': {
+      const path = lightPath(recipeId, pack, seed, aspect)
+      return path ? onSliderStep(nearestOnPath(path, point, aspect)) : null
+    }
+    default: {
+      const unknown: never = mood
+      throw new Error(`Unknown mood: ${String(unknown)}`)
+    }
+  }
+}
+
+/**
+ * Where a dragged point goes when the mood control moves from `from` to `to`:
+ * as far as the look's light moves along its own path for that change (the
+ * horizon's height for Sunset), so the slider carries on from where the drag
+ * left the light instead of jumping back to the path.
+ */
+export function movePointWithMood(
+  recipeId: RecipeId,
+  pack: ColorPack,
+  seed: number,
+  aspect: number,
+  point: LightPoint,
+  from: number,
+  to: number,
+): LightPoint {
+  const mood = moodOf(recipeId)
+  switch (mood) {
+    case 'sunset':
+      return clampPoint([point[0], point[1] + horizonHeight(to, seed, aspect) - horizonHeight(from, seed, aspect)])
+    case 'contour': {
+      const path = lightPath(recipeId, pack, seed, aspect)
+      if (!path) return point
+      const a = pathAt(path, from)
+      const b = pathAt(path, to)
+      return clampPoint([point[0] + b[0] - a[0], point[1] + b[1] - a[1]])
+    }
+    default: {
+      const unknown: never = mood
+      throw new Error(`Unknown mood: ${String(unknown)}`)
+    }
+  }
+}
+
+/** The controls for a light dragged to `point`: the point as the look gets it, and the mood control the slider shows for it. */
+export function controlsForPoint(
+  recipeId: RecipeId,
+  pack: ColorPack,
+  seed: number,
+  controls: ControlValues,
+  aspect: number,
+  point: readonly number[],
+): ControlValues & { point: LightPoint } {
+  const limited = limitPoint(recipeId, seed, aspect, point)
+  const mood = moodForPoint(recipeId, pack, seed, aspect, limited)
+  return { ...controls, mood: mood ?? controls.mood, point: limited }
 }
