@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getPack } from '../../color/packs'
+import { getPack, type PackId } from '../../color/packs'
 import type { ControlValues, ParamValue } from '../../scene'
 import { contourBeam } from './beam'
 import { contourStreaks } from './streaks'
@@ -41,7 +41,7 @@ function beamPool(params: Record<string, ParamValue>) {
   return { at: [num('beamAt'), horizon + (edgeY - horizon) * (1 - k)], landingZ, landingX: (num('beamAt') * landingZ) / focal }
 }
 
-const compose = (recipe: typeof contourBeam, pack: string, seed: number, drag?: NonNullable<ControlValues['drag']>) =>
+const compose = (recipe: typeof contourBeam, pack: PackId, seed: number, drag?: NonNullable<ControlValues['drag']>) =>
   recipe.compose!({ pack: getPack(pack), controls: { ...MIDDLE, ...(drag ? { drag } : {}) }, seed, aspect: ASPECT }).params
 
 describe('a dragged line on Beam', () => {
