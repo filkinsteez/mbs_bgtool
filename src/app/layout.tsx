@@ -12,7 +12,7 @@ const optimistic = localFont({
 })
 
 export const metadata: Metadata = {
-  title: 'MBS Background Generator',
+  title: 'MBS Background Tool',
   description:
     'Generate static Meta backgrounds with approved Color Packs and 4K export.',
 }
