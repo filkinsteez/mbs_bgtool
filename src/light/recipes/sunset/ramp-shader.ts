@@ -84,6 +84,7 @@ uniform vec2 uSunLight;      // depth over which the path fades, and how far abo
 uniform vec4 uWater;         // squeeze, degrees below the horizon half a short side under the line, ripple smear per unit of depth, strip strength
 uniform vec3 uWaterOwn;      // the water's own light, seen where the reflection weakens
 uniform float uWaterMirror;  // share of calm water's reflectance that a rough sea keeps
+uniform float uMirrorDeep;   // height above the frame's top over which the sky that water mirrors there dims by e (0: none)
 uniform vec3 uGroundTop;     // land right under its outline
 uniform vec3 uGroundBottom;  // land at the bottom edge
 uniform vec2 uGroundHaze;    // share of the sky's light in far land, and the depth over which it fades
@@ -510,6 +511,9 @@ vec3 rampScene(vec2 p) {
   }
   vec3 seen = rampSky(q) * skyPatch(p);
   if (kind == 0) return seen;
+  // The sky high above the frame, which near water mirrors under a high line, is darker than the
+  // sky in it.
+  if (kind == 2 && uMirrorDeep > 0.0) seen *= exp(-max(0.0, -0.5 * uFrameAspect.y - q.y) / uMirrorDeep);
   // One call site, as for rampSky: land itself, or the far bank as the water mirrors it.
   vec3 mirror = kind == 2 ? seen : landLight(kind == 1 ? p : mirrored, top, seen, patches);
   if (kind == 1) return mirror;

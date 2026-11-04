@@ -334,6 +334,27 @@ const darkAlternate = (seed: number) => seedRun(seed) % 2 !== 0
  */
 const seedVariant = (seed: number) => seedRun(seed) % 3
 
+/** Sky height (short sides) at and above which the zenith's room is the top fifth of the frame. */
+const FULL_ZENITH = 0.2 / 0.45
+
+/**
+ * The room at the top of a sky of this height that holds only the zenith's Meta Blue: the top fifth
+ * of the frame, shrinking with the square of a shorter sky's height. The room below it still grows
+ * with the sky's height.
+ */
+function zenithRoomOf(height: number, tall: number): number {
+  const full = FULL_ZENITH * tall
+  return height >= full ? 0.2 * tall : 0.2 * tall * (height / full) ** 2
+}
+
+/** The sky height whose room below the zenith's is `reach`: the inverse of height - zenithRoomOf(height). */
+function skyTopOf(reach: number, tall: number): number {
+  const full = FULL_ZENITH * tall
+  if (reach >= full - 0.2 * tall) return reach + 0.2 * tall
+  const a = (0.2 * tall) / (full * full)
+  return (1 - Math.sqrt(Math.max(0, 1 - 4 * a * reach))) / (2 * a)
+}
+
 /** Over water and land, the glow's line's height above the horizon as a share of the sky's height. */
 const glowShare = (look: PackLook, variant: number, pick: number, softness: number, day: number) =>
   lerp(0.25, 0.45, pick) * [0.85, 1.35, 1.05][variant] * stops2(softness, 0.3) * Math.sqrt(day) * look.glowRise
@@ -547,6 +568,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   }
   const { flat, ridge, lineAt, outline, lowest, crest, bankHeight, anchor: groundAnchor } = groundAt(lineY)
   const groundKind = water ? 1 : land ? 2 : 0
+  const landRoom = Math.max(0.1, 0.5 * tall - lineAt)
   const lineOf = (x: number) => outlineAt(outline, half, x, seed)
 
   // Open skies anchor the ramp just below the frame. Under a dragged line the anchor lies on the
@@ -575,7 +597,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // own room above it.
   const dragRise = Math.max(0.03, lineRise)
   const dragReach = line ? dragRise + line.length : 0
-  const dragTop = dragReach <= (0.55 * 0.2 * tall) / 0.45 ? dragReach / 0.55 : dragReach + 0.2 * tall
+  const dragTop = skyTopOf(dragReach, tall)
   const skyHeight = Math.max(0.2, line ? dragTop : horizonY * tall)
   // Under a dragged line the sun sits on the line's axis, just past the horizon below its start.
   const sunBelow = line ? dragRise + (arcs ? 0 : 0.03) : 0
@@ -620,9 +642,9 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   let topHeight = Infinity
   for (let i = 0; i <= 32; i++) topHeight = Math.min(topHeight, -rampAt(frame, axis, -half + (i / 32) * frameWidth, -tall / 2))
   if (line) topHeight = dragTop
-  // Meta Blue holds the top fifth of the frame, or of a short sky the top 45%, which leaves the low
-  // sky room for its own band between the zenith and the glow.
-  const zenithRoom = Math.min(0.2 * tall, 0.45 * topHeight)
+  // Meta Blue holds the top fifth of the frame; a short sky gives it less, so the low sky keeps a
+  // band of its own between the zenith and the glow wider than the lens.
+  const zenithRoom = zenithRoomOf(topHeight, tall)
   // Over open skies the sky's edges sit between the glow and the top, so they rise with the glow.
   const edgeFloor = ground ? 0 : glowRise
   const skyEdgeAt = -(edgeFloor + look.skyEdge[0] * Math.max(0.1, topHeight - edgeFloor) * within(([[0.5, 0.68], [0.82, 0.98], [0.66, 0.84]] as const)[variant], edgePick))
@@ -823,13 +845,19 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // A tall water area keeps its path further down. Around it the water mirrors the band part
     // way from the glow up to the low sky's edge.
     sunLight: [Math.max(0.3, 0.6 * (0.5 * tall - lineAt)), Math.min(0.3, Math.max(0.05, 0.7 * (-lowSkyEdge - glowRise)))],
-    // The strip under the line is thin and bright, so it still shows after the lens.
-    water: [1.25, lerp(look.waterDegrees[0], look.waterDegrees[1], ridgePick) * [0.6, 1.6, 1][variant], 0.12, 1.5],
+    // The strip under the line is thin and bright, so it still shows after the lens. Under a high
+    // line the ripples draw the short sky's reflection out over more of the water, so the water
+    // carries the sky's colors and not only the zenith's.
+    water: [Math.min(1.25, Math.max(0.5, (0.77 * lineY) / Math.max(0.05, 1 - lineY))), lerp(look.waterDegrees[0], look.waterDegrees[1], ridgePick) * [0.6, 1.6, 1][variant], 0.12, 1.5],
     waterMirror: water ? look.waterMirror : 1,
-    groundHaze: [look.landHaze, (land ? 0.1 : 0.05) * tall],
+    // Under a high line the near water mirrors the sky high above the frame, which is darker.
+    mirrorDeep: water ? 0.6 * tall : 0,
+    // A tall land area reaches nearer the viewer: the haze over its far ground reaches further
+    // down, and its near ground is darker.
+    groundHaze: [look.landHaze, land ? Math.max(0.1 * tall, 0.25 * landRoom) : 0.05 * tall],
     landLit: [ground ? look.landLit : 0, lerp(0.3, 0.5, widthPick) * frameWidth, ground ? 0.6 : 0],
     groundTopGain: look.landTop[1] * groundGain,
-    groundBottomGain: look.landBottom[1] * groundGain,
+    groundBottomGain: look.landBottom[1] * groundGain * (land ? Math.min(1, ((0.4 * tall) / landRoom) ** 1.5) : 1),
     waterGain: look.water[1] * groundGain,
   }
   return { colors: slotColors(look, midSky), params, lens: {}, output: { exposure: 0 } }
