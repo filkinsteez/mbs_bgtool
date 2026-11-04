@@ -689,11 +689,12 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   }
 
   // The sky darkens away from the lead across the whole frame, so the frame runs from the light to the deep
-  // sky in one direction: its exact hex sits partway along, beyond it the sky gets 0.8 to 1.7 stops darker,
-  // and it varies slowly by about 4 % everywhere. A small seeded skew keeps the darkening off a straight line.
+  // sky in one direction: its exact hex sits partway along, beyond it Meta Blue dims 1.2 to 2.3 stops along
+  // its own falloff toward deep navy, and it varies slowly by about 4 % everywhere. A small seeded skew keeps
+  // the darkening off a straight line.
   const skew = lerp(-0.2, 0.2, r())
   const sky: SkySpec = {
-    top: lerp(0.8, 1.7, r()),
+    top: lerp(1.2, 2.3, r()),
     mid: lerp(0.52, 0.38, rise) + plan.mid + lerp(-0.08, 0.08, r()),
     tilt: skew,
     vary: lerp(0.03, 0.05, r()),
