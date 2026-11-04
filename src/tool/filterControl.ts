@@ -11,9 +11,13 @@ export interface FilterState {
   strength: number
 }
 
-/** Panel keys; DialKit shows them as "Filter" and "Strength". */
+/** Panel key; DialKit shows it as "Filter". */
 export const FILTER_DIAL_KEY = 'filter'
-export const STRENGTH_DIAL_KEY = 'strength'
+/**
+ * The key of the slider under Filter for each filter, which DialKit shows as its label: what the slider sets for
+ * that filter. Its value is the filter's strength, `strength` in the URL.
+ */
+export const STRENGTH_DIAL_KEYS: Readonly<Record<FilterKey, string>> = { grain: 'amount', ascii: 'density', pixel: 'density' }
 
 /** Filters the tool offers, in panel order. A filter joins once it runs in the tool. */
 export const TOOL_FILTERS: readonly FilterKey[] = ['grain', 'ascii', 'pixel']
@@ -25,7 +29,8 @@ const LABELS: Readonly<Record<FilterChoice, string>> = { none: 'None', grain: 'G
 
 const CHOICES: readonly FilterChoice[] = ['none', ...TOOL_FILTERS]
 
-function readChoice(value: unknown): FilterChoice {
+/** The filter a panel or URL value picks; anything missing or unknown is none. */
+export function readChoice(value: unknown): FilterChoice {
   return typeof value === 'string' && (CHOICES as readonly string[]).includes(value) ? (value as FilterChoice) : 'none'
 }
 
@@ -40,17 +45,21 @@ export function isFilterOn(value: unknown): boolean {
   return readChoice(value) !== 'none'
 }
 
-/** The Filter choice, and the Strength slider only while a filter is on, so the panel never shows a slider that does nothing. */
-export function filterDials(initial: FilterState, showStrength: boolean): DialConfig {
+/**
+ * The Filter choice, and under it the slider for the chosen filter (Amount for Grain, Density for ASCII and Pixel)
+ * only while one is chosen, so the panel never shows a slider that does nothing.
+ */
+export function filterDials(initial: FilterState, chosen: FilterChoice): DialConfig {
   return {
     [FILTER_DIAL_KEY]: { type: 'select', options: CHOICES.map((value) => ({ value, label: LABELS[value] })), default: readChoice(initial.filter) },
-    ...(showStrength ? { [STRENGTH_DIAL_KEY]: [readStrength(initial.strength), 0, 1, 0.01] as [number, number, number, number] } : {}),
+    ...(chosen === 'none' ? {} : { [STRENGTH_DIAL_KEYS[chosen]]: [readStrength(initial.strength), 0, 1, 0.01] as [number, number, number, number] }),
   }
 }
 
 /** The filter from the panel's live values; anything missing or unknown is no filter at the default strength. */
 export function readFilter(values: Readonly<Record<string, unknown>>): FilterState {
-  return { filter: readChoice(values[FILTER_DIAL_KEY]), strength: readStrength(values[STRENGTH_DIAL_KEY]) }
+  const filter = readChoice(values[FILTER_DIAL_KEY])
+  return { filter, strength: readStrength(filter === 'none' ? undefined : values[STRENGTH_DIAL_KEYS[filter]]) }
 }
 
 type QueryInput = URLSearchParams | Readonly<Record<string, string | string[] | undefined>>

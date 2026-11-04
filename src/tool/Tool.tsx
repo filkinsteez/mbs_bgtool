@@ -19,7 +19,7 @@ import {
 } from './controls'
 import { buildDialConfig, PANEL_ID, PANEL_NAME, readToolState } from './dialConfig'
 import { exportPng } from './exportImage'
-import { FILTER_DIAL_KEY, isFilterOn, withFilter } from './filterControl'
+import { FILTER_DIAL_KEY, readChoice, withFilter } from './filterControl'
 import { panelAccessFor, usePanelAccess } from './panelAccess'
 import { Preview } from './Preview'
 import { EMPTY_SEED_HISTORY, recordSeedChange, stepBack, stepForward, type SeedStep } from './seedHistory'
@@ -106,7 +106,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const panelMood = useSyncExternalStore(subscribePanel, readPanelMood, readNoMood)
   const mood = isMoodId(panelMood) ? panelMood : start.mood
   const panelFilter = useSyncExternalStore(subscribePanel, readPanelFilter, readNoMood)
-  const filterOn = isFilterOn(panelFilter ?? start.filter)
+  const chosenFilter = readChoice(panelFilter ?? start.filter)
   const [exportStatus, setExportStatus] = useState<ExportStatus>('idle')
   const [seedHistory, setSeedHistory] = useState(EMPTY_SEED_HISTORY)
   const [seed, setSeed] = useState(start.seed)
@@ -123,7 +123,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const dragEndedRef = useRef(false)
 
   const exportLabel = exportStatus === 'busy' ? EXPORTING_LABEL : exportStatus === 'failed' ? EXPORT_FAILED_LABEL : EXPORT_LABEL
-  const config = useMemo(() => buildDialConfig(mood, start, exportLabel, filterOn), [mood, start, exportLabel, filterOn])
+  const config = useMemo(() => buildDialConfig(mood, start, exportLabel, chosenFilter), [mood, start, exportLabel, chosenFilter])
   const dial = useDialKitController(PANEL_NAME, config, { id: PANEL_ID, onAction: (action) => handleAction(action) })
   const { getValues, setValue } = dial
   const state = { ...readToolState(dial.values, mood, seed), drag }

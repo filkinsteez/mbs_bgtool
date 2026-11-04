@@ -8,8 +8,9 @@ import {
   filterQuery,
   isFilterOn,
   parseFilterQuery,
+  readChoice,
   readFilter,
-  STRENGTH_DIAL_KEY,
+  STRENGTH_DIAL_KEYS,
   TOOL_FILTERS,
   withFilter,
 } from './filterControl'
@@ -21,7 +22,7 @@ describe('filter control', () => {
     expect(TOOL_FILTERS).toEqual(['grain', 'ascii', 'pixel'])
     for (const key of TOOL_FILTERS) expect(OUTPUT_FILTERS.some((stage) => stage.key === key)).toBe(true)
     expect(DEFAULT_FILTER).toEqual({ filter: 'none', strength: 0.5 })
-    const dials = filterDials(DEFAULT_FILTER, false)
+    const dials = filterDials(DEFAULT_FILTER, 'none')
     expect(dials[FILTER_DIAL_KEY]).toEqual({
       type: 'select',
       options: [
@@ -34,9 +35,14 @@ describe('filter control', () => {
     })
   })
 
-  it('shows the strength slider only while a filter is on', () => {
-    expect(Object.keys(filterDials(DEFAULT_FILTER, false))).toEqual([FILTER_DIAL_KEY])
-    expect(filterDials({ filter: 'grain', strength: 0.8 }, true)[STRENGTH_DIAL_KEY]).toEqual([0.8, 0, 1, 0.01])
+  it('shows the slider only while a filter is chosen, named for what it sets: Amount for Grain, Density for ASCII and Pixel', () => {
+    expect(Object.keys(filterDials(DEFAULT_FILTER, 'none'))).toEqual([FILTER_DIAL_KEY])
+    expect(STRENGTH_DIAL_KEYS).toEqual({ grain: 'amount', ascii: 'density', pixel: 'density' })
+    expect(filterDials({ filter: 'grain', strength: 0.8 }, 'grain').amount).toEqual([0.8, 0, 1, 0.01])
+    expect(Object.keys(filterDials({ filter: 'grain', strength: 0.8 }, 'ascii'))).toEqual([FILTER_DIAL_KEY, 'density'])
+    expect(Object.keys(filterDials(DEFAULT_FILTER, 'pixel'))).toEqual([FILTER_DIAL_KEY, 'density'])
+    expect(readChoice('ascii')).toBe('ascii')
+    expect(readChoice('sepia')).toBe('none')
     expect(isFilterOn('grain')).toBe(true)
     expect(isFilterOn('none')).toBe(false)
     expect(isFilterOn('ascii')).toBe(true)
@@ -47,8 +53,10 @@ describe('filter control', () => {
 
   it('reads the panel values, falling back to no filter at 0.5', () => {
     expect(readFilter({})).toEqual(DEFAULT_FILTER)
-    expect(readFilter({ filter: 'grain', strength: 0.734 })).toEqual({ filter: 'grain', strength: 0.73 })
-    expect(readFilter({ filter: 'sepia', strength: 3 })).toEqual({ filter: 'none', strength: 1 })
+    expect(readFilter({ filter: 'grain', amount: 0.734 })).toEqual({ filter: 'grain', strength: 0.73 })
+    expect(readFilter({ filter: 'ascii', density: 1.4 })).toEqual({ filter: 'ascii', strength: 1 })
+    expect(readFilter({ filter: 'pixel', amount: 0.9 })).toEqual({ filter: 'pixel', strength: 0.5 })
+    expect(readFilter({ filter: 'sepia', density: 0.3 })).toEqual(DEFAULT_FILTER)
   })
 
   it('round-trips the filter through the URL and leaves links without one unchanged', () => {
