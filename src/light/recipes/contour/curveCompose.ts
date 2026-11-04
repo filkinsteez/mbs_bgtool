@@ -369,24 +369,26 @@ export function productionParts(prefix: string, light: ProductionLight): Record<
     // The core line fades more slowly than the glow, so it shows along the whole edge (the rim-edge reference's
     // 1 px line is all that is left at its far end).
     n1LightGamma: 0.5,
-    n2Weight: 0.55,
+    // A narrow band of full color beside the pale core, falling off quickly into the face (the rim-edge reference
+    // is at Oklab L 0.82, 0.56 and 0.28 at 0.01, 0.02 and 0.04 of the short side from the edge near its corner).
+    n2Weight: 0.9,
     n2Width: round6(light.glow ?? 0.005),
-    n2Shape: 3,
+    n2Shape: 8,
     n2Side: light.side,
     n2Light: 1,
     n2LightGamma: 1.2,
     n2ChOffset: [round6(spread), 0, round6(-spread)],
-    // The glow widens where the light along the edge is strong (the rim-edge reference's glow is about 0.02 of the
+    // The glow widens where the light along the edge is strong (the rim-edge reference's glow is about 0.012 of the
     // short side near the corner and a few pixels at its far end).
     n2Grow: 1,
-    n2GrowBy: [round4(light.fan ?? 3), 2],
+    n2GrowBy: [round4(light.fan ?? 1.5), 2],
     n3Weight: 2.5,
     n3Width: round6(0.0035 / light.soften ** 0.5),
     n3Shape: 4,
     n3Side: 0,
     n3Light: 2,
     n3LightGamma: 2,
-    f1Weight: 0.18,
+    f1Weight: 0.06,
     f1Width: round6(light.haze ?? 0.024),
     f1Side: light.side,
     f1Light: 1,
@@ -397,7 +399,7 @@ export function productionParts(prefix: string, light: ProductionLight): Record<
     f2Light: 2,
     f2LightGamma: 1,
   }
-  Object.assign(parts, { f3Weight: round4(light.face), f3Width: 0.5, f3Side: 1, f3Light: 2, f3LightGamma: 0.6 })
+  Object.assign(parts, { f3Weight: round4(light.face), f3Width: 0.35, f3Side: 1, f3Light: 2, f3LightGamma: 0.6 })
   return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
 }
 

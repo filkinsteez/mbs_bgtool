@@ -389,11 +389,11 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     ...productionParts('', {
       side: layout.oneSided ? 1 : 0,
       soften,
-      // The rim-edge reference's face glows navy near the corner, about 8% of the light's own level. A Tan face
-      // stays dark: a wide dim Tan fill reads grey-brown.
-      face: layout.oneSided && !bright ? 0.12 : 0,
+      // The rim-edge reference's face is a dim navy (Oklab L about 0.22) that darkens away from the edge and the
+      // corner. A Tan face stays dark: a wide dim Tan fill reads grey-brown.
+      face: layout.oneSided && !bright ? 0.035 : 0,
       glow: line ? 0.006 : 0.005,
-      fan: line ? 4 : 3,
+      fan: line ? 4 : 1.5,
       // A blue line's glow splits its colors to the two sides (the light-line reference: a different hue on each
       // side). The split moves red one way and blue the other, so it stays off where either end has much red: a
       // warm line's blue side turns green, and Ice or Steel gets a peach fringe.
@@ -401,7 +401,9 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     }),
     // A line's glow widens steadily toward its bright end, following the slow light along it, with a small hot core
     // and little haze, so the end opens as a cone rather than a cloud.
-    ...(line ? { n2Grow: 1, n2GrowBy: [6.5, 1], n3Weight: 2, f1Grow: 1, f1GrowBy: [2, 1], f1Weight: 0.12, f1Width: 0.02 } : {}),
+    ...(line
+      ? { n2Weight: 0.55, n2Shape: 3, n2Grow: 1, n2GrowBy: [6.5, 1], n3Weight: 2, f1Grow: 1, f1GrowBy: [2, 1], f1Weight: 0.12, f1Width: 0.02 }
+      : {}),
     ...(drift ? { drift: drift.ratios, driftShape: [drift.knee, drift.sharpness] } : {}),
     // A Tan edge's glow is two bands side by side just inside the edge, a flat stretch a little above Tan's level
     // that ends in a short rounded fall (the Halo's Tan bands at a rim's scale); a Tan line's are one either side.
