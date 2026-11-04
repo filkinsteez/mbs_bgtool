@@ -350,6 +350,8 @@ async function writeRenders(results) {
     ...TABLE_HEAD,
     ...tableRows(results.scenes.map((s) => ({ label: `${s.look} ${s.pack} ${s.size} grain ${s.grain}`, m: s.m }))),
     '',
+    ...(results.skipped?.length ? ['', 'Skipped (did not load):', '', ...results.skipped.map((s) => `- ${s}`)] : []),
+    '',
     '## Checks',
     '',
     ...(results.checks.seed
@@ -418,10 +420,12 @@ async function composeSheet(file, title, rows) {
   const captionHeight = Math.max(CAPTION, ...rows.flatMap((row) => row.panels.map((p) => textImage(p.lines, Math.max(side, zoomSide), 12).height)))
   const rowHeight = rowTitle + captionHeight + side + GAP + zoomSide + GAP * 2
   const width = GAP + columns * (Math.max(side, zoomSide) + GAP)
-  const height = 36 + rows.length * rowHeight
-  const composites = [{ ...textImage([title], width, 16), left: GAP, top: 8 }]
+  const heading = textImage([title], width - 2 * GAP, 16)
+  const head = heading.height + 16
+  const height = head + rows.length * rowHeight
+  const composites = [{ ...heading, left: GAP, top: 8 }]
   rows.forEach((row, r) => {
-    const top = 36 + r * rowHeight
+    const top = head + r * rowHeight
     composites.push({ ...textImage([row.title], width, 14), left: GAP, top })
     row.panels.forEach((p, c) => {
       const left = GAP + c * (Math.max(side, zoomSide) + GAP)
