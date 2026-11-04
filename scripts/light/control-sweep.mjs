@@ -4,11 +4,18 @@
 // on both sides, and every look and format gets a sheet of the change per step for each control and pack.
 // Scenes come from the tool's buildScene (src/tool/controls.ts) with the format's aspect, rendered by the light
 // harness at 2x supersampling like the settled preview. Exits 1 when it finds a jump or a look does not load.
-// Usage: node scripts/light/control-sweep.mjs [--look ramp,bands,...] [--control intensity,softness,horizon|light]
-//   [--pack bold,...] [--seeds 1-12,5081] [--format 16x9,9x16] [--at intensity=0.75,softness=1,horizon=0.79]
-//   [--from 0] [--to 1] [--quick] [--rev HEAD [--patch file] | --tree] [--label text] [--out dir]
+// The controls startx, starty, angle and length drag a line on the image (ControlValues.drag): the line's start moves
+// by 0.01 of the frame along x or y, its angle turns by 0.01 of a full turn about the start, or its length grows by
+// 0.01 of the short side, from each base line (--line), and the scene is what the tool shows for that drag
+// (controlsForDrag: the line and the mood control set from its start). --grid writes two sheets per look: one start
+// with 8 directions at one length, and one direction at 3 lengths.
+// Usage: node scripts/light/control-sweep.mjs [--look ramp,bands,...]
+//   [--control intensity,softness,horizon|light,startx,starty,angle,length|line] [--pack bold,...] [--seeds 1-12,5081]
+//   [--format 16x9,9x16] [--at intensity=0.75,softness=1,horizon=0.79] [--from 0] [--to 1]
+//   [--line 0.35,0.7,-40,0.6 ...] [--quick] [--rev HEAD [--patch file] | --tree] [--label text] [--out dir]
 //   [--ratio 4] [--floor 0.003] [--peak-floor 0.02] [--frames 0:1:0.1] [--no-strips] [--strip-all]
 //   [--tool-check http://localhost:3000]
+//   node scripts/light/control-sweep.mjs --grid [--look ...] [--pack bold] [--seeds 1-3] [--format 16x9] [--out dir]
 import { execFileSync, spawnSync } from 'node:child_process'
 import { copyFile, cp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
@@ -20,8 +27,20 @@ import { ROOT, startHarness } from './lib/harness.mjs'
 
 const LOOKS = ['sunset.ramp', 'sunset.bands', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
 const PACKS = ['bold', 'elemental', 'atmospheric']
+/** The dragged line's sweeps: its start along x or y (frame units), its angle (turns) and its length (short sides). */
+const LINE_CONTROLS = ['startx', 'starty', 'angle', 'length']
 const CONTROLS = ['intensity', 'softness', 'mood']
 const FORMATS = ['16x9', '9x16', '1x1', '4x5']
+/** Base lines: start x and y in frame units, angle in degrees (0 points right, -90 up), length in short sides. */
+const BASE_LINES = [
+  { from: [0.35, 0.7], angle: -40, length: 0.6 },
+  { from: [0.7, 0.35], angle: 150, length: 0.4 },
+  { from: [0.5, 0.92], angle: -90, length: 0.9 },
+]
+/** The grid sheets: one start with 8 directions at one length, and one direction at 3 lengths. */
+const SHEET_START = { from: [0.5, 0.55], length: 0.5 }
+const SHEET_DIRECTION = { from: [0.5, 0.88], angle: -90 }
+const SHEET_LENGTHS = [0.25, 0.5, 0.9]
 /** Long side of the frames the change is measured on, and how much larger they are rendered. */
 const THUMB = 160
 const RENDER_FACTOR = 2
@@ -46,13 +65,22 @@ const args = parseArgs()
 if (args.rev !== undefined || args.tree !== undefined) process.exit(await runInCopy())
 
 const quick = args.quick === true
+const grid = args.grid === true
 const looks = list(args.look).length ? list(args.look).map(lookId) : LOOKS
-const controls = list(args.control).length ? list(args.control).map(controlKey) : CONTROLS
-const packs = list(args.pack).length ? list(args.pack) : PACKS
-const seeds = parseSeeds(args.seeds, quick ? range(1, 6) : [...range(1, 12), 5081])
-const formats = list(args.format).length ? list(args.format) : quick ? ['16x9'] : ['16x9', '9x16']
+const controls = list(args.control).length ? list(args.control).flatMap((name) => (name === 'line' ? LINE_CONTROLS : [controlKey(name)])) : CONTROLS
+const packs = list(args.pack).length ? list(args.pack) : grid ? ['bold'] : PACKS
+const seeds = parseSeeds(args.seeds, grid ? range(1, 3) : quick ? range(1, 6) : [...range(1, 12), 5081])
+const formats = list(args.format).length ? list(args.format) : quick || grid ? ['16x9'] : ['16x9', '9x16']
 const base = parseBase(args.at)
 const values = range(Math.round(Number(args.from ?? 0) * 100), Math.round(Number(args.to ?? 1) * 100)).map((i) => i / 100)
+/** Line sweeps: the base lines they start from, and each control's values (the drag reaches 0.25 past each edge). */
+const baseLines = args.line === undefined ? (quick ? BASE_LINES.slice(0, 1) : BASE_LINES) : [].concat(args.line).map(parseLine)
+const LINE_VALUES = {
+  startx: stepsBetween(quick ? 0 : -0.25, quick ? 1 : 1.25),
+  starty: stepsBetween(quick ? 0 : -0.25, quick ? 1 : 1.25),
+  angle: stepsBetween(0, 1),
+  length: stepsBetween(quick ? 0.1 : 0.05, quick ? 1 : 1.25),
+}
 const ratioLimit = Number(args.ratio ?? 4)
 const floor = Number(args.floor ?? 0.003)
 const peakFloor = Number(args['peak-floor'] ?? 0.02)
@@ -70,6 +98,7 @@ function range(a, b) {
 }
 
 function defaultOut() {
+  if (args.grid === true) return 'artifacts/control-sweep/grid'
   return args.quick === true ? 'artifacts/control-sweep/quick' : 'artifacts/control-sweep'
 }
 
@@ -81,8 +110,61 @@ function lookId(name) {
 
 function controlKey(name) {
   if (name === 'horizon' || name === 'light' || name === 'mood') return 'mood'
-  if (name === 'intensity' || name === 'softness') return name
-  throw new Error(`Unknown control ${name}; use intensity, softness, horizon or light`)
+  if (name === 'intensity' || name === 'softness' || LINE_CONTROLS.includes(name)) return name
+  throw new Error(`Unknown control ${name}; use intensity, softness, horizon, light, ${LINE_CONTROLS.join(', ')}`)
+}
+
+const isLine = (control) => LINE_CONTROLS.includes(control)
+
+/** The tool's 0.01 steps from a to b. */
+function stepsBetween(a, b) {
+  return range(Math.round(a * 100), Math.round(b * 100)).map((i) => i / 100)
+}
+
+/** "x,y,angle,length": a base line's start (frame units), angle (degrees, 0 right, -90 up) and length (short sides). */
+function parseLine(value) {
+  const [x, y, angle, length] = String(value).split(',').map(Number)
+  if (![x, y, angle, length].every(Number.isFinite) || length <= 0) throw new Error(`--line must look like 0.35,0.7,-40,0.6, got ${value}`)
+  return { from: [x, y], angle, length }
+}
+
+const baseText = (base) => `start ${base.from.join(',')}, ${base.angle} degrees, length ${base.length}`
+const baseTag = (base) => `${base.from.join('_')}_${base.angle}_${base.length}`
+
+/** A sweep's name in captions, and in file names (no spaces). */
+function sweepName(sweep) {
+  return isLine(sweep.control) ? `line ${sweep.control} (${baseText(sweep.base)})` : controlName(sweep.look, sweep.control)
+}
+
+function sweepFileName(sweep) {
+  return isLine(sweep.control) ? `${sweep.control}-${baseTag(sweep.base)}` : controlName(sweep.look, sweep.control)
+}
+
+/**
+ * The line in frame units for a start, an angle (degrees, y down) and a length in short sides, so a line keeps its
+ * length on screen whichever way it points.
+ */
+function lineAt(from, angle, length, aspect) {
+  const [fw, fh] = aspect >= 1 ? [aspect, 1] : [1, 1 / aspect]
+  const turn = (angle * Math.PI) / 180
+  return { from, to: [from[0] + (length * Math.cos(turn)) / fw, from[1] + (length * Math.sin(turn)) / fh] }
+}
+
+/** The dragged line for a line sweep's value. */
+function lineOf(sweep, value, aspect) {
+  const { from, angle, length } = sweep.base
+  switch (sweep.control) {
+    case 'startx':
+      return lineAt([value, from[1]], angle, length, aspect)
+    case 'starty':
+      return lineAt([from[0], value], angle, length, aspect)
+    case 'angle':
+      return lineAt(from, angle + 360 * value, length, aspect)
+    case 'length':
+      return lineAt(from, angle, value, aspect)
+    default:
+      throw new Error(`Not a line control: ${sweep.control}`)
+  }
 }
 
 /** The control's name in the tool. */
@@ -99,10 +181,10 @@ function parseSeeds(value, fallback) {
   })
 }
 
-/** Values for --frames: a list (0,0.5,1) or from:to:step (0:1:0.1), on the tool's 0.01 grid. */
+/** Values for --frames: a list (0,0.5,1) or from:to:step (0:1:0.1, or -0.2:1.2:0.2 for a point), on the tool's 0.01 grid. */
 function parseFrames(value) {
   if (typeof value !== 'string') return []
-  const match = /^([\d.]+):([\d.]+):([\d.]+)$/.exec(value)
+  const match = /^(-?[\d.]+):(-?[\d.]+):([\d.]+)$/.exec(value)
   const numbers = match
     ? range(0, Math.round((Number(match[2]) - Number(match[1])) / Number(match[3]))).map((k) => Number(match[1]) + k * Number(match[3]))
     : list(value).map(Number)
@@ -335,7 +417,9 @@ async function writeCurves(look, format, lookSweeps) {
   const left = 50
   const lo = Math.log10(1e-4)
   const hi = Math.log10(0.3)
-  const usedControls = [...new Set(lookSweeps.map((s) => s.control))]
+  // One row per control, and per base line for the line's controls.
+  const rowOf = (s) => (isLine(s.control) ? `${s.control}@${baseTag(s.base)}` : s.control)
+  const usedControls = [...new Set(lookSweeps.map(rowOf))]
   const usedPacks = [...new Set(lookSweeps.map((s) => s.pack))]
   const width = Math.max(left + usedPacks.length * (panelWidth + gap), 1300)
   const height = top + usedControls.length * (panelHeight + gap + 20) + 10
@@ -346,23 +430,25 @@ async function writeCurves(look, format, lookSweeps) {
     .map(([key, value]) => `${controlName(look, key)} ${value}`)
     .join(', ')
   text(8, 22, `${label}: ${look} ${format}. Change per 0.01 step (mean Oklab ΔE, log scale), one line per seed, red dots are jumps. Other controls at ${others}.`, 14, '#e8e8e8')
-  usedControls.forEach((control, row) => {
+  usedControls.forEach((rowKey, row) => {
+    const rowSweeps = lookSweeps.filter((s) => rowOf(s) === rowKey)
+    const rowValues = rowSweeps[0].values
     usedPacks.forEach((pack, col) => {
       const x0 = left + col * (panelWidth + gap)
       const y0 = top + row * (panelHeight + gap + 20) + 18
       const yOf = (v) => y0 + panelHeight - ((Math.log10(Math.max(v, 1e-4)) - lo) / (hi - lo)) * panelHeight
-      const xOf = (i) => x0 + ((values[i] + values[i + 1]) / 2 - values[0]) / (values.at(-1) - values[0]) * panelWidth
+      const xOf = (i) => x0 + ((rowValues[i] + rowValues[i + 1]) / 2 - rowValues[0]) / (rowValues.at(-1) - rowValues[0]) * panelWidth
       parts.push(`<rect x="${x0}" y="${y0}" width="${panelWidth}" height="${panelHeight}" fill="#1e1e1e" stroke="#333"/>`)
       for (const level of [1e-3, 1e-2, 1e-1]) {
         parts.push(`<line x1="${x0}" x2="${x0 + panelWidth}" y1="${yOf(level)}" y2="${yOf(level)}" stroke="#333"/>`)
         if (col === 0) text(x0 - 4, yOf(level) + 4, String(level), 10, '#777', 'end')
       }
       for (const tick of [0, 0.25, 0.5, 0.75, 1]) {
-        const t = values[0] + tick * (values.at(-1) - values[0])
+        const t = rowValues[0] + tick * (rowValues.at(-1) - rowValues[0])
         text(x0 + tick * panelWidth, y0 + panelHeight + 13, t.toFixed(2), 10, '#777', 'middle')
       }
-      text(x0 + 4, y0 - 5, `${controlName(look, control)}, ${pack}`, 13, '#d8d8d8')
-      for (const sweep of lookSweeps.filter((s) => s.control === control && s.pack === pack)) {
+      text(x0 + 4, y0 - 5, `${sweepName(rowSweeps[0])}, ${pack}`, 13, '#d8d8d8')
+      for (const sweep of rowSweeps.filter((s) => s.pack === pack)) {
         const points = sweep.steps.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`).join(' ')
         parts.push(`<polyline points="${points}" fill="none" stroke="${sweep.jumps.length ? '#e0a040' : '#6f9fd8'}" stroke-opacity="0.6" stroke-width="1.2"/>`)
         for (const jump of sweep.jumps) {
@@ -385,7 +471,7 @@ const harness = await startHarness()
 let failed = false
 try {
   const info = await harness.info()
-  const { buildScene } = await harness.ssr('/src/tool/controls.ts')
+  const { buildScene, clampDrag, controlsForDrag } = await harness.ssr('/src/tool/controls.ts')
   const { getPack } = await harness.ssr('/src/light/color/packs.ts')
   const { EXPORT_SIZES } = await harness.ssr('/src/light/engine/frame.ts')
   const { linearToOklab } = await harness.ssr('/src/light/color/oklab.ts')
@@ -402,12 +488,51 @@ try {
   }
 
   const timing = { compose: 0, render: 0, measure: 0, frames: 0 }
+  /** The tool's controls for a dragged line (as the tool clamps it), or the controls without one. */
+  const controlsForLine = (look, pack, seed, format, line) => {
+    const drag = line ? clampDrag(line) : undefined
+    return drag ? controlsForDrag(look, getPack(pack), seed, base, frameOf(format).aspect, drag) : base
+  }
+  /** The tool's controls for a sweep's value: a slider at that value, or the line for that value. */
+  const controlsFor = (sweep, value) =>
+    isLine(sweep.control)
+      ? controlsForLine(sweep.look, sweep.pack, sweep.seed, sweep.format, lineOf(sweep, value, frameOf(sweep.format).aspect))
+      : { ...base, [sweep.control]: value }
   const sceneFor = (sweep, value) => {
     const start = performance.now()
-    const scene = buildScene(sweep.look, getPack(sweep.pack), sweep.seed, { ...base, [sweep.control]: value }, frameOf(sweep.format).aspect)
+    const scene = buildScene(sweep.look, getPack(sweep.pack), sweep.seed, controlsFor(sweep, value), frameOf(sweep.format).aspect)
     timing.compose += performance.now() - start
     return scene
   }
+
+  /**
+   * A copy of a frame with the dragged line drawn on it (frame units): white with a dark edge, and a ring at the start,
+   * where the light should be strongest, so a sheet shows what the drag asked for.
+   */
+  const withLine = (image, line) => {
+    const data = Buffer.from(image.data)
+    const { width, height } = image
+    const [ax, ay] = [line.from[0] * width, line.from[1] * height]
+    const [bx, by] = [line.to[0] * width, line.to[1] * height]
+    const ring = 0.03 * Math.min(width, height)
+    const dx = bx - ax
+    const dy = by - ay
+    const length2 = Math.max(dx * dx + dy * dy, 1e-9)
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const px = x + 0.5
+        const py = y + 0.5
+        const t = Math.min(1, Math.max(0, ((px - ax) * dx + (py - ay) * dy) / length2))
+        const toLine = Math.hypot(ax + t * dx - px, ay + t * dy - py)
+        const toRing = Math.abs(Math.hypot(px - ax, py - ay) - ring)
+        const d = Math.min(toLine, toRing)
+        if (d > 2) continue
+        data.fill(d < 0.8 ? 255 : 0, (y * width + x) * 4, (y * width + x) * 4 + 3)
+      }
+    }
+    return { width, height, data }
+  }
+  const shownFrame = (sweep, value, image) => (isLine(sweep.control) ? withLine(image, lineOf(sweep, value, frameOf(sweep.format).aspect)) : image)
 
   const renderFrame = async (sweep, value, size = frameOf(sweep.format).render) => {
     const scene = sceneFor(sweep, value)
@@ -457,8 +582,8 @@ try {
    * change per step around it (or they switch where they otherwise hold still). That points at the code to fix.
    */
   const jumpCauses = (sweep, jump) => {
-    const ks = range(Math.max(0, jump.from - 3), Math.min(values.length - 1, jump.to + 4))
-    const sets = ks.map((k) => numbersAt(sweep, values[k]))
+    const ks = range(Math.max(0, jump.from - 3), Math.min(sweep.values.length - 1, jump.to + 4))
+    const sets = ks.map((k) => numbersAt(sweep, sweep.values[k]))
     const at = ks.indexOf(jump.from)
     const span = jump.to - jump.from + 1
     const causes = []
@@ -486,16 +611,16 @@ try {
 
   /** The frames on both sides of a jump, two steps out, and where the jump changes the picture. */
   const writeStrip = async (sweep, jump) => {
-    const name = controlName(sweep.look, sweep.control)
+    const name = sweepName(sweep)
     const panels = []
     const thumbs = new Map()
     let previous = null
-    for (const k of range(Math.max(0, jump.from - 2), Math.min(values.length - 1, jump.to + 3))) {
-      const image = await renderFrame(sweep, values[k])
+    for (const k of range(Math.max(0, jump.from - 2), Math.min(sweep.values.length - 1, jump.to + 3))) {
+      const image = await renderFrame(sweep, sweep.values[k])
       const thumb = labThumb(image)
       thumbs.set(k, thumb)
       const step = previous ? `  Δ ${change(previous, thumb).mean.toFixed(4)}` : ''
-      panels.push({ image, caption: `${name} ${values[k].toFixed(2)}${step}` })
+      panels.push({ image: shownFrame(sweep, sweep.values[k], image), caption: `${sweep.control === 'mood' ? name : sweep.control} ${sweep.values[k].toFixed(2)}${step}` })
       previous = thumb
     }
     const a = thumbs.get(jump.from)
@@ -503,7 +628,7 @@ try {
     const white = heatScale(perPixel)
     panels.push({ image: await enlarge(heatmap(perPixel, a.width, a.height, white), RENDER_FACTOR), caption: `ΔE ${jump.a.toFixed(2)} to ${jump.b.toFixed(2)}, white ${white.toFixed(3)}` })
     const title = `${label}: ${sweep.look} ${sweep.pack} seed ${sweep.seed} ${sweep.format}, ${name} ${jump.a.toFixed(2)} to ${jump.b.toFixed(2)}: ΔE ${jump.step.toFixed(4)}, ${jump.ratio.toFixed(1)}x the steps around it (${jump.usual.toFixed(4)}), worst block ${jump.peak.toFixed(3)}`
-    const file = path.join(outDir, 'jumps', `${sweep.look.split('.')[1]}-${name}-${sweep.pack}-s${sweep.seed}-${sweep.format}-${jump.a.toFixed(2)}.jpg`)
+    const file = path.join(outDir, 'jumps', `${sweep.look.split('.')[1]}-${sweepFileName(sweep)}-${sweep.pack}-s${sweep.seed}-${sweep.format}-${jump.a.toFixed(2)}.jpg`)
     const causes = jump.causes ? `Jumps with it: ${describeCauses(jump.causes, 5) || 'nothing in the scene or uniforms'}` : ''
     await composeStrip(file, [title, causes], panels)
     return file
@@ -511,30 +636,34 @@ try {
 
   const othersText = (sweep) =>
     Object.entries(base)
-      .filter(([key]) => key !== sweep.control)
+      .filter(([key]) => key !== sweep.control && !(isLine(sweep.control) && key === 'mood'))
       .map(([key, value]) => `${controlName(sweep.look, key)} ${value}`)
+      .concat(isLine(sweep.control) ? [`${controlName(sweep.look, 'mood')} set from the line's start`] : [])
       .join(', ')
 
   /** Frames at the --frames values, with the change from the frame before; returns the frames for the contact sheet. */
   const writeFrames = async (sweep) => {
-    const name = controlName(sweep.look, sweep.control)
+    const name = sweepName(sweep)
     const panels = []
     let previous = null
     for (const value of frameValues) {
       const image = await renderFrame(sweep, value)
       const thumb = labThumb(image)
-      panels.push({ image, caption: `${name} ${value.toFixed(2)}${previous ? `  Δ ${change(previous, thumb).mean.toFixed(3)}` : ''}` })
+      const caption = isLine(sweep.control) ? `${sweep.control} ${value.toFixed(2)}` : `${name} ${value.toFixed(2)}`
+      panels.push({ image: shownFrame(sweep, value, image), caption: `${caption}${previous ? `  Δ ${change(previous, thumb).mean.toFixed(3)}` : ''}` })
       previous = thumb
     }
-    const file = path.join(outDir, 'frames', `${sweep.look.split('.')[1]}-${name}-${sweep.pack}-s${sweep.seed}-${sweep.format}.jpg`)
+    const file = path.join(outDir, 'frames', `${sweep.look.split('.')[1]}-${sweepFileName(sweep)}-${sweep.pack}-s${sweep.seed}-${sweep.format}.jpg`)
     const columns = sweep.format === '16x9' ? 4 : 6
     await composeStrip(file, `${label}: ${sweep.look} ${sweep.pack} seed ${sweep.seed} ${sweep.format}, ${name} across its range (${othersText(sweep)}); Δ: mean ΔE from the frame before`, panels, columns)
     return panels
   }
 
-  /** One sheet per look, control and format: a row of frames per pack and seed, a column per --frames value. */
-  const writeContact = async (look, control, format, rows) => {
-    const name = controlName(look, control)
+  /** One sheet per look, control (and point line) and format: a row of frames per pack and seed, a column per --frames value. */
+  const writeContact = async (look, sweepKey, format, rows) => {
+    const name = sweepName({ look, ...sweepKey })
+    const fileName = sweepFileName({ look, ...sweepKey })
+    const control = sweepKey.control
     const { thumb } = frameOf(format)
     const scale = format === '16x9' ? 1.2 : 0.75
     const width = Math.round(thumb.width * scale)
@@ -555,7 +684,7 @@ try {
         composites.push({ input: small, left: labelWidth + c * (width + gap), top: y })
       }
     }
-    const file = path.join(outDir, 'contact', `${look.split('.')[1]}-${name}-${format}.jpg`)
+    const file = path.join(outDir, 'contact', `${look.split('.')[1]}-${fileName}-${format}.jpg`)
     await mkdir(path.dirname(file), { recursive: true })
     await sharp({ create: { width: sheetWidth, height: top + rows.length * (height + gap), channels: 3, background: BACKGROUND } })
       .composite(composites)
@@ -568,8 +697,8 @@ try {
     const browser = harness.page.context().browser()
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
     try {
-      for (const value of [values[0], values[values.length >> 1], values.at(-1)]) {
-        const controlValues = { ...base, [sweep.control]: value }
+      for (const value of [sweep.values[0], sweep.values[sweep.values.length >> 1], sweep.values.at(-1)]) {
+        const controlValues = controlsFor(sweep, value)
         const [mood, look] = sweep.look.split('.')
         const query = new URLSearchParams({
           mood,
@@ -578,6 +707,7 @@ try {
           intensity: String(controlValues.intensity),
           softness: String(controlValues.softness),
           [controlName(sweep.look, 'mood')]: String(controlValues.mood),
+          ...(controlValues.drag ? { from: controlValues.drag.from.join(','), to: controlValues.drag.to.join(',') } : {}),
           seed: String(sweep.seed),
           format: sweep.format,
         })
@@ -591,7 +721,7 @@ try {
         const tool = labThumb({ ...size, data: shot }, factor)
         const ours = labThumb(render, factor)
         const { mean, peak } = change(tool, ours)
-        const file = path.join(outDir, 'tool-check', `${sweep.look.split('.')[1]}-${sweep.pack}-s${sweep.seed}-${controlName(sweep.look, sweep.control)}-${value.toFixed(2)}.jpg`)
+        const file = path.join(outDir, 'tool-check', `${sweep.look.split('.')[1]}-${sweep.pack}-s${sweep.seed}-${sweepFileName(sweep)}-${value.toFixed(2)}.jpg`)
         await composeStrip(file, `${url}/?${query} (${size.width}x${size.height}): tool canvas, harness render; mean ΔE ${mean.toFixed(4)}, worst block ${peak.toFixed(4)}`, [
           { image: { ...size, data: shot }, caption: 'tool' },
           { image: render, caption: `harness (${label})` },
@@ -603,8 +733,77 @@ try {
     }
   }
 
+  /** A frame of the look with the line dragged (or none) as the tool composes it, 1.5 times the sweep size, with the line drawn on it. */
+  const renderLine = async (look, pack, seed, format, line) => {
+    const { aspect, render } = frameOf(format)
+    const controls = controlsForLine(look, pack, seed, format, line)
+    const scene = buildScene(look, getPack(pack), seed, controls, aspect)
+    const image = await harness.render({ scene, width: Math.round(render.width * 1.5), height: Math.round(render.height * 1.5), supersample: 2 })
+    return { image: controls.drag ? withLine(image, controls.drag) : image, mood: controls.mood }
+  }
+
+  /**
+   * Two sheets per look and format. Directions: per pack and seed, a 3 x 3 block with the seed's own frame in the middle
+   * and the line from one start in 8 directions at one length, each frame where its direction points. Lengths: per pack
+   * and seed, the seed's own frame and one direction at 3 lengths. The line is drawn on each frame.
+   */
+  const writeSheets = async (look, format) => {
+    const { aspect } = frameOf(format)
+    const moodName = controlName(look, 'mood')
+    const others = `intensity ${base.intensity}, softness ${base.softness}`
+    // Left to right, top to bottom: the direction each place in the block points to; null is the seed's own frame.
+    const compass = [-135, -90, -45, 180, null, 0, 135, 90, 45]
+    const directionPanels = []
+    const lengthPanels = []
+    for (const pack of packs) {
+      for (const seed of seeds) {
+        const own = await renderLine(look, pack, seed, format, null)
+        const ownPanel = { image: own.image, caption: `${pack} s${seed}: own (${moodName} ${base.mood})` }
+        for (const angle of compass) {
+          if (angle === null) {
+            directionPanels.push(ownPanel)
+            continue
+          }
+          const frame = await renderLine(look, pack, seed, format, lineAt(SHEET_START.from, angle, SHEET_START.length, aspect))
+          directionPanels.push({ image: frame.image, caption: `${angle} degrees, ${moodName} ${frame.mood}` })
+        }
+        lengthPanels.push(ownPanel)
+        for (const length of SHEET_LENGTHS) {
+          const frame = await renderLine(look, pack, seed, format, lineAt(SHEET_DIRECTION.from, SHEET_DIRECTION.angle, length, aspect))
+          lengthPanels.push({ image: frame.image, caption: `length ${length}, ${moodName} ${frame.mood}` })
+        }
+      }
+    }
+    const directions = path.join(outDir, `${look.split('.')[1]}-directions-${format}.jpg`)
+    await composeStrip(
+      directions,
+      `${label}: ${look} ${format}, ${others}. Each block: the seed's own frame in the middle, around it the line from ${SHEET_START.from.join(', ')} with length ${SHEET_START.length} short sides in 8 directions (0 right, -90 up), each where it points. The drawn line runs from the start (ring) to its end.`,
+      directionPanels,
+      3,
+    )
+    const lengths = path.join(outDir, `${look.split('.')[1]}-lengths-${format}.jpg`)
+    await composeStrip(
+      lengths,
+      `${label}: ${look} ${format}, ${others}. Per row: the seed's own frame, then the line from ${SHEET_DIRECTION.from.join(', ')} at ${SHEET_DIRECTION.angle} degrees with length ${SHEET_LENGTHS.join(', ')} short sides. The drawn line runs from the start (ring) to its end.`,
+      lengthPanels,
+      SHEET_LENGTHS.length + 1,
+    )
+    console.log(`${look} ${format}: ${shown(directions)}, ${shown(lengths)}`)
+  }
+
+  if (grid) {
+    for (const look of looks) {
+      if (info.recipeErrors[look]) {
+        console.log(`${look}: did not load: ${info.recipeErrors[look].split('\n')[0]}`)
+        failed = true
+        continue
+      }
+      for (const format of formats) await writeSheets(look, format)
+    }
+  }
+
   const sweeps = []
-  for (const look of looks) {
+  for (const look of grid ? [] : looks) {
     if (info.recipeErrors[look]) {
       console.log(`${look}: did not load: ${info.recipeErrors[look].split('\n')[0]}`)
       failed = true
@@ -612,15 +811,22 @@ try {
     }
     for (const format of formats) {
       const lookSweeps = []
-      for (const control of controls) {
+      // A line sweep runs once per base line; a slider sweep once.
+      const sweepKeys = controls.flatMap((control) => (isLine(control) ? baseLines.map((line) => ({ control, base: line })) : [{ control }]))
+      if (sweepKeys.some((key) => isLine(key.control)) && typeof controlsForDrag !== 'function') {
+        console.log('This code has no controlsForDrag (src/tool/controls.ts), so the line sweeps are skipped.')
+      }
+      for (const sweepKey of sweepKeys) {
+        if (isLine(sweepKey.control) && typeof controlsForDrag !== 'function') continue
+        const sweepValues = isLine(sweepKey.control) ? LINE_VALUES[sweepKey.control] : values
         const contactRows = []
         for (const pack of packs) {
           for (const seed of seeds) {
-            const sweep = { look, control, pack, seed, format }
+            const sweep = { look, ...sweepKey, pack, seed, format, values: sweepValues }
             const steps = []
             const peaks = []
             let previous = null
-            for (const value of values) {
+            for (const value of sweepValues) {
               const image = await renderFrame(sweep, value)
               const start = performance.now()
               const thumb = labThumb(image)
@@ -632,7 +838,7 @@ try {
               previous = thumb
               timing.measure += performance.now() - start
             }
-            const jumps = findJumps(steps, peaks).map((jump) => ({ ...jump, a: values[jump.from], b: values[jump.to + 1] }))
+            const jumps = findJumps(steps, peaks).map((jump) => ({ ...jump, a: sweepValues[jump.from], b: sweepValues[jump.to + 1] }))
             for (const jump of jumps) jump.causes = jumpCauses(sweep, jump)
             const result = { ...sweep, steps, peaks, jumps }
             lookSweeps.push(result)
@@ -641,16 +847,16 @@ try {
             const at = steps.indexOf(largest)
             const notes = jumps.map((j) => `${j.a.toFixed(2)}-${j.b.toFixed(2)} ΔE ${j.step.toFixed(4)} (${j.ratio.toFixed(1)}x, worst block ${j.peak.toFixed(3)})`)
             console.log(
-              `${look} ${controlName(look, control)} ${pack} seed ${seed} ${format}: largest step ${largest.toFixed(4)} at ${values[at].toFixed(2)}-${values[at + 1].toFixed(2)}, median ${median(steps).toFixed(4)}${notes.length ? `  JUMP ${notes.join(', ')}` : ''}`,
+              `${look} ${sweepName(sweep)} ${pack} seed ${seed} ${format}: largest step ${largest.toFixed(4)} at ${sweepValues[at].toFixed(2)}-${sweepValues[at + 1].toFixed(2)}, median ${median(steps).toFixed(4)}${notes.length ? `  JUMP ${notes.join(', ')}` : ''}`,
             )
             for (const jump of jumps) console.log(`    jumps with it: ${describeCauses(jump.causes) || 'nothing in the scene or uniforms (look in the shader)'}`)
             if (jumps.length) failed = true
             if (strips) for (const jump of jumps) await writeStrip(result, jump)
             if (frameValues.length) contactRows.push({ pack, seed, panels: await writeFrames(result) })
-            if (args['strip-all'] === true) await writeStrip(result, { from: at, to: at, i: at, a: values[at], b: values[at + 1], step: largest, usual: median(steps), ratio: largest / Math.max(median(steps), NOISE), peak: peaks[at] })
+            if (args['strip-all'] === true) await writeStrip(result, { from: at, to: at, i: at, a: sweepValues[at], b: sweepValues[at + 1], step: largest, usual: median(steps), ratio: largest / Math.max(median(steps), NOISE), peak: peaks[at] })
           }
         }
-        if (contactRows.length) await writeContact(look, control, format, contactRows)
+        if (contactRows.length) await writeContact(look, sweepKey, format, contactRows)
       }
       if (lookSweeps.length) await writeCurves(look, format, lookSweeps)
     }
@@ -665,7 +871,7 @@ try {
       base,
       values: [values[0], values.at(-1)],
       thresholds: { ratio: ratioLimit, floor, peakFloor, window: WINDOW },
-      sweeps: sweeps.map((s) => ({ ...s, steps: s.steps.map(round), peaks: s.peaks.map(round) })),
+      sweeps: sweeps.map(({ values: run, ...s }) => ({ ...s, range: [run[0], run.at(-1)], steps: s.steps.map(round), peaks: s.peaks.map(round) })),
     }),
   )
   const jumpCount = sweeps.reduce((n, s) => n + s.jumps.length, 0)
