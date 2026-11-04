@@ -8,23 +8,35 @@ import type { FilterFrame, OutputFilter } from './types'
  * picked like the deck's filter tile (Figma 44:275; measurements in
  * docs/light/research/ascii.md, prototype in prototypes/ascii/).
  *
- * - 26 rows on the short side, 0.6 x 1.3 em cells, whole cells across and down,
- *   so the grid depends on the frame's aspect only and a 4K export has the same
- *   characters in the same places as the preview.
- * - Each cell aims for a level of the ramp from its mean light (the frame
- *   source) and picks its glyph uniformly from a 5-level window around it,
- *   seeded per cell, as the tile does. Levels stay within 2..7, the tile's
+ * - The slider sets density: rows of characters on the short side, from 13 at
+ *   0 to 52 at 1 on a log scale, 26 at 0.5 (the tile). Cells are 0.6 x 1.3 em,
+ *   whole cells across and down, so the grid depends on the frame's aspect and
+ *   the density only and a 4K export has the same characters in the same
+ *   places as the preview. Between whole row counts nothing changes.
+ * - Each cell aims for a level of the ramp from its mean light (read from the
+ *   frame source) and picks its glyph uniformly from a 5-level window around
+ *   it, seeded per cell, as the tile does. Levels stay within 2..7, the tile's
  *   sparsest and densest rows, so text is always a mix of glyphs.
  * - Each pixel keeps its own light; glyph and background split it so a cell
  *   keeps its mean light. Dark cells get light glyphs in the light's own color
  *   on a dimmed background ("pack-colored text on the dark base"); bright cells
  *   get dark ink, a deep nearly grey shade of the pixel's hue, on a background
- *   that brightens by the light the ink takes. Strength sets the contrast only.
+ *   that brightens by the light the ink takes. Every density gets this in full.
  */
 
+/** Rows of characters on the short side at density 0.5: the tile's 26 rows in 440 px. */
 export const ASCII_ROWS_ON_SHORT_SIDE = 26
+/** Rows on the short side at density 0 and 1; between them the row count grows by the same ratio per step. */
+export const ASCII_MIN_ROWS = 13
+export const ASCII_MAX_ROWS = 52
 export const ASCII_LINE_EM = 1.3
 export const ASCII_ADVANCE_EM = 0.6
+/**
+ * The frame source has twice the densest grid's texels each way, each the mean
+ * of 2 x 2 samples, so a cell's mean is read from whole pairs of texels at every
+ * density. Its size depends on the frame's aspect only, as the chain asks.
+ */
+const SOURCE_SAMPLES = 2
 
 /** Glyph ids (see asciiGlyph) from sparse to dense, sorted by ink: ' .:-+=*#%@'. */
 export const ASCII_RAMP = [0, 1, 2, 3, 5, 4, 6, 7, 8, 9] as const
@@ -58,23 +70,44 @@ export interface AsciiGrid {
   cellH: number
 }
 
-export function asciiGrid(frame: Pick<FilterFrame, 'width' | 'height'>): AsciiGrid {
+/** Rows of characters on the short side for a density 0..1 (a missing value gives the tile's 26). */
+export function asciiRows(density: number): number {
+  const d = Number.isFinite(density) ? Math.min(1, Math.max(0, density)) : 0.5
+  return Math.round(ASCII_MIN_ROWS * (ASCII_MAX_ROWS / ASCII_MIN_ROWS) ** d)
+}
+
+function gridOf(frame: Pick<FilterFrame, 'width' | 'height'>, rowsOnShort: number): AsciiGrid {
   const aspect = frameAspect(frame.width, frame.height)
   const across = Math.max(aspect, 1)
   const down = Math.max(1 / aspect, 1)
-  const cols = Math.max(1, Math.round((across * ASCII_ROWS_ON_SHORT_SIDE * ASCII_LINE_EM) / ASCII_ADVANCE_EM))
-  const rows = Math.max(1, Math.round(down * ASCII_ROWS_ON_SHORT_SIDE))
+  const cols = Math.max(1, Math.round((across * rowsOnShort * ASCII_LINE_EM) / ASCII_ADVANCE_EM))
+  const rows = Math.max(1, Math.round(down * rowsOnShort))
   return { cols, rows, cellW: frame.width / cols, cellH: frame.height / rows }
 }
 
-export function asciiUniforms(strength: number, frame: FilterFrame): UniformMap {
-  const grid = asciiGrid(frame)
+/** The character grid at a density (0.5 by default). */
+export function asciiGrid(frame: Pick<FilterFrame, 'width' | 'height'>, density = 0.5): AsciiGrid {
+  return gridOf(frame, asciiRows(density))
+}
+
+/** The frame source's texels, the same at every density: twice the densest grid each way. */
+export function asciiSourceGrid(frame: Pick<FilterFrame, 'width' | 'height'>): AsciiGrid {
+  const densest = gridOf(frame, ASCII_MAX_ROWS)
+  return { cols: 2 * densest.cols, rows: 2 * densest.rows, cellW: densest.cellW / 2, cellH: densest.cellH / 2 }
+}
+
+/** The slider's value is the density. */
+export function asciiUniforms(density: number, frame: FilterFrame): UniformMap {
+  const grid = asciiGrid(frame, density)
+  const source = asciiSourceGrid(frame)
+  // Bilinear reads, each the mean of 2 x 2 texels, across a cell: enough to cover its texels.
+  const texelsPerCell = Math.max(source.cols / grid.cols, source.rows / grid.rows)
   return {
     uAsciiGrid: [grid.cols, grid.rows],
     uAsciiCellPx: [grid.cellW, grid.cellH],
     uAsciiFramePx: [frame.width, frame.height],
     uAsciiEmPx: grid.cellH / ASCII_LINE_EM,
-    uAsciiStrength: Math.min(1, Math.max(0, Number.isFinite(strength) ? strength : 0)),
+    uAsciiTaps: Math.min(8, Math.max(1, Math.ceil(texelsPerCell / 2 - 1e-6))),
   }
 }
 
@@ -88,7 +121,7 @@ uniform ivec2 uAsciiGrid;
 uniform vec2 uAsciiCellPx;
 uniform vec2 uAsciiFramePx;
 uniform float uAsciiEmPx;
-uniform float uAsciiStrength;
+uniform int uAsciiTaps;
 
 const int ASCII_RAMP[10] = int[10](${ASCII_RAMP.join(', ')});
 const float ASCII_INK[10] = float[10](${ASCII_INK.map(f).join(', ')});
@@ -116,7 +149,7 @@ float asciiExpectedInk(float level) {
 }
 
 // For a cell's light m and the frame's darkest light: x the level aimed for, y 1 for dark ink, z how much of the
-// strength applies. Light glyphs carry a dark cell's light, so they need ink in proportion to it and stop where the
+// glyph contrast applies. Light glyphs carry a dark cell's light, so they need ink in proportion to it and stop where the
 // densest mix can no longer hold it (the pivot); dark ink takes light from a bright cell, so it thins out as the
 // brightest channel runs out of room above it. Both sides fade toward the pivot, so the handover is a clean band,
 // and wherever there is text it is at least the tile's sparsest mix: faint text fades by contrast, not into lone dots.
@@ -136,7 +169,18 @@ vec3 asciiPlan(vec3 m, float base) {
   return vec3(level, 0.0, fade);
 }
 
-// The frame's darkest light: the dimmest brightest channel among 8 x 5 cell lights spread over the frame.
+// Mean light of a cell-sized box from its top-left corner (px): taps x taps bilinear reads of the frame source, each
+// the mean of the 2 x 2 texels around it.
+vec3 asciiBoxLight(vec2 corner) {
+  float k = float(uAsciiTaps);
+  vec3 sum = vec3(0.0);
+  for (int j = 0; j < uAsciiTaps; j++) {
+    for (int i = 0; i < uAsciiTaps; i++) sum += texture(uAsciiCells, (corner + (vec2(float(i), float(j)) + 0.5) / k * uAsciiCellPx) / uAsciiFramePx).rgb;
+  }
+  return max(sum / (k * k), 0.0);
+}
+
+// The frame's darkest light: the dimmest brightest channel among 8 x 5 reads spread over the frame.
 float asciiBase() {
   float base = 1.0;
   for (int j = 0; j < 5; j++) {
@@ -162,15 +206,16 @@ vec3 filterAscii(vec3 display, ivec2 px, float weight) {
   vec2 local = pc - vec2(cell) * uAsciiCellPx;
   vec2 q = vec2(local.x - 0.5 * uAsciiCellPx.x, uAsciiCellPx.y - local.y) / uAsciiEmPx - vec2(0.0, ASCII_BASELINE);
   float base = asciiBase();
-  int level = asciiPickLevel(asciiPlan(texelFetch(uAsciiCells, cell, 0).rgb, base).x, hash1(ivec3(cell, uSeed * 7 + 40503)));
+  int level = asciiPickLevel(asciiPlan(asciiBoxLight(vec2(cell) * uAsciiCellPx), base).x, hash1(ivec3(cell, uSeed * 7 + 40503)));
   float ink = asciiInk(ASCII_RAMP[level], q, 1.0 / uAsciiEmPx);
 
-  // Gains follow the cell light smoothed between cell centres, so backgrounds show no cell edges. They keep the
-  // light of a cell whose glyph has the expected ink of its pick: ink * glyph + (1 - ink) * background = light.
-  vec3 m = max(sampleSmooth(uAsciiCells, pc / uAsciiFramePx), 0.0);
+  // Gains follow the light of a cell-sized box centred on the pixel, so they move smoothly and backgrounds show no
+  // cell edges. They keep the light of a cell whose glyph has the expected ink of its pick:
+  // ink * glyph + (1 - ink) * background = light.
+  vec3 m = asciiBoxLight(pc - 0.5 * uAsciiCellPx);
   vec3 plan = asciiPlan(m, base);
   float c = asciiExpectedInk(plan.x);
-  float s = uAsciiStrength * plan.z;
+  float s = plan.z;
   if (c <= 1e-4 || s <= 0.0) return display;
   if (plan.y > 0.5) {
     // Dark ink; the background brightens by the light the ink takes, as far as every channel has room.
@@ -203,8 +248,9 @@ export const ASCII_FILTER: OutputFilter = {
   source: {
     uniform: 'uAsciiCells',
     size: (frame) => {
-      const grid = asciiGrid(frame)
+      const grid = asciiSourceGrid(frame)
       return { width: grid.cols, height: grid.rows }
     },
+    samples: SOURCE_SAMPLES,
   },
 }
