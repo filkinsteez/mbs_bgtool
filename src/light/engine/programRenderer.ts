@@ -2,7 +2,6 @@ import { hexToLinear } from '../color/srgb'
 import type { RecipeContext, RecipeProgram, UniformMap } from '../scene'
 import { frameAspect } from './frame'
 import { CONTEXT_LOST_MESSAGE, Gpu, LightEngineError, type Target } from './gl'
-import { grainUniforms } from './grain'
 import {
   BASE_FROM_RADIANCE_SHADER,
   halationStart,
@@ -12,7 +11,7 @@ import {
   TEXEL_COMPOSITE_SHADER,
   TEXTURE_COMPOSITE_SHADER,
 } from './lens'
-import { OUTPUT_SHADER, PRESENT_SHADER, RESOLVE_X_SHADER } from './output'
+import { prepareOutputFilters, PRESENT_SHADER, RESOLVE_X_SHADER } from './output'
 import { AREA_RESAMPLE_SHADER, POST_MAX_SHORT_SIDE, runPostPasses } from './passes'
 import { createProfiler, NO_PROFILE } from './profile'
 import { buildRecipeShader, type RecipeShaderMode } from './recipeShader'
@@ -273,8 +272,15 @@ export class ProgramRenderer {
         ? { ...lensTextures, uRadianceTex: pixelScene }
         : { ...lensTextures, ...scatter.textures }
     const resolveX = gpu.program(RESOLVE_X_SHADER)
-    const outputProgram = gpu.program(OUTPUT_SHADER)
-    const grain = grainUniforms(resolved.output.grain, width, height)
+    // Filters that work per cell read a small copy of the whole frame, drawn by the same composite.
+    const frameProgram = postScene || pixelScene ? gpu.program(TEXTURE_COMPOSITE_SHADER) : compositeProgram
+    const filters = prepareOutputFilters(gpu, resolved.output, { width, height, seed: resolved.seed }, (target) =>
+      gpu.draw(frameProgram, target, {
+        uniforms: { ...engine(target.width, target.height, [0, 0], 1 / Math.min(target.width, target.height), 1), ...scatter.uniforms, ...lensUniforms },
+        textures: sceneTextures,
+      }),
+    )
+    const outputProgram = gpu.program(filters.shader)
     let tiles = 0
     for (let ty = 0; ty < height; ty += tileH) {
       for (let tx = 0; tx < width; tx += tileW) {
@@ -301,14 +307,14 @@ export class ProgramRenderer {
         }
         gpu.draw(outputProgram, output, {
           viewport: [tx, ty, ow, oh],
-          textures: { uSrc: source },
+          textures: { uSrc: source, ...filters.textures },
           uniforms: {
             uTileOrigin: [tx, ty],
             uFactor: factor,
             uApron: apron,
             uSeed: resolved.seed,
             uDither: dither,
-            ...grain,
+            ...filters.uniforms,
           },
         })
         mark.mark('output', output)
@@ -322,6 +328,7 @@ export class ProgramRenderer {
     gpu.release(lens.surround)
     gpu.release(postScene)
     gpu.release(pixelScene)
+    filters.release()
     scatter.release()
     gpu.trimPool()
     if (options.present) this.present()
