@@ -16,7 +16,7 @@ export const FILTER_DIAL_KEY = 'filter'
 export const STRENGTH_DIAL_KEY = 'strength'
 
 /** Filters the tool offers, in panel order. A filter joins once it runs in the tool. */
-export const TOOL_FILTERS: readonly FilterKey[] = ['grain']
+export const TOOL_FILTERS: readonly FilterKey[] = ['grain', 'ascii', 'pixel']
 
 /** Off by default (the brief); a filter turned on starts at 0.5. */
 export const DEFAULT_FILTER: FilterState = { filter: 'none', strength: 0.5 }

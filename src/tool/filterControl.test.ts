@@ -18,7 +18,7 @@ const scene: Scene = { recipe: 'sunset.ramp', seed: 4, colors: [], params: {}, l
 
 describe('filter control', () => {
   it('offers None and the filters that run in the tool, off by default', () => {
-    expect(TOOL_FILTERS).toEqual(['grain'])
+    expect(TOOL_FILTERS).toEqual(['grain', 'ascii', 'pixel'])
     for (const key of TOOL_FILTERS) expect(OUTPUT_FILTERS.some((stage) => stage.key === key)).toBe(true)
     expect(DEFAULT_FILTER).toEqual({ filter: 'none', strength: 0.5 })
     const dials = filterDials(DEFAULT_FILTER, false)
@@ -27,6 +27,8 @@ describe('filter control', () => {
       options: [
         { value: 'none', label: 'None' },
         { value: 'grain', label: 'Grain' },
+        { value: 'ascii', label: 'ASCII' },
+        { value: 'pixel', label: 'Pixel' },
       ],
       default: 'none',
     })
@@ -37,7 +39,9 @@ describe('filter control', () => {
     expect(filterDials({ filter: 'grain', strength: 0.8 }, true)[STRENGTH_DIAL_KEY]).toEqual([0.8, 0, 1, 0.01])
     expect(isFilterOn('grain')).toBe(true)
     expect(isFilterOn('none')).toBe(false)
-    expect(isFilterOn('ascii')).toBe(false)
+    expect(isFilterOn('ascii')).toBe(true)
+    expect(isFilterOn('pixel')).toBe(true)
+    expect(isFilterOn('sepia')).toBe(false)
     expect(isFilterOn(undefined)).toBe(false)
   })
 
@@ -53,7 +57,9 @@ describe('filter control', () => {
     expect(parseFilterQuery(new URLSearchParams('filter=grain&strength=0.5'))).toEqual({ filter: 'grain', strength: 0.5 })
     expect(parseFilterQuery({ filter: 'grain', strength: '-2' })).toEqual({ filter: 'grain', strength: 0 })
     expect(parseFilterQuery({})).toEqual(DEFAULT_FILTER)
-    expect(parseFilterQuery({ filter: 'pixel' })).toEqual(DEFAULT_FILTER)
+    expect(parseFilterQuery({ filter: 'pixel' })).toEqual({ filter: 'pixel', strength: 0.5 })
+    expect(parseFilterQuery(new URLSearchParams('filter=ascii&strength=0.3'))).toEqual({ filter: 'ascii', strength: 0.3 })
+    expect(parseFilterQuery({ filter: 'sepia' })).toEqual(DEFAULT_FILTER)
   })
 
   it('sets the chosen filter in the scene and turns the others off', () => {
