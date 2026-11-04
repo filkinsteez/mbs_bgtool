@@ -12,7 +12,6 @@ import {
   clampDrag,
   controlsForDrag,
   DEFAULT_CONTROLS,
-  limitPoint,
   MOOD_DIAL_KEY,
   moodForPoint,
   moveDragWithMood,
@@ -80,9 +79,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const query = toQuery(state)
   const { look, pack, seed, intensity, softness, moodControl, format, filter, strength } = state
   const scene = useMemo(() => {
-    // Ramp reads `point` until it reads `drag`: the line's start, where the light is strongest.
-    const point = drag ? limitPoint(look, seed, frameAspect(format), drag.from) : undefined
-    const controls = { intensity, softness, mood: moodControl, drag, point }
+    const controls = { intensity, softness, mood: moodControl, drag }
     return withFilter(buildScene(look, getPack(pack), seed, controls, frameAspect(format)), { filter, strength })
   }, [look, pack, seed, intensity, softness, moodControl, drag, format, filter, strength])
 

@@ -222,29 +222,6 @@ function nearestOnPath(path: readonly LightPoint[], point: LightPoint, aspect: n
 const moodOf = (recipeId: RecipeId): MoodId => getRecipe(recipeId).mood
 
 /**
- * The point a drag hands to the look: within the drag's reach, and for Sunset
- * no higher or lower than the Horizon control can put the line, so the Horizon
- * thumb always shows the light's height.
- */
-export function limitPoint(recipeId: RecipeId, seed: number, aspect: number, point: readonly number[]): LightPoint {
-  const [x, y] = clampPoint(point)
-  const mood = moodOf(recipeId)
-  switch (mood) {
-    case 'sunset': {
-      const top = horizonHeight(1, seed, aspect)
-      const bottom = horizonHeight(0, seed, aspect)
-      return clampPoint([x, Math.min(bottom, Math.max(top, y))])
-    }
-    case 'contour':
-      return [x, y]
-    default: {
-      const unknown: never = mood
-      throw new Error(`Unknown mood: ${String(unknown)}`)
-    }
-  }
-}
-
-/**
  * The mood control value, on the slider's 0.01 steps, that puts the look's
  * light nearest the point. Sunset: the Horizon whose shared line sits at the
  * point's height. Contour: the Light position whose light lies nearest the
@@ -328,9 +305,7 @@ export function moveDragWithMood(
 
 /**
  * The controls for a dragged line: the line, and the mood control set from
- * its start, so a look that doesn't read `drag` yet still moves its light
- * toward `from`. `point` repeats the start (limited as before) for Ramp,
- * which reads it until it reads `drag`.
+ * its start, so the slider shows where the light starts.
  */
 export function controlsForDrag(
   recipeId: RecipeId,
@@ -341,5 +316,5 @@ export function controlsForDrag(
   drag: LightDrag,
 ): ControlValues & { drag: LightDrag } {
   const mood = moodForPoint(recipeId, pack, seed, aspect, drag.from)
-  return { ...controls, mood: mood ?? controls.mood, drag, point: limitPoint(recipeId, seed, aspect, drag.from) }
+  return { ...controls, mood: mood ?? controls.mood, drag }
 }

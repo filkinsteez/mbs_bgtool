@@ -21,7 +21,6 @@ import {
   controlsForDrag,
   DEFAULT_CONTROLS,
   lightPlace,
-  limitPoint,
   moodForPoint,
   moveDragWithMood,
   type ControlValues,
@@ -129,7 +128,7 @@ describe('dragging the light', () => {
     for (const id of RECIPE_IDS) {
       for (const pack of PACKS) {
         const before = buildScene(id, pack, 3, DEFAULT_CONTROLS)
-        expect(buildScene(id, pack, 3, { ...DEFAULT_CONTROLS, drag: undefined, point: undefined }), id).toEqual(before)
+        expect(buildScene(id, pack, 3, { ...DEFAULT_CONTROLS, drag: undefined }), id).toEqual(before)
       }
     }
   })
@@ -150,15 +149,10 @@ describe('dragging the light', () => {
       }
     })
 
-    it('stops at the ends of the Horizon range; the start Ramp gets as its point stays inside it', () => {
+    it('stops at the ends of the Horizon range', () => {
       for (const seed of SEEDS) {
         expect(moodForPoint('sunset.ramp', PACKS[0], seed, 16 / 9, [0.5, -0.2])).toBe(1)
         expect(moodForPoint('sunset.ramp', PACKS[0], seed, 16 / 9, [0.5, 1.2])).toBe(0)
-        const top = placeHorizon(1, seed, 16 / 9).y
-        const bottom = placeHorizon(0, seed, 16 / 9).y
-        expect(limitPoint('sunset.bands', seed, 16 / 9, [1.2, -0.2])).toEqual(clampPoint([1.2, top]))
-        expect(limitPoint('sunset.blooms', seed, 16 / 9, [-0.3, 1.3])).toEqual(clampPoint([-0.25, bottom]))
-        expect(limitPoint('sunset.ramp', seed, 16 / 9, [0.4, 0.6])).toEqual([0.4, 0.6])
       }
     })
 
@@ -218,14 +212,12 @@ describe('dragging the light', () => {
     }
   })
 
-  it('gives the look the line, the mood control set from its start, and the start as the point Ramp reads', () => {
+  it('gives the look the line and the mood control set from its start', () => {
     const drag: LightDrag = { from: [0.8, 0.45], to: [0.2, 0.15] }
     for (const id of RECIPE_IDS) {
       for (const aspect of ASPECTS) {
         const controls = controlsForDrag(id, PACKS[2], 4, DEFAULT_CONTROLS, aspect, drag)
-        expect(controls.drag, id).toEqual(drag)
-        expect(controls.point, id).toEqual(limitPoint(id, 4, aspect, drag.from))
-        expect(controls.mood, id).toBe(moodForPoint(id, PACKS[2], 4, aspect, drag.from))
+        expect(controls).toEqual({ ...DEFAULT_CONTROLS, mood: moodForPoint(id, PACKS[2], 4, aspect, drag.from), drag })
         const scene = buildScene(id, PACKS[2], 4, controls, aspect)
         expect(compositionProblems(getRecipe(id), PACKS[2], scene), id).toEqual([])
         expect(buildScene(id, PACKS[2], 4, controls, aspect), id).toEqual(scene)
