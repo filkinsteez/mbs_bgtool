@@ -15,7 +15,7 @@ import {
 import { OUTPUT_SHADER, PRESENT_SHADER, RESOLVE_X_SHADER } from './output'
 import { AREA_RESAMPLE_SHADER, POST_MAX_SHORT_SIDE, runPostPasses } from './passes'
 import { createProfiler, NO_PROFILE } from './profile'
-import { buildRecipeShader } from './recipeShader'
+import { buildRecipeShader, type RecipeShaderMode } from './recipeShader'
 import { recipeContext, resolveScene, type SceneInput } from './resolve'
 import { runScatter } from './scatter'
 
@@ -35,6 +35,12 @@ export interface RenderOptions {
   measure?: boolean
   /** Wait for the GPU after every stage and report each stage's time (slower; for finding costs). */
   profile?: boolean
+  /**
+   * Don't wait for shader compiles (KHR_parallel_shader_compile). If a program is still compiling, the render draws
+   * and presents nothing and says `ready: false`; `gpu.compiled(stats.compiling)` tells when to try again. Without
+   * the extension it renders as usual. Anything that reads the pixels leaves this off.
+   */
+  background?: boolean
 }
 
 export interface RenderStats {
@@ -47,6 +53,10 @@ export interface RenderStats {
   measured: boolean
   /** With `profile`: ms per stage (scatter, radiance, post, lens, composite, resolve, output). */
   stages?: Record<string, number>
+  /** False when a `background` render found a program still compiling and drew nothing. */
+  ready: boolean
+  /** Those programs. */
+  compiling: readonly string[]
 }
 
 const MAX_OUTPUT_SIDE = 8192
@@ -62,6 +72,12 @@ const REUSE_MAX_PIXELS = 2560 * 1600
  */
 function baseSubsamples(renderShort: number, baseShort: number): number {
   return renderShort > baseShort ? 2 : 1
+}
+
+/** Every recipe shader mode a scene of this program can draw with, whatever its params and the frame size. */
+function recipeShaderModes(program: RecipeProgram): RecipeShaderMode[] {
+  const sources = new Set((program.scatter ?? []).map((blur) => blur.source))
+  return ['composite', 'radiance', ...(sources.has('radiance') ? (['source'] as const) : []), ...(sources.has('aux') ? (['aux'] as const) : [])]
 }
 
 /** The recipe's radianceScale for this scene, snapped to 1, 0.5 or 0.25. */
@@ -86,6 +102,7 @@ export class ProgramRenderer {
 
   constructor(canvas?: HTMLCanvasElement | OffscreenCanvas) {
     this.gpu = new Gpu(canvas ?? new OffscreenCanvas(1, 1))
+    this.gpu.prepare([PRESENT_SHADER])
     this.black = this.gpu.acquire(1, 1)
     const gl = this.gpu.gl
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.black.framebuffer)
@@ -102,6 +119,24 @@ export class ProgramRenderer {
   }
 
   renderProgram(program: RecipeProgram, scene: SceneInput, options: RenderOptions): RenderStats {
+    if (!options.background) return this.renderNow(program, scene, options)
+    const { value, unfinished } = this.gpu.withoutWaiting(() => this.renderNow(program, scene, options))
+    return { ...value, ready: unfinished.length === 0, compiling: unfinished }
+  }
+
+  /**
+   * Starts compiling every program a scene of this recipe can draw with, without waiting; needs
+   * KHR_parallel_shader_compile. Returns them, for `gpu.compiled`.
+   */
+  prepareProgram(program: RecipeProgram): string[] {
+    const sources = recipeShaderModes(program).map((mode) => buildRecipeShader(program, mode))
+    // Drawn on large 1x frames with the lens on (`reuse` in renderNow).
+    if (!program.post?.length) sources.push(TEXEL_COMPOSITE_SHADER, BASE_FROM_RADIANCE_SHADER)
+    this.gpu.prepare(sources)
+    return sources
+  }
+
+  private renderNow(program: RecipeProgram, scene: SceneInput, options: RenderOptions): RenderStats {
     const start = performance.now()
     const gpu = this.gpu
     if (gpu.isLost) throw new LightEngineError(CONTEXT_LOST_MESSAGE)
@@ -155,7 +190,8 @@ export class ProgramRenderer {
     const base = lensOn ? gpu.acquire(baseSize.width, baseSize.height, 'rgba16f', !usesTexture && resolved.lens.halation > 0 ? 2 : 1) : null
     let postScene: Target | null = null
     let pixelScene: Target | null = null
-    const radianceProgram = gpu.program(buildRecipeShader(program, 'radiance'))
+    // Compiled only when drawn: with the lens off and no radiance texture the render never uses it.
+    const radianceProgram = () => gpu.program(buildRecipeShader(program, 'radiance'))
     if (usesTexture) {
       const scale = Math.min(radianceScale, usesPost ? POST_MAX_SHORT_SIDE / renderShort : 1)
       const pw = Math.max(1, Math.round(renderWidth * scale))
@@ -163,7 +199,7 @@ export class ProgramRenderer {
       // A reduced scale is for smooth looks, so one sample per pixel; post-pass input keeps 2 x 2.
       const subsamples = radianceScale < 1 ? 1 : 2
       const raw = gpu.acquire(pw, ph)
-      gpu.draw(radianceProgram, raw, {
+      gpu.draw(radianceProgram(), raw, {
         uniforms: { ...engine(pw, ph, [0, 0], 1 / (Math.min(pw, ph) * subsamples), subsamples), ...scatter.uniforms },
         textures: scatter.textures,
       })
@@ -179,7 +215,7 @@ export class ProgramRenderer {
       }
     } else if (reuse && base) {
       pixelScene = gpu.acquire(renderWidth, renderHeight)
-      gpu.draw(radianceProgram, pixelScene, {
+      gpu.draw(radianceProgram(), pixelScene, {
         uniforms: { ...engine(renderWidth, renderHeight, [0, 0], 1 / renderShort, 1), ...scatter.uniforms },
         textures: scatter.textures,
       })
@@ -191,7 +227,7 @@ export class ProgramRenderer {
       mark.mark('lens base', base)
     } else if (base) {
       const subsamples = baseSubsamples(renderShort, Math.min(base.width, base.height))
-      gpu.draw(radianceProgram, base, {
+      gpu.draw(radianceProgram(), base, {
         uniforms: { ...engine(base.width, base.height, [0, 0], 1 / (Math.min(base.width, base.height) * subsamples), subsamples), ...scatter.uniforms },
         textures: scatter.textures,
       })
@@ -289,7 +325,7 @@ export class ProgramRenderer {
     scatter.release()
     gpu.trimPool()
     if (options.present) this.present()
-    if (options.measure) {
+    if (options.measure && !gpu.waiting) {
       const gl = gpu.gl
       gl.bindFramebuffer(gl.FRAMEBUFFER, output.framebuffer)
       gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, this.probe)
@@ -303,16 +339,29 @@ export class ProgramRenderer {
       ms: performance.now() - start,
       measured: Boolean(options.measure || options.profile),
       ...(profiler ? { stages: profiler.times } : {}),
+      ready: true,
+      compiling: [],
     }
   }
 
-  /** Draws the last render on the canvas at 1:1. */
+  /**
+   * `present` for a page that must not wait: while the present program is still compiling it leaves the canvas as it
+   * is and returns false. Call it after the render's fence has passed: resizing the canvas waits for the GPU.
+   */
+  presentWithoutWaiting(): boolean {
+    return this.gpu.withoutWaiting(() => this.present()).unfinished.length === 0
+  }
+
+  /** Draws the last render on the canvas at 1:1. While a `background` render waits for a compile it leaves the canvas as it is. */
   present(): void {
     if (!this.output) return
+    const presentProgram = this.gpu.program(PRESENT_SHADER)
+    // Resizing clears the canvas, so a render that drew nothing must not resize it.
+    if (this.gpu.waiting) return
     const canvas = this.gpu.canvas
     if (canvas.width !== this.output.width) canvas.width = this.output.width
     if (canvas.height !== this.output.height) canvas.height = this.output.height
-    this.gpu.draw(this.gpu.program(PRESENT_SHADER), null, {
+    this.gpu.draw(presentProgram, null, {
       textures: { uSrc: this.output },
       viewport: [0, 0, this.output.width, this.output.height],
     })

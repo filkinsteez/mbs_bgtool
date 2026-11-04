@@ -11,6 +11,7 @@ export class LightEngineError extends Error {
 export const CONTEXT_LOST_MESSAGE = 'WebGL context lost: create a new renderer on a new canvas.'
 
 export type TextureFormat = 'rgba16f' | 'rgba8'
+const TEXTURE_FORMATS: readonly TextureFormat[] = ['rgba16f', 'rgba8']
 
 export interface Target {
   readonly width: number
@@ -55,17 +56,36 @@ type AnyCanvas = HTMLCanvasElement | OffscreenCanvas
 const POOL_RENDERS = 2
 const POOL_BYTES = 256 * 1024 * 1024
 
+/** KHR_parallel_shader_compile: whether a program has finished compiling and linking, answered without waiting. */
+const COMPLETION_STATUS_KHR = 0x91b1
+
+/** A program whose compile and link have been issued and not yet checked. */
+interface PendingProgram {
+  readonly program: WebGLProgram
+  readonly fragment: WebGLShader
+}
+
+/** Stands in for a program still compiling during a render that doesn't wait; draws with it are skipped. */
+const UNREADY: Program = { program: null as unknown as WebGLProgram, uniforms: new Map() }
+
 /** Owns one WebGL2 context: programs, render targets and fullscreen-triangle draws. */
 export class Gpu {
   readonly gl: WebGL2RenderingContext
   readonly canvas: AnyCanvas
+  /** KHR_parallel_shader_compile: programs compile on the driver's threads and can be checked without waiting. */
+  readonly compilesInBackground: boolean
   private readonly programs = new Map<string, Program>()
+  private readonly pending = new Map<string, PendingProgram>()
+  /** During a render that doesn't wait for compiles: the programs it found still compiling. */
+  private unfinished: string[] | null = null
   private readonly vertexShader: WebGLShader
   private readonly vao: WebGLVertexArrayObject
   /** Oldest release first. */
   private readonly freeTargets: Target[] = []
   private readonly liveTargets = new Set<Target>()
   private readonly releasedAt = new Map<Target, number>()
+  /** Target formats whose framebuffers have been checked once; the check waits for the GPU, so it isn't repeated. */
+  private readonly checkedFormats = new Set<string>()
   private renders = 0
   private lost = false
 
@@ -89,6 +109,7 @@ export class Gpu {
       )
     }
     this.gl = gl
+    this.compilesInBackground = gl.getExtension('KHR_parallel_shader_compile') !== null
     canvas.addEventListener('webglcontextlost', (event) => {
       event.preventDefault()
       this.lost = true
@@ -100,6 +121,14 @@ export class Gpu {
     gl.disable(gl.BLEND)
     gl.disable(gl.DEPTH_TEST)
     gl.pixelStorei(gl.PACK_ALIGNMENT, 1)
+    // Checked now, while the GPU is idle; later the check would wait behind whatever the GPU is drawing.
+    for (const format of TEXTURE_FORMATS) {
+      try {
+        this.destroyTarget(this.createPair(1, 1, format))
+      } catch {
+        // Left unchecked: a target of this format checks again, and throws, when it is made.
+      }
+    }
   }
 
   get isLost(): boolean {
@@ -113,23 +142,118 @@ export class Gpu {
     if (error === this.gl.OUT_OF_MEMORY) throw new LightEngineError('The GPU ran out of memory for this render.')
   }
 
-  /** Compiles (once per source) a fragment shader drawn over a fullscreen triangle. */
+  /**
+   * Compiles (once per source) a fragment shader drawn over a fullscreen triangle, and waits for it. Inside
+   * `withoutWaiting`, a program still compiling is left to finish in the background instead: the render gets a
+   * stand-in and draws nothing more.
+   */
   program(fragmentSource: string): Program {
     const cached = this.programs.get(fragmentSource)
     if (cached) return cached
+    const pending = this.pending.get(fragmentSource) ?? this.start(fragmentSource)
+    if (this.unfinished && this.compilesInBackground && !this.isDone(pending)) {
+      this.unfinished.push(fragmentSource)
+      return UNREADY
+    }
+    return this.finish(fragmentSource, pending)
+  }
+
+  /** Starts compiling these programs without waiting for them. Without KHR_parallel_shader_compile it does nothing. */
+  prepare(fragmentSources: Iterable<string>): void {
+    if (!this.compilesInBackground) return
+    for (const source of fragmentSources) if (!this.programs.has(source) && !this.pending.has(source)) this.start(source)
+  }
+
+  /** Whether these programs have finished compiling. Always true without the extension, where they compile when drawn. */
+  compiled(fragmentSources: readonly string[]): boolean {
+    if (!this.compilesInBackground) return true
+    return fragmentSources.every((source) => {
+      if (this.programs.has(source)) return true
+      const pending = this.pending.get(source)
+      return pending !== undefined && this.isDone(pending)
+    })
+  }
+
+  /**
+   * Runs `render` without waiting for shader compiles (KHR_parallel_shader_compile): a program still compiling is
+   * started or left running, and from then on nothing is drawn. Returns `render`'s value and the programs still
+   * compiling (none: the render is complete). Without the extension `render` runs as usual and compiles as it goes.
+   */
+  withoutWaiting<T>(render: () => T): { value: T; unfinished: string[] } {
+    if (!this.compilesInBackground) return { value: render(), unfinished: [] }
+    const unfinished: string[] = []
+    this.unfinished = unfinished
+    try {
+      return { value: render(), unfinished }
+    } finally {
+      this.unfinished = null
+    }
+  }
+
+  /** Inside `withoutWaiting`, once a program was found still compiling: nothing more is drawn. */
+  get waiting(): boolean {
+    return (this.unfinished?.length ?? 0) > 0
+  }
+
+  /** Programs compiled or compiling on this context. */
+  get programCount(): number {
+    return this.programs.size + this.pending.size
+  }
+
+  /** Programs checked and ready to draw with. */
+  get finishedPrograms(): number {
+    return this.programs.size
+  }
+
+  /** A fence after everything issued so far; `signaled` tells, without waiting, when the GPU has done all of it. */
+  fence(): WebGLSync {
     const gl = this.gl
-    const fragment = this.compile(gl.FRAGMENT_SHADER, fragmentSource)
+    const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)
+    if (!sync) throw new LightEngineError('Could not create a fence.')
+    gl.flush()
+    return sync
+  }
+
+  /** Whether the GPU has passed this fence; deletes it once it has. A lost context counts as passed. */
+  signaled(sync: WebGLSync): boolean {
+    const gl = this.gl
+    if (this.isLost) return true
+    if (gl.getSyncParameter(sync, gl.SYNC_STATUS) !== gl.SIGNALED) return false
+    gl.deleteSync(sync)
+    return true
+  }
+
+  private start(fragmentSource: string): PendingProgram {
+    const gl = this.gl
+    const fragment = gl.createShader(gl.FRAGMENT_SHADER)
     const program = gl.createProgram()
-    if (!program) throw new LightEngineError('Could not create a program.')
+    if (!fragment || !program) throw new LightEngineError('Could not create a program.')
+    gl.shaderSource(fragment, fragmentSource)
+    gl.compileShader(fragment)
     gl.attachShader(program, this.vertexShader)
     gl.attachShader(program, fragment)
     gl.linkProgram(program)
-    gl.deleteShader(fragment)
+    const pending = { program, fragment }
+    this.pending.set(fragmentSource, pending)
+    return pending
+  }
+
+  private isDone(pending: PendingProgram): boolean {
+    return this.gl.getProgramParameter(pending.program, COMPLETION_STATUS_KHR) === true
+  }
+
+  /** Checks a started program (waiting for it if it is still compiling) and keeps it with its uniforms. */
+  private finish(fragmentSource: string, { program, fragment }: PendingProgram): Program {
+    const gl = this.gl
+    this.pending.delete(fragmentSource)
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      const log = gl.getProgramInfoLog(program) ?? ''
+      const compiled = gl.getShaderParameter(fragment, gl.COMPILE_STATUS)
+      const log = (compiled ? gl.getProgramInfoLog(program) : gl.getShaderInfoLog(fragment)) ?? ''
+      gl.deleteShader(fragment)
       gl.deleteProgram(program)
-      throw new LightEngineError(`Program link failed: ${log}`)
+      throw new LightEngineError(compiled ? `Program link failed: ${log}` : `Shader compile failed:\n${log}\n${numberLines(fragmentSource, log)}`)
     }
+    gl.deleteShader(fragment)
     const uniforms = new Map<string, UniformInfo>()
     const count = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS) as number
     for (let i = 0; i < count; i++) {
@@ -193,6 +317,7 @@ export class Gpu {
   }
 
   draw(program: Program, target: Target | null, options: DrawOptions = {}): void {
+    if (program === UNREADY || this.waiting) return
     const gl = this.gl
     gl.bindFramebuffer(gl.FRAMEBUFFER, target ? target.framebuffer : null)
     const width = target ? target.width : gl.drawingBufferWidth
@@ -255,6 +380,11 @@ export class Gpu {
     this.liveTargets.clear()
     for (const program of this.programs.values()) gl.deleteProgram(program.program)
     this.programs.clear()
+    for (const { program, fragment } of this.pending.values()) {
+      gl.deleteShader(fragment)
+      gl.deleteProgram(program)
+    }
+    this.pending.clear()
     gl.deleteShader(this.vertexShader)
     gl.deleteVertexArray(this.vao)
     gl.getExtension('WEBGL_lose_context')?.loseContext()
@@ -298,7 +428,7 @@ export class Gpu {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
     gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer)
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0)
-    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER)
+    const status = this.checkOnce(format)
     gl.bindTexture(gl.TEXTURE_2D, null)
     if (status !== gl.FRAMEBUFFER_COMPLETE) {
       gl.deleteTexture(texture)
@@ -316,13 +446,25 @@ export class Gpu {
     gl.bindFramebuffer(gl.FRAMEBUFFER, first.framebuffer)
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, second.texture, 0)
     gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1])
-    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER)
+    const status = this.checkOnce(`${format} pair`)
     if (status !== gl.FRAMEBUFFER_COMPLETE) {
       this.destroyTarget(first)
       this.destroyTarget(second)
       throw new LightEngineError(`Render target pair ${width}x${height} ${format} is incomplete (status ${status}).`)
     }
     return { ...first, second }
+  }
+
+  /**
+   * The bound framebuffer's status, checked for the first target of each kind only: completeness depends on the
+   * format, and the check waits for the GPU, which in a preview stalls the page while the driver builds a program.
+   */
+  private checkOnce(kind: string): number {
+    const gl = this.gl
+    if (this.checkedFormats.has(kind)) return gl.FRAMEBUFFER_COMPLETE
+    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER)
+    if (status === gl.FRAMEBUFFER_COMPLETE) this.checkedFormats.add(kind)
+    return status
   }
 
   private destroyTarget(target: Target): void {
