@@ -328,6 +328,13 @@ export interface ControlValues {
   intensity: number
   softness: number
   mood: number
+  /**
+   * Where the user dragged the light, in frame units: x from the left edge,
+   * y from the top edge, 0..1 inside the frame and up to 0.25 past each edge
+   * (-0.25..1.25). A look puts its light as close to it as the look allows
+   * and clamps it to what it supports. Undefined: the seed places the light.
+   */
+  point?: readonly [number, number]
 }
 
 export const DEFAULT_CONTROLS: ControlValues = { intensity: 0.5, softness: 0.5, mood: 0.5 }
