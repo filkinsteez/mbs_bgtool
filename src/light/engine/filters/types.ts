@@ -15,9 +15,9 @@ export interface FilterFrame {
 /**
  * A low-resolution copy of the frame for filters that work per cell: the
  * display-linear color after the tone curve and before every filter (alpha:
- * the recipe's grain weight), each texel the mean of 4 x 4 samples over its
- * area. Row 0 is the top of the frame. The engine renders it once per frame
- * and binds it to `uniform`.
+ * the recipe's grain weight), each texel the mean of `samples` x `samples`
+ * samples over its area. Row 0 is the top of the frame. The engine renders it
+ * once per frame and binds it to `uniform`.
  */
 export interface FilterSource {
   /** Sampler name the stage's GLSL declares (`uniform sampler2D <name>;`). */
@@ -28,6 +28,8 @@ export interface FilterSource {
    * same texels.
    */
   size: (frame: FilterFrame) => { width: number; height: number }
+  /** Samples per texel along each axis, 1..8; 4 if not given. */
+  samples?: number
 }
 
 /**

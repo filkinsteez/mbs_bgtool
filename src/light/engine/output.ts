@@ -256,8 +256,9 @@ export const OUTPUT_SHADER = buildOutputShader([GRAIN_FILTER])
 /** Every output pass the tool can draw with one filter at a time (and with none), for compiling ahead. */
 export const OUTPUT_FILTER_SHADERS: readonly string[] = [buildOutputShader([]), ...OUTPUT_FILTERS.map((stage) => buildOutputShader([stage]))]
 
-/** Samples per axis averaged into each texel of a filter's frame source. */
+/** Samples per axis averaged into each texel of a filter's frame source, unless the filter sets its own (at most 8). */
 const SOURCE_SAMPLES = 4
+const MAX_SOURCE_SAMPLES = 8
 const MAX_SOURCE_SIDE = 512
 
 export interface OutputFilterPass {
@@ -285,12 +286,13 @@ export function prepareOutputFilters(gpu: Gpu, output: OutputSettings, frame: Fi
     const size = stage.source.size(frame)
     const width = Math.min(MAX_SOURCE_SIDE, Math.max(1, Math.round(size.width)))
     const height = Math.min(MAX_SOURCE_SIDE, Math.max(1, Math.round(size.height)))
-    const samples = gpu.acquire(width * SOURCE_SAMPLES, height * SOURCE_SAMPLES)
+    const taps = Math.min(MAX_SOURCE_SAMPLES, Math.max(1, Math.round(stage.source.samples ?? SOURCE_SAMPLES)))
+    const samples = gpu.acquire(width * taps, height * taps)
     drawFrame(samples)
     const source = gpu.acquire(width, height)
     gpu.draw(gpu.program(AREA_RESAMPLE_SHADER), source, {
       textures: { uSrc: samples },
-      uniforms: { uDstSize: [width, height], uTaps: SOURCE_SAMPLES },
+      uniforms: { uDstSize: [width, height], uTaps: taps },
     })
     gpu.release(samples)
     textures[stage.source.uniform] = source
