@@ -196,6 +196,40 @@ const api = {
     })
   },
 
+  /**
+   * Steps one control (intensity, softness, mood or the ASCII strength) from 0 to 1 and returns the mean change per
+   * step in linear light between neighbouring renders (the tool's own compose, ASCII on at `ascii`).
+   */
+  async sweep(request: { recipe: string; pack: string; seed: number; control: string; ascii: number; width: number; height: number; steps: number }) {
+    const { renderer, composeScene, getPack, frameAspect } = await engine()
+    const recipe = await recipeById(request.recipe)
+    let previous: Float32Array | null = null
+    const changes: number[] = []
+    for (let k = 0; k <= request.steps; k++) {
+      const v = k / request.steps
+      const controls = { intensity: 0.5, softness: 0.5, mood: 0.5 }
+      let ascii = request.ascii
+      if (request.control === 'ascii') ascii = v
+      else (controls as Record<string, number>)[request.control] = v
+      const scene = composeScene(recipe, { pack: getPack(request.pack as Parameters<typeof getPack>[0]), controls, seed: request.seed, aspect: frameAspect(request.width, request.height) })
+      if (!scene) throw new Error('no compose')
+      renderer.renderProgram(recipe, { ...scene, output: { ...scene.output, ascii } }, { width: request.width, height: request.height, supersample: 1 })
+      const bytes = renderer.readPixels()
+      const linear = new Float32Array(bytes.length)
+      for (let i = 0; i < bytes.length; i++) {
+        const c = bytes[i] / 255
+        linear[i] = c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+      }
+      if (previous) {
+        let sum = 0
+        for (let i = 0; i < linear.length; i += 4) sum += Math.abs(linear[i] - previous[i]) + Math.abs(linear[i + 1] - previous[i + 1]) + Math.abs(linear[i + 2] - previous[i + 2])
+        changes.push(sum / ((linear.length / 4) * 3))
+      }
+      previous = linear
+    }
+    return changes
+  },
+
   async echo(key: string, out: string) {
     const image = await download(key)
     await upload(out, image.data)

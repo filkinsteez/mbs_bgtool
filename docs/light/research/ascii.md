@@ -108,6 +108,17 @@ Preview against export
 
 4K against 1080p: the same characters in the same places, sharper (`out/engine/s100/*-1080x2-vs-4k.jpg`).
 
+Twelve frames, 9:16 included (ab488ff), stay within a mean of 0.0041. Preview and export differ in at most 4 cells.
+
+Sliders, 960 x 540, mean change in linear light per step (`page.ts` `sweep`):
+- The ASCII strength slider (0 to 1 in 0.05 steps) changes the image by the same amount at every step. Glyphs stay where they are; only the contrast grows.
+- With ASCII at 1, Intensity and the mood control (0.01 steps) on Ramp Bold, Bands Elemental and Halo Elemental have no step above 1.5 times the median of its neighbours.
+- Glyphs that change as the light moves add a small, steady amount per step: Ramp's median step goes from 0.0027 to 0.0038.
+
+Cost: the stage adds about 2 ms to a 3840 x 2160 export at 2x (11.5 to 13.6 ms for Ramp Bold) and 0.4 ms to a 1832 x 1030 preview. Grain at 0.5 adds 3.7 ms at 4K.
+
+Dark ink over yellow, lime and tan hues (Oklab hue 55 to 145 degrees) is plain grey (ab488ff). With a trace of the hue it read dark olive over Lime.
+
 Sheets (local, `prototypes/ascii/out/engine/`)
 - `sheet-full.jpg`: every look, off, 0.5 and 1.
 - `sheet-crops.jpg`: 1:1 crops at 1080 next to the Figma tile at the same 41.5 px rows.
