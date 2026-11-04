@@ -1,8 +1,11 @@
 export const SEED_HISTORY_LIMIT = 50
 
-/** Seeds Shuffle replaced, so Back and forward can return to them. Only the seed: Shuffle changes nothing else. */
+/**
+ * Seeds the user left, so Back and forward can return to them: every change of the seed (Shuffle, a typed seed,
+ * an arrow-key step) counts. Only the seed: nothing else is recorded.
+ */
 export interface SeedHistory {
-  /** The seed before each shuffle, oldest first. */
+  /** The seed before each change, oldest first. */
   back: readonly number[]
   /** Seeds left by Back, the most recent last. */
   forward: readonly number[]
@@ -17,12 +20,12 @@ export interface SeedStep {
 
 const keepLast = (seeds: readonly number[]) => seeds.slice(-SEED_HISTORY_LIMIT)
 
-/** History after a shuffle away from `from`; a new shuffle drops the steps Back had left. */
-export function recordShuffle(history: SeedHistory, from: number): SeedHistory {
+/** History after the seed changes away from `from`; a new change drops the steps Back had left. */
+export function recordSeedChange(history: SeedHistory, from: number): SeedHistory {
   return { back: keepLast([...history.back, from]), forward: [] }
 }
 
-/** The seed before the last shuffle, or null when there is none. */
+/** The seed before the last change, or null when there is none. */
 export function stepBack(history: SeedHistory, current: number): SeedStep | null {
   const seed = history.back.at(-1)
   if (seed === undefined) return null
