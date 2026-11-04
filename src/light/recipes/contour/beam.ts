@@ -339,8 +339,15 @@ vec3 radiance(vec2 uv, vec2 screen) {
   float lum = scatter * lumHaze;
   float pale = saturate(uPale.x * smoothstep(uPale.y, uPale.z, lum + direct * lumLight));
   vec3 paleColor = mix(uLightColor / lumLight, uPaleTarget, uPaleWhite) * lumHaze;
-  vec3 scattered = scatter * warmFall(scatter) * mix(warmTail(scatter), paleColor, pale);
-  vec3 directColor = mix(uLightColor, uPaleTarget * lumLight, uPaleWhite * pale);
+  // Warm lights are their own haze, so their pool dims along the haze's path too, by all the
+  // light at the pixel: the pool's soft edge drifts and falls off like the haze around it
+  // instead of showing the light's own color dimmed (grey-brown for Tan).
+  float level = scatter + direct * lumLight / lumHaze;
+  float fall = warmFall(level);
+  vec3 tail = warmTail(level);
+  vec3 scattered = scatter * fall * mix(tail, paleColor, pale);
+  vec3 ownColor = uTail.w > 0.0 ? fall * tail * (lumLight / lumHaze) : uLightColor;
+  vec3 directColor = mix(ownColor, uPaleTarget * lumLight, uPaleWhite * pale);
   vec3 ambient = uBaseColor * mix(uAmbient.x * (1.0 - uAmbient.y + uAmbient.y * hazeHere), uAmbient.z, onFloor);
   vec3 color = ambient + scattered + directColor * direct;
 
@@ -456,8 +463,11 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     floorHaze: [round4(lerp(2.6, 3.8, random())), round4(lerp(0.12, 0.2, random()))],
     forward: round4(lerp(-0.1, 0.15, random())),
     hazeNoise: [round4(lerp(0.08, 0.15, random())), round4(lerp(2, 3, random())), round4(lerp(0.6, 1.1, random()))],
-    bounce: [round4(lerp(0.7, 1, random())), round4(soft(0.5, 0.8) * Math.min(1, 0.5 + halfH)), round4(lerp(1, 1.4, random())), round4(lerp(0.12, 0.2, random()))],
-    pool: [round4(Math.min(10, pool)), round4(lerp(1.3, 2, random())), round4(soft(1.4, 1.9))],
+    // The pool lights the haze above it in a dome that falls off faster sideways than upward,
+    // and the haze spills its light onto the floor just around the pool, so the floor beside
+    // the pool stays dark instead of glowing across the frame.
+    bounce: [round4(lerp(0.7, 1, random())), round4(soft(0.5, 0.8) * Math.min(1, 0.5 + halfH)), round4(lerp(0.5, 0.7, random())), round4(lerp(0.12, 0.2, random()))],
+    pool: [round4(Math.min(10, pool)), round4(lerp(1.3, 2, random())), round4(soft(0.8, 1.1))],
     edgeSoftness: round4(soft(HALF_SCALE_EDGE, 0.024)),
     edgeHaze: EDGE_HAZE,
     gloss: [round4(lerp(2.8, 3.4, random())), round4(soft(0.22, 0.32))],
