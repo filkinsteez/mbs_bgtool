@@ -54,6 +54,30 @@ function framePoint(event: PointerEvent<HTMLElement>): LightPoint {
 
 const percent = (value: number) => `${(value * 100).toFixed(3)}%`
 
+/** The canvas's accessible name. */
+const PREVIEW_NAME = 'Background preview'
+
+/** The one line the preview shows when the browser can't draw it. */
+const CANT_DRAW = "This browser can't draw the preview. Turn on hardware acceleration or use Chrome."
+
+const CANT_DRAW_STYLE: CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  margin: 0,
+  padding: 24,
+  textAlign: 'center',
+  fontSize: 13,
+  fontWeight: 500,
+  lineHeight: 1.4,
+  color: 'var(--dial-text-secondary, #9a9a9a)',
+  pointerEvents: 'none',
+}
+
+const sizeKey = (size: Box) => `${size.width}x${size.height}`
+
 export interface PreviewProps {
   scene: Scene
   aspect: ExportAspect
@@ -77,13 +101,20 @@ export function Preview({ scene, aspect, paused, onDrag, onDragging, onReset }: 
   const pendingRef = useRef<LightDrag | null>(null)
   const lineFrameRef = useRef(0)
   const lastTapRef = useRef<{ time: number; x: number; y: number } | null>(null)
+  /** The box the next frame is drawn for, and the size it renders at: the frame takes that box when such a frame is shown. */
+  const nextBoxRef = useRef<{ box: Box; key: string } | null>(null)
   const [stage, setStage] = useState<Box | null>(null)
   const [generation, setGeneration] = useState(0)
   const [pressed, setPressed] = useState(false)
   const [dragging, setDragging] = useState(false)
-  const box = stage ? fitBox(stage, aspect) : null
-  const boxWidth = box?.width ?? 0
-  const boxHeight = box?.height ?? 0
+  const [shownBox, setShownBox] = useState<Box | null>(null)
+  const [cantDraw, setCantDraw] = useState(false)
+  const target = stage ? fitBox(stage, aspect) : null
+  const boxWidth = target?.width ?? 0
+  const boxHeight = target?.height ?? 0
+  // The frame keeps the size of the image it shows until the image for the new size is drawn, so a new format or a
+  // resize doesn't show the old image stretched into the new box.
+  const box = cantDraw ? target : (shownBox ?? target)
 
   useLayoutEffect(() => {
     handlersRef.current = { onDrag, onDragging, onReset }
@@ -106,33 +137,65 @@ export function Preview({ scene, aspect, paused, onDrag, onDragging, onReset }: 
     if (!frame) return
     const canvas = document.createElement('canvas')
     canvas.className = 'tool-canvas'
+    canvas.setAttribute('role', 'img')
+    canvas.setAttribute('aria-label', PREVIEW_NAME)
     frame.appendChild(canvas)
+    const timers: ReturnType<typeof setTimeout>[] = []
     const retry = (delay: number) => {
-      if (attemptsRef.current >= MAX_RENDERER_ATTEMPTS) return
+      if (attemptsRef.current >= MAX_RENDERER_ATTEMPTS) {
+        timers.push(setTimeout(() => setCantDraw(true)))
+        return
+      }
       attemptsRef.current++
-      setTimeout(() => setGeneration((value) => value + 1), delay)
+      timers.push(setTimeout(() => setGeneration((value) => value + 1), delay))
     }
+    // A drawn frame: the renderer works, and the frame takes the box this frame was drawn for. Set here, in the same
+    // task that showed the frame, the new box and the new image appear together.
+    const drawn = new MutationObserver(() => {
+      attemptsRef.current = 0
+      setCantDraw(false)
+      const next = nextBoxRef.current
+      if (!next || canvas.dataset.renderSize !== next.key) return
+      frame.style.width = `${next.box.width}px`
+      frame.style.height = `${next.box.height}px`
+      setShownBox((previous) => (previous && previous.width === next.box.width && previous.height === next.box.height ? previous : next.box))
+    })
+    drawn.observe(canvas, { attributes: true, attributeFilter: ['data-frame'] })
     let loop: PreviewLoop | null = null
     try {
       loop = new PreviewLoop(canvas, () => retry(50))
     } catch (error) {
       console.error('Preview renderer could not start', error)
+      timers.push(setTimeout(() => setCantDraw(true)))
       retry(1000)
     }
     loopRef.current = loop
     return () => {
+      timers.forEach(clearTimeout)
+      drawn.disconnect()
       loop?.dispose()
       canvas.remove()
       if (loopRef.current === loop) loopRef.current = null
     }
   }, [generation])
 
+  // After the restarts run out, a change of the picture tries again.
+  useEffect(() => {
+    if (!cantDraw || attemptsRef.current < MAX_RENDERER_ATTEMPTS) return
+    const timer = setTimeout(() => {
+      attemptsRef.current = 0
+      setGeneration((value) => value + 1)
+    })
+    return () => clearTimeout(timer)
+  }, [scene, cantDraw])
+
   useEffect(() => {
     const loop = loopRef.current
     if (!loop || boxWidth < 1 || boxHeight < 1) return
-    const size = renderSize({ width: boxWidth, height: boxHeight }, window.devicePixelRatio || 1)
+    const next = { width: boxWidth, height: boxHeight }
+    const size = renderSize(next, window.devicePixelRatio || 1)
+    nextBoxRef.current = { box: next, key: sizeKey(size) }
     loop.update(scene, size.width, size.height)
-    attemptsRef.current = 0
   }, [scene, boxWidth, boxHeight, generation])
 
   useEffect(() => {
@@ -238,6 +301,11 @@ export function Preview({ scene, aspect, paused, onDrag, onDragging, onReset }: 
           <line ref={(element) => void (lineRefs.current[0] = element)} stroke="rgba(0, 0, 0, 0.35)" strokeWidth={3} strokeLinecap="round" />
           <line ref={(element) => void (lineRefs.current[1] = element)} stroke="rgba(255, 255, 255, 0.9)" strokeWidth={1.25} strokeLinecap="round" />
         </svg>
+        {cantDraw && (
+          <p role="status" style={CANT_DRAW_STYLE}>
+            {CANT_DRAW}
+          </p>
+        )}
       </div>
     </div>
   )
