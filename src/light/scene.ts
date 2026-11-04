@@ -341,8 +341,20 @@ export interface ControlValues {
    * y from the top edge, 0..1 inside the frame and up to 0.25 past each edge
    * (-0.25..1.25). A look puts its light as close to it as the look allows
    * and clamps it to what it supports. Undefined: the seed places the light.
+   * Being replaced by `drag`; it goes once Ramp reads `drag` instead.
    */
   point?: readonly [number, number]
+  /**
+   * The line the user dragged on the image, in the same frame units as
+   * `point` (-0.25..1.25 on each axis). `from` is where the light is
+   * strongest; the light runs from there in the line's direction, and at `to`
+   * it has reached the look's far end. A longer line gives a longer, slower
+   * gradient. Undefined: the seed sets the direction and reach.
+   */
+  drag?: {
+    from: readonly [number, number]
+    to: readonly [number, number]
+  }
 }
 
 export const DEFAULT_CONTROLS: ControlValues = { intensity: 0.5, softness: 0.5, mood: 0.5 }
