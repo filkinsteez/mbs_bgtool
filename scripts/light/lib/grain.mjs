@@ -409,12 +409,13 @@ const BANDS = [
  * use the blurred L. `mono` is var(L) / (var(L) + var(a) + var(b)) of the residual. Specks are residuals beyond
  * 3 standard deviations.
  */
-export function measureGrain(image, { hpSigma, rects = [], cornerRadius = 0, structure = 0.012, minBin = 1500 } = {}) {
+export function measureGrain(image, { hpSigma, rects = [], cornerRadius = 0, structure = 0.012, minBin = 1500, mask: given } = {}) {
   const { width: w, height: h } = image
   const short = Math.min(w, h)
   const sigma = hpSigma ?? Math.max(2, 0.0065 * short)
   const planes = grainPlanes(image)
-  const mask = grainMask(planes, w, h, { hpSigma: sigma, rects, cornerRadius, structure })
+  // A mask from the same frame without grain keeps coarse grain from being taken for structure.
+  const mask = given ?? grainMask(planes, w, h, { hpSigma: sigma, rects, cornerRadius, structure })
   const lowL = blurPlane(planes.L, w, h, sigma)
   const residual = {}
   let lowY = null
@@ -504,6 +505,7 @@ export function measureGrain(image, { hpSigma, rects = [], cornerRadius = 0, str
     bands,
     bins,
     mask,
+    lowL,
   }
 }
 

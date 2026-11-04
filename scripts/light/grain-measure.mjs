@@ -78,7 +78,7 @@ function binTable(entries) {
 }
 
 function strip(m) {
-  const { mask, ...rest } = m
+  const { mask, lowL, ...rest } = m
   return rest
 }
 
@@ -105,17 +105,25 @@ async function measureFile() {
   console.log(`== ${args.label ?? path.basename(args.file)}\n${grainSummary(m)}`)
 }
 
-/** The square window (size `size`) of the measured area with the most measured pixels and a mean lightness nearest 0.6. */
+/** A square window (size `size`) inside the measured area, as near a mean lightness of 0.6 as possible. */
 function pickWindow(m, size) {
-  const { width: w, height: h, mask } = m
+  const { width: w, height: h, mask, lowL } = m
   let best = null
   const step = Math.max(16, Math.round(size / 4))
   for (let y0 = 0; y0 + size <= h; y0 += step) {
     for (let x0 = 0; x0 + size <= w; x0 += step) {
       let inside = 0
-      for (let y = y0; y < y0 + size; y += 8) for (let x = x0; x < x0 + size; x += 8) inside += mask[y * w + x]
-      const share = inside / ((size / 8) * (size / 8))
-      if (!best || share > best.share + 1e-9) best = { x: x0, y: y0, share }
+      let level = 0
+      let count = 0
+      for (let y = y0; y < y0 + size; y += 8) {
+        for (let x = x0; x < x0 + size; x += 8) {
+          inside += mask[y * w + x]
+          level += lowL[y * w + x]
+          count++
+        }
+      }
+      const score = inside / count - Math.abs(level / count - 0.6)
+      if (!best || score > best.score) best = { x: x0, y: y0, score }
     }
   }
   return best
@@ -180,10 +188,11 @@ async function measureRenders() {
     // 1. Grain against lightness and clump size: a black-to-white ramp in linear light.
     const ramp = { program: 'test.ramp', colors: ['#000000', '#FFFFFF'], lens: NO_LENS, seed }
     for (const [sizeName, [width, height]] of part('ramp') ? Object.entries(SIZES) : []) {
+      let mask = null
       for (const grain of [0, 0.5, 1]) {
-        if (grain === 0 && sizeName === '4K') continue
         const image = await harness.render({ scene: { ...ramp, output: { grain } }, width, height })
-        const m = measureGrain(image)
+        const m = measureGrain(image, { mask })
+        mask ??= m.mask
         results.ramp.push({ label: `ramp ${sizeName} grain ${grain}`, m: strip(m) })
         log(`== ramp ${sizeName} grain ${grain}\n${grainSummary(m)}`)
       }
@@ -207,13 +216,15 @@ async function measureRenders() {
       const rects = (ref.ignore ?? []).map((r) => r.rect)
       const target = await loadRgba(path.join(AWE, ref.file))
       const tm = measureGrain(target, { rects })
+      const clean = await harness.render({ scene: { ...preset.scene, output: { ...preset.scene.output, grain: 0 } }, width: ref.width, height: ref.height })
+      const mask = measureGrain(clean, { rects }).mask
       const withInk = await harness.render({ scene: preset.scene, width: ref.width, height: ref.height })
       const flatWeight = await harness.render({ scene: { ...preset.scene, params: { ...preset.scene.params, grainInk: [0, 1] } }, width: ref.width, height: ref.height })
-      const im = measureGrain(withInk, { rects })
-      const fm = measureGrain(flatWeight, { rects })
+      const im = measureGrain(withInk, { mask })
+      const fm = measureGrain(flatWeight, { mask })
       results.riso.push({ id, target: strip(tm), preset: strip(im), weight1: strip(fm) })
       log(`== ${id}: target / preset with ink weight / strength 1 everywhere\n${grainSummary(tm)}\n--\n${grainSummary(im)}\n--\n${grainSummary(fm)}`)
-      const window = { x: Math.round(ref.width * 0.5 - 80), y: Math.round(ref.height * 0.3 - 80) }
+      const window = pickWindow(tm, 160)
       await saveCrop(`riso-${id}-target`, target, window, 160)
       await saveCrop(`riso-${id}-preset`, withInk, window, 160)
       await saveCrop(`riso-${id}-weight1`, flatWeight, window, 160)
@@ -225,11 +236,13 @@ async function measureRenders() {
       for (const pack of PACKS) {
         const scene = await harness.call('compose', look, pack, { intensity: 0.5, softness: 0.5, mood: 0.5 }, seed, 16 / 9)
         for (const [sizeName, [width, height]] of Object.entries(SIZES)) {
-          const grains = sheetLooks.has(look) ? [0, 0.5, 1] : sizeName === '4K' ? [0.5] : []
+          const grains = sheetLooks.has(look) ? [0, 0.5, 1] : sizeName === '4K' ? [0, 0.5] : []
           let window = null
+          let mask = null
           for (const grain of grains) {
             const image = await harness.render({ scene: { ...scene, output: { ...scene.output, grain } }, width, height })
-            const m = measureGrain(image)
+            const m = measureGrain(image, { mask })
+            mask ??= m.mask
             if (!window) window = pickWindow(m, CROP[sizeName])
             results.scenes.push({ look, pack, size: sizeName, grain, m: strip(m) })
             log(`== ${look} ${pack} ${sizeName} grain ${grain}: ${pct(m.stdL)} % L, half width ${m.acfHalf.toFixed(2)} px, flat runs ${pct(m.flatRuns)} %`)
@@ -344,7 +357,158 @@ async function writeRenders(results) {
   console.log(`wrote ${path.relative(ROOT, outDir)}/renders.json, renders.md and crops/`)
 }
 
+// ---------------------------------------------------------------------------
+// Sheets: 1:1 crops side by side, each with its own grain numbers, and a 3x zoom of its middle under it.
+
+const ZOOM = 3
+const GAP = 10
+const CAPTION = 34
+
+function escapeXml(text) {
+  return String(text).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c])
+}
+
+function wrap(line, width, size) {
+  const perLine = Math.max(10, Math.floor(width / (size * 0.55)))
+  const out = []
+  let current = ''
+  for (const word of String(line).split(' ')) {
+    if (current && current.length + word.length + 1 > perLine) {
+      out.push(current)
+      current = word
+    } else current = current ? `${current} ${word}` : word
+  }
+  if (current) out.push(current)
+  return out
+}
+
+function textImage(rawLines, width, size = 13) {
+  const lines = rawLines.flatMap((line) => wrap(line, width, size))
+  const height = lines.length * (size + 4) + 4
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">${lines
+    .map((line, i) => `<text x="2" y="${(i + 1) * (size + 4) - 2}" fill="${i === 0 ? '#e0e0e0' : '#9a9a9a'}" font-family="Helvetica, Arial, sans-serif" font-size="${size}">${escapeXml(line)}</text>`)
+    .join('')}</svg>`
+  return { input: Buffer.from(svg), height }
+}
+
+/** A panel: the crop at 1:1, its 3x zoom (middle third) under it, and a caption with its grain numbers above. */
+async function panel(image, title, pictureShort) {
+  // Crops are picked inside the measured area already, so no edge mask here.
+  const m = measureGrain(image, { hpSigma: 0.0065 * pictureShort, minBin: 200, structure: 0 })
+  const side = image.width
+  const z = Math.round(side / ZOOM)
+  const middle = await cropRgba(image, Math.round((side - z) / 2), Math.round((image.height - z) / 2), z, z)
+  const zoom = await resizeRgba(middle, z * ZOOM, z * ZOOM, 'nearest')
+  return { image, zoom, lines: [title, `L ${pct(m.stdL)} %, ${m.stdY.toFixed(1)} code values, half width ${m.acfHalf.toFixed(1)} px`] }
+}
+
+async function composeSheet(file, title, rows) {
+  const columns = Math.max(...rows.map((row) => row.panels.length))
+  const side = Math.max(...rows.flatMap((row) => row.panels.map((p) => p.image.width)))
+  const zoomSide = Math.max(...rows.flatMap((row) => row.panels.map((p) => p.zoom.width)))
+  const rowTitle = 24
+  const captionHeight = Math.max(CAPTION, ...rows.flatMap((row) => row.panels.map((p) => textImage(p.lines, Math.max(side, zoomSide), 12).height)))
+  const rowHeight = rowTitle + captionHeight + side + GAP + zoomSide + GAP * 2
+  const width = GAP + columns * (Math.max(side, zoomSide) + GAP)
+  const height = 36 + rows.length * rowHeight
+  const composites = [{ ...textImage([title], width, 16), left: GAP, top: 8 }]
+  rows.forEach((row, r) => {
+    const top = 36 + r * rowHeight
+    composites.push({ ...textImage([row.title], width, 14), left: GAP, top })
+    row.panels.forEach((p, c) => {
+      const left = GAP + c * (Math.max(side, zoomSide) + GAP)
+      composites.push({ ...textImage(p.lines, Math.max(side, zoomSide), 12), left, top: top + rowTitle })
+      composites.push({ input: p.image.data, raw: { width: p.image.width, height: p.image.height, channels: 4 }, left, top: top + rowTitle + captionHeight })
+      composites.push({ input: p.zoom.data, raw: { width: p.zoom.width, height: p.zoom.height, channels: 4 }, left, top: top + rowTitle + captionHeight + side + GAP })
+    })
+  })
+  await mkdir(path.dirname(file), { recursive: true })
+  await sharp({ create: { width, height, channels: 3, background: '#161616' } }).composite(composites).jpeg({ quality: 92 }).toFile(file)
+  console.log(`wrote ${path.relative(ROOT, file)}`)
+}
+
+/** A window of a reference image in its measured area, as big as `size` px of a picture whose short side is `pictureShort`, enlarged to `size`. */
+async function referenceCrop(image, rects, size, pictureShort) {
+  const m = measureGrain(image, { rects })
+  const short = Math.min(image.width, image.height)
+  const native = Math.max(16, Math.round((size * short) / pictureShort))
+  const window = pickWindow(m, native)
+  const crop = await cropRgba(image, window.x, window.y, native, native)
+  return native === size ? crop : resizeRgba(crop, size, size, 'lanczos3')
+}
+
+async function loadCrop(name) {
+  return loadRgba(path.join(cropDir, `${name}.png`))
+}
+
+async function makeSheets() {
+  const sheetDir = path.join(outDir, 'sheets')
+  const risoImages = []
+  for (const id of RISO) {
+    const ref = await manifestEntry(id)
+    risoImages.push({ id, image: await loadRgba(path.join(AWE, ref.file)), rects: (ref.ignore ?? []).map((r) => r.rect) })
+  }
+  const deck = await loadRgba(path.join(FIGMA, '44-271-grain-tile-1x.png'))
+  const deckCrop = await cropRgba(deck, 144, 92, CROP['1080p'], CROP['1080p'])
+
+  for (const [mood, look] of Object.entries(SHEET_LOOKS)) {
+    for (const sizeName of ['4K', '1080p']) {
+      const [, pictureShort] = SIZES[sizeName]
+      const size = CROP[sizeName]
+      const rows = []
+      for (const [k, pack] of PACKS.entries()) {
+        const riso = risoImages[k]
+        const panels = []
+        if (sizeName === '1080p') panels.push(await panel(deckCrop, 'Deck Grain tile (44:271) at 1x, 1:1', 440))
+        panels.push(await panel(await referenceCrop(riso.image, riso.rects, size, pictureShort), `${riso.id}, enlarged to a ${pictureShort} px short side`, pictureShort))
+        for (const grain of [0, 0.5, 1]) {
+          const name = `${look}-${pack}-${sizeName}-g${grain}`
+          if (!existsSync(path.join(cropDir, `${name}.png`))) continue
+          panels.push(await panel(await loadCrop(name), `${look} ${pack}, ${sizeName} export, grain ${grain}`, pictureShort))
+        }
+        rows.push({ title: `${pack[0].toUpperCase()}${pack.slice(1)}`, panels })
+      }
+      await composeSheet(path.join(sheetDir, `${mood}-${sizeName}.jpg`), `${mood[0].toUpperCase()}${mood.slice(1)} (${look}) at ${sizeName}: 1:1 crops, 3x zoom of the middle below each`, rows)
+    }
+  }
+
+  // The riso prints at their own size next to the riso presets: with the presets' ink weight, and at strength 1 everywhere.
+  const risoRows = []
+  for (const id of RISO) {
+    const ref = await manifestEntry(id)
+    const short = Math.min(ref.width, ref.height)
+    risoRows.push({
+      title: id,
+      panels: [
+        await panel(await loadCrop(`riso-${id}-target`), `${id} print, 1:1 at ${ref.width}x${ref.height}`, short),
+        await panel(await loadCrop(`riso-${id}-preset`), 'reference preset, grain 1 with its ink weight', short),
+        await panel(await loadCrop(`riso-${id}-weight1`), 'the same preset, grain 1 everywhere (the tool)', short),
+      ],
+    })
+  }
+  await composeSheet(path.join(sheetDir, 'riso-native.jpg'), 'Riso prints vs our grain at strength 1, the same picture size, 1:1', risoRows)
+
+  // The deck's Grain tile exported at 1x, 2x and 4x: the same picture area, each at 1:1.
+  const deckRows = [{ title: 'Deck Grain tile (Figma Noise effect)', panels: [] }]
+  for (const scale of [1, 2, 4]) {
+    const tile = await loadRgba(path.join(FIGMA, `44-271-grain-tile-${scale}x.png`))
+    const span = Math.round(CROP['1080p'] / scale)
+    const crop = await cropRgba(tile, 144 * scale, 92 * scale, span * scale, span * scale)
+    deckRows[0].panels.push(await panel(crop.width === CROP['1080p'] ? crop : await resizeRgba(crop, CROP['1080p'], CROP['1080p'], 'nearest'), `exported at ${scale}x: ${span} px of the tile, 1:1`, 440 * scale))
+  }
+  const sky = `${SHEET_LOOKS.sunset}-bold-1080p`
+  deckRows.push({
+    title: 'Ours at 1080p, the size of the deck slide',
+    panels: [
+      await panel(await loadCrop(`${sky}-g0.5`), 'sunset.ramp bold, grain 0.5', 1080),
+      await panel(await loadCrop(`${sky}-g1`), 'sunset.ramp bold, grain 1', 1080),
+    ],
+  })
+  await composeSheet(path.join(sheetDir, 'deck-tile.jpg'), 'Figma Noise on the deck Grain tile at 1x, 2x and 4x, and our grain at 1080p', deckRows)
+}
+
 if (args.file) await measureFile()
 else if (args.refs) await measureRefs()
 else if (args.renders) await measureRenders()
-else console.log('Usage: --refs | --renders | --file <png> [--rect x,y,w,h] [--hp px]')
+else if (args.sheets) await makeSheets()
+else console.log('Usage: --refs | --renders | --sheets | --file <png> [--rect x,y,w,h] [--hp px]')

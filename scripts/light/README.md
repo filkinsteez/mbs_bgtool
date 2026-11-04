@@ -240,4 +240,17 @@ To plug in a filter:
 
 `OUTPUT_FILTER_SHADERS` lists the output pass for no filter and for each filter alone, for compiling them ahead. `prepareOutputFilters(gpu, output, frame, drawFrame)` builds the pass for a scene: its shader, the active stages' uniforms and their frame sources. Until `programRenderer.ts` calls it (a patch is with the coordinator), the renderer draws `OUTPUT_SHADER`, which holds the grain stage only, so only grain runs.
 
+### Grain measurement
+
+```sh
+node scripts/light/grain-measure.mjs --refs                 # the moodboard images with grain, about 15 s
+node scripts/light/grain-measure.mjs --renders [--only ramp,preview,riso,scenes,checks] [--looks ramp,beam] [--seed 1]
+node scripts/light/grain-measure.mjs --sheets                # after --renders
+node scripts/light/grain-measure.mjs --file <png> [--rect x,y,w,h] [--hp px]
+```
+
+One measurement for reference images and renders (`lib/grain.mjs`). The grain is each plane minus its gaussian blur at 0.65 % of the short side (6 px at 925 px, 14 px at 4K), on the pixels away from edges, folds and text. It reports the standard deviation of that residual in Oklab L (% of L) and in 8-bit luma (code values), overall and for shadows (L under 0.35), mids and highlights (over 0.7) and per 0.1 of L; the clump size as the half width of the residual's autocorrelation in px and per 1000 of the short side (white per-pixel noise about 0.5 px); the share of residual power above 0.25 cycles per px (about 0.8 for per-pixel noise, near 0 for soft clumps); the mono share var(L) / (var(L) + var(a) + var(b)); skew and dark specks (residuals 3 standard deviations below), which tell dark speckle from film grain; and banding as the share of pixels in runs of 16 px or more of one 8-bit color across which the blurred luma changes by more than half a code value.
+
+`--refs` measures the three riso prints, the poster, a sky, the rings photo, the riso scan behind the prints (from `prototypes/grain-study/out/raw/`, when there) and the deck's Grain tile (44:271) at 1x, 2x and 4x with its source photo (downloaded to `artifacts/grain/figma/`). `--renders` measures, through the engine harness on the working tree: a black-to-white ramp at 1080p and 4K, preview against export, the riso reference presets at their print's size, every look and pack at 4K (Sunset Ramp and Contour Beam also at 1080p and grain 0 and 1), seed repeatability, repeats across the frame and banding on a dark ramp. `--sheets` puts 1:1 crops of those renders next to crops of the riso prints and the deck tile, each with its numbers. Everything goes to `artifacts/grain/measure/` (`refs.md`, `renders.md`, `crops/`, `sheets/`). Results: `docs/light/research/grain.md`.
+
 `compose` (optional on a `RecipeDefinition`): `({ pack, controls: { intensity, softness, mood }, seed, aspect }) => { colors, params, lens, output }`, with each control 0..1 and `aspect` = width / height. The tool uses it instead of its fallback mapping in `src/tool/controls.ts`. Colors must be exact hexes of `pack` (or `#000000`); `compositionProblems(recipe, pack, composition)` in `src/light/compose.ts` lists anything wrong, and `src/light/recipes/compose.test.ts` runs it for every recipe with `compose` over 3 packs x 5 seeds x 4 aspects x 27 control settings.
