@@ -1,7 +1,7 @@
 import { linearToOklch } from '../../color/oklab'
 import { PACKS, type ColorPack } from '../../color/packs'
 import { hexToLinear } from '../../color/srgb'
-import type { LensSettings, OutputSettings, ParamValue } from '../../scene'
+import type { ControlValues, LensSettings, OutputSettings, ParamValue } from '../../scene'
 import { closeHues, dimDrift, isLightColor, isWarm, needsBridge } from './bands-light'
 import { BAND_MAX, bandKey, BUMP_MAX, LIGHT_MAX, LIGHT_SHADE, lightKey, MODE_ADD, MODE_COVER, MODE_LIGHT, PATCH_MAX, patchKey } from './bands-params'
 import { edgeAt, edgeSeed, type Bump, type EdgeShape } from './bands-shape'
@@ -17,6 +17,8 @@ export interface BandsComposeInput {
   intensity?: number
   softness?: number
   horizon?: number
+  /** The line the user dragged: the stack runs along it, from the light's band at `from` to the deep sky at `to`. */
+  drag?: ControlValues['drag']
 }
 
 export interface BandsComposition {
@@ -168,7 +170,9 @@ export function composeBands(input: BandsComposeInput): BandsComposition {
   const R = lerp(0.045, 0.12, clamp(softness, 0, 1))
   // Intensity is the scene's light level: the light rises most, the other bands less.
   const level = 2 ** ((clamp(intensity, 0, 1) - 0.5) * 1.2)
-  return writeScene(stack(pack, seed, R, level, clamp(horizon, 0, 1), aspect, frameW, frameH), R)
+  const along = input.drag ? dragAlong(input.drag, frameW, frameH) : undefined
+  const scene = stack(pack, seed, R, level, clamp(horizon, 0, 1), aspect, frameW, frameH, along)
+  return writeScene(scene, R, stackMap(scene, input.drag, frameW, frameH))
 }
 
 interface Scene {
@@ -184,6 +188,10 @@ interface Scene {
   skyLift: number
   /** The whole scene's light, below 1 at the low end of Intensity. */
   dim: number
+  /** The middle of the light's band, frame heights. */
+  lightAt: number
+  /** Where the middle of the light's band is without a drag, at this Softness and Horizon. */
+  seedSpan: number
 }
 
 /** A color of the stack: its hex and the share of nominal light it gets (a deep band is the same color under less light). */
@@ -212,7 +220,7 @@ interface Entry {
  * lighter colors fade into each other as light, and where two colors far apart
  * meet, pale light added across the transition keeps its middle pale.
  */
-function stack(pack: ColorPack, seed: number, R: number, level: number, horizon: number, aspect: number, frameW: number, frameH: number): Scene {
+function stack(pack: ColorPack, seed: number, R: number, level: number, horizon: number, aspect: number, frameW: number, frameH: number, along?: number): Scene {
   // The middle Softness's lens, which the seed's layout is made for.
   const R0 = lerp(0.045, 0.12, 0.5)
   const warmHex = (hex: string) => isWarm(hexToLinear(hex)) || isLightColor(hexToLinear(hex))
@@ -574,6 +582,20 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
       : leastNow.map((v, i) =>
           i === n - 1 ? v + lastSpare : v + (aboveSeed > 0 ? (spareSeed[i] / aboveSeed) * (spare - lastSpare) : (spare - lastSpare) / (n - 1)),
         )
+  // A dragged line sets the span from the top of the sky to the middle of the light's band (`along`, frame
+  // heights). Shorter than the seed's own span, the bands above the light give up spare height, down to their
+  // least heights; a longer line draws the whole stack out along it (`stackMap`).
+  const lightBand = Math.max(0, bands.findIndex((b, i) => b.color === light && under[i] === 1))
+  const spanOf = (h: readonly number[]) => h.slice(0, lightBand + 1).reduce((s, v) => s + v, 0) + h[lightBand + 1] / 2
+  const seedSpan = spanOf(now)
+  if (along !== undefined && along < seedSpan) {
+    const room = now.slice(0, lightBand + 1).map((v, j) => Math.max(0, v - leastNow[j]))
+    const roomSum = room.reduce((s, v) => s + v, 0)
+    if (roomSum > 1e-6) {
+      const keep = softLimit((along - (seedSpan - roomSum)) / roomSum, 0, Infinity, 0.1)
+      room.forEach((r, j) => (now[j] -= r * (1 - keep)))
+    }
+  }
   let edgeTop = 0
   bands.forEach((b, k) => {
     edgeTop += now[k]
@@ -628,7 +650,56 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   const lightVary = rnd.between(0.1, 0.17)
   // The light's column: where Intensity above the middle gathers its extra light.
   const sun: [number, number] = [rnd.between(0.2, 0.8), rnd.between(0.22, 0.35)]
-  return { sky: list[0].hex, bands, lights: lightTerms, patches, sun, lightVary, skyFall: zenith + 3 * Math.max(0, 1 - level), skyLift: 1.2 * Math.max(0, level - 1), dim }
+  return {
+    sky: list[0].hex,
+    bands,
+    lights: lightTerms,
+    patches,
+    sun,
+    lightVary,
+    skyFall: zenith + 3 * Math.max(0, 1 - level),
+    skyLift: 1.2 * Math.max(0, level - 1),
+    dim,
+    lightAt: spanOf(now),
+    seedSpan,
+  }
+}
+
+/** The most the stack may be drawn out along a drag, in spans of the seed's own stack. */
+const MAX_ZOOM = 2.5
+
+/** x held between lo and hi: unchanged more than `knee` inside them, bending smoothly onto them beyond. */
+function softLimit(x: number, lo: number, hi: number, knee: number): number {
+  if (x < lo + knee) return lo + knee * Math.exp((x - lo) / knee - 1)
+  if (x > hi - knee) return hi - knee * Math.exp((hi - x) / knee - 1)
+  return x
+}
+
+/** The dragged line's length in frame heights. */
+const dragAlong = (drag: NonNullable<BandsComposeInput['drag']>, frameW: number, frameH: number) =>
+  Math.hypot((drag.to[0] - drag.from[0]) * frameW, (drag.to[1] - drag.from[1]) * frameH) / frameH
+
+/**
+ * The stack along a dragged line: the middle of the light's band at the line's start (at the light's column) and
+ * the top of the sky at its end, so the line's length is the stack's span from the light to the deep sky. A line
+ * shorter than the seed's span has already tightened the bands above the light (`stack`); a longer one draws the
+ * whole stack out, at most MAX_ZOOM times. The map takes a frame point p (short sides from the frame's center, y
+ * down) to the scene point (a b; c d) p + (e, f); without a drag it is the identity.
+ */
+function stackMap(scene: Scene, drag: BandsComposeInput['drag'], frameW: number, frameH: number): number[] {
+  const identity = [1, 0, 0, 1, 0, 0]
+  if (!drag) return identity
+  const from = [(drag.from[0] - 0.5) * frameW, (drag.from[1] - 0.5) * frameH]
+  const along = dragAlong(drag, frameW, frameH)
+  if (along < 1e-6) return identity
+  // The line's direction, short-side units.
+  const ux = ((drag.to[0] - drag.from[0]) * frameW) / (along * frameH)
+  const uy = (drag.to[1] - drag.from[1]) / along
+  const zoom = along > scene.seedSpan ? softLimit(along / scene.seedSpan, -Infinity, MAX_ZOOM, 0.25) : 1
+  // Along the line toward `to` is up the stack, toward the sky; across it to the line's right is the stack's x.
+  const [a, b, c, d] = [-uy / zoom, ux / zoom, -ux / zoom, -uy / zoom]
+  const light = [(scene.sun[0] - 0.5) * frameW, (scene.lightAt - 0.5) * frameH]
+  return [a, b, c, d, light[0] - (a * from[0] + b * from[1]), light[1] - (c * from[0] + d * from[1])]
 }
 
 /** Ice is close to white: below white at the default Intensity. */
@@ -636,8 +707,8 @@ function iceCap(hex: string, level: number): number {
   return lightness(hex) > 0.95 ? Math.min(1, 0.58 / level ** 0.4) : 1
 }
 
-function writeScene(scene: Scene, R: number): BandsComposition {
-  const params: Record<string, ParamValue> = {}
+function writeScene(scene: Scene, R: number, stack: number[]): BandsComposition {
+  const params: Record<string, ParamValue> = { stack }
   const colors = [scene.sky]
   scene.bands.slice(0, BAND_MAX).forEach((b, i) => {
     const key = (name: Parameters<typeof bandKey>[1]) => bandKey(i, name)

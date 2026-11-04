@@ -141,6 +141,9 @@ export const BANDS_PARAMS: readonly ParamSpec[] = [
   // Water below a level horizon (frame heights; 2 is off): the sky mirrored, squeezed, smeared by ripples, dimmer with depth.
   { kind: 'vector', key: 'water', label: 'Water horizon, squeeze, smear, reflection at the bottom', min: 0, max: 2, step: 0.0005, default: [2, 1.25, 0.3, 0.4] },
   { kind: 'vector', key: 'waterLook', label: 'Water own light, strip gain, strip width, ripple length', min: 0, max: 2, step: 0.0005, default: [0.5, 0, 0.008, 0.05] },
+  // The stack along the dragged line: a frame point p (short sides from the frame's center, y down) shows the scene
+  // at (a b; c d) p + (e, f). The identity without a drag.
+  { kind: 'vector', key: 'stack', label: 'Stack along the drag: a, b, c, d, e, f', min: -20, max: 20, step: 0.0001, default: [1, 0, 0, 1, 0, 0] },
   ...Array.from({ length: BAND_MAX }, (_, i) => bandSpecs(i)).flat(),
   ...Array.from({ length: PATCH_MAX }, (_, i) => patchSpecs(i)).flat(),
   ...Array.from({ length: LIGHT_MAX }, (_, i) => lightSpecs(i)).flat(),

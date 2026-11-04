@@ -149,6 +149,8 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     uEdgeSeed: edgeSeed(ctx.seed),
     uBaseLum: Math.max(luminance(ctx.colors[0]), 1e-4),
     uLensDisc: discRadius(ctx) > 0 ? 1 : 0,
+    uStackMap: ctx.vec('stack').slice(0, 4),
+    uStackShift: ctx.vec('stack').slice(4, 6),
   }
 }
 
@@ -219,6 +221,8 @@ uniform vec4 uWaterLook;             // own light, strip gain, strip width (fram
 uniform int uEdgeSeed;
 uniform float uBaseLum;
 uniform float uLensDisc;             // 1: the disc lens result, 0: the gaussian one
+uniform vec4 uStackMap;              // the stack along a drag: a frame point p shows the scene at (a b; c d) p + shift
+uniform vec2 uStackShift;
 
 // Set by combine() for grainWeight(), which the engine calls right after it for the same point.
 float gGrainWeight = 1.0;
@@ -331,7 +335,9 @@ vec3 scene(float x, float v, vec2 p) {
     if (wave.x != 0.0) shift += wave.x * edgeWave(p.x, wave.z, float(2 * i), uEdgeSeed);
     if (wave.y != 0.0) shiftBottom += wave.y * edgeWave(p.x, wave.z, float(2 * i + 1), uEdgeSeed);
     float top = edge.x + shift;
-    float bottom = edge.y + shift + shiftBottom;
+    // A bottom at 2 or more is none: the band runs on past the frame, and past the scene's own frame when a drag
+    // draws the stack tighter.
+    float bottom = edge.y >= 2.0 ? 1e4 : edge.y + shift + shiftBottom;
     float widthTop = edge.z;
     float widthBottom = edge.w;
     if (wave.w > 0.0) {
@@ -446,8 +452,11 @@ vec3 water(float x, float v, vec2 p) {
 }
 
 vec3 auxRadiance(vec2 uv, vec2 p) {
-  if (uWater.x < 1.5 && uv.y > uWater.x) return water(uv.x, uv.y, p);
-  return scene(uv.x, uv.y, p);
+  // The scene point this frame point shows: the stack runs along the dragged line (the same point without a drag).
+  vec2 q = vec2(dot(uStackMap.xy, p), dot(uStackMap.zw, p)) + uStackShift;
+  vec2 s = q / uFrameAspect + 0.5;
+  if (uWater.x < 1.5 && s.y > uWater.x) return water(s.x, s.y, q);
+  return scene(s.x, s.y, q);
 }
 
 // The pipeline's radiance is the lensed scene from combine().
@@ -471,5 +480,5 @@ float grainWeight(vec2 uv, vec2 p) { return gGrainWeight; }
   radianceScale: (ctx) => (ctx.num('lens') >= 0.02 ? 0.5 : 1),
   fromPack: (pack: ColorPack) => composeBands({ pack, seed: 1, aspect: 16 / 9 }).colors,
   compose: ({ pack, controls, seed, aspect }) =>
-    composeBands({ pack, seed, aspect, intensity: controls.intensity, softness: controls.softness, horizon: controls.mood }),
+    composeBands({ pack, seed, aspect, intensity: controls.intensity, softness: controls.softness, horizon: controls.mood, drag: controls.drag }),
 }
