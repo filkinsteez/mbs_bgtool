@@ -214,6 +214,8 @@ interface PackLook {
    * down, at the default Intensity (linear light).
    */
   veil: [main: number, low: number]
+  /** White haze in front of far land (linear light); none over Elemental's Plum and Forest, which it would turn mauve. */
+  groundVeil: number
 }
 
 /**
@@ -252,6 +254,7 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, va
     glowUp: 1,
     glowRise: 1,
     veil: [0.22, 0.12] as [number, number],
+    groundVeil: 0.1,
   }
   switch (packId) {
     case 'bold': {
@@ -265,14 +268,14 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, va
         // pink or mauve the two make when mixed; under the glow line and inside the glow's dense
         // haze the skylight fades out, so the glow's body is Orange-red itself. A compact, low glow
         // leaves a band of Cyan above it.
-        return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.8, horizonGain: 0.42, skyEdge: [0.95, 0.9, 0.15], veil: [0.16, 0.04], light: orangeRed, coreColor: yellow, glow: 1.2, glowUp: 0.25, glowRise: structure === 'land' ? 0.62 : 0.25, path: [-0.15, 0.55, 0.45], hue: [-0.25, 0.2], bridge: 0.9, bridgeLift: 0.5, bridgeWarmth: 0.8, bridgeFloor: 0.1, haze: 0.3, downReach: 1.5, sideDeeper: 0.3, waterDegrees: [6, 9], landHaze: 0.03, extinction: 3 }
+        return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.8, horizonGain: 0.42, skyEdge: [0.95, 0.9, 0.15], veil: [0.16, 0.04], groundVeil: 0.05, light: orangeRed, coreColor: yellow, glow: 1.2, glowUp: 0.25, glowRise: structure === 'land' ? 0.62 : 0.25, path: [-0.15, 0.55, 0.45], hue: [-0.25, 0.2], bridge: 0.9, bridgeLift: 0.5, bridgeWarmth: 0.8, bridgeFloor: 0.1, haze: 0.3, downReach: 1.5, sideDeeper: 0.3, waterDegrees: [6, 9], landHaze: 0.03, extinction: 3 }
       }
       // Yellow under a band of Cyan, so Meta Blue, Cyan and the warm light all show.
       return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.6, skyEdge: [0.97, 1.0, 0.3], veil: [0.16, 0.04], light: yellow, coreColor: yellow, glow: 0.7, glowUp: 0.5, path: [0.5, 1, 0.45], hue: [-0.3, 0.35], bridge: 0.5, haze: 0.5, sideDeeper: 0.4, core: 2 }
     }
     case 'elemental': {
       const [lime, forest, tan, plum] = rest
-      const dark = { landTop: [plum, 1.7] as Tone, landBottom: [plum, 0.6] as Tone, water: [metaBlue, 0.3] as Tone }
+      const dark = { landTop: [plum, 1.7] as Tone, landBottom: [plum, 0.6] as Tone, water: [metaBlue, 0.3] as Tone, groundVeil: 0 }
       // Lime or Tan is the one light. Lime pales into Meta Blue through added light; it lights some
       // open skies and the Forest land, never water, where its dim reflection turns olive.
       const limeLight = { light: lime, coreColor: lime, glow: 1.0, path: [-0.2, 0, 0.35], hue: [-0.15, 0.1], bridge: 0.3, bridgeLift: 0.3, haze: 0.8, sideDeeper: 0, core: 1 } satisfies Partial<PackLook>
@@ -884,6 +887,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // A tall land area reaches nearer the viewer: the haze over its far ground reaches further
     // down, and its near ground is darker.
     groundHaze: [look.landHaze, land ? Math.max(0.1 * tall, 0.25 * landRoom) : 0.05 * tall],
+    groundVeil: [land ? look.groundVeil * groundGain : 0, 0.35 * landRoom],
     landLit: [ground ? look.landLit : 0, lerp(0.3, 0.5, widthPick) * frameWidth, ground ? 0.6 : 0],
     groundTopGain: look.landTop[1] * groundGain,
     groundBottomGain: look.landBottom[1] * groundGain * (land ? Math.min(1, ((0.4 * tall) / landRoom) ** 1.5) : 1),

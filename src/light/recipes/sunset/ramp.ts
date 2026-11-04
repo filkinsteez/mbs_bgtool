@@ -137,6 +137,7 @@ const PARAMS: ParamSpec[] = [
   num('waterMirror', "Share of calm water's reflectance that a rough sea keeps", 0, 1, 0.01, 1),
   num('mirrorDeep', 'Height above the frame top over which the sky that water mirrors there dims by e (0: none)', 0, 8, 0.001, 0),
   vec('groundHaze', 'Far land: share of the sky light, depth over which it fades', 0, 2, 0.001, [0.7, 0.08]),
+  vec('groundVeil', 'White haze in front of far land, depth over which it fades toward the viewer', 0, 2, 0.001, [0, 0.1]),
   vec('landLit', "Land's side toward the light: extra light there, width of that side, change of light over its relief", 0, 4, 0.001, [0, 0.5, 0]),
   num('groundTopGain', 'Land top gain', 0, 4, 0.005, 1),
   num('groundBottomGain', 'Land bottom gain', 0, 4, 0.005, 0.5),
@@ -249,6 +250,8 @@ function uniforms(ctx: RecipeContext): UniformMap {
     uGroundTop: scale(ctx.color('groundTop'), ctx.num('groundTopGain')),
     uGroundBottom: scale(ctx.color('groundBottom'), ctx.num('groundBottomGain')),
     uGroundHaze: ctx.vec('groundHaze'),
+    uGroundVeil: ctx.vec('groundVeil'),
+    uGroundVeilTint: bridgeTint(ctx.color('groundTop'), 1),
     uLandLit: ctx.vec('landLit'),
   }
   return { ...u, ...rampBoundary(ctx, u).uniforms }

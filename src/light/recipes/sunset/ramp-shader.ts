@@ -91,6 +91,8 @@ uniform float uMirrorDeep;   // height above the frame's top over which the sky 
 uniform vec3 uGroundTop;     // land right under its outline
 uniform vec3 uGroundBottom;  // land at the bottom edge
 uniform vec2 uGroundHaze;    // share of the sky's light in far land, and the depth over which it fades
+uniform vec2 uGroundVeil;    // pale haze in front of far land, and the depth over which it fades toward the viewer
+uniform vec3 uGroundVeilTint; // the haze's color: a pale tint of the land's own, at luminance 1
 uniform vec3 uLandLit;       // land's and the water's own light on their side toward the sun: extra light there, the width of that side, and how much land's relief or the water's wind patches change it
 
 uniform vec4 uLand;          // coverage, height at the center, slope, drop at the side edges
@@ -453,7 +455,10 @@ vec3 landLight(vec2 p, float outline, vec3 air, float noise) {
   float room = max(0.1, 0.5 * uFrameAspect.y - outline);
   float relief = max(1.0 + uLandLit.z * noise, 0.2);
   vec3 own = mix(uGroundTop, uGroundBottom, clamp(d / room, 0.0, 1.0)) * litSide(p.x) * relief;
-  return mix(own, air * uGroundHaze.x, exp(-d / max(uGroundHaze.y, 1e-3)));
+  vec3 hazed = mix(own, air * uGroundHaze.x, exp(-d / max(uGroundHaze.y, 1e-3)));
+  // A pale haze in a tint of the land's own color lies in front of the far land, so it reads as a
+  // soft silhouette without turning another hue.
+  return hazed + uGroundVeil.x * exp(-d / max(uGroundVeil.y, 1e-3)) * uGroundVeilTint;
 }
 
 // How far above an outline the air in front of the land is read.
