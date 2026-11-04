@@ -100,13 +100,23 @@ const DRAG_REACH = 1.25
 /** The lead's long radius a dragged line can give it, in units of sqrt(width * height). */
 const DRAG_RADIUS: readonly [number, number] = [0.1, 1.6]
 
+/** How far past the frame edge a dragged line's dark area sits, in units of sqrt(width * height). */
+const DARK_PAST_EDGE = 0.04
+
 /**
  * The layout for a dragged line. The lead sits at `from` with its long axis along the line and reaches
- * `to`; the sky darkens along the line; the other blooms and the dark corner keep their places relative
- * to the lead, turned by the angle between the seed's light direction and the line. Everything moves
- * smoothly with the line, and nothing is added, removed or swapped.
+ * `to`; the sky darkens along the line; the other blooms keep their places relative to the lead, turned
+ * by the angle between the seed's light direction and the line. The dark area goes to the frame edge the
+ * line runs toward, lying along it, so it stays at an edge or a corner and never lands mid-frame;
+ * `sizeDark` gives it its usual share of the frame there. Everything moves smoothly with the line, and
+ * nothing is added, removed or swapped.
  */
-function followDrag(layout: BloomsLayout, drag: NonNullable<BloomsControls['drag']>, aspect: number): BloomsLayout {
+function followDrag(
+  layout: BloomsLayout,
+  drag: NonNullable<BloomsControls['drag']>,
+  aspect: number,
+  sizeDark: (zenith: ZenithSpec) => number,
+): BloomsLayout {
   const frame = [Math.sqrt(aspect), 1 / Math.sqrt(aspect)]
   const toP = (p: readonly number[]): [number, number] => [(p[0] - 0.5) * frame[0], (p[1] - 0.5) * frame[1]]
   const fromP = (q: readonly number[]): [number, number] => [q[0] / frame[0] + 0.5, q[1] / frame[1] + 0.5]
@@ -136,10 +146,22 @@ function followDrag(layout: BloomsLayout, drag: NonNullable<BloomsControls['drag
         }
       : { ...glow, at: place(glow.at), angle: glow.angle + degrees },
   )
+  // Where the line, run on from its start (held inside the frame), leaves the frame.
+  const half = [frame[0] / 2, frame[1] / 2]
+  const origin = [clamp(start[0], -half[0], half[0]), clamp(start[1], -half[1], half[1])]
+  const dir = [line[0] / length, line[1] / length]
+  const reach = (o: number, d: number, h: number) => (d > 1e-9 ? (h - o) / d : d < -1e-9 ? (-h - o) / d : Infinity)
+  const exit = Math.min(reach(origin[0], dir[0], half[0]), reach(origin[1], dir[1], half[1]))
+  const zenith: ZenithSpec = {
+    ...layout.zenith,
+    at: fromP([origin[0] + dir[0] * (exit + DARK_PAST_EDGE), origin[1] + dir[1] * (exit + DARK_PAST_EDGE)]),
+    angle: (lineAngle * 180) / Math.PI + 90,
+  }
+  zenith.radius = sizeDark(zenith)
   return {
     ...layout,
     glows,
-    zenith: { ...layout.zenith, at: place(layout.zenith.at), angle: layout.zenith.angle + degrees },
+    zenith,
     sky: { ...layout.sky, turn: -degrees },
   }
 }
@@ -686,9 +708,9 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
         hold: 0,
         meet: 0,
       }
-  if (darkGround) {
-    zenith.radius = sizeCorner(zenith, aspect, skyFamily ? CORNER_SHARE : OTHER_HUE_CORNER_SHARE, lobes(ZENITH_VARY, seed, ZENITH_LOBE_INDEX))
-  }
+  const zenithLobes = lobes(ZENITH_VARY, seed, ZENITH_LOBE_INDEX)
+  const sizeDark = (z: ZenithSpec) => (darkGround ? sizeCorner(z, aspect, skyFamily ? CORNER_SHARE : OTHER_HUE_CORNER_SHARE, zenithLobes) : z.radius)
+  zenith.radius = sizeDark(zenith)
 
   const layout: BloomsLayout = {
     glows: glows.slice(0, GLOW_COUNT),
@@ -701,5 +723,5 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     bridge: lerp(0.85, 1.2, soft),
     bridgeFloor: BRIDGE_FLOOR,
   }
-  return controls.drag ? followDrag(layout, controls.drag, aspect) : layout
+  return controls.drag ? followDrag(layout, controls.drag, aspect, sizeDark) : layout
 }
