@@ -143,14 +143,11 @@ function nearGlsl(layout: CurveLightLayout): string {
   const arcs = parts
     .map((k) => `        if (radial < cut${k}) acc${k} += em * clArc(r, psiM, halfSweep, max(vec3(1e-6), g.z - toInside * offs${k}), s2p${k}, p${k}, bp${k});`)
     .join('\n')
-  const total = parts.map((k) => `amp${k} * clDrift(lit${k} * acc${k}, own, drift, sharpness)`).join(' + ')
+  const total = parts.map((k) => `amp${k} * lit${k} * acc${k}`).join(' + ')
   return /* glsl */ `
 // Near parts of emitter e, written out per part so their sums stay in registers.
 vec3 clNear(int e, vec2 q, float light1, float light2, float sd) {
   int nb = e * CL_N * ${NEAR_VEC4};
-  vec3 own = uClEmit[e * ${EMIT_VEC4} + 2].rgb;
-  vec4 drift = uClEmit[e * ${EMIT_VEC4} + 3];
-  float sharpness = uClEmit[e * ${EMIT_VEC4} + 4].x;
 ${declare}
   float maxCut = ${maxCut};
   if (maxCut < 0.0) return vec3(0.0);
@@ -404,9 +401,9 @@ float clLit(int li, float light1, float light2, float gamma) {
   return gamma > 0.0 ? pow(lit, gamma) : lit;
 }
 
-// A part's light as it dims: v is its level against the emitter's own color (1 at the line of a straight emitter
-// under full light). The largest channel follows v; the others move from the light's own ratios toward d.rgb times
-// them as s falls from 1, with s = v^a (1 + k^a) / (v^a + k^a) (knee k = d.w, sharpness a). Off when k is 0.
+// An emitter's light as it dims: v is its summed level at the pixel against the emitter's own color (1 is the
+// light at its own hex). The largest channel follows v; the others move from the light's own ratios toward d.rgb
+// times them as s falls from 1, with s = v^a (1 + k^a) / (v^a + k^a) (knee k = d.w, sharpness a). Off when k is 0.
 vec3 clDrift(vec3 raw, vec3 own, vec4 d, float sharpness) {
   if (d.w <= 0.0) return raw;
   float v = maxComponent(raw) / max(maxComponent(own), 1e-6);
@@ -489,8 +486,6 @@ vec3 clLine(int e, vec2 q, float sigma, bool ownColor) {
 vec3 clFar(int e, float light1, float light2, float sd, vec3 b0, vec3 b1, vec3 b2, vec3 b3, bool perEmitter) {
   vec3 total = vec3(0.0);
   vec3 own = uClEmit[e * ${EMIT_VEC4} + 2].rgb;
-  vec4 drift = uClEmit[e * ${EMIT_VEC4} + 3];
-  float sharpness = uClEmit[e * ${EMIT_VEC4} + 4].x;
   vec4 rung = uClRungs * ${literal(Math.sqrt(2 * Math.PI))};
   for (int f = 0; f < CL_F; f++) {
     int fb = (e * CL_F + f) * ${FAR_VEC4};
@@ -518,7 +513,7 @@ vec3 clFar(int e, float light1, float light2, float sd, vec3 b0, vec3 b1, vec3 b
     vec3 s2 = perEmitter ? own * b2[e] : b2;
     vec3 s3 = perEmitter ? own * b3[e] : b3;
     vec3 light = w0 * rung.x * s0 + w1 * rung.y * s1 + w2 * rung.z * s2 + w3 * rung.w * s3 + w4 * own;
-    total += mask * a.x * b.rgb * clDrift(lit * light, own, drift, sharpness);
+    total += mask * lit * a.x * b.rgb * light;
   }
   return total;
 }
@@ -539,8 +534,10 @@ vec3 curveLight(vec2 p, vec3 b0, vec3 b1, vec3 b2, vec3 b3, bool perEmitter) {
     if (uClEmit[e * ${EMIT_VEC4}].z < 0.5) continue;
     vec2 q = p - clAnchor(e);
     float sd = clEmitterMask(e, q);
-    color += clNear(e, q, light1, light2, sd);
-    color += clFar(e, light1, light2, sd, b0, b1, b2, b3, perEmitter);
+    // The color drifts with the emitter's summed light at the pixel, so a dim part (a faint fill, the end of a tail)
+    // drifts like the light there, whatever part it belongs to.
+    vec3 lit = clNear(e, q, light1, light2, sd) + clFar(e, light1, light2, sd, b0, b1, b2, b3, perEmitter);
+    color += clDrift(lit, uClEmit[e * ${EMIT_VEC4} + 2].rgb, uClEmit[e * ${EMIT_VEC4} + 3], uClEmit[e * ${EMIT_VEC4} + 4].x);
   }
   return color;
 }

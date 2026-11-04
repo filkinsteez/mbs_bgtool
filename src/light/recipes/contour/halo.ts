@@ -257,14 +257,15 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   // Light falls 20 to 60 times from the hot spot to the far end of the visible curve (sized at the default
   // hot spot, so the Light control moves the light without resizing it). The light field is six times longer
   // across the curve, so the glow keeps its long fade outward near the hot spot.
-  const power = lerp(2, 3, rand())
-  const across = normalNear(path, hot, 12)
-  const factor = lerp(20, 60, rand())
-  const stretch = { direction: normalNear(path, home, 12), by: 6 }
   // A Tan light keeps most of its light at or above Tan's own brightness: near full along most of the curve, then
   // a rounded shoulder and the same 20 to 60 times fall over a short stretch (a flat-top field).
   const bright = warmTail(light.hex) === 'bright'
-  const radius = bright ? flatRadius(path, home, factor, FLAT_POWER, stretch) : falloffRadius(path, home, factor, power, stretch)
+  const powerDraw = rand()
+  const power = bright ? FLAT_POWER : lerp(2, 3, powerDraw)
+  const across = normalNear(path, hot, 12)
+  const factor = lerp(20, 60, rand())
+  const stretch = { direction: normalNear(path, home, 12), by: 6 }
+  const radius = bright ? flatRadius(path, home, factor, power, stretch) : falloffRadius(path, home, factor, power, stretch)
   const drift = warmDrift(light.hex)
   const params: Record<string, ParamValue> = {
     ring1On: true,
@@ -286,7 +287,7 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     light1Kind: bright ? 5 : 3,
     light1At: at.map(round4),
     light1Radius: round4(radius),
-    light1Power: round4(bright ? FLAT_POWER : power),
+    light1Power: round4(power),
     light1Stretch: 6,
     light1Angle: round4((Math.atan2(across[1], across[0]) * 180) / Math.PI),
     light2Kind: 0,

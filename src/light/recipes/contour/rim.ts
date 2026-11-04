@@ -2,7 +2,6 @@ import type { ColorPack } from '../../color/packs'
 import type { ComposeInput, Composition, ParamSpec, ParamValue, RecipeContext, RecipeDefinition } from '../../scene'
 import {
   blockPlan,
-  falloffRadius,
   FLAT_POWER,
   flatRadius,
   frameSize,
@@ -334,16 +333,16 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   const reachDraw = rand()
   const powerDraw = rand()
   const hotDraw = rand()
-  // Away from a line, light field 1 falls 10 to 30 times from the hot spot to the far end of the curve in the frame
-  // (with the hot core on top, the edge ends up about 40 to 120 times dimmer there). It is sized at the default hot
-  // spot, so the Light control moves the light without resizing it.
-  const power = line ? lerp(1.4, 2.2, powerDraw) : lerp(2, 3, powerDraw)
-  // A Tan edge keeps most of its light at or above Tan's own brightness: near full along most of the curve, then a
-  // rounded shoulder and the same fall over a short stretch (a flat-top field), with a glow that ends sooner.
+  // Away from a line, light field 1 is a flat-top field: near full along a stretch around the hot spot, then a
+  // rounded shoulder, 10 to 30 times dimmer at the far end of the curve in the frame (the rim-edge reference stays
+  // at 90% for about a third of the short side and is at 10% by 0.9; its fall fits a power of about 2.8). It is
+  // sized at the default hot spot, so the Light control moves the light without resizing it. A Tan edge keeps most
+  // of its light at or above Tan's own brightness: a flatter top, a shorter fall and a glow that ends sooner.
   const bright = warmTail(light.hex) === 'bright'
+  const power = line ? lerp(1.4, 2.2, powerDraw) : bright ? FLAT_POWER : lerp(2.4, 3.2, powerDraw)
   const factor = lerp(10, 30, reachDraw)
   const lineReach = lerp(0.22, 0.34, reachDraw) * Math.max(fw, fh)
-  const reach = line ? lineReach : bright ? flatRadius(run, home, factor, FLAT_POWER) : falloffRadius(run, home, factor, power)
+  const reach = line ? lineReach : flatRadius(run, home, factor, power)
   // A logo crop's edges catch the light where they face the way the outline faces at the default hot spot, so the
   // hot spot's own edge is always fully lit (around a hole tip the outline faces back toward the logo's middle).
   const outwardAt = (p: Vec2): number => {
@@ -367,9 +366,10 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     ...productionParts('', {
       side: layout.oneSided ? 1 : 0,
       soften,
-      face: layout.oneSided ? 0.012 : 0,
+      // The rim-edge reference's face glows navy near the corner, about 8% of the light's own level.
+      face: layout.oneSided ? 0.12 : 0,
       glow: line ? 0.006 : 0.005,
-      fan: line ? 4 : 1.8,
+      fan: line ? 4 : 3,
       spread: line ? 0.003 : 0,
     }),
     // Lines widen gradually toward the bright end (growth follows the long light, not the hot spot) and open into a haze there.
@@ -380,13 +380,14 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     facingAngle: round4(toward),
     facingPower: 1.5,
     farWidth: 0.01,
-    light1Kind: bright ? 5 : 3,
+    light1Kind: line ? 3 : 5,
     light1At: at.map(round4),
     light1Radius: round4(reach),
-    light1Power: round4(bright ? FLAT_POWER : power),
+    light1Power: round4(power),
     light2Kind: 1,
     light2At: at.map(round4),
-    light2Radius: round4(lerp(0.06, 0.12, hotDraw)),
+    // A broad hot spot: the overexposed core covers a stretch of the edge, not a point (rim-edge reference).
+    light2Radius: round4(lerp(0.18, 0.36, hotDraw)),
     base: base.gain > 0 ? 3 : 0,
     baseGain: base.gain,
     gain: round4(gain),
