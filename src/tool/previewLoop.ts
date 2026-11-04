@@ -6,6 +6,16 @@ const SETTLE_MS = 250
 const SLOW_SETTLE_MS = 300
 /** The render that has the driver build a look's programs for drawing before the look is shown. */
 const WARM_SIZE = { width: 96, height: 54 }
+/** While frames come back out of date (a drag or a slider moving), one that would take more GPU time than this at full size is drawn smaller. */
+const MOVING_GPU_MS = 12
+/** The GPU time a smaller moving frame aims for. */
+const MOVING_TARGET_MS = 8
+/** Sizes a moving frame may be drawn at, against the canvas; the browser scales it up. */
+const MOVING_SCALES = [1, 0.75, 0.5]
+/** Without a GPU timer: a moving frame that takes longer than this to reach the canvas counts as too slow. */
+const LATE_FRAME_MS = 25
+/** Updates closer together than this are a drag or a slider moving; this long after the last, frames are full size again. */
+const MOVING_QUIET_MS = 100
 
 type Step = 'done' | 'waiting' | 'failed'
 
@@ -15,6 +25,9 @@ interface InFlight {
   sync: WebGLSync | null
   start: number
   supersample: 1 | 2
+  /** Its size against the canvas: below 1 while moving. */
+  scale: number
+  /** The canvas size it was drawn for. */
   size: string
   version: number
   /** Some of its programs were drawn for the first time, so its time includes the driver building them. */
@@ -27,6 +40,8 @@ interface InFlight {
 interface Timing {
   query: WebGLQuery
   supersample: 1 | 2
+  scale: number
+  fresh: boolean
 }
 
 /** A look, with or without a filter, drawn once at a tiny size in idle time. */
@@ -50,6 +65,16 @@ const whenIdle = (callback: () => void): number =>
 const cancelIdle = (handle: number): void => {
   if (typeof cancelIdleCallback === 'function') cancelIdleCallback(handle)
   else clearTimeout(handle)
+}
+
+/** The size for moving frames when a full-size 1x frame takes `fullMs` of GPU time: the largest that fits MOVING_TARGET_MS once it is over MOVING_GPU_MS. */
+function movingScaleFor(fullMs: number): number {
+  if (fullMs <= MOVING_GPU_MS) return 1
+  return MOVING_SCALES.find((scale) => fullMs * scale * scale <= MOVING_TARGET_MS) ?? MOVING_SCALES[MOVING_SCALES.length - 1]
+}
+
+function smallerScale(scale: number): number {
+  return MOVING_SCALES.find((s) => s < scale) ?? MOVING_SCALES[MOVING_SCALES.length - 1]
 }
 
 /**
@@ -88,6 +113,12 @@ export class PreviewLoop {
   private warming: Warming | null = null
   private timing: Timing | null = null
   private timingFrame = 0
+  /** Updates are arriving close together (a drag or a slider moving). */
+  private moving = false
+  private lastUpdate = -Infinity
+  private quietTimer: ReturnType<typeof setTimeout> | undefined
+  /** The size moving frames are drawn at, from the GPU time of recent 1x frames. */
+  private movingScale = 1
   private paused = false
   private lost = false
   private readonly handleLost = () => {
@@ -109,6 +140,18 @@ export class PreviewLoop {
     this.width = width
     this.height = height
     this.version++
+    const now = performance.now()
+    this.moving = now - this.lastUpdate < MOVING_QUIET_MS
+    this.lastUpdate = now
+    clearTimeout(this.quietTimer)
+    // Right after the last change the frame is drawn again at full size, before the settled 2x frame.
+    if (this.moving) {
+      this.quietTimer = setTimeout(() => {
+        this.quietTimer = undefined
+        this.moving = false
+        this.schedule()
+      }, MOVING_QUIET_MS)
+    }
     this.schedule()
   }
 
@@ -120,6 +163,7 @@ export class PreviewLoop {
 
   dispose(): void {
     this.cancel()
+    clearTimeout(this.quietTimer)
     if (this.idle) cancelIdle(this.idle)
     this.idle = 0
     if (this.timingFrame) cancelAnimationFrame(this.timingFrame)
@@ -179,18 +223,22 @@ export class PreviewLoop {
       if (!this.renderer.presentWithoutWaiting()) return 'waiting'
       this.inFlight = null
       this.record(frame)
-      if (frame.version === this.version && frame.supersample === supersample) return 'done'
+      // Once a smaller frame comes back up to date (the drag or slider stopped), the next one is full size.
+      if (frame.version === this.version && frame.supersample === supersample && frame.scale === this.scaleFor(supersample)) return 'done'
     }
     const scene = this.scene
     if (!scene) return 'failed'
     if (!gpu.compiled(this.compiling)) return 'waiting'
+    const scale = this.scaleFor(supersample)
+    const width = Math.max(1, Math.round(this.width * scale))
+    const height = Math.max(1, Math.round(this.height * scale))
     const start = performance.now()
     const finished = gpu.finishedPrograms
     const timer = gpu.beginTimer()
     let ready = false
     try {
       // Presented once the GPU has finished it: resizing the canvas before then would wait for the GPU.
-      const stats = this.renderer.render(scene, { width: this.width, height: this.height, supersample, background: true })
+      const stats = this.renderer.render(scene, { width, height, supersample, background: true })
       this.compiling = stats.compiling
       ready = stats.ready
     } catch (error) {
@@ -205,8 +253,13 @@ export class PreviewLoop {
       return 'waiting'
     }
     const fresh = gpu.finishedPrograms !== finished
-    this.inFlight = { sync: gpu.fence(), start, supersample, size: this.sizeKey(), version: this.version, fresh, timer }
+    this.inFlight = { sync: gpu.fence(), start, supersample, scale, size: this.sizeKey(), version: this.version, fresh, timer }
     return 'waiting'
+  }
+
+  /** Settled frames and frames while nothing moves are full size. */
+  private scaleFor(supersample: 1 | 2): number {
+    return supersample === 1 && this.moving ? this.movingScale : 1
   }
 
   /**
@@ -216,15 +269,17 @@ export class PreviewLoop {
   private record(frame: InFlight): void {
     const ms = performance.now() - frame.start
     if (frame.supersample === 2 && ms > SLOW_SETTLE_MS && !frame.fresh) this.slowSizes.add(frame.size)
+    if (frame.supersample === 1 && !frame.timer && !frame.fresh && this.moving) this.movingScale = ms > LATE_FRAME_MS ? smallerScale(frame.scale) : frame.scale
     this.frames++
     this.canvas.dataset.frame = String(this.frames)
     this.canvas.dataset.supersample = String(frame.supersample)
-    this.canvas.dataset.renderSize = frame.size
+    this.canvas.dataset.scale = String(frame.scale)
+    this.canvas.dataset.renderSize = `${Math.max(1, Math.round(this.width * frame.scale))}x${Math.max(1, Math.round(this.height * frame.scale))}`
     this.canvas.dataset[frame.supersample === 2 ? 'settledMs' : 'fastMs'] = ms.toFixed(1)
     if (!frame.timer) return
     if (this.timing) this.renderer.gpu.deleteTimer(this.timing.query)
     if (this.timingFrame) cancelAnimationFrame(this.timingFrame)
-    this.timing = { query: frame.timer, supersample: frame.supersample }
+    this.timing = { query: frame.timer, supersample: frame.supersample, scale: frame.scale, fresh: frame.fresh }
     this.readTiming()
   }
 
@@ -238,7 +293,9 @@ export class PreviewLoop {
       return
     }
     this.timing = null
-    if (ms !== null) this.canvas.dataset[timing.supersample === 2 ? 'settledGpuMs' : 'fastGpuMs'] = ms.toFixed(1)
+    if (ms === null) return
+    this.canvas.dataset[timing.supersample === 2 ? 'settledGpuMs' : 'fastGpuMs'] = ms.toFixed(1)
+    if (timing.supersample === 1 && !timing.fresh) this.movingScale = movingScaleFor(ms / (timing.scale * timing.scale))
   }
 
   /** The shown look, then the shown look with each filter (a filter's output pass is the same in every look), then the other looks. */
@@ -262,12 +319,16 @@ export class PreviewLoop {
     this.idle = 0
     if (this.lost || !this.warmQueue) return
     const gpu = this.renderer.gpu
-    const previewIdle = !this.inFlight && !this.fastFrame && !this.settleFrame && this.settleTimer === undefined
+    // Nothing starts while the preview is busy, compiles included: they share the GPU process with a drag's frames.
+    const previewIdle =
+      this.canvas.dataset.settled === 'true' && !this.inFlight && !this.fastFrame && !this.settleFrame && this.settleTimer === undefined
     try {
       if (!this.warming) {
-        const item = this.warmQueue.shift()
-        if (!item) return
-        this.warming = { ...item, sources: this.renderer.prepare(item.recipe), sync: null, drawn: false }
+        if (previewIdle) {
+          const item = this.warmQueue.shift()
+          if (!item) return
+          this.warming = { ...item, sources: this.renderer.prepare(item.recipe), sync: null, drawn: false }
+        }
       } else if (!this.warming.sync) {
         if (previewIdle && gpu.compiled(this.warming.sources)) {
           const { recipe, output } = this.warming
