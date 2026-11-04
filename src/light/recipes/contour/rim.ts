@@ -372,9 +372,10 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     const r = (layout.shape.rotate * Math.PI) / 180
     return 0.5 + ((p[0] - layout.anchor[0]) * Math.cos(r) + (p[1] - layout.anchor[1]) * Math.sin(r)) / layout.shape.size
   }
-  const partner = line && !warmTail(light.hex) ? linePartner(pack, light) : null
+  const partner = line ? linePartner(pack, light) : null
   const littleRed = (hex: string) => parseInt(hex.slice(1, 3), 16) < 64
   const lineColor = partner ? { partner, bright: along1(brightEnd), far: along1(farEnd) } : null
+  const warmLine = line && warmTail(light.hex) === 'deep red'
   const params: Record<string, ParamValue> = {
     shape: SHAPE_KINDS.indexOf(layout.shape.kind) + 1,
     at: toFrame(layout.anchor, aspect).map(round4),
@@ -403,6 +404,23 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     // and little haze, so the end opens as a cone rather than a cloud.
     ...(line
       ? { n2Weight: 0.55, n2Shape: 3, n2Grow: 1, n2GrowBy: [6.5, 1], n3Weight: 2, f1Grow: 1, f1GrowBy: [2, 1], f1Weight: 0.12, f1Width: 0.02 }
+      : {}),
+    // A Yellow or Orange-red line's cone is a different hue on each side (the light-line reference: orange on one
+    // side, red on the other): the hot core's part becomes the second side's cone, tinted toward Orange-red for
+    // Yellow and toward orange for Orange-red.
+    ...(warmLine
+      ? {
+          n2Side: 1,
+          n3Weight: 0.55,
+          n3Width: 0.006,
+          n3Shape: 3,
+          n3Side: 2,
+          n3Light: 1,
+          n3LightGamma: 1.2,
+          n3Grow: 1,
+          n3GrowBy: [6.5, 1],
+          n3Tint: light.hex.toUpperCase() === '#FFD61E' ? [1, 0.35, 0.1] : [1, 4, 1],
+        }
       : {}),
     ...(drift ? { drift: drift.ratios, driftShape: [drift.knee, drift.sharpness] } : {}),
     // A Tan edge's glow is two bands side by side just inside the edge, a flat stretch a little above Tan's level

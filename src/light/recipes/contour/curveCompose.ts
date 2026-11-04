@@ -593,7 +593,7 @@ export function ringPartner(pack: ColorPack, light: PackColor): PackColor | null
 /**
  * The pack color a cool light's line turns toward at its far end (the light-line reference runs from blue to
  * white): Meta Blue toward Cyan or Ice, Cyan, Ice and Steel toward Meta Blue. Null for Meta Blue in Elemental and
- * for warm lights, whose drift already changes their color along the line.
+ * for warm lights: their drift toward deep red as they dim would take the blue out of a Meta Blue end.
  */
 export function linePartner(pack: ColorPack, light: PackColor): PackColor | null {
   const has = (hex: string) => pack.colors.find((c) => c.hex.toUpperCase() === hex) ?? null
