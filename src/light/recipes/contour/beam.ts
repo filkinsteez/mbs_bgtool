@@ -21,6 +21,8 @@ import {
   tailParams,
   tailUniform,
   turnParam,
+  veiled,
+  veilParam,
   wrapAngle,
 } from './beam-compose'
 
@@ -77,6 +79,8 @@ uniform float uVignette;
 uniform vec4 uTurn;       // a dragged line: cos and sin of the stage's turn on screen, offset (stage = turn^-1 screen + offset)
 uniform vec2 uSource;     // world heights where the beam starts and where it has all its light
 uniform float uCeilingTop; // how far above its ceiling the ceiling haze thins out (screen; 0: it doesn't)
+uniform vec2 uLaneShape;  // floor gloss lanes: weight of the finer, blotchier lanes, how fast a lane changes along its length
+uniform vec4 uVeil;       // a cool light's haze: veil color share (1: full color), level of the full color (share of the clipping luminance), band width (octaves), dark haze luminance
 
 const int BEAM_STEPS = 16;
 
@@ -322,9 +326,9 @@ vec3 radiance(vec2 uv, vec2 screen) {
         // away, at grazing angles, every board reflects alike, so the lanes fade in below the
         // pool and no dull board starts at the pool line.
         vec2 l = floorAt / (uLanes.y * a);
-        l.x += 0.35 * valueNoise(vec2(l.y * 0.08, 7.3), uSeed + 127);
-        l.y *= 0.08;
-        float n = 0.65 * valueNoise(l, uSeed + 131) + 0.35 * valueNoise(vec2(2.1 * l.x, 2.1 * l.y + 3.5), uSeed + 137);
+        l.x += 0.35 * valueNoise(vec2(l.y * uLaneShape.y, 7.3), uSeed + 127);
+        l.y *= uLaneShape.y;
+        float n = (1.0 - uLaneShape.x) * valueNoise(l, uSeed + 131) + uLaneShape.x * valueNoise(vec2(2.1 * l.x, 2.1 * l.y + 3.5), uSeed + 137);
         lanes = exp(uLanes.x * smoothstep(0.02, 0.3, travel / zb) * n);
       }
       reflection = uFloorLook.x * fresnel * lanes * (uBeamLight.x * mirrored + mBounce);
@@ -345,11 +349,19 @@ vec3 radiance(vec2 uv, vec2 screen) {
   float level = scatter + direct * lumLight / lumHaze;
   float fall = warmFall(level);
   vec3 tail = warmTail(level);
+  // A cool light's haze is a pale veil of its color, with the full color only in a band of
+  // levels; its darks are a faint haze of the veil, not black.
+  vec3 veil = mix(vec3(lumHaze), uHazeColor, uVeil.x);
+  if (uTail.w <= 0.0 && uVeil.x < 1.0) {
+    float clip = lumHaze / max(max(uHazeColor.r, uHazeColor.g), uHazeColor.b);
+    float octaves = log2(max(level * lumHaze, 1e-6) / (uVeil.y * clip)) / max(uVeil.z, 0.05);
+    tail = mix(veil, uHazeColor, exp(-0.5 * octaves * octaves));
+  }
   vec3 scattered = scatter * fall * mix(tail, paleColor, pale);
   vec3 ownColor = uTail.w > 0.0 ? fall * tail * (lumLight / lumHaze) : uLightColor;
   vec3 directColor = mix(ownColor, uPaleTarget * lumLight, uPaleWhite * pale);
   vec3 ambient = uBaseColor * mix(uAmbient.x * (1.0 - uAmbient.y + uAmbient.y * hazeHere), uAmbient.z, onFloor);
-  vec3 color = ambient + scattered + directColor * direct;
+  vec3 color = ambient + scattered + directColor * direct + uVeil.w * veil / lumHaze;
 
   vec2 half_ = 0.5 * uFrameAspect;
   float vig = 1.0 - uVignette * dot(screen, screen) / dot(half_, half_);
@@ -360,8 +372,11 @@ vec3 radiance(vec2 uv, vec2 screen) {
 /** Luminance one unit of scattered light should have, whatever the pack's haze color. */
 const HAZE_LUMINANCE = 0.12
 
-/** Share of its clipping level one unit of a warm light's scattered light reaches. */
-const WARM_SHARE = 0.9
+/**
+ * Share of its clipping level one unit of a warm light's scattered light reaches: low enough
+ * that the dense haze near the floor stays the light's own color instead of a wide white area.
+ */
+const WARM_SHARE = 0.65
 
 /**
  * Warm haze dimmer than this share of its clipping level falls toward black faster, and
@@ -383,6 +398,9 @@ const EDGE_HAZE = 1
  * 1x preview; crisper edges (the beam-pool reference's flare line) keep full resolution.
  */
 const HALF_SCALE_EDGE = 0.012
+
+/** Screen radius of a narrow beam; broader beams keep floor boards about this wide. */
+const NARROW_WIDTH = 0.11
 
 /**
  * Pack output. A wide, nearly parallel beam lands on the stage's edge and is seen
@@ -414,7 +432,10 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
   const [onRight, leaning, broad, cone] = seedLayout(pack, seed, 0xbea)
   const [floorShare, poolShare] = seedShares(seed, 0xbea, 2, random)
   const either = (choice: number, lo: [number, number], hi: [number, number]) => (choice ? lerp(hi[0], hi[1], random()) : lerp(lo[0], lo[1], random()))
-  const edgeAt = wide ? lerp(0.52, 0.82, floorShare) : lerp(0.56, 0.84, floorShare)
+  let edgeAt = wide ? lerp(0.52, 0.82, floorShare) : lerp(0.56, 0.84, floorShare)
+  // A broad beam that would land in front of the edge lands on it instead, with the edge moved
+  // down to where its oval pool would have been, so the pool's height still spreads over seeds.
+  if (broad && poolShare >= 0.5) edgeAt = lerp(edgeAt + 0.05, Math.min(0.9, edgeAt + 0.2), poolShare * 2 - 1)
   const floorY = -halfH + 2 * halfH * edgeAt
   const drop = lerp(0.14, 0.34, random())
   const horizon = floorY - drop
@@ -429,19 +450,22 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
   // Upright, or leaning 16 to 25 degrees either way.
   const lean = leaning ? (random() < 0.5 ? -1 : 1) * lerp(0.45, 0.7, random()) : lerp(-0.06, 0.06, random())
   const tilt = [lean, lerp(-0.04, 0.04, random())]
-  // Half the seeds land the beam on the stage's edge, so its pool is a line as wide as the
-  // beam; the rest land it on the floor in front of the edge, an oval pool between the edge
-  // and 0.9 of the frame's height. `landing` is that depth as the stage uses it (beamWorld).
+  // Every broad beam and half the narrow ones land on the stage's edge, so the pool is a thin
+  // bright line as wide as the beam with the floor's rays fanning from it; the other narrow
+  // ones land on the floor in front of the edge, an oval pool between the edge and 0.9 of the
+  // frame's height (a broad oval fills the floor). `landing` is that depth as the stage uses
+  // it (beamWorld).
   let landing = lerp(-0.15, 0.1, Math.min(1, poolShare * 2))
-  if (poolShare >= 0.5) {
+  if (poolShare >= 0.5 && !broad) {
     const poolAt = lerp(edgeAt + 0.05, Math.min(0.9, edgeAt + 0.2), poolShare * 2 - 1)
     const k = 1 - (-halfH + 2 * halfH * poolAt - horizon) / drop
     landing = (k * focal) / width
   }
 
   const power = geo(intensity, 0.35, 0.75, 1.6) * hazeGain * lerp(0.9, 1.1, random())
-  // Warm light already sits near nominal over the whole beam, so its pool is less hot.
-  const pool = lerp(6, 8.5, random()) * (luminanceOf(light.haze) / Math.max(luminanceOf(light.light), 0.01)) * (light.toe > 0 ? 0.5 : 1)
+  // Warm light already sits near nominal over the whole beam, so its pool is less hot and
+  // never a wide white area.
+  const pool = lerp(6, 8.5, random()) * (luminanceOf(light.haze) / Math.max(luminanceOf(light.light), 0.01)) * (light.toe > 0 ? 0.3 : 1)
 
   const params: Record<string, ParamValue> = {
     horizon: round4(horizon),
@@ -460,9 +484,12 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     extinction: round4(lerp(0, 0.25, random())),
     haze: round4(lerp(0.03, 0.045, random())),
     ceiling: [round4(lerp(1, 1.5, random())), round4(lerp(0.12, 0.2, random())), round4(-halfH - lerp(0, 0.1, random()))],
-    floorHaze: [round4(lerp(2.6, 3.8, random())), round4(lerp(0.12, 0.2, random()))],
+    // Denser haze just over the floor, so the column brightens toward its pool, but not so
+    // dense that its base turns into a wide white area.
+    floorHaze: [round4(lerp(1.6, 2.3, random())), round4(lerp(0.12, 0.2, random()))],
     forward: round4(lerp(-0.1, 0.15, random())),
-    hazeNoise: [round4(lerp(0.08, 0.15, random())), round4(lerp(2, 3, random())), round4(lerp(0.6, 1.1, random()))],
+    // Layers of denser and thinner haze along the column, about two per short side.
+    hazeNoise: [round4(lerp(0.14, 0.22, random())), round4(lerp(0.8, 1.2, random())), round4(lerp(1.8, 2.6, random()))],
     // The pool lights the haze above it in a dome that falls off faster sideways than upward,
     // and the haze spills its light onto the floor just around the pool, so the floor beside
     // the pool stays dark instead of glowing across the frame.
@@ -472,15 +499,22 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     edgeHaze: EDGE_HAZE,
     gloss: [round4(lerp(2.8, 3.4, random())), round4(soft(0.22, 0.32))],
     texture: [0.05, 0.006],
-    lanes: [round4(lerp(1.5, 1.9, random())), round4(lerp(0.4, 0.6, random()))],
-    // The color starts toward white from 0.4 of the haze's clipping level and is there by
-    // 1.3 times it, so light passing nominal keeps whitening at the same pace.
-    pale: [round4(lerp(0.5, 0.7, random())), round4(0.4 * clipLuminanceOf(light.haze)), round4(1.3 * clipLuminanceOf(light.haze))],
+    // Boards about as wide whatever the beam's width, each even along its length, so the
+    // floor's rays stay thin and smooth under any beam instead of breaking into spikes.
+    lanes: [round4(lerp(1.4, 1.8, random())), round4(lerp(0.8, 1.2, random()) * Math.min(1, NARROW_WIDTH / width))],
+    laneShape: [0, 0.025],
+    // The color starts toward white from 0.4 of the haze's clipping level (0.3 for a veiled
+    // light, all the way) and is there by 1.3 times it, so light passing nominal keeps
+    // whitening at the same pace.
+    pale: veiled(light)
+      ? [Math.max(1, lerp(0.5, 0.7, random())), round4(0.3 * clipLuminanceOf(light.haze)), round4(1.3 * clipLuminanceOf(light.haze))]
+      : [round4(lerp(0.5, 0.7, random())), round4(0.4 * clipLuminanceOf(light.haze)), round4(1.3 * clipLuminanceOf(light.haze))],
     paleWhite: light.light === light.haze ? 0.5 : 0.2,
     ...tailParams(light, TAIL_BELOW),
     fall: fallParam(light, TAIL_BELOW, TAIL_FALL),
     ambient: [light.baseLevel, 0, light.baseLevel],
     vignette: round4(lerp(0.1, 0.18, random())),
+    veil: veilParam(light),
   }
   if (controls.drag) Object.assign(params, beamOnLine(params, lineInShorts(controls.drag, aspect), halfH))
 
@@ -599,6 +633,8 @@ export const contourBeam: RecipeDefinition = {
     { kind: 'vector', key: 'turn', label: 'Turn', min: -8, max: 8, step: 0.0005, default: [1, 0, 0, 0] },
     { kind: 'vector', key: 'source', label: 'Beam start', min: -50, max: 2, step: 0.005, default: [-50, -49] },
     { kind: 'number', key: 'ceilingTop', label: 'Ceiling haze above', min: 0, max: 1, step: 0.005, default: 0 },
+    { kind: 'vector', key: 'laneShape', label: 'Floor lane shape', min: 0, max: 1, step: 0.0005, default: [0.35, 0.08] },
+    { kind: 'vector', key: 'veil', label: 'Haze veil', min: 0, max: 4, step: 0.0005, default: [1, 1, 1, 0] },
   ],
   fragment: BEAM_GLSL,
   uniforms: (ctx) => {
@@ -637,6 +673,8 @@ export const contourBeam: RecipeDefinition = {
       uTurn: ctx.vec('turn'),
       uSource: ctx.vec('source'),
       uCeilingTop: ctx.num('ceilingTop'),
+      uLaneShape: ctx.vec('laneShape'),
+      uVeil: ctx.vec('veil'),
     }
   },
   radianceScale: (ctx) => (ctx.num('edgeSoftness') >= HALF_SCALE_EDGE ? 0.5 : 1),
