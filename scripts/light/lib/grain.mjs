@@ -52,14 +52,18 @@ function boxPass(src, dst, w, h, radius, horizontal) {
   const len = horizontal ? w : h
   const stride = horizontal ? 1 : w
   const scale = 1 / (2 * radius + 1)
+  const last = len - 1
   for (let line = 0; line < lines; line++) {
     const start = horizontal ? line * w : line
-    const at = (k) => src[start + Math.min(len - 1, Math.max(0, k)) * stride]
+    const first = src[start]
+    const end = src[start + last * stride]
     let sum = 0
-    for (let k = -radius; k <= radius; k++) sum += at(k)
+    for (let k = -radius; k <= radius; k++) sum += src[start + (k < 0 ? 0 : k > last ? last : k) * stride]
     for (let k = 0; k < len; k++) {
       dst[start + k * stride] = sum * scale
-      sum += at(k + radius + 1) - at(k - radius)
+      const add = k + radius + 1
+      const drop = k - radius
+      sum += (add > last ? end : src[start + add * stride]) - (drop < 0 ? first : src[start + drop * stride])
     }
   }
 }
@@ -357,10 +361,15 @@ export function residualSpectrum(hp, mask, w, h, n = 64, maxWindows = 48) {
   return { windows: used, highShare: total > 0 ? high / total : 0, halfFrequency, curve: curve.map((p) => p / (plateau || 1)) }
 }
 
-/** Long runs of one 8-bit value along a gradient: the share of masked pixels in runs of 16 px or more, both ways. */
-export function flatRunShare(planes, lowL, mask, w, h) {
+/**
+ * Banding: the share of measured pixels in runs of 16 px or more of one 8-bit color (all three channels) along
+ * which the blurred luma changes by more than half a code value, both ways. Runs of exact black are left out:
+ * nothing can dither below 0.
+ */
+export function flatRunShare(planes, lowY, mask, w, h) {
   let flagged = 0
   let count = 0
+  const same = (i, p) => planes.R[i] === planes.R[p] && planes.G[i] === planes.G[p] && planes.Bl[i] === planes.Bl[p]
   const runs = (horizontal) => {
     const lines = horizontal ? h : w
     const len = horizontal ? w : h
@@ -369,12 +378,13 @@ export function flatRunShare(planes, lowL, mask, w, h) {
       for (let k = 1; k <= len; k++) {
         const i = horizontal ? line * w + k : k * w + line
         const p = horizontal ? line * w + k - 1 : (k - 1) * w + line
-        if (k < len && planes.G[i] === planes.G[p]) continue
+        if (k < len && same(i, p)) continue
         const runLength = k - start
         if (runLength >= 16) {
           const a = horizontal ? line * w + start : start * w + line
           const b = p
-          if (mask[a] && mask[b] && Math.abs(lowL[a] - lowL[b]) > 0.002) flagged += runLength
+          const black = planes.R[a] === 0 && planes.G[a] === 0 && planes.Bl[a] === 0
+          if (!black && mask[a] && mask[b] && Math.abs(lowY[a] - lowY[b]) > 0.5) flagged += runLength
         }
         start = k
       }
@@ -407,15 +417,21 @@ export function measureGrain(image, { hpSigma, rects = [], cornerRadius = 0, str
   const mask = grainMask(planes, w, h, { hpSigma: sigma, rects, cornerRadius, structure })
   const lowL = blurPlane(planes.L, w, h, sigma)
   const residual = {}
+  let lowY = null
   for (const key of ['L', 'A', 'B', 'Y', 'R', 'G', 'Bl']) {
     const low = key === 'L' ? lowL : blurPlane(planes[key], w, h, sigma)
+    if (key === 'Y') lowY = low
     const hp = new Float32Array(w * h)
     for (let i = 0; i < hp.length; i++) hp[i] = planes[key][i] - low[i]
     residual[key] = hp
   }
-  const pick = (key, test = () => true) => {
-    const out = []
-    for (let i = 0; i < mask.length; i++) if (mask[i] && test(i)) out.push(residual[key][i])
+  const pick = (key, test) => {
+    const plane = residual[key]
+    let count = 0
+    for (let i = 0; i < mask.length; i++) if (mask[i] && (!test || test(i))) count++
+    const out = new Float32Array(count)
+    let k = 0
+    for (let i = 0; i < mask.length; i++) if (mask[i] && (!test || test(i))) out[k++] = plane[i]
     return out
   }
   const used = mask.reduce((sum, v) => sum + v, 0)
@@ -433,23 +449,37 @@ export function measureGrain(image, { hpSigma, rects = [], cornerRadius = 0, str
   const rgb = ['R', 'G', 'Bl'].map((key) => pick(key))
   const acf = radialAutocorrelation(residual.L, mask, w, h)
   const spectrum = residualSpectrum(residual.L, mask, w, h)
-  const bins = []
-  for (let k = 0; k < 10; k++) {
-    const lo = k / 10
-    const hi = (k + 1) / 10
-    const values = pick('L', (i) => lowL[i] >= lo && lowL[i] < hi)
-    if (values.length < minBin) continue
-    bins.push({ lo, hi, n: values.length, stdL: rms(values), stdY: rms(pick('Y', (i) => lowL[i] >= lo && lowL[i] < hi)) })
-  }
-  const bands = Object.fromEntries(
-    BANDS.map(([name, lo, hi]) => {
-      const values = pick('L', (i) => lowL[i] >= lo && lowL[i] < hi)
-      if (values.length < minBin) return [name, null]
-      return [name, { n: values.length, stdL: rms(values), stdY: rms(pick('Y', (i) => lowL[i] >= lo && lowL[i] < hi)) }]
-    }),
-  )
+  // One pass of sums per lightness bin (0.1 wide) and band.
+  const sums = (count) => Array.from({ length: count }, () => ({ n: 0, l: 0, l2: 0, y: 0, y2: 0 }))
+  const binSums = sums(10)
+  const bandSums = sums(BANDS.length)
   let meanL = 0
-  for (let i = 0; i < mask.length; i++) if (mask[i]) meanL += lowL[i]
+  for (let i = 0; i < mask.length; i++) {
+    if (!mask[i]) continue
+    const level = lowL[i]
+    meanL += level
+    const l = residual.L[i]
+    const y = residual.Y[i]
+    const add = (s) => {
+      s.n++
+      s.l += l
+      s.l2 += l * l
+      s.y += y
+      s.y2 += y * y
+    }
+    add(binSums[Math.min(9, Math.max(0, Math.floor(level * 10)))])
+    BANDS.forEach(([, lo, hi], k) => {
+      if (level >= lo && level < hi) add(bandSums[k])
+    })
+  }
+  const spread = (s) => ({
+    n: s.n,
+    stdL: Math.sqrt(Math.max(0, s.l2 / s.n - (s.l / s.n) ** 2)),
+    stdY: Math.sqrt(Math.max(0, s.y2 / s.n - (s.y / s.n) ** 2)),
+  })
+  const bins = binSums.flatMap((s, k) => (s.n >= minBin ? [{ lo: k / 10, hi: (k + 1) / 10, ...spread(s) }] : []))
+  const bands = Object.fromEntries(BANDS.map(([name], k) => [name, bandSums[k].n >= minBin ? spread(bandSums[k]) : null]))
+  const sampleStep = Math.max(1, Math.floor(valuesL.length / 400_000))
   return {
     width: w,
     height: h,
@@ -458,7 +488,7 @@ export function measureGrain(image, { hpSigma, rects = [], cornerRadius = 0, str
     usedShare: used / (w * h),
     meanL: used ? meanL / used : NaN,
     stdL,
-    robustStdL: robustStd(valuesL),
+    robustStdL: robustStd(valuesL.filter((_, i) => i % sampleStep === 0)),
     stdY: rms(pick('Y')),
     mono: (stdL * stdL) / (stdL * stdL + stdA * stdA + stdB * stdB),
     rgbCorrelation: (correlation(rgb[0], rgb[1]) + correlation(rgb[1], rgb[2]) + correlation(rgb[0], rgb[2])) / 3,
@@ -470,7 +500,7 @@ export function measureGrain(image, { hpSigma, rects = [], cornerRadius = 0, str
     acfHalf: acf.half,
     acfHalfShort: acf.half / short,
     spectrum,
-    flatRuns: flatRunShare(planes, lowL, mask, w, h),
+    flatRuns: flatRunShare(planes, lowY, mask, w, h),
     bands,
     bins,
     mask,
