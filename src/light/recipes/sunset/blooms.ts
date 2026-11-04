@@ -55,7 +55,7 @@ function glowParams(i: number, glow: GlowSpec): ParamSpec[] {
     vec(`glow${n}At`, `Glow ${n} at`, -1, 2, 0.005, glow.at),
     num(`glow${n}Radius`, `Glow ${n} radius`, 0.05, 2.5, 0.005, glow.radius),
     num(`glow${n}Aniso`, `Glow ${n} width / height`, 1, 12, 0.05, glow.aniso),
-    num(`glow${n}Angle`, `Glow ${n} tilt`, -60, 60, 0.5, glow.angle),
+    num(`glow${n}Angle`, `Glow ${n} tilt`, -360, 360, 0.01, glow.angle),
     num(`glow${n}Gain`, `Glow ${n} gain`, 0, 4, 0.01, glow.gain),
     num(`glow${n}Beta`, `Glow ${n} falloff`, 1, 5, 0.01, glow.beta),
     num(`glow${n}Haze`, `Glow ${n} haze`, 0, 8, 0.01, glow.haze),
@@ -72,7 +72,7 @@ const PARAMS: readonly ParamSpec[] = [
   vec('zenithAt', 'Zenith at', -1, 2, 0.005, [1.16, -0.12]),
   num('zenithRadius', 'Zenith radius', 0.1, 3, 0.005, 0.48),
   num('zenithAniso', 'Zenith width / height', 1, 8, 0.05, 1.9),
-  num('zenithAngle', 'Zenith tilt', -60, 60, 0.5, -16),
+  num('zenithAngle', 'Zenith tilt', -360, 360, 0.01, -16),
   num('zenithAmount', 'Zenith amount', 0, 2, 0.01, 0.6),
   num('zenithFalloff', 'Zenith falloff', 1, 5, 0.01, 2.6),
   num('zenithHold', 'Zenith keeps its hex under the darker top (0: darkens with the sky)', 0, 1, 0.01, 0),
@@ -83,6 +83,7 @@ const PARAMS: readonly ParamSpec[] = [
   num('skyTop', 'Sky stops darker at the top', 0, 3, 0.01, 0),
   num('skyMid', 'Sky exact hex height', 0, 1, 0.005, 0.5),
   num('skyTilt', 'Sky darkening tilt', -1, 1, 0.005, 0),
+  num('skyTurn', 'Sky darkening turned about the frame middle, degrees', -180, 180, 0.01, 0),
   num('skyVary', 'Sky light variation', 0, 0.1, 0.001, 0),
   num('lensRadius', 'Lens radius, short sides; the scene is seen through it (0: off)', 0, 0.3, 0.0005, 0),
   num('glowCore', 'Glow core: extra light in a narrower core at each source, over its peak', 0, 2, 0.01, 0),
@@ -124,7 +125,7 @@ function readLayout(ctx: RecipeContext): BloomsLayout {
       hold: ctx.num('zenithHold'),
       meet: ctx.num('zenithMeet'),
     },
-    sky: { top: ctx.num('skyTop'), mid: ctx.num('skyMid'), tilt: ctx.num('skyTilt'), vary: ctx.num('skyVary') },
+    sky: { top: ctx.num('skyTop'), mid: ctx.num('skyMid'), tilt: ctx.num('skyTilt'), vary: ctx.num('skyVary'), turn: ctx.num('skyTurn') },
     core: ctx.num('glowCore'),
     warp: ctx.num('warp'),
     warpScale: ctx.num('warpScale'),
@@ -151,6 +152,7 @@ function layoutParams(layout: BloomsLayout): Record<string, ParamValue> {
     skyTop: layout.sky.top,
     skyMid: layout.sky.mid,
     skyTilt: layout.sky.tilt,
+    skyTurn: layout.sky.turn,
     skyVary: layout.sky.vary,
     glowCore: layout.core,
     warp: layout.warp,
@@ -332,6 +334,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     uSky: scale(sky, skyGain),
     uDeep: scale(slot(z.color), skyGain),
     uSkyRamp: [layout.sky.top, layout.sky.mid, layout.sky.tilt, layout.sky.vary],
+    uSkyTurn: [Math.cos((layout.sky.turn * Math.PI) / 180), Math.sin((layout.sky.turn * Math.PI) / 180)],
     uZenithShape: [z.at[0], z.at[1], clamp(z.amount, 0, 2), z.falloff],
     uZenithHold: clamp(z.hold, 0, 1),
     uZenithMeet: clamp(z.meet, 0, 0.9),
@@ -433,6 +436,7 @@ uniform vec3 uGlowCoreTint[GLOW_COUNT]; // color of that core light, the light's
 uniform vec3 uSky;
 uniform vec3 uDeep;
 uniform vec4 uSkyRamp;                // stops darker at the top, height of the exact hex, tilt, light variation
+uniform vec2 uSkyTurn;                // cos, sin of the angle the sky ramp is turned by about the frame middle
 uniform vec4 uZenithShape;           // center (frame fractions), amount, falloff exponent
 uniform float uZenithHold;           // 1: the deep area keeps its hex under the darker top; 0: it darkens with the sky
 uniform float uZenithMeet;           // share of the blue's light taken away where the deep area comes in
@@ -561,7 +565,9 @@ vec3 bloomsScene(vec2 uv) {
   // bent by the shared warp) and above it gets darker without changing hue; a dark pack color comes in
   // only where it is already dark, so blue and it meet without a lighter purple or teal band between.
   // It also varies slowly in brightness, with the hex at the mean.
-  float vSky = uv.y + uSkyRamp.z * (uv.x - 0.5) + warp.y / frame.y;
+  // The ramp is read in a frame turned by uSkyTurn (in short-side units, so the turn keeps its angle).
+  vec2 turned = vec2(uSkyTurn.x * P.x - uSkyTurn.y * P.y, uSkyTurn.y * P.x + uSkyTurn.x * P.y) / frame + 0.5;
+  float vSky = turned.y + uSkyRamp.z * (turned.x - 0.5) + warp.y / frame.y;
   // The line drifts like a glow edge, on the field row after the deep area's, and its lighter and
   // darker levels drift apart, so the darker top has no ruled edge and no parallel steps.
   float fromLine = (vSky - uSkyRamp.y) * frame.y * shortUnit;
@@ -661,7 +667,7 @@ vec3 combine(vec2 uv, vec2 p, vec3 direct, vec3 seen) {
     const layout = composeLayout(
       colors.map(hexToLinear),
       seed,
-      { intensity: controls.intensity, softness: controls.softness, rise: controls.mood },
+      { intensity: controls.intensity, softness: controls.softness, rise: controls.mood, drag: controls.drag },
       aspect,
     )
     const soft = clamp(controls.softness, 0, 1)

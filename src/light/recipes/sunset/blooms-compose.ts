@@ -51,12 +51,15 @@ export interface ZenithSpec {
  * heights per frame width) lowers that line on one side, so the side away
  * from the light is deeper. `vary` is slow light variation over the whole sky
  * (one standard deviation, a share of luminance) with the hex at its mean.
+ * `turn` (degrees) turns that whole ramp about the frame's middle, so a
+ * dragged line can point the darkening in any direction.
  */
 export interface SkySpec {
   top: number
   mid: number
   tilt: number
   vary: number
+  turn: number
 }
 
 export interface BloomsLayout {
@@ -85,6 +88,57 @@ export interface BloomsControls {
   intensity: number
   softness: number
   rise: number
+  /** The line dragged on the image, in frame units (`ControlValues.drag`). */
+  drag?: { from: readonly [number, number]; to: readonly [number, number] }
+}
+
+/** Where the lead's light has faded to about a tenth along its long axis, in long radii: the end of a dragged line. */
+const DRAG_REACH = 1.25
+/** The lead's long radius a dragged line can give it, in units of sqrt(width * height). */
+const DRAG_RADIUS: readonly [number, number] = [0.1, 1.6]
+
+/**
+ * The layout for a dragged line. The lead sits at `from` with its long axis along the line and reaches
+ * `to`; the sky darkens along the line; the other blooms and the dark corner keep their places relative
+ * to the lead, turned by the angle between the seed's light direction and the line. Everything moves
+ * smoothly with the line, and nothing is added, removed or swapped.
+ */
+function followDrag(layout: BloomsLayout, drag: NonNullable<BloomsControls['drag']>, aspect: number): BloomsLayout {
+  const frame = [Math.sqrt(aspect), 1 / Math.sqrt(aspect)]
+  const toP = (p: readonly number[]): [number, number] => [(p[0] - 0.5) * frame[0], (p[1] - 0.5) * frame[1]]
+  const fromP = (q: readonly number[]): [number, number] => [q[0] / frame[0] + 0.5, q[1] / frame[1] + 0.5]
+  const line = [(drag.to[0] - drag.from[0]) * frame[0], (drag.to[1] - drag.from[1]) * frame[1]]
+  const length = Math.hypot(line[0], line[1])
+  if (length < 1e-6) return layout
+  const lineAngle = Math.atan2(line[1], line[0])
+  // The seed's light runs the way its sky darkens, where uv.y + tilt (uv.x - 0.5) falls. The turn is kept
+  // within half a turn either way; where it wraps, everything turns by a whole turn, which looks the same.
+  const seedAngle = Math.atan2(-1 / frame[1], -layout.sky.tilt / frame[0])
+  const turn = Math.atan2(Math.sin(lineAngle - seedAngle), Math.cos(lineAngle - seedAngle))
+  const [c, s] = [Math.cos(turn), Math.sin(turn)]
+  const lead = toP(layout.glows[0].at)
+  const start = toP(drag.from)
+  const place = (at: readonly number[]): [number, number] => {
+    const [dx, dy] = [toP(at)[0] - lead[0], toP(at)[1] - lead[1]]
+    return fromP([start[0] + c * dx - s * dy, start[1] + s * dx + c * dy])
+  }
+  const degrees = (turn * 180) / Math.PI
+  const glows = layout.glows.map((glow, i) =>
+    i === 0
+      ? {
+          ...glow,
+          at: [drag.from[0], drag.from[1]] as [number, number],
+          angle: (lineAngle * 180) / Math.PI,
+          radius: clamp(length / DRAG_REACH, DRAG_RADIUS[0], DRAG_RADIUS[1]) / Math.sqrt(glow.aniso),
+        }
+      : { ...glow, at: place(glow.at), angle: glow.angle + degrees },
+  )
+  return {
+    ...layout,
+    glows,
+    zenith: { ...layout.zenith, at: place(layout.zenith.at), angle: layout.zenith.angle + degrees },
+    sky: { ...layout.sky, turn: -degrees },
+  }
 }
 
 const LUMA: Rgb = [0.2126, 0.7152, 0.0722]
@@ -583,6 +637,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     mid: lerp(0.52, 0.38, rise) + plan.mid + lerp(-0.08, 0.08, r()),
     tilt: tiltSide * lerp(plan.tilt[0], plan.tilt[1], r()),
     vary: lerp(0.03, 0.05, r()),
+    turn: 0,
   }
   // With dark colors in the pack (Plum and Forest, Slate and Near-black), the corner away from the
   // light deepens all the way to one of them, so the pack's ground shows as an area of its own. A grey
@@ -630,7 +685,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     zenith.radius = sizeCorner(zenith, aspect, skyFamily ? CORNER_SHARE : OTHER_HUE_CORNER_SHARE, lobes(ZENITH_VARY, seed, ZENITH_LOBE_INDEX))
   }
 
-  return {
+  const layout: BloomsLayout = {
     glows: glows.slice(0, GLOW_COUNT),
     zenith,
     sky,
@@ -641,4 +696,5 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     bridge: lerp(0.85, 1.2, soft),
     bridgeFloor: BRIDGE_FLOOR,
   }
+  return controls.drag ? followDrag(layout, controls.drag, aspect) : layout
 }
