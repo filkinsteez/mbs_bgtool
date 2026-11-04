@@ -375,7 +375,10 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const intensity = clamp01(controls.intensity)
   const softness = clamp01(controls.softness)
   const mood = clamp01(controls.mood)
-  const placed = placeHorizon(mood, seed, aspect)
+  // Each variant puts the line at its own height, so a structure's repeats differ in layout. The
+  // shift fades out toward both ends of the Horizon control, which keep the shared heights.
+  const shared = placeHorizon(mood, seed, aspect)
+  const placed = { ...shared, y: shared.y + [-0.1, 0.05, 0][variant] * Math.min(1, mood / 0.25, (1 - mood) / 0.25) }
   // A dragged line takes the Horizon control's place: the glow sits at its start, the horizon runs
   // across it, and the sky reaches the zenith's color at its end. The seed keeps everything else.
   const line = controls.drag ? rampLine(controls.drag, aspect) : null
