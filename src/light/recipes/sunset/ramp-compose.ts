@@ -528,6 +528,9 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // stay below it, so the top of the frame is the pack's Meta Blue.
   let topHeight = Infinity
   for (let i = 0; i <= 32; i++) topHeight = Math.min(topHeight, -rampAt(frame, axis, -half + (i / 32) * frameWidth, -tall / 2))
+  // Meta Blue holds the top fifth of the frame, or of a short sky the top 45%, which leaves the low
+  // sky room for its own band between the zenith and the glow.
+  const zenithRoom = Math.min(0.2 * tall, 0.45 * topHeight)
   // Over open skies the sky's edges sit between the glow and the top, so they rise with the glow.
   const edgeFloor = ground ? 0 : glowRise
   const skyEdgeAt = -(edgeFloor + look.skyEdge[0] * Math.max(0.1, topHeight - edgeFloor) * within(([[0.5, 0.68], [0.82, 0.98], [0.66, 0.84]] as const)[variant], edgePick))
@@ -579,7 +582,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const topEdge = midSky ? edges[1].map((v, i) => lerp(v, edges[0][i], midAmount)) : edges[0]
   const [topAt, topWidth] = topEdge
   const tail = 0.5 * (1 + 0.5 * Math.max(0, Math.log2((midSky ? lerp(lowGain, midGain, midAmount) : lowGain) / zenithGain)))
-  const room = (topHeight - 0.2 * tall) / (Math.abs(topAt) + tail * topWidth)
+  const room = (topHeight - zenithRoom) / (Math.abs(topAt) + tail * topWidth)
   if (room < 1) edges.forEach((edge) => (edge[0] *= Math.max(0.3, room)))
   // The top edge narrows too; without the step, the lower edge is the top edge.
   const squeeze = Math.max(0.3, Math.min(1, room))
@@ -589,13 +592,12 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // under them, as far as the top fifth allows.
   if (look.lowSky !== look.zenith) {
     const low = edges[edges.length - 1]
-    const highest = -(topHeight - 0.2 * tall - tail * low[1])
+    const highest = -(topHeight - zenithRoom - tail * low[1])
     const under = Math.max(glowRise, land ? anchorY - crest : 0)
     low[0] = Math.max(highest, Math.min(low[0], -(under + 0.3 * skyScale)))
   }
   const gains = midSky ? [zenithGain, midGain, lowGain] : [zenithGain, lowGain]
-  // The band the water around the sun's path mirrors: part way from the glow up to the low sky's edge.
-  const pathBand = Math.min(0.3, Math.max(0.05, 0.7 * (-edges[edges.length - 1][0] - glowRise)))
+  const lowSkyEdge = edges[edges.length - 1][0]
   // The dusk band's edge sits just under the glow's line, hiding the glow's lower part; the band is
   // the sky's own light, so it gains with daylight like the low sky. Its edge is about as soft as
   // land's: the lens softens it, and a wider one mixes the two sides into a third hue.
@@ -606,7 +608,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     const duskAt = -lerp(0.75, 0.9, duskPick) * glowRise
     const margin = 0.3 * (last[1] + duskWidth)
     const above = edges.length > 1 ? edges[edges.length - 2] : null
-    const ceiling = Math.max(-(topHeight - 0.2 * tall - tail * last[1]), above ? above[0] + 0.3 * (above[1] + last[1]) : -Infinity)
+    const ceiling = Math.max(-(topHeight - zenithRoom - tail * last[1]), above ? above[0] + 0.3 * (above[1] + last[1]) : -Infinity)
     last[0] = Math.min(last[0], Math.max(ceiling, duskAt - margin))
     edges.push([Math.max(duskAt, last[0] + margin), duskWidth])
     gains.push(look.dusk[1] * lowGain)
@@ -710,8 +712,9 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // Each variant has its own water: a near mirror with a medium path, deep dark water with a
     // strong path, or between with a faint one.
     sunPath: [water ? look.sunPath * [0.7, 1, 0.45][variant] : 0, 0.02, 0.6, glowRise + 1.2 * bankHeight],
-    // A tall water area keeps its path further down.
-    sunLight: [Math.max(0.3, 0.6 * (0.5 * tall - lineAt)), pathBand],
+    // A tall water area keeps its path further down. Around it the water mirrors the band part
+    // way from the glow up to the low sky's edge.
+    sunLight: [Math.max(0.3, 0.6 * (0.5 * tall - lineAt)), Math.min(0.3, Math.max(0.05, 0.7 * (-lowSkyEdge - glowRise)))],
     // The strip under the line is thin and bright, so it still shows after the lens.
     water: [1.25, lerp(look.waterDegrees[0], look.waterDegrees[1], ridgePick) * [0.6, 1.6, 1][variant], 0.12, 1.5],
     waterMirror: water ? look.waterMirror : 1,

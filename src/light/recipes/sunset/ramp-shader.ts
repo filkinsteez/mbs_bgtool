@@ -452,8 +452,8 @@ const float AIR_ABOVE = 0.02;
 // soft lighter strip under the line changes along it. The sun's path is many short, wide glints
 // on ripples tilted toward the glow: each mirrors the glow instead of the sky above it, so no warm
 // light lands on the mirrored blue (that turns purple). Just under the sun the ripples are seen
-// edge-on and the path is narrow and dense; nearer ones need steeper slopes to glint, so it widens
-// and thins out into sparse glints toward the viewer. Around it the water mirrors the band just
+// edge-on and the path is narrow and dense; nearer ones need steeper slopes to glint, so it keeps
+// widening and fades by having fewer, dimmer glints. Around it the water mirrors the band just
 // above the glow, not the zenith, so the lens blurs the glints into a lighter color, not mauve.
 vec3 rampScene(vec2 p) {
   vec2 q = p;
@@ -488,14 +488,16 @@ vec3 rampScene(vec2 p) {
           float across = p.x - (uSunAt.x - 0.5) * uFrameAspect.x;
           float spread = uSunPath.y + uSunPath.z * depth;
           float fade = exp(-depth / uSunLight.x);
-          float near = min(1.0, 1.3 * uSunPath.x * sqrt(fade) * exp(-0.5 * across * across / (4.0 * spread * spread + 0.01)));
+          // The path keeps its width as it comes closer and fades by having fewer, dimmer glints.
+          float near = min(1.0, 1.3 * uSunPath.x * (0.55 + 0.45 * fade) * exp(-0.5 * across * across / (4.0 * spread * spread + 0.01)));
+          // Around the glints the water mirrors the band just above the glow, not the zenith.
           float band = uSunPath.w + uSunLight.y;
           up = min(up, band + max(up - band, 0.0) * (1.0 - near) * (1.0 - near));
           float density = min(1.0, 1.6 * uSunPath.x * fade * exp(-0.5 * across * across / (spread * spread)));
           float g = 0.5 + 0.5 * hazeNoise(vec2(1.6 * across / spread, 10.0 * log(depth + 0.02)), uSeed + 991);
           float glint = smoothstep(1.0 - density, 1.25 - density, g) * near;
           up = mix(up, min(up, uSunPath.w), glint);
-          r = mix(r, max(r, 0.95), max(glint, 0.6 * near));
+          r = mix(r, max(r, 0.95 * (0.5 + 0.5 * fade)), max(glint, 0.6 * near));
         }
         mirrored = vec2(p.x, line - up);
         q = mirrored;
