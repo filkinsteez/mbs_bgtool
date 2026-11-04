@@ -36,6 +36,9 @@ const T = {
   // compare agent (artifacts/compare/rounds/12/haze/): at 0.035 a blue haze still reads blue-grey, at 0.03 grey.
   // Warm lights keep their tail rule: their greyed haze reads olive or brown.
   haze: 0.035,
+  // Sunset skies (SHARED.md, decided 2026-11-04 4:15 PM): full-strength Meta Blue, Oklab chroma `sky.C` or more in
+  // Meta Blue's hue window, covers at most about `sky.share` of a Sunset frame. Frames over it are listed, not failed.
+  sky: { C: 0.15, share: 0.25 },
   pale: { L: 0.78, C: 0.05 }, // a pixel this light and this grey is a pale bridge, never mud
   warmDimStops: { yellowish: 1, red: 1.5 }, // how far under nominal a warm color still reads as itself, not olive or brown
   darkOverStops: 1, // how far over nominal a dark pack color (L under 0.5) still reads as itself
@@ -393,12 +396,19 @@ try {
     let dark = 0
     let white = 0
     let pale = 0
+    let skyFull = 0
+    const metaBlue = k.colors.find((c) => c.name === 'Meta Blue').path
+    const skyHue = metaBlue.dim?.hue ?? [-T.hueTolerance, T.hueTolerance]
     const labs = new Float32Array(n * 3)
     for (let p = 0; p < n; p++) {
       const lab = linearToOklab([SRGB_TO_LINEAR[data[3 * p]], SRGB_TO_LINEAR[data[3 * p + 1]], SRGB_TO_LINEAR[data[3 * p + 2]]])
       labs.set(lab, 3 * p)
       const [L, C, h] = lch(lab)
       Ls[p] = L
+      if (C >= T.sky.C) {
+        const turn = ((((h - metaBlue.h0) % 360) + 540) % 360) - 180
+        if (turn >= skyHue[0] && turn <= skyHue[1]) skyFull++
+      }
       if (L < T.dark) {
         bucket[p] = BUCKET_DARK
         dark++
@@ -597,6 +607,7 @@ try {
       own: Object.fromEntries(k.colors.map((c, i) => [c.name, frac(own[i])])),
       bridges: Object.fromEntries(k.pairs.map(([i, j], b) => [`${k.colors[i].name} + ${k.colors[j].name}`, frac(bridges[b])])),
       dark: frac(dark),
+      skyFull: frac(skyFull),
       white: frac(white),
       pale: frac(pale),
       edge: frac(edge),
@@ -766,7 +777,8 @@ try {
       const failing = frames.filter((f) => f.pack === pack && f.fails?.length)
       const row = rows[pack]
       const across = look.startsWith('contour.') ? ` Main light across seeds 1-${seeds}: ${Object.entries(row.counts).map(([nm, c]) => `${nm} ${c}`).join(', ')}${row.missing.length ? `; never ${row.missing.join(', ')}: FAIL` : ''}.` : ''
-      summary.push(`- ${pack}: ${failing.length} of ${frames.filter((f) => f.pack === pack && !f.missing).length} frames fail.${across} ${varietyLine(row.alike)}`)
+      const sky = look.startsWith('sunset.') ? ` ${skyLine(frames.filter((f) => f.pack === pack && f.m))}` : ''
+      summary.push(`- ${pack}: ${failing.length} of ${frames.filter((f) => f.pack === pack && !f.missing).length} frames fail.${across} ${varietyLine(row.alike)}${sky}`)
       for (const f of failing) summary.push(`  - ${f.id}: ${f.fails.join('; ')}${f.notes.length ? ` (also ${f.notes.join('; ')})` : ''}`)
     }
     summary.push('')
@@ -810,6 +822,11 @@ try {
     }
     return pairs
   }
+  function skyLine(packFrames) {
+    const over = packFrames.filter((f) => f.m.skyFull > T.sky.share)
+    if (!over.length) return `Full-strength Meta Blue under ${pct(T.sky.share)} in every frame.`
+    return `Full-strength Meta Blue over ${pct(T.sky.share)} of the frame: ${over.map((f) => `s${f.seed}${f.format === '9x16' ? ' 9:16' : ''} ${pct(f.m.skyFull)}`).join(', ')}.`
+  }
   function varietyLine(alike) {
     if (!alike.length) return `No two of seeds 1-${seeds} look alike.`
     return `Seeds that look alike (layout, mix): ${alike.map((p) => `s${p.seeds[0]}/s${p.seeds[1]} (${p.layout}, ${p.mix})`).join(', ')}: FAIL.`
@@ -844,7 +861,9 @@ try {
         const idx = portrait ? seeds + f.seed - 1 : f.seed - 1
         const left = LEFT + (portrait ? seeds * (TW + GAP) + (f.seed - 1) * (PW + GAP) : idx * (TW + GAP))
         const w = portrait ? PW : TW
-        comp.push({ input: textSvg([`s${f.seed}${portrait ? ' 9:16' : ''}`], w, 16, 11, '#bbb'), left, top })
+        const skyOver = f.m && look.startsWith('sunset.') ? f.m.skyFull > T.sky.share : false
+        const skyText = f.m && look.startsWith('sunset.') ? `${portrait ? ' ' : '   full Meta Blue '}${pct(f.m.skyFull)}` : ''
+        comp.push({ input: textSvg([{ text: `s${f.seed}${portrait ? ' 9:16' : ''}${skyText}`, color: skyOver ? '#e0a040' : '#bbb' }], w, 16, 11), left, top })
         if (f.missing || !f.m) {
           comp.push({ input: textSvg(['missing'], w, 16), left, top: top + 18 })
           continue

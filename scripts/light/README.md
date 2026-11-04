@@ -127,6 +127,8 @@ A frame fails when:
 
 Contour also checks each pack across seeds 1-8 at 16:9: every light color the pack offers (pack colors at L 0.5 or more; for Atmospheric, Meta Blue and Ice) must be a frame's main light at least once. The thresholds (`T` at the top of the script) were set by eye on the coordinator's shots in `artifacts/coordinator/bands-bug`, `palette-now` and `palette-now-contour`.
 
+Sunset looks also report the sky share (SHARED.md, 4:15 PM on 2026-11-04: full-strength Meta Blue covers at most about a quarter of a Sunset frame): the share of each frame that is Oklab chroma 0.15 or more inside Meta Blue's hue window (`T.sky`). It is shown above each tile (amber over 25%) and in `palette.json` as `skyFull`, and the summary lists, per pack, the frames over 25%. It doesn't fail a frame. Where in the frame that blue sits isn't measured.
+
 Every look also checks seed variety (SHARED.md, 10:15 AM: no two of seeds 1-8 in one pack may look like the same frame at thumbnail size). Each pair of seeds 1-8 at 16:9 gets two numbers:
 
 - layout, where the light sits: Oklab L at 40x23, blurred by 1 px and stretched to 0-1 per frame, compared as the summed difference over the summed lightness of both, so the shared black of two Contour frames does not make them alike;
