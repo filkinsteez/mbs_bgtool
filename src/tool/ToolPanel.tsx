@@ -8,15 +8,18 @@ const noPanel = () => undefined
 /**
  * DialKit's inline panel without its title and toolbar (versions, copy JSON):
  * the markup of DialKit's inline root folder minus its header, around DialKit's
- * controls for a registered panel, with `after` placed after the control at
- * `afterPath`. Renders nothing until the panel registers.
+ * controls for a registered panel, with `after` placed after the first control
+ * whose path is in `afterPaths`. Renders nothing until the panel registers.
+ * List every path the control can have: when its path changes with the config,
+ * the panel holds the old one for a render, and a split that misses it would
+ * move every control into the other group and rebuild them all.
  */
-export function ToolPanel({ panelId, afterPath, after }: { panelId: string; afterPath: string; after: ReactNode }) {
+export function ToolPanel({ panelId, afterPaths, after }: { panelId: string; afterPaths: readonly string[]; after: ReactNode }) {
   const panel = useSyncExternalStore(subscribePanels, () => DialStore.getPanel(panelId), noPanel)
   const subscribeValues = useCallback((onChange: () => void) => DialStore.subscribe(panelId, onChange), [panelId])
   const values = useSyncExternalStore(subscribeValues, () => DialStore.getValues(panelId), () => NO_VALUES)
   if (!panel) return null
-  const split = panel.controls.findIndex((control) => control.path === afterPath) + 1
+  const split = panel.controls.findIndex((control) => afterPaths.includes(control.path)) + 1
   return (
     <div className="dialkit-root" data-mode="inline" data-theme="dark">
       <div className="dialkit-panel" data-mode="inline">

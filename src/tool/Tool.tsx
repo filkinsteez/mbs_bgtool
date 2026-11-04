@@ -30,6 +30,8 @@ const EXPORT_LABEL = 'Export PNG'
 const EXPORTING_LABEL = 'Exporting…'
 const EXPORT_FAILED_LABEL = 'Export failed'
 const BACK_LABEL = 'Back'
+/** The seed row goes after the mood control, under either mood's key. */
+const MOOD_DIAL_KEYS = Object.values(MOOD_DIAL_KEY)
 const URL_DELAY_MS = 200
 
 type ExportStatus = 'idle' | 'busy' | 'failed'
@@ -327,7 +329,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
         onReset={resetLight}
       />
       <aside ref={panelRef} className="tool-panel dial-column">
-        <ToolPanel panelId={PANEL_ID} afterPath={MOOD_DIAL_KEY[mood]} after={seedActions} />
+        <ToolPanel panelId={PANEL_ID} afterPaths={MOOD_DIAL_KEYS} after={seedActions} />
       </aside>
     </main>
   )
