@@ -12,6 +12,8 @@ export interface ExportRequest {
   height?: number
   /** 2 by default, as the deck asks. */
   supersample?: RenderOptions['supersample']
+  /** File name parts that follow the seed, such as control values (`i50`). */
+  nameParts?: readonly string[]
 }
 
 export interface ExportResult {
@@ -30,13 +32,18 @@ export function exportSize(request: ExportRequest): { width: number; height: num
   return { width: Math.round(request.width), height: Math.round(request.height), label: `${Math.round(request.width)}x${Math.round(request.height)}` }
 }
 
-/** `<recipe>-<pack or reference id>-<aspect>-seed<seed>.png`; a filter that is on adds its name and strength after the seed (`-grain50`). */
+/**
+ * `<recipe>-<pack or reference id>-<aspect>-seed<seed>.png`. Name parts follow the seed, and a filter that is on
+ * adds its name and strength last (`-i50-s50-h28-grain50`).
+ */
 export function exportFileName(
   preset: Pick<Preset, 'pack' | 'referenceId' | 'id'> & { scene: Pick<Scene, 'recipe' | 'seed'> & Partial<Pick<Scene, 'output'>> },
   sizeLabel: string,
+  nameParts: readonly string[] = [],
 ): string {
   const source = preset.pack ?? preset.referenceId ?? preset.id
-  return `${preset.scene.recipe}-${source}-${sizeLabel}-seed${preset.scene.seed}${filterFileTag(preset.scene.output)}.png`
+  const parts = nameParts.map((part) => `-${part}`).join('')
+  return `${preset.scene.recipe}-${source}-${sizeLabel}-seed${preset.scene.seed}${parts}${filterFileTag(preset.scene.output)}.png`
 }
 
 /** Encodes top-down RGBA8 pixels as an RGB PNG. Every alpha must be 255: the opaque canvas drops it. */
@@ -62,7 +69,7 @@ export async function exportPreset(preset: Preset, request: ExportRequest): Prom
     renderer.gpu.checkErrors()
     const pixels = renderer.readPixels()
     const blob = await encodePng(pixels, width, height)
-    return { blob, fileName: exportFileName(preset, label), width, height }
+    return { blob, fileName: exportFileName(preset, label, request.nameParts), width, height }
   } finally {
     renderer.dispose()
   }
