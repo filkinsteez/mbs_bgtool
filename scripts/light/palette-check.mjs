@@ -20,6 +20,16 @@ const T = {
   white: 0.97, // L at or above this is white, the pale end of every light
   hueTolerance: 20, // degrees of Oklab hue a pixel may differ from a pack color's light path and still be that color
   greyer: 0.65, // below nominal a pixel may lose this much of the path's chroma (blur, a little mixing) and stay the color
+  // A pack color that isn't warm or near-grey (Meta Blue, Cyan, Plum), dimmed along its own falloff (SHARED.md,
+  // decided 2026-11-04 1:40 PM), keeps its hue while its lightness and chroma fall together, down to the dark base,
+  // and stays that color: Meta Blue may sink to a deep navy. Deeper down it may grey further: the share of the
+  // path's chroma it must keep falls from `greyer` at
+  // nominal to `dim.greyer` at L `dim.floorL` and below. A hue that moves away stays off-pack: Meta Blue's falloff
+  // may turn at most `dim.hue` degrees (- toward cyan, + toward violet). Set by eye in round 11 of the compare agent
+  // (artifacts/compare/rounds/11/rule/swatches/): navy reads as navy down to 0.4 of the path's chroma at L 0.2 and
+  // until +12 degrees; from +15 it reads indigo (the violet-wave reference's #181751 is +18). Warm colors keep their
+  // tail rules below.
+  dim: { greyer: 0.4, floorL: 0.2, hue: { 'Meta Blue': [-20, 12] } },
   pale: { L: 0.78, C: 0.05 }, // a pixel this light and this grey is a pale bridge, never mud
   warmDimStops: { yellowish: 1, red: 1.5 }, // how far under nominal a warm color still reads as itself, not olive or brown
   darkOverStops: 1, // how far over nominal a dark pack color (L under 0.5) still reads as itself
@@ -59,7 +69,7 @@ const T = {
   variety: { layout: 0.2, mix: 0.3 },
 }
 // Hues that are neither neighbour, so a lens edge never excuses them (SHARED.md palette rules).
-const THIRD_HUES = new Set(['pink', 'salmon', 'mauve', 'lavender', 'purple', 'magenta', 'mauve-grey'])
+const THIRD_HUES = new Set(['pink', 'salmon', 'mauve', 'lavender', 'purple', 'magenta', 'mauve-grey', 'indigo'])
 
 // Linear-light mixes that stay clean, measured in docs/light/research/perception-additive-light.md section 5.
 // Every other pair goes grey, invents a hue (magenta, mint) or turns olive, khaki or brown, so its mix counts as
@@ -90,6 +100,8 @@ const maps = Boolean(args.maps)
 // colors count as edges up to the lens's own width.
 const rule = args.rule === 'old' ? 'old' : 'new'
 const tailRule = args.tails === 'strict' ? 'strict' : 'drift'
+// --dim strict: dim colors keep the nominal limits (`greyer`, 20 degrees of hue) all the way down, as before 1:40 PM.
+const dimRule = args.dim !== 'strict'
 // Control values for the render (--at intensity=1,softness=0,horizon=0.3; horizon or light is the mood control).
 const controls = { intensity: 0.5, softness: 0.5, mood: 0.5 }
 for (const pair of list(args.at)) {
@@ -177,9 +189,15 @@ try {
     if (dh > T.hueTolerance) return Infinity
     if (C > 1.6 * Cf + 0.03) return Infinity
     if (pale) return C > Cf + 0.03 ? Infinity : paleCost + dh / T.hueTolerance
+    let greyer = T.greyer
+    if (path.dim) {
+      const turn = ((((h - hf) % 360) + 540) % 360) - 180
+      if (turn < path.dim.hue[0] || turn > path.dim.hue[1]) return Infinity
+      greyer = T.dim.greyer + (T.greyer - T.dim.greyer) * Math.min(1, Math.max(0, (L - T.dim.floorL) / (path.L0 - T.dim.floorL)))
+    }
     // Below nominal: a pale tint (light and greyer, like cream for Yellow) still counts; a dim one may only be a
     // little greyer than the path.
-    if (C < T.greyer * Cf) return L >= T.pale.L ? 0.3 + dh / T.hueTolerance : Infinity
+    if (C < greyer * Cf) return L >= T.pale.L ? 0.3 + dh / T.hueTolerance : Infinity
     return dh / T.hueTolerance + Math.abs(C - Cf) / Math.max(Cf, 0.03)
   }
   const toAb = (C, h) => [C * Math.cos((h * Math.PI) / 180), C * Math.sin((h * Math.PI) / 180)]
@@ -210,6 +228,7 @@ try {
       // Dark pack colors stop reading as themselves soon above nominal (Forest turns aquamarine, Plum hot pink,
       // Steel pale sky blue: perception-additive-light.md 3), so their path ends 1 stop up; light colors go to white.
       c.path = lightPath(c.lin, c.warm ? warmStops(c.lab) : 12, c.lab[0] < 0.5 ? T.darkOverStops : 8)
+      if (!c.warm && c.path.C0 >= 0.06 && dimRule) c.path.dim = { hue: T.dim.hue[c.name] ?? [-T.hueTolerance, T.hueTolerance], narrow: c.name in T.dim.hue }
     }
     const pairs = []
     const clean = CLEAN_MIXES[packId]
@@ -223,6 +242,14 @@ try {
     return { packId, pack, colors, pairs, neutrals }
   }
   const classifiers = Object.fromEntries(PACK_ORDER.map((id) => [id, classifier(id)]))
+  // A dim color whose hue has turned past its own window, away from the other color (Meta Blue toward violet, next
+  // to Cyan or a grey), is not a mix of the two either.
+  function movedAway(c, other, L, h) {
+    if (!c.path.dim?.narrow || L > c.path.L0) return false
+    const turn = ((((h - c.path.h0) % 360) + 540) % 360) - 180
+    const side = ((((lch(other.lab)[2] - c.path.h0) % 360) + 540) % 360) - 180
+    return (turn > c.path.dim.hue[1] && side < turn) || (turn < c.path.dim.hue[0] && side > turn)
+  }
   function classify(k, L, C, h) {
     let fam = -1
     let best = Infinity
@@ -253,6 +280,7 @@ try {
     let bridge = -1
     best = Infinity
     k.pairs.forEach(([i, j], n) => {
+      if (movedAway(k.colors[i], k.colors[j], L, h) || movedAway(k.colors[j], k.colors[i], L, h)) return
       const s = bridgeScore(k.colors[i].path, k.colors[j].path, L, C, h)
       if (s < best) {
         best = s
@@ -272,6 +300,7 @@ try {
     if (h < 135) return L >= 0.85 ? 'pale lime' : L < 0.75 ? 'olive' : 'yellow-green'
     if (h < 190) return L >= 0.8 ? 'mint' : 'green'
     if (h < 235) return L >= 0.8 ? 'pale cyan' : 'teal'
+    if (h >= 270 && h < 290 && L < 0.6) return 'indigo'
     if (h < 275) return L >= 0.8 ? 'pale blue' : 'blue'
     if (h < 315) return L >= 0.68 ? 'lavender' : C >= 0.1 ? 'purple' : 'mauve'
     return L >= 0.72 ? 'pink' : C >= 0.12 ? 'magenta' : 'mauve'
@@ -683,7 +712,7 @@ try {
   await fs.mkdir(path.join(outDir, 'renders'), { recursive: true })
   if (maps) await fs.mkdir(path.join(outDir, 'maps'), { recursive: true })
   const report = { source: sourceLabel, startedAt: startedAt.toISOString(), thresholds: T, looks: {} }
-  const summary = [`# Palette check: ${sourceLabel}`, '', `Started ${startedAt.toISOString()}. Controls: intensity ${controls.intensity}, softness ${controls.softness}, mood ${controls.mood}. Rule: ${rule}${rule === 'new' ? `, lens edges up to ${T.lensEdge} of the short side` : ''}; warm tails: ${tailRule}. Thresholds in \`palette-check.mjs\` (T).`, '']
+  const summary = [`# Palette check: ${sourceLabel}`, '', `Started ${startedAt.toISOString()}. Controls: intensity ${controls.intensity}, softness ${controls.softness}, mood ${controls.mood}. Rule: ${rule}${rule === 'new' ? `, lens edges up to ${T.lensEdge} of the short side` : ''}; warm tails: ${tailRule}; dim colors: ${dimRule ? 'navy rule (1:40 PM)' : 'strict'}. Thresholds in \`palette-check.mjs\` (T).`, '']
   for (const look of looks) {
     const frames = frameList(look)
     for (const f of frames) {
