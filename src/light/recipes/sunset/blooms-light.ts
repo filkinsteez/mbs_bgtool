@@ -119,10 +119,12 @@ export function bridgeGate(sky: Rgb, glow: Rgb): number {
  * Amount of pale light (times `tint`) added where a glow meets the sky. It is
  * solved so that where the two weigh the same, the result after the tone
  * curve reaches the lighter side's Oklab L, at least `minL` and at most
- * `maxL`. Pairs of near hues or with a grey end get none, so their own blend
- * is left alone.
+ * `maxL`, and, where it can, has Oklab chroma at most `maxC`: a bridge between
+ * blue and warm light is near neutral (Orange-red and blue alone make pink).
+ * Pairs of near hues or with a grey end get none, so their own blend is left
+ * alone.
  */
-export function bridgeAmount(sky: Rgb, glow: Rgb, tint: Rgb, haze: number, maxL = Infinity, minL = 0): number {
+export function bridgeAmount(sky: Rgb, glow: Rgb, tint: Rgb, haze: number, maxL = Infinity, minL = 0, maxC = Infinity): number {
   const la = linearToOklch(sky)[0]
   const lb = linearToOklch(glow)[0]
   const gate = bridgeGate(sky, glow)
@@ -130,14 +132,42 @@ export function bridgeAmount(sky: Rgb, glow: Rgb, tint: Rgb, haze: number, maxL 
   const k = balancePoint(haze)
   const mid: Rgb = [k * (sky[0] + glow[0]), k * (sky[1] + glow[1]), k * (sky[2] + glow[2])]
   const target = Math.min(Math.max(la, lb, minL), maxL)
-  const lightness = (amount: number) => linearToOklch(toneCurve(mid.map((v, i) => v + amount * tint[i])))[0]
-  if (lightness(0) >= target) return 0
-  let lo = 0
-  let hi = 2
-  for (let i = 0; i < 32; i++) {
-    const amount = 0.5 * (lo + hi)
-    if (lightness(amount) < target) lo = amount
-    else hi = amount
+  const lch = (amount: number) => linearToOklch(toneCurve(mid.map((v, i) => v + amount * tint[i])))
+  // Smallest amount that reaches the target lightness.
+  let forLight = 0
+  if (lch(0)[0] < target) {
+    let lo = 0
+    let hi = 2
+    for (let i = 0; i < 32; i++) {
+      const amount = 0.5 * (lo + hi)
+      if (lch(amount)[0] < target) lo = amount
+      else hi = amount
+    }
+    forLight = 0.5 * (lo + hi)
   }
-  return gate * 0.5 * (lo + hi)
+  // Smallest amount that brings the chroma down to maxC, or the one with the least chroma if none does.
+  let forNeutral = 0
+  if (Number.isFinite(maxC) && lch(0)[1] > maxC) {
+    let lo = 0
+    let hi = 2
+    for (let i = 0; i < 40; i++) {
+      const a = lo + (hi - lo) * 0.382
+      const b = lo + (hi - lo) * 0.618
+      if (lch(a)[1] < lch(b)[1]) hi = b
+      else lo = a
+    }
+    const least = 0.5 * (lo + hi)
+    forNeutral = least
+    if (lch(least)[1] <= maxC) {
+      let below = 0
+      let above = least
+      for (let i = 0; i < 32; i++) {
+        const amount = 0.5 * (below + above)
+        if (lch(amount)[1] > maxC) below = amount
+        else above = amount
+      }
+      forNeutral = 0.5 * (below + above)
+    }
+  }
+  return gate * Math.max(forLight, forNeutral)
 }

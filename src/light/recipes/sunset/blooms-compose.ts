@@ -310,12 +310,80 @@ function pickLead(colors: readonly Rgb[], u: number): { lead: number; other: num
   if (warmA !== warmB) {
     const warm = warmA ? a : b
     const cool = warmA ? b : a
-    const coolOdds = isCyan(colors[cool]) ? 0.25 : isGreen(colors[cool]) ? 0.25 : 0.35
+    // Red-orange light (Orange-red) comes in only as the warm bloom beside a cyan lead: as the lead, its
+    // large body and second bloom let the blue through and turn pink.
+    const redWarm = linearToOklch(colors[warm])[2] < 50
+    const coolOdds = redWarm ? 1 : isCyan(colors[cool]) ? 0.25 : isGreen(colors[cool]) ? 0.25 : 0.35
     return u < 1 - coolOdds ? { lead: warm, other: cool } : { lead: cool, other: warm }
   }
   const lighter = luminance(colors[a]) >= luminance(colors[b]) ? a : b
   return { lead: lighter, other: lighter === a ? b : a }
 }
+
+/**
+ * How a seed arranges the light. Every arrangement is soft blooms of pack light on a sky; they differ in
+ * where the brightest bloom sits, which way the sky darkens and whether two blooms share the frame.
+ */
+type Arrangement = 'low' | 'diagonal' | 'side' | 'high' | 'pair'
+const ARRANGEMENTS: readonly Arrangement[] = ['low', 'diagonal', 'side', 'high', 'pair']
+
+interface Plan {
+  /** The lead's distance from the middle toward its side, in frame widths (low and high end). */
+  offset: readonly [number, number]
+  /** Added to the shared light height, in frame heights. */
+  lift: readonly [number, number]
+  /** How steeply the darker sky runs across the frame. */
+  tilt: readonly [number, number]
+  /** The sky always darkens on the side away from the light (otherwise in three seeds of four). */
+  tiltAway: boolean
+  /** Shift of the line where the sky is its exact hex, in frame heights. */
+  mid: number
+  /** Chance of a second bloom of the lead's color, and its size and strength against the lead. */
+  pair: number
+  balance: readonly [number, number]
+  /** The soft inner bloom sits below the lead instead of above it. */
+  innerBelow: boolean
+}
+
+function planFor(arrangement: Arrangement): Plan {
+  switch (arrangement) {
+    case 'low':
+      // One bloom low, the sky darkening upward.
+      return { offset: [0, 0.3], lift: [-0.06, 0.06], tilt: [0.1, 0.35], tiltAway: false, mid: 0, pair: 0.3, balance: [0, 0.6], innerBelow: false }
+    case 'diagonal':
+      // A bloom in a lower corner, the sky darkening toward the opposite upper corner.
+      return { offset: [0.3, 0.55], lift: [-0.02, 0.06], tilt: [0.6, 0.9], tiltAway: true, mid: 0.06, pair: 0.2, balance: [0, 0.5], innerBelow: false }
+    case 'side':
+      // A bloom at a side edge at mid height, the sky darkening toward the other side.
+      return { offset: [0.48, 0.62], lift: [-0.32, -0.16], tilt: [0.5, 0.9], tiltAway: true, mid: 0.1, pair: 0.25, balance: [0, 0.6], innerBelow: true }
+    case 'high':
+      // A wide bloom in the upper middle, with a narrow darker sky above it.
+      return { offset: [0, 0.35], lift: [-0.42, -0.28], tilt: [0.1, 0.3], tiltAway: false, mid: -0.1, pair: 0.3, balance: [0, 0.6], innerBelow: true }
+    case 'pair':
+      // Two near-equal blooms at different sides and heights.
+      return { offset: [0.15, 0.4], lift: [-0.1, 0.04], tilt: [0.1, 0.4], tiltAway: false, mid: 0, pair: 1, balance: [0.75, 1], innerBelow: false }
+    default: {
+      const unknown: never = arrangement
+      throw new Error(`Unknown arrangement: ${String(unknown)}`)
+    }
+  }
+}
+
+/** Seeds come in runs of five; each run takes every arrangement once, in a seeded order, so neighbours differ. */
+function arrangementFor(seed: number): Arrangement {
+  const n = Math.round(seed) - 1
+  const count = ARRANGEMENTS.length
+  const r = random(Math.floor(n / count) * 31 + 11)
+  const order = ARRANGEMENTS.map((_, i) => i)
+  for (let i = count - 1; i > 0; i--) {
+    const j = Math.floor(r() * (i + 1))
+    ;[order[i], order[j]] = [order[j], order[i]]
+  }
+  return ARRANGEMENTS[order[((n % count) + count) % count]]
+}
+
+/** Highest a lead's center sits, in frame heights from the top, so a bloom never sits on the top edge. */
+const MIN_LEAD_Y = 0.22
 
 /**
  * The pack composition: one dominant bloom at the shared light height, from
@@ -350,14 +418,16 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const size = lerp(0.8, 1.2, r()) * lerp(0.95, 1.08, soft) * sameHalfWidth * lerp(0.88, 1.16, rise) * (isGreen(colors[lead]) ? 0.95 : darkerLight)
   const bend = () => lerp(0.04, 0.2, r())
 
-  // Every seed is the same kind of image: a bloom at the shared light height, from the middle of the frame
-  // to partly beyond a side edge, round to wide and small to large by seed. The Horizon control only moves
-  // it: low, it sinks below the bottom edge as a setting light does. A cyan bloom stays well clear of the
-  // bottom edge, where a warm light may sit.
-  const jitter = lerp(-0.09, 0.09, r())
-  const at: [number, number] = [0.5 + side * lerp(0, 0.55, r()), height + jitter]
+  // Every seed is the same kind of image: blooms of pack light on a sky, round to wide and small to large by
+  // seed. The seed's arrangement (planFor) sets where the lead sits relative to the shared light height and
+  // how far toward a side edge, partly beyond it in some seeds. The Horizon control only moves it: low, it
+  // sinks toward the bottom edge as a setting light does. A cyan bloom stays well clear of the bottom edge,
+  // where a warm light may sit.
+  const plan = planFor(arrangementFor(seed))
+  const [ux, uy] = [r(), r()]
+  const at: [number, number] = [0.5 + side * lerp(plan.offset[0], plan.offset[1], ux), Math.max(MIN_LEAD_Y, height + lerp(plan.lift[0], plan.lift[1], uy))]
   const tilt = lerp(-8, 8, r())
-  let radius = lerp(0.34, 0.58, r()) * (cyanLead ? 0.85 : 1)
+  let radius = lerp(0.3, 0.66, r()) * (cyanLead ? 0.85 : 1)
   const aniso = lerp(1.6, 2.8, r())
   radius *= size
   // The lead stays narrower than the frame, so there is sky beside it for the other blooms.
@@ -371,18 +441,22 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     { color: lead, at, radius, aniso, angle, gain: leadGain, beta, haze: isWarm(colors[lead]) ? warmHaze(colors[lead], r()) : lerp(1.8, 2.6, r()), vary: lerp(0.45, 0.85, r()), bend: bend() },
   ]
 
-  // Some seeds get a second bloom of the same light across the frame and a little higher, with sky between
-  // the two (near each other they would merge into one wide pale mass or a band), from much smaller and
-  // weaker than the lead to nearly its equal, so seeds differ in how many blooms there are and how they
+  // Some seeds get a second bloom of the same light across the frame and higher, with sky between the two
+  // (near each other they would merge into one wide pale mass or a band), from much smaller and weaker than
+  // the lead to nearly its equal (planFor), so seeds differ in how many blooms there are and how they
   // compare as well as where. Under a cool lead the warm light takes that place across the frame.
   const coolLeadWarmOther = !isWarm(colors[lead]) && isWarm(colors[other])
-  if (r() < 0.45 && !coolLeadWarmOther) {
-    // Two near-equal blooms of a very light color (Lime, Ice) read as one wide pale mass, so its second
-    // bloom stays clearly the smaller one.
-    const balance = r() * (linearToOklch(colors[lead])[0] > 0.88 ? 0.45 : 1)
+  if (r() < plan.pair && !coolLeadWarmOther) {
+    // Outside the pair arrangement, two near-equal blooms of a very light color (Lime, Ice) would read as
+    // one wide pale mass, so its second bloom stays clearly the smaller one.
+    const nearEqual = plan.balance[0] > 0.5
+    const balance = lerp(plan.balance[0], plan.balance[1], r()) * (!nearEqual && linearToOklch(colors[lead])[0] > 0.88 ? 0.45 : 1)
     glows.push({
       color: lead,
-      at: [clamp(at[0] - side * lerp(0.4, 0.62, r()), 0.06, 0.94), at[1] - lerp(0.06, 0.22, r())],
+      at: [
+        clamp(at[0] - side * (nearEqual ? lerp(0.48, 0.7, r()) : lerp(0.4, 0.62, r())), 0.06, 0.94),
+        Math.max(MIN_LEAD_Y, at[1] - (nearEqual ? lerp(0.14, 0.3, r()) : lerp(0.06, 0.22, r()))),
+      ],
       radius: radius * lerp(0.55, 0.95, balance),
       aniso: lerp(1.6, 2.6, r()),
       angle: -angle * lerp(0.3, 1.0, r()),
@@ -414,7 +488,8 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const [uSize, uAniso, uGain, uBeta, uHaze] = [r(), r(), r(), r(), r()]
   glows.push({
     color: innerColor,
-    at: [0.5 + innerSide * lerp(0.05, 0.3, r()), lerp(0.42, 0.28, rise) + lerp(-0.05, 0.05, r())],
+    // Below a lead that sits high or at a side edge, above it otherwise.
+    at: [0.5 + innerSide * lerp(0.05, 0.3, r()), (plan.innerBelow ? lerp(0.86, 0.72, rise) : lerp(0.42, 0.28, rise)) + lerp(-0.05, 0.05, r())],
     radius: radius * (innerGrey ? lerp(0.6, 0.8, uSize) : innerCyan ? lerp(1.0, 1.25, uSize) * (aspect < 1 ? 0.75 : 1) : lerp(1.15, 1.4, uSize)),
     aniso: innerCyan || innerGrey ? lerp(1.7, 2.5, uAniso) : lerp(2.8, 3.8, uAniso),
     angle: -side * lerp(-4, 12, r()),
@@ -491,12 +566,13 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
 
   // The sky keeps changing up to the top edge: its exact hex sits in mid-sky and above it the
   // sky gets 0.8 to 1.7 stops darker, mostly deeper on the side away from the light and in some
-  // seeds on the light's side, and it varies slowly by about 4 % everywhere.
-  const tiltSide = r() < 0.75 ? side : -side
+  // seeds on the light's side, and it varies slowly by about 4 % everywhere. The seed sets how far
+  // down the darker sky reaches and how steeply it runs, from across the top to a diagonal.
+  const tiltSide = plan.tiltAway || r() < 0.75 ? side : -side
   const sky: SkySpec = {
     top: lerp(0.8, 1.7, r()),
-    mid: lerp(0.52, 0.38, rise) + lerp(-0.05, 0.05, r()),
-    tilt: tiltSide * lerp(0.1, 0.4, r()),
+    mid: lerp(0.52, 0.38, rise) + plan.mid + lerp(-0.08, 0.08, r()),
+    tilt: tiltSide * lerp(plan.tilt[0], plan.tilt[1], r()),
     vary: lerp(0.03, 0.05, r()),
   }
   // With dark colors in the pack (Plum and Forest, Slate and Near-black), the corner away from the

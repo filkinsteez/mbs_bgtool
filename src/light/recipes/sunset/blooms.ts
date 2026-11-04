@@ -21,6 +21,7 @@ import {
   isWarm,
   LOBES,
   lobes,
+  random,
   SLOT,
   SLOT_COUNT,
   TAIL_END,
@@ -202,6 +203,8 @@ function inFront(haze: number): number {
 const BRIDGE_RISE = 0
 /** Highest Oklab L a bridge aims for, so the bridge to a very light glow (Lime) stays pale and colored, not white. */
 const BRIDGE_MAX_L = 0.9
+/** Oklab chroma a pack bridge brings the blend down to where it can: bridges between blue and warm are near neutral. */
+const BRIDGE_MAX_C = 0.06
 /**
  * A light whose hex is darker than this (Tan, Orange-red) and that meets the sky through a bridge gets a
  * stronger core, by CORE_LIFT per unit of Oklab L short, so its brightest point stays above its pale
@@ -228,7 +231,8 @@ function bridgeLight(sky: Rgb, light: Rgb, tint: Rgb, haze: number, intensity: n
   const above = atDefault + BRIDGE_RISE * Math.max(0, lighter(litSky, litGlow) - atDefault)
   // The aim moves from BRIDGE_MAX_L to `above` between Intensity 0.5 and 0.65, so no step jumps.
   const t = clamp((intensity - 0.5) / 0.15, 0, 1)
-  return bridgeAmount(litSky, litGlow, tint, haze, lerp(BRIDGE_MAX_L, above, t * t * (3 - 2 * t)), floor)
+  // A pack bridge (one with a floor) is also near neutral; the 1:1 presets keep their fitted bridges.
+  return bridgeAmount(litSky, litGlow, tint, haze, lerp(BRIDGE_MAX_L, above, t * t * (3 - 2 * t)), floor, floor > 0 ? BRIDGE_MAX_C : Infinity)
 }
 
 /**
@@ -370,6 +374,28 @@ function rolesFromPack(pack: ColorPack): string[] {
   const light1 = lights[0] ?? sky
   const light2 = lights[1] ?? light1
   return [sky, dark[0] ?? NO_LIGHT, dark[1] ?? dark[0] ?? NO_LIGHT, light1, light2]
+}
+
+/** Seeds come in runs of this many; in each run, one shows a pack's second warm light instead of its first. */
+const WARM_RUN = 4
+
+/**
+ * The roles for one seed. A pack with two warm light colors (Bold: Yellow and Orange-red) shows one of
+ * them per seed, never both in one frame: in each run of WARM_RUN seeds, one seed at a seeded place in
+ * the run shows the darker one, so both show across any WARM_RUN seeds in a row.
+ */
+function rolesForSeed(pack: ColorPack, seed: number): string[] {
+  const roles = rolesFromPack(pack)
+  const lightness = (hex: string) => linearToOklab(hexToLinear(hex))[0]
+  const warm = pack.colors
+    .slice(1)
+    .map((c) => c.hex)
+    .filter((hex) => lightness(hex) >= DARK_L && isWarm(hexToLinear(hex)))
+    .sort((a, b) => lightness(b) - lightness(a))
+  if (warm.length < 2) return roles
+  const n = Math.round(seed) - 1
+  const place = Math.floor(random(Math.floor(n / WARM_RUN) * 13 + 7)() * WARM_RUN)
+  return ((n % WARM_RUN) + WARM_RUN) % WARM_RUN === place ? roles.map((hex) => (hex === warm[0] ? warm[1] : hex)) : roles
 }
 
 /**
@@ -631,7 +657,7 @@ vec3 combine(vec2 uv, vec2 p, vec3 direct, vec3 seen) {
   lens: { bloom: 0.12, bloomRadius: 0.75, bloomWidth: 1.5 },
   fromPack: rolesFromPack,
   compose: ({ pack, controls, seed, aspect }): Composition => {
-    const colors = rolesFromPack(pack)
+    const colors = rolesForSeed(pack, seed)
     const layout = composeLayout(
       colors.map(hexToLinear),
       seed,
