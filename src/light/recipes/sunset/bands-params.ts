@@ -41,6 +41,7 @@ export type BandParamName =
   | 'BumpLight'
   | 'Bridge'
   | 'Drift'
+  | 'Pale'
 
 export type PatchParamName = 'Shape' | 'Look'
 export type LightParamName = 'Shape' | 'Look'
@@ -92,6 +93,10 @@ function bandSpecs(index: number): ParamSpec[] {
     { kind: 'number', key: key('Bridge'), label: `Band ${n} pale bridge at its top edge`, min: 0, max: 2, step: 0.01, default: 0 },
     // How fast each channel deepens as the band's light dims (1, 1, 1: all alike).
     { kind: 'vector', key: key('Drift'), label: `Band ${n} deepening of red, green, blue as its light dims`, min: -2, max: 6, step: 0.01, default: [1, 1, 1] },
+    // Extra light at the band's core, near the light's column: amount, the band's height (frame heights), where the
+    // core is (0 its top edge, 1 its height below it), and its color: 0 pale light of the band's own hue, 1 more of
+    // the band's own light, which the tone curve pales (orange-red through orange and amber to pale yellow).
+    { kind: 'vector', key: key('Pale'), label: `Band ${n} pale core amount, height, place, own light`, min: 0, max: 4, step: 0.005, default: [0, 1, 0.5, 0] },
   ]
 }
 

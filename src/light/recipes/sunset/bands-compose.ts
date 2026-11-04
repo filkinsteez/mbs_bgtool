@@ -68,6 +68,10 @@ const oklch = (hex: string) => {
   return lch
 }
 const lightness = (hex: string) => oklch(hex)[0]
+const luminanceOf = (hex: string) => {
+  const [r, g, b] = hexToLinear(hex)
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
 const hue = (hex: string) => oklch(hex)[2]
 /** The order of a run's choices, by pack, frame shape and run (see `stack`). */
 const runOrders = new Map<string, number[]>()
@@ -96,6 +100,10 @@ interface Band {
   line?: boolean
   /** The top edge is a long ramp, its width set in frame heights rather than by the lens. */
   ramp?: boolean
+  /** Pale light of the band's own hue at its core, near the light's column (0 or none: no pale core). */
+  pale?: number
+  /** The core is more of the band's own light instead, which the tone curve pales. */
+  paleOwn?: boolean
 }
 
 interface LightTerm {
@@ -234,9 +242,9 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   const lights = rest.filter((hex) => isLightColor(hexToLinear(hex)))
   const darks = rest.filter((hex) => lightness(hex) < 0.45)
   // A frame's colors: one light (if the pack has one) and the pack's other colors; two dark colors show one, the
-  // other or both. A pack with no dark color (Bold) may end with a color again under less light: Meta Blue, or
-  // Orange-red itself, since Meta Blue right below Orange-red meets it through the lens as magenta. Orange-red
-  // keeps most of its light: much dimmer it reads as brick.
+  // other or both. A pack with no dark color (Bold) may end with a color again under less light: Meta Blue sunk to
+  // a deep navy, or Orange-red itself, since Meta Blue right below Orange-red meets it through the lens as
+  // magenta. Orange-red keeps most of its light: much dimmer it reads as brick.
   // A pack whose light is near-white (Atmospheric) may also put its darkest chosen color as a band above the sky
   // (a night top), Meta Blue again, under less light, as a band low in the frame (a low blue), or its near-white
   // light as a thin bright line instead of a band (an ice line).
@@ -244,7 +252,7 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   const build = (chosenLight: string | undefined, chosenDarks: readonly string[], base: boolean, form: Form = 'plain'): Entry[] => {
     const picked = rest.filter((hex) => (lights.includes(hex) ? hex === chosenLight : darks.includes(hex) ? chosenDarks.includes(hex) : true))
     const list: Entry[] = [{ hex: sky, under: 1 }, ...picked.map((hex) => ({ hex, under: 1 }))]
-    if (base && chosenLight) list.push(hue(chosenLight) < 60 ? { hex: chosenLight, under: 0.68 } : { hex: sky, under: 0.5 })
+    if (base && chosenLight) list.push(hue(chosenLight) < 60 ? { hex: chosenLight, under: 0.68 } : { hex: sky, under: 0.22 })
     if (form === 'nightTop' && chosenDarks.length) {
       const darkest = chosenDarks.reduce((a, b) => (lightness(b) < lightness(a) ? b : a))
       const at = list.findIndex((e) => e.hex === darkest)
@@ -650,9 +658,20 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     // Intensity, so the bright part of the frame moves with the seed.
     const column = !lights.length && lightness(b.color) > 0.95 ? 0.4 : 0
     // A thin line's light spreads through the lens, so its light isn't held below white.
-    b.light = baseLight(list, i + 1) * lift * (warmLight ? dim ** -0.5 : 1) * (b.line ? 1 : iceCap(b.color, level)) * (1 + 0.6 * column)
+    // A muted warm color (Tan) has no dark partner to deepen into, so it keeps its light as the scene dims: dimmer,
+    // it reads brown.
+    const keep = warmLight ? (oklch(b.color)[1] < 0.12 ? dim ** -1 : dim ** -0.5) : 1
+    b.light = baseLight(list, i + 1) * lift * keep * (b.line ? 1 : iceCap(b.color, level)) * (1 + 0.6 * column)
     b.sun = Math.max(column, 1 - 1 / lift)
     if (warmLight && (darkAt(i - 1) || darkAt(i + 1))) b.vary = 0.5
+    // Bright light goes pale: the light's band has a core near the light's column that pales toward white in its
+    // own hue, more with Intensity, bringing a color's light to about the same pale level whatever its own
+    // lightness (near-white Ice is pale already). Orange-red paled in its own hue reads salmon, so its core is
+    // more of its own light, about twice as much, which the tone curve takes through orange toward amber.
+    if (isLight && lightness(b.color) <= 0.95) {
+      b.paleOwn = hue(b.color) < 50
+      b.pale = (b.paleOwn ? 1.2 * luminanceOf(b.color) : clamp(1.25 - luminanceOf(b.color), 0.3, 0.9)) * Math.min(1, level) ** 1.2
+    }
   })
 
   // Light terms: a darker stretch in one band that isn't warm (a warm color dimmed reads olive or khaki), and a
@@ -766,6 +785,9 @@ function writeScene(scene: Scene, R: number, stack: number[]): BandsComposition 
     params[key('BumpLight')] = pad([], 0)
     params[key('Bridge')] = b.bridge
     params[key('Drift')] = b.drift
+    // The core sits in the middle of the band, or for the last band at the frame's edge: the light's end.
+    const next = scene.bands[i + 1]?.edge.base
+    params[key('Pale')] = [b.pale ?? 0, Math.max(0.05, (next ?? 1) - b.edge.base), next === undefined ? 1 : 0.5, b.paleOwn ? 1 : 0]
   })
   while (colors.length < 1 + BAND_MAX) colors.push(scene.sky)
   scene.patches.slice(0, PATCH_MAX).forEach((patch, j) => {

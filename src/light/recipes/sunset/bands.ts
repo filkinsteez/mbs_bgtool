@@ -3,7 +3,7 @@ import type { ColorPack } from '../../color/packs'
 import type { RecipeContext, RecipeDefinition, UniformMap } from '../../scene'
 import { composeBands } from './bands-compose'
 import type { Rgb } from '../../color/srgb'
-import { bridgeLight, closeHues, paleLight } from './bands-light'
+import { bridgeLight, closeHues, dimDrift, paleLight } from './bands-light'
 import { BAND_MAX, BANDS_COLOR_SLOTS, BANDS_PARAMS, bandKey, BUMP_MAX, LIGHT_MAX, LIGHT_PALE, lightKey, PATCH_MAX, patchKey } from './bands-params'
 import { BANDS_SHAPE_GLSL, edgeSeed } from './bands-shape'
 
@@ -33,9 +33,15 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
   const tilt: number[] = []
   const sun: number[] = []
   const drift: number[] = []
+  const pale: number[] = []
+  const core: number[] = []
   const bumps: Record<'at' | 'width' | 'top' | 'bottom' | 'cover' | 'light', number[]> = { at: [], width: [], top: [], bottom: [], cover: [], light: [] }
   for (let i = 0; i < BAND_MAX; i++) {
     const key = (name: Parameters<typeof bandKey>[1]) => bandKey(i, name)
+    const [paleAmount, coreHeight, corePlace, ownLight] = ctx.vec(key('Pale'))
+    const coreColor = ownLight > 0.5 ? bandColor(i).map((v) => v / Math.max(luminance(bandColor(i)), 1e-4)) : paleLight(bandColor(i) as Rgb)
+    pale.push(...(paleAmount > 0 ? coreColor.map((v) => v * paleAmount) : [0, 0, 0]))
+    core.push(coreHeight, corePlace)
     const [top, bottom] = ctx.vec(key('Edges'))
     const [fadeTop, fadeBottom] = ctx.vec(key('Fade'))
     const [waveTop, waveBottom, wavelength] = ctx.vec(key('Wave'))
@@ -110,6 +116,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     uPatchCount: Math.min(Math.round(ctx.num('patches')), PATCH_MAX),
     uLightCount: Math.min(Math.round(ctx.num('lights')), LIGHT_MAX),
     uBase: ctx.colors[0],
+    uBaseDrift: dimDrift(ctx.colors[0] as Rgb),
     uBandColor: Array.from({ length: BAND_MAX }, (_, i) => bandColor(i)).flat(),
     uPatchColor: Array.from({ length: PATCH_MAX }, (_, j) => ctx.colors[1 + BAND_MAX + j]).flat(),
     uLightColor: lightColor,
@@ -120,6 +127,8 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     uBandTilt: tilt,
     uBandSun: sun,
     uBandDrift: drift,
+    uBandPale: pale,
+    uBandCore: core,
     uBumpAt: bumps.at,
     uBumpWidth: bumps.width,
     uBumpTop: bumps.top,
@@ -182,6 +191,7 @@ uniform int uBandCount;
 uniform int uPatchCount;
 uniform int uLightCount;
 uniform vec3 uBase;
+uniform vec3 uBaseDrift;             // how fast the sky's red, green and blue deepen as it dims (0: it keeps its hue)
 uniform vec3 uBandColor[BAND_MAX];
 uniform vec3 uPatchColor[PATCH_MAX];
 uniform vec3 uLightColor[LIGHT_MAX];
@@ -192,6 +202,8 @@ uniform vec4 uBandLook[BAND_MAX];   // opacity, light, mode (0 cover, 1 multiply
 uniform vec4 uBandTilt[BAND_MAX];   // tilt of the top edge, extra tilt of the bottom edge, cover tilt, light lean
 uniform vec4 uBandSun[BAND_MAX];    // light toward the sun, cover toward the sun, share of the light change, 0
 uniform vec3 uBandDrift[BAND_MAX];  // how fast red, green and blue deepen as the band's light dims
+uniform vec3 uBandPale[BAND_MAX];   // pale light of the band's own hue at its core, near the light's column (0: none)
+uniform vec2 uBandCore[BAND_MAX];   // the band's height (frame heights) and where its core is (0 its top, 1 its height below)
 uniform vec4 uBumpAt[BAND_MAX];
 uniform vec4 uBumpWidth[BAND_MAX];
 uniform vec4 uBumpTop[BAND_MAX];
@@ -271,7 +283,8 @@ vec3 scene(float x, float v, vec2 p) {
   float sharpest = 1.5 * uPixel / frameH;
   float sunFall = 1.0 / (1.0 + pow(abs(x - uSun.x) / max(uSun.y, 1e-3), 1.6));
 
-  vec3 base = toMix(deepen(uBase, uIntensity));
+  // A dim sky keeps its own hue (Meta Blue sinks to deep navy); a warm one deepens like warm light.
+  vec3 base = toMix(deepen(uBase, uIntensity, uBaseDrift));
   float skyGain = (1.0 + uSky.x * sunFall) * exp2(-uSky.y * max(0.0, uSky.z - v));
   if (uLightVary.x > 0.0) skyGain *= max(0.0, 1.0 + uLightVary.x * lightChange(p, BAND_MAX));
 
@@ -365,6 +378,12 @@ vec3 scene(float x, float v, vec2 p) {
     int mode = int(look.z + 0.5);
     float a = mode == 2 || mode == 3 ? shape * cover : min(1.0, shape * cover * look.x);
     vec3 emit = toMix(deepen(uBandColor[i], light * uIntensity, uBandDrift[i]) * light);
+    if (uBandPale[i] != vec3(0.0)) {
+      // Bright light goes pale: at its core, near the light's column, the band's light pales toward white in its
+      // own hue, and its full color shows only around that.
+      float d = (v - top) / max(uBandCore[i].x, 1e-3) - uBandCore[i].y;
+      emit += toMix(uBandPale[i]) * light * sunFall * exp(-d * d / 0.12);
+    }
     if (mode == 3) {
       // Light bands are the sky's own light too, so they give way to a glow in the same way.
       emit *= giveWay;
