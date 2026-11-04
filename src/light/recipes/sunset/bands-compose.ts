@@ -161,7 +161,8 @@ export function composeBands(input: BandsComposeInput): BandsComposition {
   const pack = input.pack ?? PACKS[0]
   const intensity = input.intensity ?? 0.5
   const softness = input.softness ?? 0.5
-  const horizon = input.horizon ?? 0.5
+  // With a line set, the line alone places the stack: Horizon keeps the seed's own heights.
+  const horizon = input.drag ? 0.5 : (input.horizon ?? 0.5)
   const aspect = clamp(input.aspect, 0.25, 4)
   const seed = Math.round(input.seed)
   const frameW = Math.max(aspect, 1)
