@@ -18,10 +18,12 @@
   background: #000;
 }
 
+/* After a format change the box takes its new shape a frame before the image in the new shape is drawn. */
 .tool-canvas {
   display: block;
   width: 100%;
   height: 100%;
+  object-fit: cover;
 }
 
 .tool-panel {
@@ -42,4 +44,33 @@
   cursor: default;
   background: var(--dial-surface);
   color: var(--dial-text-secondary);
+}
+
+@media (max-width: 720px) {
+  .tool {
+    flex-direction: column;
+  }
+
+  .tool-stage {
+    flex: 1 1 0;
+    min-height: 0;
+  }
+
+  .tool-panel {
+    width: auto;
+    height: auto;
+    max-height: 50%;
+    border-left: none;
+    border-top: 1px solid var(--chrome-2);
+  }
+
+  .tool-panel.dial-column {
+    overflow-y: auto;
+  }
+
+  .tool-panel .dialkit-folder-inner {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: center;
+  }
 }
