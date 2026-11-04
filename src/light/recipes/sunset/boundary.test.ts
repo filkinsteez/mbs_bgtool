@@ -358,7 +358,7 @@ describe.skipIf(!chrome || process.env.LIGHT_SKIP_GPU === '1')('boundary model i
   }, 60_000)
   afterAll(async () => {
     await harness?.close()
-  })
+  }, 60_000)
 
   it('compiles in a recipe program and matches the CPU field', { timeout: 90_000 }, async () => {
     const fragment = `${BOUNDARY_GLSL}
