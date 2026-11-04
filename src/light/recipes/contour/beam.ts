@@ -46,6 +46,7 @@ uniform vec3 uPale;       // pale share, from, to (luminance)
 uniform float uPaleWhite; // how far the pale color goes from the light's color toward white
 uniform vec3 uPaleTarget; // the light's color on the camera's path to white, at unit luminance
 uniform vec2 uEdge;       // rounded stage edge width (beam half-widths), glow falloff over the floor (1: as above it)
+uniform float uEdgeHaze;  // haze over the stage edge lit by the floor's spill there, as a share of the spill (0: none)
 uniform vec4 uTail;       // dim haze color at unit peak at half of w, w (share of the haze's clipping level; 0: off)
 uniform vec3 uTailEnd;    // dim haze color at unit peak at a quarter of w and below
 uniform vec2 uFall;       // share of the clipping level below which haze falls faster (0: off), how much faster
@@ -176,6 +177,19 @@ float warmFall(float scatter) {
   return exp((uFall.y - 1.0) * log(max(x, 1e-6)) * (1.0 - smoothstep(0.25, 1.0, x)));
 }
 
+// Distance of a floor point (world x, z) from the beam's axis across the beam, in beam radii,
+// so a leaning beam's pool stretches along its lean.
+float floorDistance(vec2 floorAt) {
+  vec2 q = (floorAt - vec2(uWorld.y, uWorld.x)) / uWorld.z;
+  float along = q.x * uBeamShape.x + q.y * uBeamShape.y;
+  return sqrt(max(dot(q, q) - along * along / (1.0 + dot(uBeamShape.xy, uBeamShape.xy)), 0.0));
+}
+
+// The light the haze scatters onto the floor around the pool, at that distance.
+float floorSpill(float d) {
+  return uPool.y * exp(-0.5 * d * d / max(uPool.z * uPool.z, 1e-4));
+}
+
 vec3 radiance(vec2 uv, vec2 p) {
   float F = uCamera.y;
   float horizon = uCamera.x;
@@ -225,15 +239,21 @@ vec3 radiance(vec2 uv, vec2 p) {
   float glow = poolGlow(vec2(abs(p.x - beamX), below > 0.0 ? below * uEdge.y : -below), aScreen, core, hazeHere);
   scatter += uBeamLight.x * glow;
 
+  // Haze just over the floor is lit from below by the floor's spill under it, and over the
+  // pit by the spill at the stage's edge, thinning upward over the floor haze's depth. So
+  // beside the pool the light rises across the edge line and the pool's contact line
+  // instead of stepping or creasing there.
+  if (uEdgeHaze > 0.0) {
+    float t = max(edgeY - p.y, 0.0) / max(uHazeB.y, 1e-3);
+    vec2 under = p.y > edgeY ? vec2(p.x * zFloor / F, zFloor) : vec2(p.x * ze / F, ze);
+    scatter += uBeamLight.x * uEdgeHaze * floorSpill(floorDistance(under)) / (1.0 + t * t);
+  }
+
   float direct = 0.0;
   float floorLight = 0.0;
   if (onFloor > 0.0) {
     vec2 floorAt = vec2(p.x * zFloor / F, zFloor);
-    // Distance from the beam's axis across the beam, so a leaning beam's pool stretches
-    // along its lean.
-    vec2 q = (floorAt - vec2(xb, zb)) / a;
-    float along = q.x * uBeamShape.x + q.y * uBeamShape.y;
-    float d = sqrt(max(dot(q, q) - along * along / (1.0 + dot(uBeamShape.xy, uBeamShape.xy)), 0.0));
+    float d = floorDistance(floorAt);
     // The pool: the beam's light per unit area on the floor. Its edge is softer than the
     // beam's (the penumbra widens with distance from the source), so it has no rim.
     float cosIn = 1.0 / length(vec3(uBeamShape.x, 1.0, uBeamShape.y));
@@ -277,7 +297,7 @@ vec3 radiance(vec2 uv, vec2 p) {
       reflection = uFloorLook.x * fresnel * lanes * (uBeamLight.x * mirrored + mBounce);
     }
 
-    float spill = uPool.y * exp(-0.5 * d * d / max(uPool.z * uPool.z, 1e-4));
+    float spill = floorSpill(d);
     direct = rounded * uPool.x * uBeamLight.x * lit * tex;
     floorLight = rounded * (spill * uBeamLight.x + reflection) * tex;
   }
@@ -311,6 +331,12 @@ const TAIL_BELOW = 0.6
 
 /** How much faster that dim warm haze falls. */
 const TAIL_FALL = 2.5
+
+/**
+ * Haze over the stage's edge, as a share of the floor's spill under it: with black walls
+ * beside the beam, the floor's light would otherwise step up at the edge line.
+ */
+const EDGE_HAZE = 1
 
 /**
  * Stage edges at least this soft (short-side units) survive half-resolution radiance in a
@@ -401,6 +427,7 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
       bounce: [round4(lerp(0.7, 1, random())), round4(soft(0.5, 0.8) * Math.min(1, 0.5 + halfH)), round4(lerp(1, 1.4, random())), round4(lerp(0.12, 0.2, random()))],
       pool: [round4(Math.min(10, pool)), round4(lerp(1.3, 2, random())), round4(soft(1.4, 1.9))],
       edgeSoftness: round4(soft(HALF_SCALE_EDGE, 0.024)),
+      edgeHaze: EDGE_HAZE,
       gloss: [round4(lerp(2.8, 3.4, random())), round4(soft(0.22, 0.32))],
       texture: [0.05, 0.006],
       lanes: [round4(lerp(1.5, 1.9, random())), round4(lerp(0.4, 0.6, random()))],
@@ -464,6 +491,7 @@ export const contourBeam: RecipeDefinition = {
     { kind: 'vector', key: 'pool', label: 'Pool', min: 0, max: 10, step: 0.005, default: [1.5, 0.3, 1.6] },
     { kind: 'number', key: 'edgeSoftness', label: 'Edge softness', min: 0, max: 0.1, step: 0.0005, default: 0.01 },
     { kind: 'vector', key: 'edgeLight', label: 'Light at the edge', min: 0, max: 6, step: 0.005, default: [0.18, 1] },
+    { kind: 'number', key: 'edgeHaze', label: 'Haze over the edge', min: 0, max: 4, step: 0.005, default: 0 },
     { kind: 'vector', key: 'lanes', label: 'Floor lanes', min: 0, max: 4, step: 0.005, default: [0.6, 0.3] },
     { kind: 'vector', key: 'gloss', label: 'Gloss', min: 0, max: 4, step: 0.005, default: [1, 0.1] },
     { kind: 'vector', key: 'texture', label: 'Floor texture', min: 0, max: 0.3, step: 0.0005, default: [0.04, 0.004] },
@@ -503,6 +531,7 @@ export const contourBeam: RecipeDefinition = {
       uPaleWhite: ctx.num('paleWhite'),
       uPaleTarget: paleTarget(ctx.color('light')),
       uEdge: ctx.vec('edgeLight'),
+      uEdgeHaze: ctx.num('edgeHaze'),
       uTail: tailUniform(ctx.vec('tail')),
       uTailEnd: tailEndUniform(ctx.vec('tailEnd')),
       uFall: ctx.vec('fall'),
