@@ -113,15 +113,15 @@ Grain is the same at 1080p and 4K relative to the picture: the strength by light
 
 ### The riso prints against strength 1, at the print's size
 
-Each riso reference preset (`src/light/presets/references/sunset-*-riso.json`) rendered at 925 x 1447 and measured the same way as the print. "Strength 1" turns off the preset's ink weight, so the grain is what the tool's Grain filter at 1 gives.
+Each riso reference preset (`src/light/presets/references/sunset-*-riso.json`) rendered at 925 x 1447 and measured the same way as the print. "Strength 1" turns off the preset's ink weight, so the grain is what the tool's Grain filter at 1 gives. The preset rows are the presets as of c06c684 (measured again at 4:45 PM).
 
 | Image | L std % | Code values | Mids L % | Highlights L % | L 0.4 | 0.5 | 0.6 | 0.7 | 0.8 | 0.9 | Half width px | per 1000 of short side |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | green riso, print | 0.98 | 3.09 | 1.11 | 0.85 | - | - | 1.11 | 0.85 | 0.83 | 1.01 | 2.43 | 2.63 |
-| green riso, preset with its ink weight | 0.73 | 2.32 | 0.93 | 0.48 | - | - | 0.93 | 0.54 | 0.26 | 0.16 | 2.20 | 2.38 |
+| green riso, preset (even grain) | 1.20 | 3.85 | 1.42 | 0.98 | - | - | 1.42 | 1.03 | 0.82 | 0.81 | 2.24 | 2.43 |
 | green riso, strength 1 (the tool) | 1.20 | 3.85 | 1.42 | 0.98 | - | - | 1.42 | 1.03 | 0.82 | 0.81 | 2.24 | 2.43 |
 | blue riso, print | 1.70 | 5.11 | 1.86 | 1.12 | 2.27 | 2.16 | 1.63 | 1.53 | 1.02 | 0.85 | 1.94 | 2.10 |
-| blue riso, preset with its ink weight | 1.36 | 4.05 | 1.52 | 0.70 | 2.02 | 1.81 | 1.26 | 0.89 | 0.65 | 0.58 | 2.25 | 2.43 |
+| blue riso, preset (even grain) | 1.48 | 4.43 | 1.63 | 0.88 | 2.09 | 1.92 | 1.40 | 1.03 | 0.82 | 0.81 | 2.25 | 2.44 |
 | blue riso, strength 1 (the tool) | 1.48 | 4.43 | 1.63 | 0.88 | 2.09 | 1.92 | 1.40 | 1.03 | 0.82 | 0.81 | 2.25 | 2.44 |
 | pink riso, print | 1.26 | 3.82 | 1.55 | 0.70 | 2.23 | 1.84 | 1.09 | 0.69 | 0.67 | 0.74 | 2.06 | 2.23 |
 | pink riso, preset with its ink weight | 1.09 | 3.27 | 1.38 | 0.47 | 1.90 | 1.51 | 1.08 | 0.66 | 0.32 | 0.17 | 2.29 | 2.47 |
