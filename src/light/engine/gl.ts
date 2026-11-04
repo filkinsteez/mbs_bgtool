@@ -59,6 +59,12 @@ const POOL_BYTES = 256 * 1024 * 1024
 /** KHR_parallel_shader_compile: whether a program has finished compiling and linking, answered without waiting. */
 const COMPLETION_STATUS_KHR = 0x91b1
 
+/** EXT_disjoint_timer_query_webgl2, which TypeScript's DOM types don't list. */
+interface TimerQueryExtension {
+  readonly TIME_ELAPSED_EXT: GLenum
+  readonly GPU_DISJOINT_EXT: GLenum
+}
+
 /** A program whose compile and link have been issued and not yet checked. */
 interface PendingProgram {
   readonly program: WebGLProgram
@@ -74,8 +80,11 @@ export class Gpu {
   readonly canvas: AnyCanvas
   /** KHR_parallel_shader_compile: programs compile on the driver's threads and can be checked without waiting. */
   readonly compilesInBackground: boolean
+  private readonly timerQuery: TimerQueryExtension | null
   private readonly programs = new Map<string, Program>()
   private readonly pending = new Map<string, PendingProgram>()
+  /** Programs that failed to compile or link in the background, with their errors. */
+  private readonly failed = new Map<string, Error>()
   /** During a render that doesn't wait for compiles: the programs it found still compiling. */
   private unfinished: string[] | null = null
   private readonly vertexShader: WebGLShader
@@ -110,6 +119,7 @@ export class Gpu {
     }
     this.gl = gl
     this.compilesInBackground = gl.getExtension('KHR_parallel_shader_compile') !== null
+    this.timerQuery = gl.getExtension('EXT_disjoint_timer_query_webgl2') as TimerQueryExtension | null
     canvas.addEventListener('webglcontextlost', (event) => {
       event.preventDefault()
       this.lost = true
@@ -144,14 +154,18 @@ export class Gpu {
 
   /**
    * Compiles (once per source) a fragment shader drawn over a fullscreen triangle, and waits for it. Inside
-   * `withoutWaiting`, a program still compiling is left to finish in the background instead: the render gets a
-   * stand-in and draws nothing more.
+   * `withoutWaiting`, a program not checked before the render started is left to finish in the background instead:
+   * the render gets a stand-in and draws nothing more.
    */
   program(fragmentSource: string): Program {
     const cached = this.programs.get(fragmentSource)
     if (cached) return cached
+    const failed = this.failed.get(fragmentSource)
+    if (failed) throw failed
     const pending = this.pending.get(fragmentSource) ?? this.start(fragmentSource)
-    if (this.unfinished && this.compilesInBackground && !this.isDone(pending)) {
+    // Checking a program waits until the GPU process has handled every draw issued before, including building
+    // their pipelines, so a render that doesn't wait only checks programs before its first draw.
+    if (this.unfinished && this.compilesInBackground) {
       this.unfinished.push(fragmentSource)
       return UNREADY
     }
@@ -164,23 +178,28 @@ export class Gpu {
     for (const source of fragmentSources) if (!this.programs.has(source) && !this.pending.has(source)) this.start(source)
   }
 
-  /** Whether these programs have finished compiling. Always true without the extension, where they compile when drawn. */
+  /**
+   * Whether these programs have finished compiling, failed ones included (drawing with one throws its error). Always
+   * true without the extension, where they compile when drawn.
+   */
   compiled(fragmentSources: readonly string[]): boolean {
     if (!this.compilesInBackground) return true
     return fragmentSources.every((source) => {
-      if (this.programs.has(source)) return true
       const pending = this.pending.get(source)
-      return pending !== undefined && this.isDone(pending)
+      return pending === undefined || this.isDone(pending)
     })
   }
 
   /**
-   * Runs `render` without waiting for shader compiles (KHR_parallel_shader_compile): a program still compiling is
-   * started or left running, and from then on nothing is drawn. Returns `render`'s value and the programs still
-   * compiling (none: the render is complete). Without the extension `render` runs as usual and compiles as it goes.
+   * Runs `render` without waiting for shader compiles (KHR_parallel_shader_compile). First it checks and keeps every
+   * program that has finished compiling; during the render a program still compiling is started or left running, and
+   * from then on nothing is drawn. Returns `render`'s value and those programs (none: the render is complete). Call
+   * it once the GPU has finished earlier work (a fence has passed): the checks wait for it. Without the extension
+   * `render` runs as usual and compiles as it goes.
    */
   withoutWaiting<T>(render: () => T): { value: T; unfinished: string[] } {
     if (!this.compilesInBackground) return { value: render(), unfinished: [] }
+    this.finishCompiled()
     const unfinished: string[] = []
     this.unfinished = unfinished
     try {
@@ -223,6 +242,40 @@ export class Gpu {
     return true
   }
 
+  /**
+   * Times the GPU work issued until `endTimer` (EXT_disjoint_timer_query_webgl2); null without the extension. One
+   * timer runs at a time. `timerMs` reads the time later without waiting.
+   */
+  beginTimer(): WebGLQuery | null {
+    if (!this.timerQuery || this.isLost) return null
+    const query = this.gl.createQuery()
+    if (query) this.gl.beginQuery(this.timerQuery.TIME_ELAPSED_EXT, query)
+    return query
+  }
+
+  endTimer(query: WebGLQuery | null): void {
+    if (query && this.timerQuery && !this.isLost) this.gl.endQuery(this.timerQuery.TIME_ELAPSED_EXT)
+  }
+
+  /** Drops a timer whose time isn't wanted. */
+  deleteTimer(query: WebGLQuery): void {
+    this.gl.deleteQuery(query)
+  }
+
+  /**
+   * A timer's GPU time in ms, without waiting: undefined while the GPU hasn't reported it, null when the time is
+   * unusable (the GPU was interrupted, or the context is lost). Deletes the query once it has an answer.
+   */
+  timerMs(query: WebGLQuery): number | null | undefined {
+    const gl = this.gl
+    if (!this.timerQuery || this.isLost) return null
+    if (!gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE)) return undefined
+    const disjoint = gl.getParameter(this.timerQuery.GPU_DISJOINT_EXT) as boolean
+    const ns = gl.getQueryParameter(query, gl.QUERY_RESULT) as number
+    gl.deleteQuery(query)
+    return disjoint ? null : ns / 1e6
+  }
+
   private start(fragmentSource: string): PendingProgram {
     const gl = this.gl
     const fragment = gl.createShader(gl.FRAGMENT_SHADER)
@@ -240,6 +293,18 @@ export class Gpu {
 
   private isDone(pending: PendingProgram): boolean {
     return this.gl.getProgramParameter(pending.program, COMPLETION_STATUS_KHR) === true
+  }
+
+  /** Checks and keeps every program that has finished compiling; a failed one keeps its error, which drawing with it throws. */
+  private finishCompiled(): void {
+    for (const [source, pending] of this.pending) {
+      if (!this.isDone(pending)) continue
+      try {
+        this.finish(source, pending)
+      } catch (error) {
+        this.failed.set(source, error instanceof Error ? error : new LightEngineError(String(error)))
+      }
+    }
   }
 
   /** Checks a started program (waiting for it if it is still compiling) and keeps it with its uniforms. */
@@ -385,6 +450,7 @@ export class Gpu {
       gl.deleteProgram(program)
     }
     this.pending.clear()
+    this.failed.clear()
     gl.deleteShader(this.vertexShader)
     gl.deleteVertexArray(this.vao)
     gl.getExtension('WEBGL_lose_context')?.loseContext()
