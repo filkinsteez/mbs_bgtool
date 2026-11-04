@@ -124,13 +124,13 @@ Each riso reference preset (`src/light/presets/references/sunset-*-riso.json`) r
 | blue riso, preset (even grain) | 1.48 | 4.43 | 1.63 | 0.88 | 2.09 | 1.92 | 1.40 | 1.03 | 0.82 | 0.81 | 2.25 | 2.44 |
 | blue riso, strength 1 (the tool) | 1.48 | 4.43 | 1.63 | 0.88 | 2.09 | 1.92 | 1.40 | 1.03 | 0.82 | 0.81 | 2.25 | 2.44 |
 | pink riso, print | 1.26 | 3.82 | 1.55 | 0.70 | 2.23 | 1.84 | 1.09 | 0.69 | 0.67 | 0.74 | 2.06 | 2.23 |
-| pink riso, preset with its ink weight | 1.09 | 3.27 | 1.38 | 0.47 | 1.90 | 1.51 | 1.08 | 0.66 | 0.32 | 0.17 | 2.29 | 2.47 |
+| pink riso, preset (light ink weight) | 1.38 | 4.20 | 1.66 | 0.88 | 2.10 | 1.80 | 1.41 | 1.02 | 0.76 | 0.74 | 2.28 | 2.46 |
 | pink riso, strength 1 (the tool) | 1.42 | 4.33 | 1.70 | 0.93 | 2.12 | 1.84 | 1.45 | 1.07 | 0.81 | 0.81 | 2.28 | 2.46 |
 
 - Averages over the three prints: L std 1.31 % for the prints and 1.37 % for strength 1 (+4 %); half width 2.14 px and 2.26 px (+5 %). The prints differ from their average by up to 30 % in strength and 14 % in size.
 - By lightness, strength 1 is within 11 % of the prints' average in dense ink (L 0.4 to 0.5: 2.1 % against 2.25 %), in the mid-tones and on paper (L 0.8 to 0.9: 0.81 % against 0.84 %). Between them (L 0.6) it is 13 % stronger than the average, close to the blue print.
 - All three are mono (0.97 to 0.99) and symmetric (skew within 0.05), with soft clumps (high-frequency share 0.01 to 0.04).
-- The presets' own ink weight takes too much grain off the paper (0.16 to 0.58 % against 0.74 to 1.01 %).
+- The presets' grain follows the prints since c06c684 (Bands agent): green and blue use even grain, the same as strength 1, and pink keeps a light ink weight (`grainInk` 0.5, 0.8). Paper is now 0.74 to 0.81 % against the prints' 0.67 to 1.01 %, and dense ink 2.09 to 2.10 % against 2.23 to 2.27 %. Before that change their ink weight left the paper at 0.16 to 0.58 %.
 
 ### Every look and pack at 4K, strength 0.5
 
@@ -185,7 +185,7 @@ Each look's own scene from its compose (controls at 0.5, seed 1, 16:9), measured
 
 All in `artifacts/grain/measure/sheets/`. Crops are 1:1, with a 3x zoom of the middle under each, and each crop has its own numbers.
 
-- `riso-native.jpg`: each riso print next to its preset with the preset's ink weight and with strength 1 everywhere, all at the print's size.
+- `riso-native.jpg`: each riso print next to its preset (as of c06c684) and with strength 1 everywhere, all at the print's size.
 - `deck-tile.jpg`: the deck Grain tile exported at 1x, 2x and 4x, then our grain at 0.5 and 1 on a Bold sky at 1080p.
 - `sunset-4K.jpg`, `contour-4K.jpg`: Sunset Ramp and Contour Beam in Bold, Elemental and Atmospheric at 4K, grain 0, 0.5 and 1, next to a riso print enlarged to a 2160 px short side.
 - `sunset-1080p.jpg`, `contour-1080p.jpg`: the same at 1080p, also next to the deck tile at 1x.
@@ -193,4 +193,4 @@ All in `artifacts/grain/measure/sheets/`. Crops are 1:1, with a 3x zoom of the m
 ## Questions for the owner
 
 1. **How much grain at the top of the slider?** The deck's Grain tile is 2.5 % L of dark one-pixel specks at 1080p, about twice our strength 0.5 and more than strength 1 on light colors. Strength 1 matches the riso prints, which are softer and weaker on light colors. Keep this, or let the slider go further, up to the deck tile's amount?
-2. **Riso presets' ink weight.** The three riso reference presets (look agents' files) put more grain in dense ink and less on paper than the prints: 0.2 to 0.6 % on paper against 0.7 to 1.0 % in the prints. Strength 1 everywhere matches the prints better. That is a change to those presets (`params.grainInk`), not to the filter.
+2. **Riso presets' ink weight.** Answered in c06c684: the presets no longer leave the paper clean (paper 0.74 to 0.81 %, dense ink about 2.1 %; see the riso table above).
