@@ -427,7 +427,10 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const [ux, uy] = [r(), r()]
   const at: [number, number] = [0.5 + side * lerp(plan.offset[0], plan.offset[1], ux), Math.max(MIN_LEAD_Y, height + lerp(plan.lift[0], plan.lift[1], uy))]
   const tilt = lerp(-8, 8, r())
-  let radius = lerp(0.3, 0.66, r()) * (cyanLead ? 0.85 : 1)
+  // How much of the frame the lead takes against the inner bloom: a small lead gets a large cyan or grey
+  // bloom and the other way round, so seeds differ in how much of each pack color shows.
+  const leadShare = r()
+  let radius = lerp(0.3, 0.66, leadShare) * (cyanLead ? 0.85 : 1)
   const aniso = lerp(1.6, 2.8, r())
   radius *= size
   // The lead stays narrower than the frame, so there is sky beside it for the other blooms.
@@ -490,7 +493,13 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     color: innerColor,
     // Below a lead that sits high or at a side edge, above it otherwise.
     at: [0.5 + innerSide * lerp(0.05, 0.3, r()), (plan.innerBelow ? lerp(0.86, 0.72, rise) : lerp(0.42, 0.28, rise)) + lerp(-0.05, 0.05, r())],
-    radius: radius * (innerGrey ? lerp(0.6, 0.8, uSize) : innerCyan ? lerp(1.0, 1.25, uSize) * (aspect < 1 ? 0.75 : 1) : lerp(1.15, 1.4, uSize)),
+    radius:
+      radius *
+      (innerGrey
+        ? lerp(0.6, 0.8, uSize) * lerp(1.3, 0.8, leadShare)
+        : innerCyan
+          ? lerp(1.0, 1.25, uSize) * lerp(1.45, 0.7, leadShare) * (aspect < 1 ? 0.75 : 1)
+          : lerp(1.15, 1.4, uSize)),
     aniso: innerCyan || innerGrey ? lerp(1.7, 2.5, uAniso) : lerp(2.8, 3.8, uAniso),
     angle: -side * lerp(-4, 12, r()),
     gain: innerColor === SLOT.sky ? lerp(0.25, 0.4, uGain) : innerGrey ? lerp(1.0, 1.2, uGain) : lightGain(colors[innerColor]) * lerp(0.65, 0.85, uGain),
