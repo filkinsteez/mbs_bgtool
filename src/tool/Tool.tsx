@@ -4,7 +4,7 @@ import '@/styles/dialkit.css'
 import '@/styles/dial-panel.css'
 import '@/styles/tool.css'
 import { DialStore, useDialKitController } from 'dialkit'
-import { useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { flushSync } from 'react-dom'
 import { EXPORT_SIZES, getPack, type ExportAspect } from '@/light'
 import {
@@ -61,22 +61,29 @@ const SEED_FIELD_ID = 'tool-seed'
 const OFF_BUTTON: CSSProperties = { cursor: 'default' }
 
 /**
- * The seed as a typed number. Enter or leaving the field applies what was typed, Escape puts the current seed back,
- * and the up and down arrows step it by 1 (10 with Shift).
+ * The seed as a typed number. Clicking or tabbing into the field selects the whole number, so typing replaces it; a
+ * second click places the caret. Enter or leaving the field applies what was typed, Escape puts the current seed back,
+ * and the up and down arrows step it by 1 (10 with Shift). After Enter or an arrow the number is selected again.
  */
 function SeedField({ seed, onChange }: { seed: number; onChange: (seed: number) => void }) {
   const [draft, setDraft] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
   const typed = draft !== null && draft !== '' ? Number(draft) : null
   const apply = () => {
     setDraft(null)
     if (typed !== null) onChange(typed)
   }
+  useLayoutEffect(() => {
+    const input = inputRef.current
+    if (input && document.activeElement === input) input.select()
+  }, [seed])
   return (
     <div className="dialkit-text-control">
       <label className="dialkit-text-label" htmlFor={SEED_FIELD_ID}>
         Seed
       </label>
       <input
+        ref={inputRef}
         id={SEED_FIELD_ID}
         className="dialkit-text-input"
         type="text"
@@ -86,10 +93,19 @@ function SeedField({ seed, onChange }: { seed: number; onChange: (seed: number) 
         maxLength={String(SEED_MAX).length}
         value={draft ?? String(seed)}
         onChange={(event) => setDraft(event.target.value.replace(/[^0-9]/g, ''))}
+        onMouseDown={(event) => {
+          // Left to itself, the click would put the caret where it landed and undo the selection.
+          if (event.button !== 0 || document.activeElement === event.currentTarget) return
+          event.preventDefault()
+          event.currentTarget.focus()
+        }}
+        onFocus={(event) => event.currentTarget.select()}
         onBlur={apply}
         onKeyDown={(event) => {
-          if (event.key === 'Enter') apply()
-          else if (event.key === 'Escape') setDraft(null)
+          if (event.key === 'Enter') {
+            apply()
+            event.currentTarget.select()
+          } else if (event.key === 'Escape') setDraft(null)
           else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
             event.preventDefault()
             setDraft(null)
