@@ -208,4 +208,21 @@ A step is a jump when it is at least `--ratio` (4) times the median of the 12 st
 
 `output.grain` is one strength 0..1 (`src/light/engine/grain.ts`, ported from `prototypes/grain-study`): mono grain on Oklab L at output size, after the tone curve and before dither, with clump sizes as fractions of the short side so a preview and an export carry the same grain relative to the picture. 0 is off; 0.5 is fine film grain (about 1.25 % Oklab L at mid-tones in a 4K export); 1 matches the riso prints. It fades to 0 at black and eases off toward white. Reference presets use 1 for the three riso prints and 0 for every other reference. Older presets' `grainSize` (px) and `grainChroma` are ignored.
 
+### Output filters: grain, then ASCII or Pixel, then dither
+
+The output pass (`src/light/engine/output.ts`) runs a chain of filter stages on every output pixel, after the Mitchell resolve and the tone curve and before the sRGB encode and the dither. Each stage has a strength in the output settings, 0..1: `output.grain`, `output.ascii`, `output.pixel`. A stage at 0 is left out of the shader. Stages run in the order of `OUTPUT_FILTERS` in `src/light/engine/filters/index.ts` (grain first). The tool turns on one filter at a time; the engine runs whatever is above 0.
+
+To plug in a filter:
+
+1. Write `src/light/engine/filters/<name>.ts` exporting an `OutputFilter` (`filters/types.ts`):
+   - `key`: `'ascii'` or `'pixel'`.
+   - `glsl`: the stage's uniforms and helpers (prefix them with the stage's name) and `vec3 <apply>(vec3 display, ivec2 px, float weight)`. `display` is display-linear color, 0..1 per channel, in and out. `px` is the output pixel, x right and y down. `weight` is the recipe's grain weight (most stages ignore it). The pass has the chunk library and `uniform int uSeed;`. Size everything in fractions of the short side, so a preview and an export show the same cells.
+   - `apply`: the function's name.
+   - `uniforms(strength, { width, height, seed })`: the stage's uniforms at that output size, for a strength above 0.
+   - `source` (optional), for stages that need per-cell values: `{ uniform, size(frame) }`. The engine renders the whole frame once at `size` texels (each the mean of 4 x 4 samples; display-linear after the tone curve, before any filter; alpha is the grain weight; row 0 is the top) and binds it to the sampler `uniform`. Make `size` depend on the frame's aspect only, so previews and exports read the same texels.
+2. Add it to `OUTPUT_FILTERS` in `filters/index.ts`, after `GRAIN_FILTER`. That file belongs to the grain agent; adding your entry and its import is fine.
+3. Render with `output: { <key>: 0.5 }` through the harness and look at the image.
+
+`OUTPUT_FILTER_SHADERS` lists the output pass for no filter and for each filter alone, for compiling them ahead. `prepareOutputFilters(gpu, output, frame, drawFrame)` builds the pass for a scene: its shader, the active stages' uniforms and their frame sources. Until `programRenderer.ts` calls it (a patch is with the coordinator), the renderer draws `OUTPUT_SHADER`, which holds the grain stage only, so only grain runs.
+
 `compose` (optional on a `RecipeDefinition`): `({ pack, controls: { intensity, softness, mood }, seed, aspect }) => { colors, params, lens, output }`, with each control 0..1 and `aspect` = width / height. The tool uses it instead of its fallback mapping in `src/tool/controls.ts`. Colors must be exact hexes of `pack` (or `#000000`); `compositionProblems(recipe, pack, composition)` in `src/light/compose.ts` lists anything wrong, and `src/light/recipes/compose.test.ts` runs it for every recipe with `compose` over 3 packs x 5 seeds x 4 aspects x 27 control settings.

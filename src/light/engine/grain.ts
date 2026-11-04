@@ -1,4 +1,5 @@
 import type { UniformMap } from '../scene'
+import type { OutputFilter } from './filters/types'
 
 /**
  * The Grain filter from prototypes/grain-study (README, lib/filter.mjs,
@@ -144,3 +145,18 @@ vec3 applyGrain(vec3 display, ivec2 px, float weight) {
   return saturate(oklabToLinear(lab));
 }
 `
+
+/** The grain as the first stage of the output filter chain. */
+export const GRAIN_FILTER: OutputFilter = {
+  key: 'grain',
+  glsl:
+    GRAIN_GLSL +
+    /* glsl */ `
+vec3 filterGrain(vec3 display, ivec2 px, float weight) {
+  if (uGrainAmp <= 0.0 || weight <= 0.0) return display;
+  return applyGrain(display, px, weight);
+}
+`,
+  apply: 'filterGrain',
+  uniforms: (strength, frame) => grainUniforms(strength, frame.width, frame.height),
+}

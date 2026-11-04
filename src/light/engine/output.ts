@@ -1,5 +1,9 @@
+import type { OutputSettings, UniformMap } from '../scene'
+import { activeFilters, OUTPUT_FILTERS, type FilterFrame, type OutputFilter } from './filters'
+import type { Gpu, Target } from './gl'
 import { CHUNK_LIBRARY, GLSL_HEADER } from './glsl'
-import { GRAIN_GLSL } from './grain'
+import { GRAIN_FILTER } from './grain'
+import { AREA_RESAMPLE_SHADER } from './passes'
 
 /**
  * Tone curve. Colors whose largest channel m is <= 1 pass through unchanged,
@@ -165,17 +169,7 @@ void main() {
 }
 `
 
-/**
- * Output filter at output size: vertical half of the resolve (when
- * supersampled), exact sRGB encode, grain (mono, on Oklab L; see grain.ts),
- * then TPDF dither of about +-1 LSB and rounding to 8 bits. Grain and dither
- * are keyed to output pixels; grain sizes follow the short side.
- */
-export const OUTPUT_SHADER =
-  GLSL_HEADER +
-  CHUNK_LIBRARY +
-  MITCHELL_GLSL +
-  /* glsl */ `
+const OUTPUT_UNIFORMS = /* glsl */ `
 uniform sampler2D uSrc;
 uniform ivec2 uTileOrigin;
 uniform int uFactor;
@@ -183,9 +177,9 @@ uniform int uApron;
 uniform int uSeed;
 uniform bool uDither;
 out vec4 fragColor;
-` +
-  GRAIN_GLSL +
-  /* glsl */ `
+`
+
+const OUTPUT_PASS = /* glsl */ `
 
 // Display-linear color in rgb, grain weight in alpha.
 vec4 resolveColumn(ivec2 local) {
@@ -221,12 +215,95 @@ void main() {
   vec4 resolved = resolveColumn(px - uTileOrigin);
   vec3 display = saturate(resolved.rgb);
   float weight = saturate(resolved.a);
-  vec3 encoded = linearToSrgb(display);
-  if (uGrainAmp > 0.0 && weight > 0.0) encoded = linearToSrgb(applyGrain(display, px, weight));
+  vec3 encoded = linearToSrgb(saturate(outputFilters(display, px, weight)));
   if (uDither) encoded = dither(saturate(encoded), px);
   fragColor = vec4(floor(saturate(encoded) * 255.0 + 0.5) / 255.0, 1.0);
 }
 `
+
+const builtShaders = new Map<string, string>()
+
+/**
+ * The output pass at output size: vertical half of the resolve (when
+ * supersampled), the filter stages in order, exact sRGB encode, then TPDF
+ * dither of about +-1 LSB and rounding to 8 bits. Filters and dither are keyed
+ * to output pixels; filter sizes follow the short side.
+ */
+export function buildOutputShader(stages: readonly OutputFilter[]): string {
+  const key = stages.map((stage) => stage.key).join(',')
+  const cached = builtShaders.get(key)
+  if (cached) return cached
+  const chain = stages.map((stage) => `  display = ${stage.apply}(display, px, weight);\n`).join('')
+  const shader =
+    GLSL_HEADER +
+    CHUNK_LIBRARY +
+    MITCHELL_GLSL +
+    OUTPUT_UNIFORMS +
+    stages.map((stage) => stage.glsl).join('\n') +
+    /* glsl */ `
+vec3 outputFilters(vec3 display, ivec2 px, float weight) {
+${chain}  return display;
+}
+` +
+    OUTPUT_PASS
+  builtShaders.set(key, shader)
+  return shader
+}
+
+/** The output pass with only the grain stage, which is off while uGrainAmp is 0. */
+export const OUTPUT_SHADER = buildOutputShader([GRAIN_FILTER])
+
+/** Every output pass the tool can draw with one filter at a time (and with none), for compiling ahead. */
+export const OUTPUT_FILTER_SHADERS: readonly string[] = [buildOutputShader([]), ...OUTPUT_FILTERS.map((stage) => buildOutputShader([stage]))]
+
+/** Samples per axis averaged into each texel of a filter's frame source. */
+const SOURCE_SAMPLES = 4
+const MAX_SOURCE_SIDE = 512
+
+export interface OutputFilterPass {
+  /** Fragment shader of the output pass with the stages that are on. */
+  shader: string
+  uniforms: UniformMap
+  /** Frame sources, by the sampler names the stages asked for. */
+  textures: Record<string, Target>
+  release(): void
+}
+
+/**
+ * The output pass for a scene's output settings: its shader, the uniforms of
+ * the stages that are on and their frame sources. `drawFrame` draws the whole
+ * frame, display-linear after the tone curve (alpha: grain weight), into a
+ * target at that target's size; it runs once per frame source.
+ */
+export function prepareOutputFilters(gpu: Gpu, output: OutputSettings, frame: FilterFrame, drawFrame: (target: Target) => void): OutputFilterPass {
+  const stages = activeFilters(output)
+  const uniforms: UniformMap = {}
+  const textures: Record<string, Target> = {}
+  for (const stage of stages) {
+    Object.assign(uniforms, stage.uniforms(output[stage.key], frame))
+    if (!stage.source) continue
+    const size = stage.source.size(frame)
+    const width = Math.min(MAX_SOURCE_SIDE, Math.max(1, Math.round(size.width)))
+    const height = Math.min(MAX_SOURCE_SIDE, Math.max(1, Math.round(size.height)))
+    const samples = gpu.acquire(width * SOURCE_SAMPLES, height * SOURCE_SAMPLES)
+    drawFrame(samples)
+    const source = gpu.acquire(width, height)
+    gpu.draw(gpu.program(AREA_RESAMPLE_SHADER), source, {
+      textures: { uSrc: samples },
+      uniforms: { uDstSize: [width, height], uTaps: SOURCE_SAMPLES },
+    })
+    gpu.release(samples)
+    textures[stage.source.uniform] = source
+  }
+  return {
+    shader: buildOutputShader(stages),
+    uniforms,
+    textures,
+    release: () => {
+      for (const target of Object.values(textures)) gpu.release(target)
+    },
+  }
+}
 
 /** Copies the top-down output texture to the canvas (whose row 0 is the bottom). */
 export const PRESENT_SHADER =
