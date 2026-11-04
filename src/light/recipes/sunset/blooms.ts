@@ -14,7 +14,21 @@ import type {
   VectorParam,
 } from '../../scene'
 import { BLOOM_BOUNDARY, BLOOM_MINOR_REF, BLOOM_ROW, bloomBoundaryUniforms } from './blooms-boundary'
-import { composeLayout, GLOW_COUNT, isSourceLight, isWarm, random, SLOT, SLOT_COUNT, type BloomsLayout, type GlowSpec } from './blooms-compose'
+import {
+  composeLayout,
+  GLOW_COUNT,
+  isSourceLight,
+  isWarm,
+  LOBES,
+  lobes,
+  SLOT,
+  SLOT_COUNT,
+  TAIL_END,
+  ZENITH_LOBE_INDEX,
+  ZENITH_VARY,
+  type BloomsLayout,
+  type GlowSpec,
+} from './blooms-compose'
 import { bridgeAmount, bridgeGate, bridgeTint, deepen, deepFade, deepMember, otherHue, skyPaleTint } from './blooms-light'
 import { BOUNDARY_GLSL } from './boundary'
 
@@ -175,34 +189,6 @@ const scale = (c: Rgb, k: number): Rgb => [c[0] * k, c[1] * k, c[2] * k]
 const luminance = (c: Rgb) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
 
-const LOBES = 3
-const LOBE_FALLOFF = 2.2
-
-/**
- * The lobes of one extended source, spread along its long axis at different
- * heights across it, each with its own size and falloff. Per lobe: offsets in
- * units of the long and short radius, 1 / size and weight (`shape`), and a
- * falloff factor (`falloff`). With vary 0 they sit on top of each other and
- * make one ellipse. The weights are scaled so the brightest point is about 1.
- */
-function lobes(vary: number, seed: number, index: number): { shape: number[]; falloff: number[] } {
-  const r = random(seed * 7919 + index * 131 + 17)
-  const raw = Array.from({ length: LOBES }, (_, j) => ({
-    along: (j - 1) * 0.55 * vary * lerp(0.7, 1.3, r()),
-    across: (r() - 0.5) * 0.9 * vary,
-    size: 1 - vary * lerp(0, 0.4, r()),
-    weight: j === 1 ? 1 : lerp(0.45, 0.9, r()),
-    falloff: 1 + vary * lerp(-0.25, 0.25, r()),
-  }))
-  const at = (a: number, c: number) =>
-    raw.reduce((sum, l) => sum + l.weight * (1 + ((a - l.along) / l.size) ** 2 + ((c - l.across) / l.size) ** 2) ** (-LOBE_FALLOFF * l.falloff), 0)
-  const peak = Math.max(at(0, 0), ...raw.map((l) => at(l.along, l.across)))
-  return {
-    shape: raw.flatMap((l) => [l.along, l.across, 1 / l.size, l.weight / peak]),
-    falloff: raw.map((l) => l.falloff),
-  }
-}
-
 /** 1 for a glow with its own haze (it sits in front), 0 for a glow without (it sits behind the others' haze). */
 function inFront(haze: number): number {
   const t = clamp(haze / 0.2, 0, 1)
@@ -271,6 +257,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
   const glowLow: number[] = []
   const glowWarm: number[] = []
   const glowCore: number[] = []
+  const glowCoreTint: number[] = []
   const glowShape: number[] = []
   const glowAxis: number[] = []
   const glowEdge: number[] = []
@@ -291,6 +278,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
       glowLow.push(0, 0, 0)
       glowWarm.push(0)
       glowCore.push(0)
+      glowCoreTint.push(0, 0, 0)
       glowShape.push(0, 0, 2, 0)
       glowAxis.push(1, 0, 1, 1)
       glowEdge.push(0, 1, 0, 0)
@@ -323,18 +311,19 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     const short = bridgeGate(sky, light) * Math.max(0, CORE_ABOVE_BRIDGE - linearToOklab(base)[0])
     const core = isSourceLight(glow.color, base) ? Math.min(MAX_CORE, layout.core * (1 + CORE_LIFT * short)) : 0
     glowCore.push(core)
+    const tint = bridgeTint(light)
+    glowCoreTint.push(...scale(tint, luminance(light) * gain))
     glowShape.push(glow.at[0], glow.at[1], glow.beta, haze)
     glowAxis.push(...axis(glow.radius * reach, glow.aniso, glow.angle))
     glowEdge.push(glow.vary, 1.15, 1.7 * i + 0.3, front)
     glowDeepFade.push(deepFade(sky, deep, light))
-    const tint = bridgeTint(light)
     // A dim glow's bridge stays below its own brightest point, so it never gets a pale ring lighter than itself.
     const floor = Math.min(layout.bridgeFloor, linearToOklab(scale(light, gain * (1 + core)))[0] - 0.04)
     const amount = front * layout.bridge * bridgeLight(sky, light, tint, haze, intensity, skyGain, gain, floor)
     glowBridge.push(...scale(tint, amount))
   }
   const z = layout.zenith
-  const zenithLobes = lobes(0.8, seed, GLOW_COUNT)
+  const zenithLobes = lobes(ZENITH_VARY, seed, ZENITH_LOBE_INDEX)
   return {
     uSky: scale(sky, skyGain),
     uDeep: scale(slot(z.color), skyGain),
@@ -351,6 +340,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     uGlowLow: glowLow,
     uGlowWarm: glowWarm,
     uGlowCore: glowCore,
+    uGlowCoreTint: glowCoreTint,
     uGlowDeepFade: glowDeepFade,
     uGlowShape: glowShape,
     uGlowAxis: glowAxis,
@@ -406,13 +396,14 @@ export const sunsetBlooms: RecipeDefinition = {
   fragment: `${BOUNDARY_GLSL}
 #define GLOW_COUNT ${GLOW_COUNT}
 #define LOBES ${LOBES}
-#define TAIL_END 4.5
+#define TAIL_END ${TAIL_END.toFixed(2)}
 #define LOW_HAZE 1.5
 #define CORE_RADIUS 0.3
 #define BLOOM_MINOR_REF ${BLOOM_MINOR_REF.toFixed(6)}
 #define BLOOM_ROW ${BLOOM_ROW.toFixed(6)}
 uniform float uLens;                  // 1: seen through the scatter lens (pack output); 0: drawn directly (1:1 presets)
 uniform float uGlowCore[GLOW_COUNT];  // light in a narrower core at each glow's source, over its peak
+uniform vec3 uGlowCoreTint[GLOW_COUNT]; // color of that core light, the light's pale tint at its body's luminance
 uniform vec3 uSky;
 uniform vec3 uDeep;
 uniform vec4 uSkyRamp;                // stops darker at the top, height of the exact hex, tilt, light variation
@@ -479,7 +470,7 @@ float halfReach(float b) { return sqrt(exp2(1.0 / b) - 1.0); }
 // falloff softens and hardens along the arc around a fixed half-brightness
 // edge, so its edges wander and soften unevenly and its inner and outer
 // edges move apart.
-float bloom(vec2 P, vec2 warp, vec2 center, vec4 axis, vec2 stretch, float beta, vec3 edge, float bend, int index, float shortUnit, vec4 lobe[LOBES], float falloff[LOBES], float core) {
+float bloom(vec2 P, vec2 warp, vec2 center, vec4 axis, vec2 stretch, float beta, vec3 edge, float bend, int index, float shortUnit, vec4 lobe[LOBES], float falloff[LOBES], float core, out float corePart) {
   vec2 scaleAxes = vec2(axis.z * stretch.x, axis.w * stretch.y);
   vec2 d0 = P - center;
   float reach0 = length(vec2(dot(d0, axis.xy), dot(d0, vec2(-axis.y, axis.x))) * scaleAxes);
@@ -517,7 +508,8 @@ float bloom(vec2 P, vec2 warp, vec2 center, vec4 axis, vec2 stretch, float beta,
   // A narrower core where the light comes from: brightness keeps rising toward the source and goes
   // white there, instead of standing flat across the glow, and the color stays in the falloff.
   float c2 = (along * along + across * across) * (keepHalf / (CORE_RADIUS * CORE_RADIUS));
-  return sum + core * exp2(-2.0 * b * log2(1.0 + c2));
+  corePart = core * exp2(-2.0 * b * log2(1.0 + c2));
+  return sum + corePart;
 }
 
 vec3 bloomsScene(vec2 uv) {
@@ -537,7 +529,8 @@ vec3 bloomsScene(vec2 uv) {
     falloff[j] = uZenithLobeFalloff[j];
   }
   // The deep area's edge drifts like a glow's, on the field row after the glows'.
-  float z = min(1.0, uZenithShape.z * bloom(P, warp, (uZenithShape.xy - 0.5) * frame, uZenithAxis, vec2(shortUnit), uZenithShape.w, vec3(0.5, 1.1, 2.3), 0.0, 9, shortUnit, lobe, falloff, 0.0));
+  float noCore;
+  float z = min(1.0, uZenithShape.z * bloom(P, warp, (uZenithShape.xy - 0.5) * frame, uZenithAxis, vec2(shortUnit), uZenithShape.w, vec3(0.5, 1.1, 2.3), 0.0, 9, shortUnit, lobe, falloff, 0.0, noCore));
   // The sky keeps changing up to the top edge: it is its exact hex along a mid-sky line (tilted, and
   // bent by the shared warp) and above it gets darker without changing hue; a dark pack color comes in
   // only where it is already dark, so blue and it meet without a lighter purple or teal band between.
@@ -557,17 +550,19 @@ vec3 bloomsScene(vec2 uv) {
   sky *= topLight * exp(uSkyRamp.w * 3.0 * noise2x2(P * 2.6 + vec2(7.1, 2.3), uSeed + 23).x);
 
   float k[GLOW_COUNT];
+  float kc[GLOW_COUNT];
   float low[GLOW_COUNT];
   float ext = 0.0;
   for (int i = 0; i < GLOW_COUNT; i++) {
     k[i] = 0.0;
+    kc[i] = 0.0;
     low[i] = 0.0;
     if (i < uGlowCount) {
       for (int j = 0; j < LOBES; j++) {
         lobe[j] = uGlowLobe[i * LOBES + j];
         falloff[j] = uGlowLobeFalloff[i * LOBES + j];
       }
-      k[i] = bloom(P, warp, (uGlowShape[i].xy - 0.5) * frame, uGlowAxis[i], stretch, uGlowShape[i].z, uGlowEdge[i].xyz, uGlowBend[i], i, shortUnit, lobe, falloff, uGlowCore[i]);
+      k[i] = bloom(P, warp, (uGlowShape[i].xy - 0.5) * frame, uGlowAxis[i], stretch, uGlowShape[i].z, uGlowEdge[i].xyz, uGlowBend[i], i, shortUnit, lobe, falloff, uGlowCore[i], kc[i]);
       vec2 c = (uGlowShape[i].xy - 0.5) * frame;
       low[i] = smoothstep(-0.25, 1.0, (P.y - c.y) * uGlowAxis[i].w * stretch.y);
       // Low down the light passes through more air, which hides more of the sky behind it.
@@ -582,7 +577,7 @@ vec3 bloomsScene(vec2 uv) {
   float deepArea = z * z * z;
   // A held deep area is the pack's dark ground in front of the sky: the glows' light stops at it, so the
   // ground keeps its hex.
-  float ground = 1.0 - uZenithHold * smoothstep(0.0, 0.8, z);
+  float ground = 1.0 - uZenithHold * smoothstep(0.0, 0.5, z);
   for (int i = 0; i < GLOW_COUNT; i++) {
     if (i >= uGlowCount) break;
     // A glow shows its own color where it outweighs the sky; where the sky still shows through, its
@@ -593,7 +588,9 @@ vec3 bloomsScene(vec2 uv) {
     float ill = mix(1.0, topLight, uGlowDeepFade[i]) * ground;
     vec3 body = mix(uGlowColor[i], uGlowLow[i], low[i] * uGlowWarm[i]);
     vec3 faint = mix(uGlowTail[i], uGlowLow[i], deepArea);
-    vec3 light = mix(faint, body, smoothstep(0.15, 0.8, k[i])) * (k[i] * ill);
+    // The core is the light's own pale tint, so an overexposed source whitens the way fire does (Orange-red
+    // through yellow-white), not through pink.
+    vec3 light = (mix(faint, body, smoothstep(0.15, 0.8, k[i])) * (k[i] - kc[i]) + uGlowCoreTint[i] * kc[i]) * ill;
     float f = uGlowEdge[i].w;
     behind += (1.0 - f) * light;
     front += f * light;

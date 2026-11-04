@@ -104,6 +104,8 @@ export function isWarm(c: Rgb): boolean {
  */
 const MIN_LIGHT_GAIN = 0.75
 const MAX_LIGHT_GAIN = 1.35
+/** Largest linear channel a light's body reaches at its full gain. */
+const MAX_BODY = 0.95
 
 /**
  * Gain that puts every light color's body near the same luminance, within its
@@ -113,7 +115,17 @@ const MAX_LIGHT_GAIN = 1.35
 export function lightGain(c: Rgb): number {
   const y = luminance(c)
   if (y <= 1e-6) return 0
-  return clamp((isGreen(c) ? 0.8 : 0.62) / y, MIN_LIGHT_GAIN, MAX_LIGHT_GAIN)
+  // A saturated light's body also stays below clipping (Orange-red), so it keeps its hue; its core whitens it.
+  return Math.min(clamp((isGreen(c) ? 0.8 : 0.62) / y, MIN_LIGHT_GAIN, MAX_LIGHT_GAIN), MAX_BODY / Math.max(c[0], c[1], c[2]))
+}
+
+/**
+ * Haze for a warm light that should show its own color at its middle. Warm light over blue turns grey-pink
+ * where the blue shows through (Tan); red-orange light, which has no green to balance the blue, turns
+ * pink, so it hides the sky behind its whole body.
+ */
+function warmHaze(c: Rgb, u: number): number {
+  return linearToOklch(c)[2] < 50 ? lerp(4.8, 5.8, u) : lerp(2.8, 3.6, u)
 }
 
 /** Lime-like light: chroma with a hue between yellow and cyan. */
@@ -174,12 +186,102 @@ function pick<T>(options: readonly (readonly [T, number])[], u: number): T {
 }
 
 /** Longest half-length of the lead glow, in units of sqrt(width * height) (a 16:9 frame is 1.33 wide). */
-const LEAD_MAX_LONG_RADIUS = 1.15
+const LEAD_MAX_LONG_RADIUS = 0.95
 
 /** 0 at `from`, 1 at `to` (either may be the larger), with no kink at either end. */
 function smoothstep(from: number, to: number, t: number): number {
   const x = clamp((t - from) / (to - from), 0, 1)
   return x * x * (3 - 2 * x)
+}
+
+export const LOBES = 3
+const LOBE_FALLOFF = 2.2
+/** Where a bloom's tail has faded out, in radii (the shader's TAIL_END). */
+export const TAIL_END = 4.5
+
+export interface Lobes {
+  shape: number[]
+  falloff: number[]
+}
+
+/**
+ * The lobes of one extended source, spread along its long axis at different
+ * heights across it, each with its own size and falloff. Per lobe: offsets in
+ * units of the long and short radius, 1 / size and weight (`shape`), and a
+ * falloff factor (`falloff`). With vary 0 they sit on top of each other and
+ * make one ellipse. The weights are scaled so the brightest point is about 1.
+ */
+export function lobes(vary: number, seed: number, index: number): Lobes {
+  const r = random(seed * 7919 + index * 131 + 17)
+  const raw = Array.from({ length: LOBES }, (_, j) => ({
+    along: (j - 1) * 0.55 * vary * lerp(0.7, 1.3, r()),
+    across: (r() - 0.5) * 0.9 * vary,
+    size: 1 - vary * lerp(0, 0.4, r()),
+    weight: j === 1 ? 1 : lerp(0.45, 0.9, r()),
+    falloff: 1 + vary * lerp(-0.25, 0.25, r()),
+  }))
+  const at = (a: number, c: number) =>
+    raw.reduce((sum, l) => sum + l.weight * (1 + ((a - l.along) / l.size) ** 2 + ((c - l.across) / l.size) ** 2) ** (-LOBE_FALLOFF * l.falloff), 0)
+  const peak = Math.max(at(0, 0), ...raw.map((l) => at(l.along, l.across)))
+  return {
+    shape: raw.flatMap((l) => [l.along, l.across, 1 / l.size, l.weight / peak]),
+    falloff: raw.map((l) => l.falloff),
+  }
+}
+
+/** Lobe variation of the dark corner, and its index in the lobe seeds (after the glows'). */
+export const ZENITH_VARY = 0.8
+export const ZENITH_LOBE_INDEX = GLOW_COUNT
+
+/**
+ * Share of the frame a dark corner covers at nearly its full color: enough to show as an area, never a
+ * blob. One of another hue (Plum, Forest) stays smaller: its blend with the blue is not a clean one.
+ */
+const CORNER_SHARE: readonly [number, number] = [0.08, 0.15]
+const OTHER_HUE_CORNER_SHARE: readonly [number, number] = [0.07, 0.11]
+
+/**
+ * About how much of the frame a dark corner covers at 90 % or more of its color: its lobes as the
+ * shader adds them (in short-side units), on a coarse grid with a soft threshold, so it changes
+ * smoothly with the radius; the warp and the edge's drift are left out.
+ */
+function cornerCoverage(z: ZenithSpec, aspect: number, radius: number, lobe: Lobes): number {
+  const frame = [Math.sqrt(aspect), 1 / Math.sqrt(aspect)]
+  const shortUnit = 1 / Math.min(frame[0], frame[1])
+  const a = (z.angle * Math.PI) / 180
+  const stretch = Math.sqrt(z.aniso)
+  const amount = clamp(z.amount, 0, 2)
+  const cols = 32
+  const rows = 18
+  let inside = 0
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const dx = ((i + 0.5) / cols - z.at[0]) * frame[0] * shortUnit
+      const dy = ((j + 0.5) / rows - z.at[1]) * frame[1] * shortUnit
+      const along = (dx * Math.cos(a) + dy * Math.sin(a)) / (radius * stretch)
+      const across = ((-dx * Math.sin(a) + dy * Math.cos(a)) * stretch) / radius
+      let k = 0
+      for (let n = 0; n < LOBES; n++) {
+        const qa = (along - lobe.shape[4 * n]) * lobe.shape[4 * n + 2]
+        const qc = (across - lobe.shape[4 * n + 1]) * lobe.shape[4 * n + 2]
+        const d2 = qa * qa + qc * qc
+        k += lobe.shape[4 * n + 3] * (1 + d2) ** (-z.falloff * lobe.falloff[n]) * Math.exp(-(d2 * d2) / (TAIL_END * TAIL_END))
+      }
+      inside += smoothstep(0.8, 0.95, Math.min(1, amount * k))
+    }
+  }
+  return inside / (cols * rows)
+}
+
+/** The corner's radius scaled so its coverage falls within `share`. */
+function sizeCorner(z: ZenithSpec, aspect: number, share: readonly [number, number], lobe: Lobes): number {
+  let radius = z.radius
+  for (let step = 0; step < 3; step++) {
+    const now = cornerCoverage(z, aspect, radius, lobe)
+    const goal = clamp(now, share[0], share[1])
+    radius *= now <= 1e-4 ? 1.5 : clamp(Math.sqrt(goal / now), 0.7, 1.5)
+  }
+  return radius
 }
 
 /**
@@ -193,11 +295,12 @@ function lightHeight(horizonY: number): number {
 }
 
 /**
- * Which light slot leads: the warm light more often than not, and always over
- * cyan; with no warm light, the lighter one, since a dark color brightened is
- * not a light (Steel never reaches a light color, so Ice leads in every
- * Atmospheric seed). Green-yellow light leads less often (it has no match in
- * a sky).
+ * Which light slot leads: the warm light more often than not; with no warm
+ * light, the lighter one, since a dark color brightened is not a light (Steel
+ * never reaches a light color, so Ice leads in every Atmospheric seed).
+ * Green-yellow light leads less often (it has no match in a sky). Under a cool
+ * lead the warm light comes in as a small bloom across the frame, apart from
+ * it: cyan and yellow light on top of each other make mint.
  */
 function pickLead(colors: readonly Rgb[], u: number): { lead: number; other: number } {
   const a = SLOT.light1
@@ -207,9 +310,7 @@ function pickLead(colors: readonly Rgb[], u: number): { lead: number; other: num
   if (warmA !== warmB) {
     const warm = warmA ? a : b
     const cool = warmA ? b : a
-    // A cyan lead would need the warm light beside it, and cyan and yellow light together make mint,
-    // so the warm light always leads over cyan, which then comes in as the high, soft second bloom.
-    const coolOdds = isCyan(colors[cool]) ? 0 : isGreen(colors[cool]) ? 0.25 : 0.35
+    const coolOdds = isCyan(colors[cool]) ? 0.25 : isGreen(colors[cool]) ? 0.25 : 0.35
     return u < 1 - coolOdds ? { lead: warm, other: cool } : { lead: cool, other: warm }
   }
   const lighter = luminance(colors[a]) >= luminance(colors[b]) ? a : b
@@ -246,17 +347,17 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // A darker light (Tan, Orange-red) keeps its body near its hex and gets its weight in the frame from a
   // larger glow instead.
   const darkerLight = clamp(Math.sqrt(0.6 / Math.max(luminance(colors[lead]), 1e-4)), 1, 1.35)
-  const size = lerp(0.8, 1.2, r()) * lerp(0.95, 1.08, soft) * sameHalfWidth * lerp(0.88, 1.16, rise) * (isGreen(colors[lead]) ? 0.85 : darkerLight)
+  const size = lerp(0.8, 1.2, r()) * lerp(0.95, 1.08, soft) * sameHalfWidth * lerp(0.88, 1.16, rise) * (isGreen(colors[lead]) ? 0.95 : darkerLight)
   const bend = () => lerp(0.04, 0.2, r())
 
   // Every seed is the same kind of image: a bloom at the shared light height, from the middle of the frame
-  // to near a side edge, round to wide and small to large by seed. The Horizon control only moves it: low,
-  // it sinks below the bottom edge as a setting light does. A cyan bloom stays well clear of the bottom
-  // edge, where a warm light may sit.
-  const jitter = lerp(-0.06, 0.06, r())
-  const at: [number, number] = [0.5 + side * lerp(0.02, 0.4, r()), height + jitter]
+  // to partly beyond a side edge, round to wide and small to large by seed. The Horizon control only moves
+  // it: low, it sinks below the bottom edge as a setting light does. A cyan bloom stays well clear of the
+  // bottom edge, where a warm light may sit.
+  const jitter = lerp(-0.09, 0.09, r())
+  const at: [number, number] = [0.5 + side * lerp(0, 0.55, r()), height + jitter]
   const tilt = lerp(-8, 8, r())
-  let radius = lerp(0.3, 0.56, r()) * (cyanLead ? 0.75 : 1)
+  let radius = lerp(0.34, 0.58, r()) * (cyanLead ? 0.85 : 1)
   const aniso = lerp(1.6, 2.8, r())
   radius *= size
   // The lead stays narrower than the frame, so there is sky beside it for the other blooms.
@@ -265,23 +366,29 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const leadGain = lightGain(colors[lead]) * lerp(0.94, 1.06, r())
 
   const glows: GlowSpec[] = [
-    // A warm light hides the sky where it comes from: warm light over blue turns grey-pink (Tan). White or cool
-    // light over blue only pales it, so it needs less haze and leaves more of the blue.
-    { color: lead, at, radius, aniso, angle, gain: leadGain, beta, haze: isWarm(colors[lead]) ? lerp(2.8, 3.6, r()) : lerp(1.8, 2.6, r()), vary: lerp(0.45, 0.85, r()), bend: bend() },
+    // A warm light hides the sky where it comes from (warmHaze). White or cool light over blue only pales it,
+    // so it needs less haze and leaves more of the blue.
+    { color: lead, at, radius, aniso, angle, gain: leadGain, beta, haze: isWarm(colors[lead]) ? warmHaze(colors[lead], r()) : lerp(1.8, 2.6, r()), vary: lerp(0.45, 0.85, r()), bend: bend() },
   ]
 
-  // Some seeds get a second, weaker bloom of the same light across the frame at another height, with sky
-  // between the two, so seeds differ in how many blooms there are as well as where.
-  if (r() < 0.35) {
+  // Some seeds get a second bloom of the same light across the frame and a little higher, with sky between
+  // the two (near each other they would merge into one wide pale mass or a band), from much smaller and
+  // weaker than the lead to nearly its equal, so seeds differ in how many blooms there are and how they
+  // compare as well as where. Under a cool lead the warm light takes that place across the frame.
+  const coolLeadWarmOther = !isWarm(colors[lead]) && isWarm(colors[other])
+  if (r() < 0.45 && !coolLeadWarmOther) {
+    // Two near-equal blooms of a very light color (Lime, Ice) read as one wide pale mass, so its second
+    // bloom stays clearly the smaller one.
+    const balance = r() * (linearToOklch(colors[lead])[0] > 0.88 ? 0.45 : 1)
     glows.push({
       color: lead,
-      at: [0.5 - side * lerp(0.15, 0.38, r()), at[1] + lerp(-0.16, 0.04, r())],
-      radius: radius * lerp(0.55, 0.8, r()),
+      at: [clamp(at[0] - side * lerp(0.4, 0.62, r()), 0.06, 0.94), at[1] - lerp(0.06, 0.22, r())],
+      radius: radius * lerp(0.55, 0.95, balance),
       aniso: lerp(1.6, 2.6, r()),
       angle: -angle * lerp(0.3, 1.0, r()),
-      gain: leadGain * lerp(0.45, 0.65, r()),
+      gain: leadGain * lerp(0.45, 0.9, balance),
       beta,
-      haze: lerp(0.9, 1.4, r()),
+      haze: isWarm(colors[lead]) ? warmHaze(colors[lead], r()) * 0.8 : lerp(0.9, 1.4, r()),
       vary: lerp(0.45, 0.85, r()),
       bend: bend(),
     })
@@ -289,17 +396,18 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
 
   // Higher on the same side, a fainter and wider bloom with its center inside the frame, so the
   // light is a few blooms at different heights and sizes, not one glow on an edge. It changes the
-  // sky's color more than its brightness where a light can do that faintly: a cyan light (the lead
-  // or the other one). Otherwise it is a slightly paler patch of sky: faint green or grey light
-  // over blue turns grey-teal or grey, and a warm bloom above a cool light would be a second
-  // light direction.
+  // sky's color more than its brightness where a light can do that faintly: the other light when
+  // it is cyan. Otherwise it is a slightly paler patch of sky: faint green or grey light over blue
+  // turns grey-teal or grey, a warm bloom above a cool light would be a second light direction,
+  // and a second cyan bloom above a cyan lead would turn the whole sky cyan.
   // Its edge is much softer than the lead's, so the frame has one firm and one very soft edge.
   // A grey of the pack (Steel) takes this place as a patch of haze at its own hex, smaller than the
   // light and partly see-through, so the blue still holds the mid sky around it.
-  // A cyan bloom is a bloom, not the sky: rounder and about the lead's size, with blue around it. Under a
-  // warm lead it sits on the far side, apart from it: cyan and yellow light on top of each other make mint.
+  // A cyan bloom is a bloom, not the sky: rounder and about the lead's size, with blue around it, and
+  // smaller in a tall frame, which it would otherwise cross. Under a warm lead it sits on the far side,
+  // apart from it: cyan and yellow light on top of each other make mint.
   const greyOther = isGrey(colors[other])
-  const innerColor = isCyan(colors[lead]) ? lead : isCyan(colors[other]) || greyOther ? other : SLOT.sky
+  const innerColor = !isCyan(colors[lead]) && (isCyan(colors[other]) || greyOther) ? other : SLOT.sky
   const innerGrey = innerColor === other && greyOther
   const innerCyan = innerColor !== SLOT.sky && isCyan(colors[innerColor])
   const innerSide = innerColor === other && isCyan(colors[other]) && isWarm(colors[lead]) ? -side : side
@@ -307,14 +415,14 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   glows.push({
     color: innerColor,
     at: [0.5 + innerSide * lerp(0.05, 0.3, r()), lerp(0.42, 0.28, rise) + lerp(-0.05, 0.05, r())],
-    radius: radius * (innerGrey ? lerp(0.6, 0.8, uSize) : innerCyan ? lerp(0.9, 1.15, uSize) : lerp(1.15, 1.4, uSize)),
+    radius: radius * (innerGrey ? lerp(0.6, 0.8, uSize) : innerCyan ? lerp(1.0, 1.25, uSize) * (aspect < 1 ? 0.75 : 1) : lerp(1.15, 1.4, uSize)),
     aniso: innerCyan || innerGrey ? lerp(1.7, 2.5, uAniso) : lerp(2.8, 3.8, uAniso),
     angle: -side * lerp(-4, 12, r()),
-    gain: innerColor === SLOT.sky ? lerp(0.25, 0.4, uGain) : innerGrey ? lerp(1.0, 1.2, uGain) : lightGain(colors[innerColor]) * lerp(0.5, 0.65, uGain),
+    gain: innerColor === SLOT.sky ? lerp(0.25, 0.4, uGain) : innerGrey ? lerp(1.0, 1.2, uGain) : lightGain(colors[innerColor]) * lerp(0.65, 0.85, uGain),
     beta: beta * (innerCyan ? lerp(0.75, 0.9, uBeta) : lerp(0.5, 0.6, uBeta)),
     // Enough haze that a light bloom's middle is its own color, not a blend with the blue behind it; the
     // grey patch is thinner, so blue shows through its edges.
-    haze: innerGrey ? lerp(0.9, 1.3, uHaze) : innerColor === SLOT.sky ? 0 : lerp(0.9, 1.3, uHaze),
+    haze: innerGrey ? lerp(1.4, 1.9, uHaze) : innerColor === SLOT.sky ? 0 : lerp(0.9, 1.3, uHaze),
     vary: lerp(0.4, 0.8, r()),
     bend: bend(),
   })
@@ -322,9 +430,8 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // The far edge: a smaller light of the other color, or a paler patch of sky, with blue sky
   // between it and the lead. It sits on the opposite side, clearly higher than the lead; when the
   // lead is already high, it sits in the opposite bottom corner instead.
-  // A dim green light over the blue turns grey-teal, so a green far light becomes a paler patch of sky.
-  // Under a cool lead the pack's warm light always comes in here, so the frame still shows it.
-  const coolLeadWarmOther = !isWarm(colors[lead]) && isWarm(colors[other])
+  // A dim green light over the blue turns grey-teal, so a green far light is smaller, rounder and at nearly
+  // full strength. Under a cool lead the pack's warm light always comes in here, so the frame still shows it.
   const far = pick<'none' | 'other' | 'sky'>(
     coolLeadWarmOther ? [['other', 1]] : [['none', 0.4], ['other', 0.4], ['sky', 0.2]],
     r(),
@@ -340,25 +447,29 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     const warmUnderCool = far === 'other' && coolLeadWarmOther
     const ux = r()
     const farAt: [number, number] = warmUnderCool
-      ? [0.5 - side * lerp(0.5, 0.58, ux), lerp(0.62, 0.74, r())]
+      ? [0.5 - side * lerp(0.25, 0.45, ux), lerp(0.62, 0.74, r())]
       : [0.5 - side * lerp(lerp(0.6, 0.7, ux), lerp(0.5, 0.62, ux), corner), lerp(farHeight, lerp(1.0, 1.06, ux), corner)]
     const ua = r()
     const farAngle = side * lerp(lerp(-4, 8, ua), lerp(10, 22, ua), corner)
     // From a side edge a very wide shape reads as a streak, so it is rounder there.
     const un = r()
     const farAniso = lerp(lerp(2.6, 3.4, un), lerp(3.6, 4.6, un), corner)
-    const farRadius = radius * lerp(0.55, 0.72, r())
-    if (far === 'other' && !isGreen(colors[other])) {
+    const farRadius = radius * (warmUnderCool ? lerp(1.0, 1.25, r()) : lerp(0.55, 0.72, r()))
+    // A color the inner bloom already shows (cyan) gets no second bloom; two of them make it the sky.
+    const green = isGreen(colors[other])
+    if (far === 'other' && innerColor !== other) {
       glows.push({
         color: other,
         at: farAt,
-        radius: farRadius,
-        aniso: warmUnderCool ? lerp(2.2, 3.0, r()) : farAniso,
+        radius: farRadius * (green ? 0.85 : 1),
+        aniso: warmUnderCool ? lerp(2.2, 3.0, r()) : green ? lerp(1.8, 2.4, r()) : farAniso,
         angle: farAngle,
-        gain: lightGain(colors[other]) * (warmUnderCool ? lerp(0.55, 0.68, r()) : lerp(0.4, 0.55, r())),
+        // The warm bloom under a cool lead is small but at nearly full strength: dimmed, Yellow reads mustard.
+        gain: lightGain(colors[other]) * (warmUnderCool || green ? lerp(0.85, 1.0, r()) : lerp(0.4, 0.55, r())),
         beta: beta * lerp(0.85, 0.95, r()),
-        // Little haze: a dim light that hides the blue behind it turns grey.
-        haze: warmUnderCool ? lerp(0.6, 1.0, r()) : lerp(0.1, 0.35, r()),
+        // Little haze: a dim light that hides the blue behind it turns grey. The warm bloom under a cool lead
+        // and a green far light are lights of their own, so they show their color at their middle.
+        haze: warmUnderCool ? warmHaze(colors[other], r()) : green ? lerp(1.2, 1.6, r()) : lerp(0.1, 0.35, r()),
         vary: lerp(0.4, 0.8, r()),
         bend: bend(),
       })
@@ -379,13 +490,13 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   }
 
   // The sky keeps changing up to the top edge: its exact hex sits in mid-sky and above it the
-  // sky gets 1 to 1.5 stops darker, deeper on the side away from the light, and it varies
-  // slowly by about 4 % everywhere. The darkest corner, away from the light (for a pair,
-  // either one), deepens a little more.
+  // sky gets 0.8 to 1.7 stops darker, mostly deeper on the side away from the light and in some
+  // seeds on the light's side, and it varies slowly by about 4 % everywhere.
+  const tiltSide = r() < 0.75 ? side : -side
   const sky: SkySpec = {
-    top: lerp(1.0, 1.5, r()),
+    top: lerp(0.8, 1.7, r()),
     mid: lerp(0.52, 0.38, rise) + lerp(-0.05, 0.05, r()),
-    tilt: side * lerp(0.15, 0.35, r()),
+    tilt: tiltSide * lerp(0.1, 0.4, r()),
     vary: lerp(0.03, 0.05, r()),
   }
   // With dark colors in the pack (Plum and Forest, Slate and Near-black), the corner away from the
@@ -396,15 +507,21 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const deep = r() < 0.5 ? SLOT.deep1 : SLOT.deep2
   const darkGround = luminance(colors[deep]) > 1e-4
   const skyFamily = darkGround && blendsWithSky(colors[deep], colors[SLOT.sky])
-  const zSide = -side
+  // The dark corner sits where the sky darkens most, from near the middle of the top to a corner. One of
+  // another hue (Plum, Forest) always sits away from the light: next to a large warm halo the blend turns mauve.
+  const zSide = skyFamily ? -tiltSide : -side
+  // The light's own glow stops at the dark ground, so on the light's side the corner sits higher and
+  // the glow below it keeps its size. Its size is set by the share of the frame it covers (sizeCorner).
+  const sameSide = zSide === side
   // The dark color keeps its own hex under the darker top, so the corner shows the pack's ground at its
   // hex over a real share of the frame, not a darker mix that reads as night sky. One of another hue
   // reaches into the frame with the blue darkening where it comes in, so the two still meet dark.
   const zenith: ZenithSpec = darkGround
     ? {
         color: deep,
-        at: [0.5 + zSide * lerp(0.3, 0.5, r()), skyFamily ? lerp(-0.08, 0.02, r()) : lerp(-0.07, 0.02, r())],
-        radius: lerp(0.62, 0.85, r()) * lerp(0.92, 1.12, soft) * (skyFamily ? 1 : 0.88),
+        // One of another hue stays in the corner: across the top it would meet a warm halo along its length.
+        at: [0.5 + zSide * lerp(skyFamily ? 0.12 : 0.32, 0.5, r()), skyFamily ? lerp(-0.04, 0.06, r()) - (sameSide ? 0.06 : 0) : lerp(-0.07, 0.02, r())],
+        radius: lerp(0.62, 0.85, r()) * lerp(0.92, 1.12, soft),
         aniso: lerp(1.6, 2.4, r()),
         angle: lerp(-8, 8, r()),
         amount: skyFamily ? lerp(1.6, 2.0, r()) : lerp(1.7, 2.0, r()),
@@ -424,13 +541,16 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
         hold: 0,
         meet: 0,
       }
+  if (darkGround) {
+    zenith.radius = sizeCorner(zenith, aspect, skyFamily ? CORNER_SHARE : OTHER_HUE_CORNER_SHARE, lobes(ZENITH_VARY, seed, ZENITH_LOBE_INDEX))
+  }
 
   return {
     glows: glows.slice(0, GLOW_COUNT),
     zenith,
     sky,
     // More daylight is more exposure at the source: the core takes more of the light as Intensity rises.
-    core: lerp(0.35, 1.6, Math.max(0, 2 * clamp(controls.intensity, 0, 1) - 1)),
+    core: lerp(0.5, 1.6, Math.max(0, 2 * clamp(controls.intensity, 0, 1) - 1)),
     warp: lerp(0.05, 0.085, r()),
     warpScale: lerp(0.9, 1.35, r()),
     bridge: lerp(0.85, 1.2, soft),
