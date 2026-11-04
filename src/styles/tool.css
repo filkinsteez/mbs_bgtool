@@ -71,6 +71,26 @@
   }
 }
 
+@media (max-height: 440px) {
+  .tool-panel .dialkit-root {
+    --dial-row-height: 28px;
+  }
+
+  .tool-panel.dial-column .dialkit-panel-inline {
+    padding-top: 6px;
+  }
+
+  .tool-panel .dialkit-folder-inner {
+    gap: 3px;
+    padding-bottom: 6px;
+  }
+
+  .tool-panel .dialkit-button {
+    padding-top: 5px;
+    padding-bottom: 5px;
+  }
+}
+
 @media (max-width: 720px) {
   .tool {
     flex-direction: column;
