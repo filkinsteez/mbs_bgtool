@@ -268,30 +268,21 @@ export function moodForPoint(recipeId: RecipeId, pack: ColorPack, seed: number, 
 }
 
 /**
- * Where a dragged point goes when the mood control moves from `from` to `to`:
- * as far as the look's light moves along its own path for that change (the
- * horizon's height for Sunset), so the slider carries on from where the drag
- * left the light instead of jumping back to the path.
+ * How far the look's light moves (frame units) when the mood control goes
+ * from `from` to `to`: the shared horizon's height change for Sunset, the
+ * move along the look's own path for Contour.
  */
-export function movePointWithMood(
-  recipeId: RecipeId,
-  pack: ColorPack,
-  seed: number,
-  aspect: number,
-  point: LightPoint,
-  from: number,
-  to: number,
-): LightPoint {
+function moodShift(recipeId: RecipeId, pack: ColorPack, seed: number, aspect: number, from: number, to: number): LightPoint {
   const mood = moodOf(recipeId)
   switch (mood) {
     case 'sunset':
-      return clampPoint([point[0], point[1] + horizonHeight(to, seed, aspect) - horizonHeight(from, seed, aspect)])
+      return [0, horizonHeight(to, seed, aspect) - horizonHeight(from, seed, aspect)]
     case 'contour': {
       const path = lightPath(recipeId, pack, seed, aspect)
-      if (!path) return point
+      if (!path) return [0, 0]
       const a = pathAt(path, from)
       const b = pathAt(path, to)
-      return clampPoint([point[0] + b[0] - a[0], point[1] + b[1] - a[1]])
+      return [b[0] - a[0], b[1] - a[1]]
     }
     default: {
       const unknown: never = mood
@@ -300,16 +291,55 @@ export function movePointWithMood(
   }
 }
 
-/** The controls for a light dragged to `point`: the point as the look gets it, and the mood control the slider shows for it. */
-export function controlsForPoint(
+/** The line the user dragged on the image (`ControlValues.drag`): from where the light is strongest to where it reaches the look's far end. */
+export interface LightDrag {
+  from: LightPoint
+  to: LightPoint
+}
+
+/** A line shorter than this (frame units) has no clear direction, so it counts as no line. */
+export const MIN_DRAG_LENGTH = 0.002
+
+/** The line with both ends within the drag's reach, on 0.001 of the frame; undefined when it is too short to have a direction. */
+export function clampDrag(drag: { from: readonly number[]; to: readonly number[] }): LightDrag | undefined {
+  const from = clampPoint(drag.from)
+  const to = clampPoint(drag.to)
+  return Math.hypot(to[0] - from[0], to[1] - from[1]) >= MIN_DRAG_LENGTH ? { from, to } : undefined
+}
+
+/**
+ * Where the dragged line goes when the mood control moves from `from` to
+ * `to`: both ends move as far as the look's light moves for that change, so
+ * the line keeps its direction and length and the slider carries the light on
+ * from where the drag left it.
+ */
+export function moveDragWithMood(
+  recipeId: RecipeId,
+  pack: ColorPack,
+  seed: number,
+  aspect: number,
+  drag: LightDrag,
+  from: number,
+  to: number,
+): LightDrag {
+  const [dx, dy] = moodShift(recipeId, pack, seed, aspect, from, to)
+  return { from: clampPoint([drag.from[0] + dx, drag.from[1] + dy]), to: clampPoint([drag.to[0] + dx, drag.to[1] + dy]) }
+}
+
+/**
+ * The controls for a dragged line: the line, and the mood control set from
+ * its start, so a look that doesn't read `drag` yet still moves its light
+ * toward `from`. `point` repeats the start (limited as before) for Ramp,
+ * which reads it until it reads `drag`.
+ */
+export function controlsForDrag(
   recipeId: RecipeId,
   pack: ColorPack,
   seed: number,
   controls: ControlValues,
   aspect: number,
-  point: readonly number[],
-): ControlValues & { point: LightPoint } {
-  const limited = limitPoint(recipeId, seed, aspect, point)
-  const mood = moodForPoint(recipeId, pack, seed, aspect, limited)
-  return { ...controls, mood: mood ?? controls.mood, point: limited }
+  drag: LightDrag,
+): ControlValues & { drag: LightDrag } {
+  const mood = moodForPoint(recipeId, pack, seed, aspect, drag.from)
+  return { ...controls, mood: mood ?? controls.mood, drag, point: limitPoint(recipeId, seed, aspect, drag.from) }
 }

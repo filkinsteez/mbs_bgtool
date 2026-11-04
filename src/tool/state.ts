@@ -9,7 +9,7 @@ import {
   type PackId,
   type RecipeId,
 } from '@/light'
-import { clampPoint, DEFAULT_CONTROLS, MOOD_CONTROL, type LightPoint } from './controls'
+import { clampDrag, clampPoint, DEFAULT_CONTROLS, MOOD_CONTROL, type LightDrag, type LightPoint } from './controls'
 import { DEFAULT_FILTER, filterQuery, parseFilterQuery, type FilterChoice } from './filterControl'
 
 export interface ToolState {
@@ -22,8 +22,8 @@ export interface ToolState {
   moodControl: number
   seed: number
   format: ExportAspect
-  /** Where the user dragged the light, in frame units (`point=x,y` in the URL). Missing until they drag. */
-  point?: LightPoint
+  /** The line the user dragged on the image, in frame units (`from=x,y&to=x,y` in the URL). Missing until they drag. */
+  drag?: LightDrag
   /** The surface filter (`filter=grain` in the URL), none by default, and its strength 0..1 (`strength=0.5`). */
   filter: FilterChoice
   strength: number
@@ -79,6 +79,13 @@ export function parsePoint(value: string | undefined): LightPoint | undefined {
   return Number.isFinite(x) && Number.isFinite(y) ? clampPoint([x, y]) : undefined
 }
 
+/** A dragged line from the URL's `from` and `to`; missing, unreadable or too short is no line. */
+export function parseDrag(from: string | undefined, to: string | undefined): LightDrag | undefined {
+  const start = parsePoint(from)
+  const end = parsePoint(to)
+  return start && end ? clampDrag({ from: start, to: end }) : undefined
+}
+
 /** A page's search params as Next.js passes them to the page. */
 export type SearchParams = Readonly<Record<string, string | string[] | undefined>>
 
@@ -101,7 +108,7 @@ export function parseQuery(query: QueryInput): ToolState {
   const lookParam = readParam(query, 'look')
   const pack = readParam(query, 'pack')
   const format = readParam(query, 'format')?.replace('x', ':')
-  const point = parsePoint(readParam(query, 'point'))
+  const drag = parseDrag(readParam(query, 'from'), readParam(query, 'to'))
   return {
     mood,
     look: fixLook(mood, lookParam && !lookParam.includes('.') ? `${mood}.${lookParam}` : lookParam),
@@ -111,13 +118,13 @@ export function parseQuery(query: QueryInput): ToolState {
     moodControl: clampUnit(readParam(query, MOOD_CONTROL[mood]), DEFAULT_STATE.moodControl),
     seed: clampSeed(readParam(query, 'seed'), DEFAULT_STATE.seed),
     format: isExportAspect(format) ? format : DEFAULT_STATE.format,
-    ...(point ? { point } : {}),
+    ...(drag ? { drag } : {}),
     ...parseFilterQuery(query),
   }
 }
 
 /**
- * The URL query (without "?") that reproduces the state. The point's comma is left as it is, so the link stays
+ * The URL query (without "?") that reproduces the state. The line's commas are left as they are, so the link stays
  * readable. The filter goes last, and only when one is on.
  */
 export function toQuery(state: ToolState): string {
@@ -129,10 +136,11 @@ export function toQuery(state: ToolState): string {
     ['softness', unitToQuery(state.softness)],
     [MOOD_CONTROL[state.mood], unitToQuery(state.moodControl)],
   ]).toString()
-  const point = state.point ? `point=${clampPoint(state.point).join(',')}` : null
+  const drag = state.drag ? clampDrag(state.drag) : undefined
+  const line = drag ? `from=${drag.from.join(',')}&to=${drag.to.join(',')}` : null
   const tail = new URLSearchParams([
     ['seed', String(state.seed)],
     ['format', formatToQuery(state.format)],
   ]).toString()
-  return [head, point, tail, filterQuery(state)].filter(Boolean).join('&')
+  return [head, line, tail, filterQuery(state)].filter(Boolean).join('&')
 }
