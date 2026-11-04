@@ -39,10 +39,10 @@ export function exportFileName(
   return `${preset.scene.recipe}-${source}-${sizeLabel}-seed${preset.scene.seed}${filterFileTag(preset.scene.output)}.png`
 }
 
-/** Encodes top-down RGBA8 pixels as a PNG. */
+/** Encodes top-down RGBA8 pixels as an RGB PNG. Every alpha must be 255: the opaque canvas drops it. */
 export async function encodePng(pixels: Uint8Array<ArrayBuffer>, width: number, height: number): Promise<Blob> {
   const canvas = new OffscreenCanvas(width, height)
-  const context = canvas.getContext('2d')
+  const context = canvas.getContext('2d', { alpha: false })
   if (!context) throw new Error('2D canvas is not available for PNG encoding.')
   const image = new ImageData(new Uint8ClampedArray(pixels.buffer, pixels.byteOffset, pixels.byteLength), width, height)
   context.putImageData(image, 0, 0)
