@@ -289,6 +289,17 @@ function handleKeyDown(event: KeyboardEvent, access: PanelAccess): void {
   if (handled) event.preventDefault()
 }
 
+/** DialKit closes a select's list only on a click outside it; this also closes it when focus moves to another control. */
+function closeListOnLeave(event: FocusEvent): void {
+  const trigger = event.target
+  if (!(trigger instanceof HTMLElement) || !trigger.matches('.dialkit-select-trigger') || !(event.relatedTarget instanceof HTMLElement)) return
+  setTimeout(() => {
+    const active = document.activeElement
+    if (trigger.dataset.open !== 'true' || active === trigger || active?.closest('.dialkit-select-dropdown')) return
+    trigger.click()
+  }, 0)
+}
+
 export function usePanelAccess(rootRef: RefObject<HTMLElement | null>, access: PanelAccess): void {
   const key = useId()
   const latest = useRef(access)
@@ -308,9 +319,11 @@ export function usePanelAccess(rootRef: RefObject<HTMLElement | null>, access: P
     observer.observe(root, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['data-open', 'data-active'] })
     const onKeyDown = (event: KeyboardEvent) => handleKeyDown(event, latest.current)
     root.addEventListener('keydown', onKeyDown)
+    root.addEventListener('focusout', closeListOnLeave)
     return () => {
       observer.disconnect()
       root.removeEventListener('keydown', onKeyDown)
+      root.removeEventListener('focusout', closeListOnLeave)
     }
   }, [rootRef])
 }
