@@ -3,6 +3,8 @@ import type { ComposeInput, Composition, ParamSpec, ParamValue, RecipeContext, R
 import {
   blockPlan,
   falloffRadius,
+  FLAT_POWER,
+  flatRadius,
   frameSize,
   geo,
   lerp,
@@ -21,6 +23,7 @@ import {
   visiblePath,
   visibleRuns,
   warmDrift,
+  warmTail,
   warmToe,
 } from './curveCompose'
 import {
@@ -335,7 +338,12 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   // (with the hot core on top, the edge ends up about 40 to 120 times dimmer there). It is sized at the default hot
   // spot, so the Light control moves the light without resizing it.
   const power = line ? lerp(1.4, 2.2, powerDraw) : lerp(2, 3, powerDraw)
-  const reach = line ? lerp(0.22, 0.34, reachDraw) * Math.max(fw, fh) : falloffRadius(run, home, lerp(10, 30, reachDraw), power)
+  // A Tan edge keeps most of its light at or above Tan's own brightness: near full along most of the curve, then a
+  // rounded shoulder and the same fall over a short stretch (a flat-top field), with a glow that ends sooner.
+  const bright = warmTail(light.hex) === 'bright'
+  const factor = lerp(10, 30, reachDraw)
+  const lineReach = lerp(0.22, 0.34, reachDraw) * Math.max(fw, fh)
+  const reach = line ? lineReach : bright ? flatRadius(run, home, factor, FLAT_POWER) : falloffRadius(run, home, factor, power)
   // A logo crop's edges catch the light where they face the way the outline faces at the default hot spot, so the
   // hot spot's own edge is always fully lit (around a hole tip the outline faces back toward the logo's middle).
   const outwardAt = (p: Vec2): number => {
@@ -367,14 +375,15 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     // Lines widen gradually toward the bright end (growth follows the long light, not the hot spot) and open into a haze there.
     ...(line ? { n2Grow: 1, n2GrowBy: [6, 1.5], n3Weight: 9, f1Grow: 1, f1GrowBy: [2, 1.5], f1Weight: 0.24, f1Width: 0.028 } : {}),
     ...(drift ? { drift: drift.ratios, driftShape: [drift.knee, drift.sharpness] } : {}),
+    ...(bright ? { n2Shape: 8, n2Weight: 1.6, n2Width: 0.01, f1Weight: 0.02, f2Weight: 0.02 } : {}),
     facing: logo ? 0.85 : 0,
     facingAngle: round4(toward),
     facingPower: 1.5,
     farWidth: 0.01,
-    light1Kind: 3,
+    light1Kind: bright ? 5 : 3,
     light1At: at.map(round4),
     light1Radius: round4(reach),
-    light1Power: round4(power),
+    light1Power: round4(bright ? FLAT_POWER : power),
     light2Kind: 1,
     light2At: at.map(round4),
     light2Radius: round4(lerp(0.06, 0.12, hotDraw)),

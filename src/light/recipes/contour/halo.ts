@@ -3,6 +3,8 @@ import type { ComposeInput, Composition, ParamSpec, ParamValue, RecipeContext, R
 import {
   blockPlan,
   falloffRadius,
+  FLAT_POWER,
+  flatRadius,
   frameSize,
   geo,
   haloParts,
@@ -255,10 +257,14 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   // Light falls 20 to 60 times from the hot spot to the far end of the visible curve (sized at the default
   // hot spot, so the Light control moves the light without resizing it). The light field is six times longer
   // across the curve, so the glow keeps its long fade outward near the hot spot.
-  // A Tan light stays near full along more of the curve and then falls faster: the same 20 to 60 times, later.
-  const power = lerp(2, 3, rand()) * (warmTail(light.hex) === 'bright' ? 2.5 : 1)
+  const power = lerp(2, 3, rand())
   const across = normalNear(path, hot, 12)
-  const radius = falloffRadius(path, home, lerp(20, 60, rand()), power, { direction: normalNear(path, home, 12), by: 6 })
+  const factor = lerp(20, 60, rand())
+  const stretch = { direction: normalNear(path, home, 12), by: 6 }
+  // A Tan light keeps most of its light at or above Tan's own brightness: near full along most of the curve, then
+  // a rounded shoulder and the same 20 to 60 times fall over a short stretch (a flat-top field).
+  const bright = warmTail(light.hex) === 'bright'
+  const radius = bright ? flatRadius(path, home, factor, FLAT_POWER, stretch) : falloffRadius(path, home, factor, power, stretch)
   const drift = warmDrift(light.hex)
   const params: Record<string, ParamValue> = {
     ring1On: true,
@@ -277,10 +283,10 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     ring3On: false,
     farWidth: 0.03,
     farStep: 3,
-    light1Kind: 3,
+    light1Kind: bright ? 5 : 3,
     light1At: at.map(round4),
     light1Radius: round4(radius),
-    light1Power: round4(power),
+    light1Power: round4(bright ? FLAT_POWER : power),
     light1Stretch: 6,
     light1Angle: round4((Math.atan2(across[1], across[0]) * 180) / Math.PI),
     light2Kind: 0,

@@ -161,10 +161,11 @@ export function warmTail(hex: string): WarmTail | null {
 /**
  * How a warm light's color changes as it dims, or null. Yellow drifts like
  * fire: it keeps its color down to about a third of its level, is Orange-red's
- * hue at a little under half its lightness and deep red below a quarter, like
+ * hue at half its peak lightness and deep red below a quarter, like
  * Orange-red's own tail; Orange-red drifts to the same deep red. Lime drifts
- * to Forest's ratios and Tan toward copper amber right away, since both read
- * olive or grey-brown one stop under their own brightness.
+ * to Forest's ratios right away, since it reads olive one stop under its own
+ * brightness. Tan keeps its color through its bright band and warms toward
+ * copper amber in the short fall at its edge.
  */
 export function warmDrift(hex: string): { ratios: number[]; knee: number; sharpness: number } | null {
   const tail = warmTail(hex)
@@ -173,7 +174,18 @@ export function warmDrift(hex: string): { ratios: number[]; knee: number; sharpn
   const target = tail === 'forest' ? FOREST : tail === 'bright' ? COPPER : DEEP_RED
   const m = light.indexOf(Math.max(...light))
   const ratios = light.map((c, k) => (k === m || c < 1e-6 ? 1 : round4(Math.min(8, target[k] / target[m] / (c / light[m])))))
-  return { ratios, knee: tail === 'deep red' ? 0.35 : 1, sharpness: 2 }
+  switch (tail) {
+    case 'deep red':
+      return { ratios, knee: 0.6, sharpness: 3 }
+    case 'forest':
+      return { ratios, knee: 1, sharpness: 3 }
+    case 'bright':
+      return { ratios, knee: 0.6, sharpness: 2 }
+    default: {
+      const unknown: never = tail
+      throw new Error(`Unknown warm tail: ${String(unknown)}`)
+    }
+  }
 }
 
 /** Oklab lightness of a base: dark enough that text set on it reads, light enough to tell from black. */
@@ -398,14 +410,28 @@ const prefixed = (prefix: string, values: Record<string, number | number[]>) =>
  */
 export function haloParts(prefix: string, hex: string): Record<string, number | number[]> {
   const outside = { Side: 2, Light: 1, LightGamma: 1, MaskSoft: 0.015 }
-  // A Tan halo keeps most of its light at or above Tan's own brightness: a brighter, shorter fade outward.
-  const bright = warmTail(hex) === 'bright'
+  const crest = { Weight: 0.25, Width: 0.026, Shape: 8, Side: 0, Offset: -0.035, Light: 1, LightGamma: 1, Grow: 1, GrowBy: [0.5, 1.5] }
+  if (warmTail(hex) === 'bright') {
+    // A Tan halo keeps most of its light at or above Tan's own brightness: three bands just outside the curve, 1.3
+    // widths apart so their sum has no ripple, make a flat stretch a little above Tan's level that ends in a rounded
+    // gaussian edge and a faint short tail.
+    const band = { ...outside, Shape: 8, Width: 0.035, Weight: 1.25 }
+    const parts: Record<string, number | number[]> = {
+      ...prefixed('n1', { ...band, Offset: -0.012 }),
+      ...prefixed('n2', { ...band, Offset: -0.057 }),
+      ...prefixed('n3', { ...band, Offset: -0.102 }),
+      f1Weight: 0,
+      ...prefixed('f2', { ...outside, Weight: 0.06, Width: 0.12 }),
+      f3Weight: 0,
+    }
+    return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
+  }
   const parts: Record<string, number | number[]> = {
-    ...prefixed('n1', { Weight: 0.25, Width: 0.026, Shape: 8, Side: 0, Offset: -0.035, Light: 1, LightGamma: 1, Grow: 1, GrowBy: [0.5, 1.5] }),
+    ...prefixed('n1', crest),
     n2Weight: 0,
     n3Weight: 0,
     f1Weight: 0,
-    ...prefixed('f2', { ...outside, Weight: bright ? 1.6 : 0.75, Width: bright ? 0.17 : 0.27 }),
+    ...prefixed('f2', { ...outside, Weight: 0.75, Width: 0.27 }),
     f3Weight: 0,
   }
   return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
@@ -427,6 +453,27 @@ export function falloffRadius(path: readonly Vec2[], hot: Vec2, factor: number, 
   }
   const far = Math.max(0.05, ...path.map(distance))
   return far / Math.sqrt(Math.max(1e-6, factor ** (2 / power) - 1))
+}
+
+/** How flat a Tan light's field is along the curve (the power of its flat-top field). */
+export const FLAT_POWER = 6
+
+/**
+ * Radius of a flat-top light field (kind 5, exp(-(d / r)^power)) at `hot` that
+ * is `factor` times dimmer at the farthest point of the visible path: the light
+ * stays near full along most of the curve and falls over a short stretch at
+ * its end.
+ */
+export function flatRadius(path: readonly Vec2[], hot: Vec2, factor: number, power: number, stretch?: { direction: Vec2; by: number }): number {
+  const distance = (v: Vec2) => {
+    const d: Vec2 = [v[0] - hot[0], v[1] - hot[1]]
+    if (!stretch) return Math.hypot(d[0], d[1])
+    const u = (d[0] * stretch.direction[0] + d[1] * stretch.direction[1]) / stretch.by
+    const w = d[0] * -stretch.direction[1] + d[1] * stretch.direction[0]
+    return Math.hypot(u, w)
+  }
+  const far = Math.max(0.05, ...path.map(distance))
+  return far / Math.log(Math.max(1.0001, factor)) ** (1 / power)
 }
 
 /** Unit normal of a run of points at the sample nearest to p, from the samples `span` either side (wider is smoother). */

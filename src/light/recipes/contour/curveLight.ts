@@ -251,6 +251,8 @@ float clLightField(int i, vec2 q) {
   float r2 = u * u + v * v;
   if (kind == 1) return exp(-0.5 * r2 / (r0 * r0));
   if (kind == 2) return exp(-(sqrt(r0 * r0 + r2) - r0) / max(b.x, 1e-6));
+  // Flat top, exp(-(r / r0)^power): near full out to about r0, then a rounded shoulder and a short fall.
+  if (kind == 5) return exp(-pow(r2 / (r0 * r0), 0.5 * max(b.y, 2.0)));
   return pow(1.0 + r2 / (r0 * r0), -0.5 * b.y);
 }
 ${polynomialsGlsl()}
@@ -1011,7 +1013,7 @@ export function farParams(prefix: string, label: string, defaults: Defaults = {}
 /** Param specs for the two light fields. */
 export function lightParams(defaults: Defaults = {}): ParamSpec[] {
   const specs = [1, 2].flatMap((i): ParamSpec[] => [
-    { kind: 'number', key: `light${i}Kind`, label: `Light ${i} (0 off, 1 gauss, 2 exp, 3 power, 4 plane)`, min: 0, max: 4, step: 1, default: 0 },
+    { kind: 'number', key: `light${i}Kind`, label: `Light ${i} (0 off, 1 gauss, 2 exp, 3 power, 4 plane, 5 flat top)`, min: 0, max: 5, step: 1, default: 0 },
     { kind: 'vector', key: `light${i}At`, label: `Light ${i} position from the shape`, min: -6, max: 6, step: 0.0005, default: [0, 0] },
     { kind: 'number', key: `light${i}Radius`, label: `Light ${i} radius`, min: 0.001, max: 6, step: 0.0005, default: 0.4 },
     { kind: 'number', key: `light${i}Length`, label: `Light ${i} falloff length`, min: 0.001, max: 6, step: 0.0005, default: 0.2 },
