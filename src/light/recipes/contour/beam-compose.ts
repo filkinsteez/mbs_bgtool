@@ -1,5 +1,6 @@
 import type { ColorPack } from '../../color/packs'
 import { hexToLinear } from '../../color/srgb'
+import type { ControlValues } from '../../scene'
 import { toneCurve } from '../../engine/output'
 import { warmToe } from './curveCompose'
 
@@ -96,6 +97,39 @@ export const round4 = (v: number) => Math.round(v * 1e4) / 1e4
 /** Half the frame's width and height in short-side units for an aspect (width / height). */
 export function frameHalf(aspect: number): { halfW: number; halfH: number } {
   return { halfW: 0.5 * Math.max(aspect, 1), halfH: 0.5 * Math.max(1 / aspect, 1) }
+}
+
+/** A dragged line (`ControlValues.drag`) in short-side units from the frame's center, y down. */
+export interface ShortLine {
+  from: [number, number]
+  to: [number, number]
+  length: number
+  /** Its direction on screen in radians, from +x toward +y, so -pi/2 points up. */
+  angle: number
+}
+
+export function lineInShorts(drag: NonNullable<ControlValues['drag']>, aspect: number): ShortLine {
+  const { halfW, halfH } = frameHalf(aspect)
+  const at = (point: readonly [number, number]): [number, number] => [(point[0] - 0.5) * 2 * halfW, (point[1] - 0.5) * 2 * halfH]
+  const from = at(drag.from)
+  const to = at(drag.to)
+  const dx = to[0] - from[0]
+  const dy = to[1] - from[1]
+  return { from, to, length: Math.hypot(dx, dy), angle: Math.atan2(dy, dx) }
+}
+
+/** The angle in [-pi, pi]. */
+export const wrapAngle = (a: number) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI))
+
+/**
+ * Turn param of a scene turned on screen by `turn` (radians, from +x toward +y) so that its
+ * point `sceneAt` shows at `screenAt`: cos and sin of the turn, then the offset in
+ * scene = turn^-1 (screen) + offset.
+ */
+export function turnParam(turn: number, screenAt: readonly [number, number], sceneAt: readonly [number, number]): number[] {
+  const c = Math.cos(turn)
+  const s = Math.sin(turn)
+  return [c, s, sceneAt[0] - (screenAt[0] * c + screenAt[1] * s), sceneAt[1] - (-screenAt[0] * s + screenAt[1] * c)].map(round4)
 }
 
 export function luminanceOf(hex: string): number {

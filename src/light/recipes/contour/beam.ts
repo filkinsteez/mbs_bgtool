@@ -1,6 +1,28 @@
 import type { ColorPack } from '../../color/packs'
-import type { ComposeInput, Composition, RecipeContext, RecipeDefinition } from '../../scene'
-import { clipLuminanceOf, contourLights, fallParam, frameHalf, geo, hazeGainFor, lerp, luminanceOf, paleTarget, pickContourLight, round4, seededRandom, seedLayout, seedShares, tailEndUniform, tailParams, tailUniform } from './beam-compose'
+import type { ComposeInput, Composition, ParamValue, RecipeContext, RecipeDefinition } from '../../scene'
+import {
+  clipLuminanceOf,
+  contourLights,
+  fallParam,
+  frameHalf,
+  geo,
+  hazeGainFor,
+  lerp,
+  lineInShorts,
+  luminanceOf,
+  paleTarget,
+  pickContourLight,
+  round4,
+  seededRandom,
+  seedLayout,
+  seedShares,
+  type ShortLine,
+  tailEndUniform,
+  tailParams,
+  tailUniform,
+  turnParam,
+  wrapAngle,
+} from './beam-compose'
 
 /**
  * A beam of light from a source above the frame, seen through haze, landing
@@ -52,6 +74,9 @@ uniform vec3 uTailEnd;    // dim haze color at unit peak at a quarter of w and b
 uniform vec2 uFall;       // share of the clipping level below which haze falls faster (0: off), how much faster
 uniform vec3 uAmbient;    // room level, haze share, floor level
 uniform float uVignette;
+uniform vec4 uTurn;       // a dragged line: cos and sin of the stage's turn on screen, offset (stage = turn^-1 screen + offset)
+uniform vec2 uSource;     // world heights where the beam starts and where it has all its light
+uniform float uCeilingTop; // how far above its ceiling the ceiling haze thins out (screen; 0: it doesn't)
 
 const int BEAM_STEPS = 16;
 
@@ -71,6 +96,10 @@ float beamScreenHeight(float y) { return uCamera.x + y * uCamera.y / uWorld.x; }
 float hazeDensity(float e) {
   float floorE = beamScreenHeight(1.0);
   float top = uHazeA.y * exp(-max(e - uHazeA.w, 0.0) / max(uHazeA.z, 1e-3));
+  if (uCeilingTop > 0.0 && e < uHazeA.w) {
+    float t = (uHazeA.w - e) / uCeilingTop;
+    top *= exp(-t * t);
+  }
   float low = uHazeB.x * exp(-abs(floorE - e) / max(uHazeB.y, 1e-3));
   return uHazeA.x + top + low;
 }
@@ -126,11 +155,14 @@ float beamInScatter(vec2 s, float zNear, float zFar, float mirror, float widen, 
     float z = z0 + (float(k) + 0.5) * dz;
     float x = s.x * z / F;
     float y = 1.0 + mirror * (ys * z - 1.0);
-    float ah = a * max(0.05, 1.0 + uBeamShape.z * (y - 1.0));
+    // Past its start the beam widens from a fifth of its width while its light comes up, so
+    // it starts in a rounded tip instead of a flat cut across it.
+    float started = smoothstep(uSource.x, uSource.y, y);
+    float ah = a * max(0.05, 1.0 + uBeamShape.z * (y - 1.0)) * mix(0.2, 1.0, started);
     float aw = sqrt(ah * ah + widen * widen);
     vec2 axis = vec2(xb + tx * (y - 1.0), zb + tz * (y - 1.0));
     float r = length(vec2(x, z) - axis) / aw;
-    sum += beamAperture(r) * (a * a) / (aw * aw) * hazeDensity(beamScreenHeight(y));
+    sum += beamAperture(r) * (a * a) / (aw * aw) * hazeDensity(beamScreenHeight(y)) * started;
   }
   float e = beamScreenHeight(1.0 + mirror * (ys * zc - 1.0));
   vec3 dir = vec3(s.x, s.y - uCamera.x, F);
@@ -190,7 +222,8 @@ float floorSpill(float d) {
   return uPool.y * exp(-0.5 * d * d / max(uPool.z * uPool.z, 1e-4));
 }
 
-vec3 radiance(vec2 uv, vec2 p) {
+vec3 radiance(vec2 uv, vec2 screen) {
+  vec2 p = vec2(dot(screen, uTurn.xy), dot(screen, vec2(-uTurn.y, uTurn.x))) + uTurn.zw;
   float F = uCamera.y;
   float horizon = uCamera.x;
   float zb = uWorld.x;
@@ -312,7 +345,7 @@ vec3 radiance(vec2 uv, vec2 p) {
   vec3 color = ambient + scattered + directColor * direct;
 
   vec2 half_ = 0.5 * uFrameAspect;
-  float vig = 1.0 - uVignette * dot(p, p) / dot(half_, half_);
+  float vig = 1.0 - uVignette * dot(screen, screen) / dot(half_, half_);
   return color * max(vig, 0.0);
 }
 `
@@ -355,8 +388,9 @@ const HALF_SCALE_EDGE = 0.012
  * narrows toward the source, the floor's height, and whether it lands on the stage's
  * edge (a pool line) or in front of it (an oval pool). It also picks the light, the
  * hollow, the camera, the haze layers and the floor's gloss and lanes. Light (the mood
- * control) moves the beam across the frame from the seed's place; Intensity is the
- * source's power; Softness softens the beam's edge, the haze and the floor.
+ * control) moves the beam across the frame from the seed's place, and a dragged line puts
+ * the beam on the line instead (beamOnLine); Intensity is the source's power; Softness
+ * softens the beam's edge, the haze and the floor.
  */
 function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Composition {
   const random = seededRandom(seed, 0xbea)
@@ -383,7 +417,7 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
   // 0.08..0.92 of the frame, so it keeps moving up to both ends of the slider.
   const center = wide ? either(onRight, [0.18, 0.34], [0.66, 0.82]) : either(onRight, [0.26, 0.38], [0.62, 0.74])
   const reach = Math.min(wide ? 0.3 : 0.2, 0.92 - center, center - 0.08)
-  const side = center + (mood - 0.5) * 2 * reach
+  const side = controls.drag ? center : center + (mood - 0.5) * 2 * reach
   const beamAt = (side - 0.5) * 2 * halfW
   // Upright, or leaning 16 to 25 degrees either way.
   const lean = leaning ? (random() < 0.5 ? -1 : 1) * lerp(0.45, 0.7, random()) : lerp(-0.06, 0.06, random())
@@ -402,46 +436,96 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
   // Warm light already sits near nominal over the whole beam, so its pool is less hot.
   const pool = lerp(6, 8.5, random()) * (luminanceOf(light.haze) / Math.max(luminanceOf(light.light), 0.01)) * (light.toe > 0 ? 0.5 : 1)
 
+  const params: Record<string, ParamValue> = {
+    horizon: round4(horizon),
+    focal: round4(focal),
+    floorY: round4(floorY),
+    stageRound: round4(lerp(0.4, 0.9, random())),
+    beamAt: round4(beamAt),
+    beamWidth: round4(width * soft(0.95, 1.05)),
+    landing: round4(landing),
+    tilt: tilt.map(round4),
+    // A nearly parallel column, or a cone that narrows toward the source.
+    spread: round4(either(cone, [-0.04, 0.03], [0.2, 0.3])),
+    beamEdge: round4(soft(3.6, 2.2)),
+    hollow: [round4(lerp(0.42, 0.58, random())), round4(lerp(0.35, 0.6, random()))],
+    power: round4(Math.min(20, power)),
+    extinction: round4(lerp(0, 0.25, random())),
+    haze: round4(lerp(0.03, 0.045, random())),
+    ceiling: [round4(lerp(1, 1.5, random())), round4(lerp(0.12, 0.2, random())), round4(-halfH - lerp(0, 0.1, random()))],
+    floorHaze: [round4(lerp(2.6, 3.8, random())), round4(lerp(0.12, 0.2, random()))],
+    forward: round4(lerp(-0.1, 0.15, random())),
+    hazeNoise: [round4(lerp(0.08, 0.15, random())), round4(lerp(2, 3, random())), round4(lerp(0.6, 1.1, random()))],
+    bounce: [round4(lerp(0.7, 1, random())), round4(soft(0.5, 0.8) * Math.min(1, 0.5 + halfH)), round4(lerp(1, 1.4, random())), round4(lerp(0.12, 0.2, random()))],
+    pool: [round4(Math.min(10, pool)), round4(lerp(1.3, 2, random())), round4(soft(1.4, 1.9))],
+    edgeSoftness: round4(soft(HALF_SCALE_EDGE, 0.024)),
+    edgeHaze: EDGE_HAZE,
+    gloss: [round4(lerp(2.8, 3.4, random())), round4(soft(0.22, 0.32))],
+    texture: [0.05, 0.006],
+    lanes: [round4(lerp(1.5, 1.9, random())), round4(lerp(0.4, 0.6, random()))],
+    // The color starts toward white from 0.4 of the haze's clipping level and is there by
+    // 1.3 times it, so light passing nominal keeps whitening at the same pace.
+    pale: [round4(lerp(0.5, 0.7, random())), round4(0.4 * clipLuminanceOf(light.haze)), round4(1.3 * clipLuminanceOf(light.haze))],
+    paleWhite: light.light === light.haze ? 0.5 : 0.2,
+    ...tailParams(light, TAIL_BELOW),
+    fall: fallParam(light, TAIL_BELOW, TAIL_FALL),
+    ambient: [light.baseLevel, 0, light.baseLevel],
+    vignette: round4(lerp(0.1, 0.18, random())),
+  }
+  if (controls.drag) Object.assign(params, beamOnLine(params, lineInShorts(controls.drag, aspect), halfH))
+
   return {
     colors: [light.light, light.haze, light.base],
-    params: {
-      horizon: round4(horizon),
-      focal: round4(focal),
-      floorY: round4(floorY),
-      stageRound: round4(lerp(0.4, 0.9, random())),
-      beamAt: round4(beamAt),
-      beamWidth: round4(width * soft(0.95, 1.05)),
-      landing: round4(landing),
-      tilt: tilt.map(round4),
-      // A nearly parallel column, or a cone that narrows toward the source.
-      spread: round4(either(cone, [-0.04, 0.03], [0.2, 0.3])),
-      beamEdge: round4(soft(3.6, 2.2)),
-      hollow: [round4(lerp(0.42, 0.58, random())), round4(lerp(0.35, 0.6, random()))],
-      power: round4(Math.min(20, power)),
-      extinction: round4(lerp(0, 0.25, random())),
-      haze: round4(lerp(0.03, 0.045, random())),
-      ceiling: [round4(lerp(1, 1.5, random())), round4(lerp(0.12, 0.2, random())), round4(-halfH - lerp(0, 0.1, random()))],
-      floorHaze: [round4(lerp(2.6, 3.8, random())), round4(lerp(0.12, 0.2, random()))],
-      forward: round4(lerp(-0.1, 0.15, random())),
-      hazeNoise: [round4(lerp(0.08, 0.15, random())), round4(lerp(2, 3, random())), round4(lerp(0.6, 1.1, random()))],
-      bounce: [round4(lerp(0.7, 1, random())), round4(soft(0.5, 0.8) * Math.min(1, 0.5 + halfH)), round4(lerp(1, 1.4, random())), round4(lerp(0.12, 0.2, random()))],
-      pool: [round4(Math.min(10, pool)), round4(lerp(1.3, 2, random())), round4(soft(1.4, 1.9))],
-      edgeSoftness: round4(soft(HALF_SCALE_EDGE, 0.024)),
-      edgeHaze: EDGE_HAZE,
-      gloss: [round4(lerp(2.8, 3.4, random())), round4(soft(0.22, 0.32))],
-      texture: [0.05, 0.006],
-      lanes: [round4(lerp(1.5, 1.9, random())), round4(lerp(0.4, 0.6, random()))],
-      // The color starts toward white from 0.4 of the haze's clipping level and is there by
-      // 1.3 times it, so light passing nominal keeps whitening at the same pace.
-      pale: [round4(lerp(0.5, 0.7, random())), round4(0.4 * clipLuminanceOf(light.haze)), round4(1.3 * clipLuminanceOf(light.haze))],
-      paleWhite: light.light === light.haze ? 0.5 : 0.2,
-      ...tailParams(light, TAIL_BELOW),
-      fall: fallParam(light, TAIL_BELOW, TAIL_FALL),
-      ambient: [light.baseLevel, 0, light.baseLevel],
-      vignette: round4(lerp(0.1, 0.18, random())),
-    },
+    params,
     lens: { bloom: round4(soft(0.04, 0.07)), bloomLevels: [1, 0.6, 0.3, 0.15, 0.1, 0.05, 0, 0], halation: 0 },
     output: { grain: 0, toe: light.toe },
+  }
+}
+
+/**
+ * Most a dragged line leans the beam, in radians on screen (about as far as the seeds lean
+ * it); the stage turns for the rest of the line's angle.
+ */
+const LEAN_MOST = 0.7
+
+/**
+ * The stage for a dragged line: the beam starts at the line's start and lands at its end, with
+ * its pool there. A line near straight down leans the beam; for the rest of its angle the whole
+ * stage turns about the pool, all the way round, so a line pointing up gives a beam rising to a
+ * pool overhead. The lean eases back to upright as the line turns to point straight up, so
+ * turning the line never flips the beam from one side to the other. The beam comes out of the
+ * dark at the start, under the ceiling haze, which thins out above it; the longer the line, the
+ * longer the beam takes to reach all its light.
+ */
+function beamOnLine(params: Record<string, ParamValue>, line: ShortLine, halfH: number): Record<string, ParamValue> {
+  const num = (key: string) => params[key] as number
+  const horizon = num('horizon')
+  const focal = num('focal')
+  const edgeY = Math.max(num('floorY'), horizon + 0.01)
+  const k = Math.min(0.9, (num('landing') * num('beamWidth')) / focal)
+  const landingZ = focal / (edgeY - horizon) / (1 - k)
+  const landingX = (num('beamAt') * landingZ) / focal
+  const pool: [number, number] = [num('beamAt'), horizon + (edgeY - horizon) * (1 - k)]
+  const tiltZ = (params.tilt as number[])[1]
+  // The line's angle from straight down, positive toward -x, and the beam's direction on the
+  // unturned stage (toward the pool) for the lean it takes of it.
+  const fromDown = wrapAngle(line.angle - Math.PI / 2)
+  const lean = LEAN_MOST * Math.tanh(Math.sin(fromDown) / LEAN_MOST)
+  const down = Math.cos(lean)
+  const tiltX = (-Math.tan(lean) * (landingZ - tiltZ) + landingX * tiltZ) / landingZ
+  // Screen heights of the beam's start and of where it has all its light, and the world
+  // height on the beam's axis at a screen height.
+  const start = pool[1] - line.length * down
+  const full = start + (0.03 + 0.25 * line.length) * down
+  const heightAt = (e: number) => Math.min(2, Math.max(-50, ((e - horizon) * (landingZ - tiltZ)) / (focal - (e - horizon) * tiltZ)))
+  const startHeight = round4(heightAt(start))
+  const ceiling = params.ceiling as number[]
+  return {
+    tilt: [round4(Math.min(1, Math.max(-1, tiltX))), tiltZ],
+    ceiling: [ceiling[0], ceiling[1], round4(Math.min(4, Math.max(-2, start + halfH + ceiling[2])))],
+    ceilingTop: ceiling[1],
+    turn: turnParam(fromDown - lean, line.to, pool),
+    source: [startHeight, round4(Math.max(heightAt(full), startHeight + 0.001))],
   }
 }
 
@@ -502,6 +586,9 @@ export const contourBeam: RecipeDefinition = {
     { kind: 'vector', key: 'fall', label: 'Dim haze falloff', min: 0, max: 8, step: 0.005, default: [0, 1] },
     { kind: 'vector', key: 'ambient', label: 'Ambient', min: 0, max: 4, step: 0.005, default: [1, 0.3, 1] },
     { kind: 'number', key: 'vignette', label: 'Vignette', min: 0, max: 1, step: 0.005, default: 0.1 },
+    { kind: 'vector', key: 'turn', label: 'Turn', min: -8, max: 8, step: 0.0005, default: [1, 0, 0, 0] },
+    { kind: 'vector', key: 'source', label: 'Beam start', min: -50, max: 2, step: 0.005, default: [-50, -49] },
+    { kind: 'number', key: 'ceilingTop', label: 'Ceiling haze above', min: 0, max: 1, step: 0.005, default: 0 },
   ],
   fragment: BEAM_GLSL,
   uniforms: (ctx) => {
@@ -537,6 +624,9 @@ export const contourBeam: RecipeDefinition = {
       uFall: ctx.vec('fall'),
       uAmbient: ctx.vec('ambient'),
       uVignette: ctx.num('vignette'),
+      uTurn: ctx.vec('turn'),
+      uSource: ctx.vec('source'),
+      uCeilingTop: ctx.num('ceilingTop'),
     }
   },
   radianceScale: (ctx) => (ctx.num('edgeSoftness') >= HALF_SCALE_EDGE ? 0.5 : 1),
