@@ -299,7 +299,7 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, va
       ]
       // The band is bright enough near its line to read as Ice; under it the light fades to Steel,
       // and open skies end in a Slate dusk band.
-      return { ...sky, ...grounds[variant], ...(variant === 1 ? { lowSky: steel } : variant === 2 ? { lowSky: ice } : {}), lowSkyGain: 1.2, horizonGain: 0.5, light: ice, coreColor: ice, glow: 0.62 * [1.3, 0.85, 1][variant], path: [0, 0, 0], hue: [0, 0], bridge: 0.3, haze: 0.8, downReach: 0.8, sideDeeper: 0, sunGlow: 0, core: 0, minFloor: 0.5, minLift: 0.08, ...(ground ? {} : { dusk: [slate, 1.0] as Tone, downReach: 0.45 }) }
+      return { ...sky, ...grounds[variant], ...(variant === 1 ? { lowSky: steel } : variant === 2 ? { lowSky: ice } : {}), lowSkyGain: 1.2, horizonGain: structure === 'water' ? 0.8 : 0.5, light: ice, coreColor: ice, glow: 0.62 * [1.3, 0.85, 1][variant], path: [0, 0, 0], hue: [0, 0], bridge: 0.3, haze: 0.8, downReach: 0.8, sideDeeper: 0, sunGlow: 0, core: 0, minFloor: 0.5, minLift: 0.08, ...(ground ? {} : { dusk: [slate, 1.0] as Tone, downReach: 0.45 }) }
     }
     default: {
       const unknown: never = packId
