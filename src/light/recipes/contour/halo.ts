@@ -9,6 +9,9 @@ import {
   frameSize,
   geo,
   haloParts,
+  ringPartner,
+  ringParts,
+  suitsRings,
   lerp,
   logoPartsShown,
   longestRun,
@@ -73,6 +76,8 @@ function ringParams(i: number): ParamSpec[] {
     { kind: 'number', key: `ring${i}Sweep`, label: `Ring ${i} sweep (360 closed)`, min: 1, max: 360, step: 0.01, default: 360 },
     { kind: 'number', key: `ring${i}Rotate`, label: `Ring ${i} rotation`, min: -360, max: 360, step: 0.01, default: 0 },
     { kind: 'number', key: `ring${i}Color`, label: `Ring ${i} color slot`, min: 1, max: COLORS, step: 1, default: 2 },
+    { kind: 'number', key: `ring${i}Color2`, label: `Ring ${i} second color slot, shifting around the ring (0 none)`, min: 0, max: COLORS, step: 1, default: 0 },
+    { kind: 'number', key: `ring${i}ColorTurns`, label: `Ring ${i} color cycles around the ring`, min: 1, max: 8, step: 1, default: 3 },
     { kind: 'number', key: `ring${i}Gain`, label: `Ring ${i} gain`, min: 0, max: 20, step: 0.001, default: 1 },
     { kind: 'vector', key: `ring${i}MaskShift`, label: `Ring ${i} inside edge shift`, min: -2, max: 2, step: 0.0005, default: [0, 0] },
     { kind: 'number', key: `ring${i}MaskGrow`, label: `Ring ${i} inside edge grow`, min: -2, max: 2, step: 0.0001, default: 0 },
@@ -229,6 +234,24 @@ function haloLayout(kind: 'ring' | 'ellipse' | 'logoEdge', rand: () => number, a
 }
 
 /**
+ * A second ring that crosses the first inside the frame (iridescent-rings reference): centered off the frame in a
+ * direction 55 to 110 degrees from the first ring's center, so both arcs pass near the frame center and cross there,
+ * and neither ring shows whole.
+ */
+function crossingRing(first: HaloLayout, rand: () => number, aspect: number): HaloLayout {
+  const [fw, fh] = frameSize(aspect)
+  const short = Math.min(fw, fh)
+  const length = Math.hypot(first.anchor[0], first.anchor[1]) || 1
+  const unit = rotate([first.anchor[0] / length, first.anchor[1] / length], (rand() < 0.5 ? 1 : -1) * lerp(55, 110, rand()))
+  const radius = lerp(0.6, 1.2, rand()) * short
+  const gap = lerp(0.02, 0.18, rand()) * short
+  const edge = Math.min(Math.abs(fw / 2 / (unit[0] || 1e-9)), Math.abs(fh / 2 / (unit[1] || 1e-9)))
+  const shape: ShapeSettings = { kind: 'ring', size: Math.max(radius, edge + 0.1 - gap), angle: 360, aspect: 1, rotate: rand() * 360, flip: false }
+  const distance = Math.max(ringDistance(shape, unit, gap), edge + 0.1)
+  return { shape, anchor: [unit[0] * distance, unit[1] * distance] }
+}
+
+/**
  * One large curve of light crossing the frame (never a whole ring), lit like a
  * halo around an off-frame source: crest on the curve, long falloff outward,
  * short flank inward, the inside at the base level, and the light falling
@@ -241,6 +264,12 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   const light = pickLight(pack, rand, seed, 67)
   const base = pickBase(pack, rand, light.hex)
   const layout = haloLayout(plan.kind, rand, aspect, plan.place)
+  // Ring seeds are two thin glass rims that cross, their color shifting around each ring, their insides faintly
+  // lit and their light adding where they overlap (iridescent-rings reference); the others are a crest with a long
+  // fade outward.
+  const rings = plan.kind === 'ring' && suitsRings(light)
+  const second = rings ? crossingRing(layout, rand, aspect) : null
+  const partner = rings ? ringPartner(pack, light) : null
   // The hot spot and the falloff follow the longest piece of the curve inside the frame.
   const runs = visibleRuns(buildShape(layout.shape), layout.anchor, aspect)
   const path = longestRun(runs)
@@ -268,7 +297,9 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   const powerDraw = rand()
   const power = bright ? FLAT_POWER : lerp(2, 3, powerDraw)
   const across = normalNear(path, hot, 12)
-  const factor = lerp(20, 60, rand())
+  // Rims are lit most of the way around (3 to 5 times dimmer at the far end of the visible curve).
+  const factorDraw = rand()
+  const factor = rings ? lerp(3, 5, factorDraw) : lerp(20, 60, factorDraw)
   const stretch = { direction: normalNear(path, home, 12), by: 6 }
   const radius = bright ? flatRadius(path, home, factor, power, stretch) : falloffRadius(path, home, factor, power, stretch)
   const dragPower = bright ? FLAT_POWER : 2
@@ -284,9 +315,25 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     ring1Flip: layout.shape.flip,
     ring1Color: 2,
     ring1Gain: 1,
-    ...haloParts('ring1', light.hex),
+    ...(rings ? ringParts('ring1') : haloParts('ring1', light.hex)),
+    ...(rings && partner ? { ring1Color2: 4 } : {}),
     ...(drift ? { ring1Drift: drift.ratios, ring1DriftShape: [drift.knee, drift.sharpness] } : {}),
-    ring2On: false,
+    ring2On: Boolean(second),
+    ...(second
+      ? {
+          ring2Shape: SHAPE_KINDS.indexOf('ring') + 1,
+          ring2At: toFrame(second.anchor, aspect).map(round4),
+          ring2Radius: round4(second.shape.size),
+          ring2Aspect: 1,
+          ring2Sweep: 360,
+          ring2Rotate: round4(second.shape.rotate),
+          ring2Color: 2,
+          ring2Gain: 0.85,
+          ...ringParts('ring2'),
+          ...(partner ? { ring2Color2: 4 } : {}),
+          ...(drift ? { ring2Drift: drift.ratios, ring2DriftShape: [drift.knee, drift.sharpness] } : {}),
+        }
+      : {}),
     ring3On: false,
     farWidth: 0.03,
     farStep: 3,
@@ -306,7 +353,7 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     soften: round4(soften),
   }
   return {
-    colors: ['#000000', light.hex, base.gain > 0 ? base.hex : '#000000', '#000000', '#000000', '#000000', '#000000', '#000000'],
+    colors: ['#000000', light.hex, base.gain > 0 ? base.hex : '#000000', partner?.hex ?? '#000000', '#000000', '#000000', '#000000', '#000000'],
     params,
     lens: {
       bloom: 0,
@@ -338,10 +385,18 @@ export function haloEmitters(ctx: RecipeContext): EmitterSettings[] {
           flip: ctx.bool(`ring${i}Flip`),
         })
       : null
+    // With a second color the rim shifts between the two around the ring, like thin glass catching the light.
+    const color = slotColor(ctx, ctx.num(`ring${i}Color`))
+    const second = Math.round(ctx.num(`ring${i}Color2`)) > 0 ? slotColor(ctx, ctx.num(`ring${i}Color2`)) : null
+    const turns = Math.max(1, Math.round(ctx.num(`ring${i}ColorTurns`)))
+    const ringGain = ctx.num(`ring${i}Gain`)
+    const stops = second
+      ? Array.from({ length: 2 * turns + 1 }, (_, k) => ({ t: k / (2 * turns), color: k % 2 ? second : color, gain: ringGain }))
+      : [{ t: 0, color, gain: ringGain }]
     return {
       shape,
       anchor: ctx.vec(`ring${i}At`),
-      stops: [{ t: 0, color: slotColor(ctx, ctx.num(`ring${i}Color`)), gain: ctx.num(`ring${i}Gain`) }],
+      stops,
       near: Array.from({ length: NEAR }, (_, k) => readNear(ctx, `ring${i}n${k + 1}`, soften, gain)),
       far: Array.from({ length: FAR }, (_, k) => readFar(ctx, `ring${i}f${k + 1}`, soften, gain)),
       maskShift: ctx.vec(`ring${i}MaskShift`),

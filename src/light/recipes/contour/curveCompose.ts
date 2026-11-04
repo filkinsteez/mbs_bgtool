@@ -515,6 +515,54 @@ export function dragLight(
   }
 }
 
+/**
+ * A thin glass rim under a key prefix (the iridescent-rings reference): a fine bright line on the curve with a soft
+ * glow on both sides, the inside faintly lit like a translucent body and a faint glow outside. All parts follow
+ * light field 1.
+ */
+export function ringParts(prefix: string): Record<string, number | number[]> {
+  const parts: Record<string, number | number[]> = {
+    ...prefixed('n1', { Weight: 0.9, Width: 0.0035, Shape: 8, Side: 0, Offset: 0, Light: 1, LightGamma: 1, Grow: 0 }),
+    ...prefixed('n2', { Weight: 0.4, Width: 0.02, Shape: 4, Side: 0, Offset: 0, Light: 1, LightGamma: 1, Grow: 0 }),
+    n3Weight: 0,
+    ...prefixed('f1', { Weight: 0.2, Width: 0.09, Side: 1, Light: 1, LightGamma: 1, MaskSoft: 0.01 }),
+    ...prefixed('f2', { Weight: 0.05, Width: 0.09, Side: 2, Light: 1, LightGamma: 1, MaskSoft: 0.01 }),
+    f3Weight: 0,
+  }
+  return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
+}
+
+/**
+ * The pack color a light's rim shifts toward around a ring: a color its light mixes with cleanly (Meta Blue and
+ * Cyan, Orange-red toward Yellow, Meta Blue and Plum, the Atmospheric greys) or its own dim tail's color (Lime and
+ * Forest). Null when there is none: Tan, and Yellow, whose dim rim already runs to Orange-red's hue like fire (an
+ * Orange-red stretch on top would leave too little Yellow to read as a Yellow light).
+ */
+const RING_PARTNERS: Record<string, string> = {
+  '#1FCDF0': '#0064E0',
+  '#FF4F00': '#FFD61E',
+  '#D6F26C': '#0F3D33',
+  '#F2F4F7': '#6A7788',
+  '#6A7788': '#F2F4F7',
+}
+
+/**
+ * Whether a light can be thin rims: not Yellow, whose rim would mostly be its Orange-red dim stretch (the fire rule),
+ * leaving too little Yellow to read as a Yellow light; a Yellow halo keeps its broad crest.
+ */
+export function suitsRings(light: PackColor): boolean {
+  const [, a, b] = linearToOklab(hexToLinear(light.hex))
+  return !(warmTail(light.hex) === 'deep red' && (Math.atan2(b, a) * 180) / Math.PI > 60)
+}
+
+export function ringPartner(pack: ColorPack, light: PackColor): PackColor | null {
+  const has = (hex: string) => pack.colors.find((c) => c.hex.toUpperCase() === hex) ?? null
+  const hex = light.hex.toUpperCase()
+  // Meta Blue's partner is Cyan in Bold, Plum in Elemental and Ice in Atmospheric.
+  if (hex === '#0064E0') return has('#1FCDF0') ?? has('#4A0A3C') ?? has('#F2F4F7')
+  return RING_PARTNERS[hex] ? has(RING_PARTNERS[hex]) : null
+}
+
 /** How flat a Tan light's field is along the curve (the power of its flat-top field). */
 export const FLAT_POWER = 6
 
