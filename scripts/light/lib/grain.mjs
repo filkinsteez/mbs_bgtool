@@ -84,9 +84,11 @@ export function blurPlane(plane, w, h, sigma) {
 /**
  * Pixels to measure: away from the border, outside `rects` ([x, y, w, h]) and rounded corners, and away from
  * mid-scale structure (edges, folds, text), where the residual is not grain. Structure: the difference of the L
- * plane blurred at 0.4 and 1.6 hpSigma, above `structure` (Oklab L), grown by hpSigma.
+ * plane blurred at 0.4 and 1.6 hpSigma, above `structure` (Oklab L), grown by hpSigma. At 0.012 the coarse mottle of
+ * riso-strength grain counts as structure and its grainiest areas drop out (a riso print measured 1.03 % on 21 % of
+ * its pixels, against 1.70 % on 92 % at 0.04); ink edges, rims and bands still count at 0.04.
  */
-export function grainMask(planes, w, h, { hpSigma, rects = [], cornerRadius = 0, structure = 0.012 }) {
+export function grainMask(planes, w, h, { hpSigma, rects = [], cornerRadius = 0, structure = 0.04 }) {
   const mask = new Uint8Array(w * h)
   const border = Math.ceil(2 * hpSigma) + 2
   for (let y = border; y < h - border; y++) for (let x = border; x < w - border; x++) mask[y * w + x] = 1
@@ -409,7 +411,7 @@ const BANDS = [
  * use the blurred L. `mono` is var(L) / (var(L) + var(a) + var(b)) of the residual. Specks are residuals beyond
  * 3 standard deviations.
  */
-export function measureGrain(image, { hpSigma, rects = [], cornerRadius = 0, structure = 0.012, minBin = 1500, mask: given } = {}) {
+export function measureGrain(image, { hpSigma, rects = [], cornerRadius = 0, structure = 0.04, minBin = 1500, mask: given } = {}) {
   const { width: w, height: h } = image
   const short = Math.min(w, h)
   const sigma = hpSigma ?? Math.max(2, 0.0065 * short)

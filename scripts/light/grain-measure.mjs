@@ -214,14 +214,13 @@ async function measureRenders() {
       const ref = await manifestEntry(id)
       const preset = JSON.parse(await readFile(path.join(PRESETS, `${id}.json`), 'utf8'))
       const rects = (ref.ignore ?? []).map((r) => r.rect)
+      // Print and renders by the same rule: each with its own edge mask, since the print has no copy without grain.
       const target = await loadRgba(path.join(AWE, ref.file))
       const tm = measureGrain(target, { rects })
-      const clean = await harness.render({ scene: { ...preset.scene, output: { ...preset.scene.output, grain: 0 } }, width: ref.width, height: ref.height })
-      const mask = measureGrain(clean, { rects }).mask
       const withInk = await harness.render({ scene: preset.scene, width: ref.width, height: ref.height })
       const flatWeight = await harness.render({ scene: { ...preset.scene, params: { ...preset.scene.params, grainInk: [0, 1] } }, width: ref.width, height: ref.height })
-      const im = measureGrain(withInk, { mask })
-      const fm = measureGrain(flatWeight, { mask })
+      const im = measureGrain(withInk, { rects })
+      const fm = measureGrain(flatWeight, { rects })
       results.riso.push({ id, target: strip(tm), preset: strip(im), weight1: strip(fm) })
       log(`== ${id}: target / preset with ink weight / strength 1 everywhere\n${grainSummary(tm)}\n--\n${grainSummary(im)}\n--\n${grainSummary(fm)}`)
       const window = pickWindow(tm, 160)
