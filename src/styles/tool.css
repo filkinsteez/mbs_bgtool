@@ -46,6 +46,11 @@
   color: var(--dial-text-secondary);
 }
 
+.tool-panel .dialkit-text-control:focus-within {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
 @media (max-height: 600px) {
   .tool-panel .dialkit-root {
     --dial-row-height: 32px;
