@@ -341,13 +341,14 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     ring3On: false,
     farWidth: 0.03,
     farStep: 3,
-    // Along a dragged line the light is 20 to 60 times dimmer where the line ends, and three times longer across
-    // (rounder than the seed's own field, so a short line lights a soft patch, not a wedge).
+    // Along a dragged line the light is 20 to 60 times dimmer where the line ends, and only 1.5 times longer across,
+    // with a longer least reach than the Rim's: a short line's patch then fades along the curve, instead of a round
+    // patch whose edge meets the crisp side at a corner.
     light1Kind: dragged ? 6 : bright ? 5 : 3,
     light1At: at.map(round4),
-    light1Radius: round4(dragged ? dragged.length / Math.log(factor) ** (1 / dragPower) : radius),
+    light1Radius: round4(dragged ? Math.hypot(dragged.length, 0.4) / Math.log(factor) ** (1 / dragPower) : radius),
     light1Power: round4(dragged ? dragPower : power),
-    light1Stretch: dragged ? 3 : 6,
+    light1Stretch: dragged ? 1.5 : 6,
     light1Angle: round4(dragged ? dragged.angle : (Math.atan2(across[1], across[0]) * 180) / Math.PI),
     ...(dragged ? { light1Length: dragged.back } : {}),
     light2Kind: 0,
