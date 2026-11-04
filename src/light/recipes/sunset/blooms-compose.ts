@@ -60,6 +60,8 @@ export interface SkySpec {
   tilt: number
   vary: number
   turn: number
+  /** Pale light over the sky toward the light, in units of the sky luminance. */
+  veil: number
 }
 
 export interface BloomsLayout {
@@ -104,6 +106,8 @@ const DRAG_RADIUS: readonly [number, number] = [0.1, 1.6]
 const DARK_PAST_EDGE = 0.04
 /** Leans the sky's direction upward as the lead nears the frame's middle, so it never jumps there. */
 const AWAY_UP = 0.12
+/** Pale light over the sky at the light's side, in units of the sky luminance: the sky pales toward the light. */
+const SKY_VEIL = 2
 
 /**
  * Where a ray from `start` (short-side units from the frame's middle, held inside the frame) in direction
@@ -699,6 +703,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     tilt: skew,
     vary: lerp(0.03, 0.05, r()),
     turn: rampTurn(skew, awayAngle, frameP),
+    veil: SKY_VEIL,
   }
   // With dark colors in the pack (Plum and Forest, Slate and Near-black), the corner away from the
   // light deepens all the way to one of them, so the pack's ground shows as an area of its own. A grey

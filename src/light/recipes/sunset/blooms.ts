@@ -83,6 +83,7 @@ const PARAMS: readonly ParamSpec[] = [
   num('skyMid', 'Sky exact hex height', 0, 1, 0.005, 0.5),
   num('skyTilt', 'Sky darkening tilt', -1, 1, 0.005, 0),
   num('skyTurn', 'Sky darkening turned about the frame middle, degrees', -180, 180, 0.01, 0),
+  num('skyVeil', 'Pale light over the sky toward the light, in units of the sky luminance (0: none)', 0, 6, 0.001, 0),
   num('skyVary', 'Sky light variation', 0, 0.1, 0.001, 0),
   num('lensRadius', 'Lens radius, short sides; the scene is seen through it (0: off)', 0, 0.3, 0.0005, 0),
   num('glowCore', 'Glow core: extra light in a narrower core at each source, over its peak', 0, 2, 0.01, 0),
@@ -124,7 +125,7 @@ function readLayout(ctx: RecipeContext): BloomsLayout {
       hold: ctx.num('zenithHold'),
       meet: ctx.num('zenithMeet'),
     },
-    sky: { top: ctx.num('skyTop'), mid: ctx.num('skyMid'), tilt: ctx.num('skyTilt'), vary: ctx.num('skyVary'), turn: ctx.num('skyTurn') },
+    sky: { top: ctx.num('skyTop'), mid: ctx.num('skyMid'), tilt: ctx.num('skyTilt'), vary: ctx.num('skyVary'), turn: ctx.num('skyTurn'), veil: ctx.num('skyVeil') },
     core: ctx.num('glowCore'),
     warp: ctx.num('warp'),
     warpScale: ctx.num('warpScale'),
@@ -152,6 +153,7 @@ function layoutParams(layout: BloomsLayout): Record<string, ParamValue> {
     skyMid: layout.sky.mid,
     skyTilt: layout.sky.tilt,
     skyTurn: layout.sky.turn,
+    skyVeil: layout.sky.veil,
     skyVary: layout.sky.vary,
     glowCore: layout.core,
     warp: layout.warp,
@@ -334,6 +336,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     uDeep: scale(slot(z.color), skyGain),
     uSkyRamp: [layout.sky.top, layout.sky.mid, layout.sky.tilt, layout.sky.vary],
     uSkyTurn: [Math.cos((layout.sky.turn * Math.PI) / 180), Math.sin((layout.sky.turn * Math.PI) / 180)],
+    uSkyVeil: [...scale(skyPale, luminance(scale(sky, skyGain))), layout.sky.veil],
     uZenithShape: [z.at[0], z.at[1], clamp(z.amount, 0, 2), z.falloff],
     uZenithHold: clamp(z.hold, 0, 1),
     uZenithMeet: clamp(z.meet, 0, 0.9),
@@ -414,6 +417,7 @@ uniform vec3 uSky;
 uniform vec3 uDeep;
 uniform vec4 uSkyRamp;                // stops darker at the top, height of the exact hex, tilt, light variation
 uniform vec2 uSkyTurn;                // cos, sin of the angle the sky ramp is turned by about the frame middle
+uniform vec4 uSkyVeil;                // pale light in the sky's own hue at the sky's luminance, and how much of it toward the light
 uniform vec4 uZenithShape;           // center (frame fractions), amount, falloff exponent
 uniform float uZenithHold;           // 1: the deep area keeps its hex under the darker top; 0: it darkens with the sky
 uniform float uZenithMeet;           // share of the blue's light taken away where the deep area comes in
@@ -557,6 +561,11 @@ vec3 bloomsScene(vec2 uv) {
   float meet = 1.0 - uZenithMeet * smoothstep(0.0, 0.6, z);
   vec3 sky = mix(uSky * meet, uDeep * mix(1.0, 1.0 / topLight, uZenithHold), z);
   sky *= topLight * exp(uSkyRamp.w * 3.0 * noise2x2(P * 2.6 + vec2(7.1, 2.3), uSeed + 23).x);
+  // The sky pales toward its light: a veil of pale light in its own hue rises from the line where it is its
+  // exact hex toward the light, so full-strength blue is only a band toward the far edge. Not over the dark
+  // ground.
+  float toLight = clamp((vSky - uSkyRamp.y) / max(1.0 - uSkyRamp.y, 0.05), 0.0, 1.0);
+  sky += uSkyVeil.rgb * (uSkyVeil.a * toLight * toLight * (3.0 - 2.0 * toLight) * (1.0 - z));
 
   float k[GLOW_COUNT];
   float kc[GLOW_COUNT];
