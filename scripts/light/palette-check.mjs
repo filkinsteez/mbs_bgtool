@@ -30,6 +30,12 @@ const T = {
   // until +12 degrees; from +15 it reads indigo (the violet-wave reference's #181751 is +18). Warm colors keep their
   // tail rules below.
   dim: { greyer: 0.4, floorL: 0.2, hue: { 'Meta Blue': [-20, 12] } },
+  // A cool light's haze (Meta Blue, Cyan; SHARED.md, decided 2026-11-04 4:15 PM) may desaturate toward neutral at the
+  // light's own hue down to the moodboard's haze chroma (beam pool: median 0.045, 10% under 0.030), and below
+  // nominal it still counts as the light while its hue stays in the window above. Set by eye in round 12 of the
+  // compare agent (artifacts/compare/rounds/12/haze/): at 0.035 a blue haze still reads blue-grey, at 0.03 grey.
+  // Warm lights keep their tail rule: their greyed haze reads olive or brown.
+  haze: 0.035,
   pale: { L: 0.78, C: 0.05 }, // a pixel this light and this grey is a pale bridge, never mud
   warmDimStops: { yellowish: 1, red: 1.5 }, // how far under nominal a warm color still reads as itself, not olive or brown
   darkOverStops: 1, // how far over nominal a dark pack color (L under 0.5) still reads as itself
@@ -102,6 +108,8 @@ const rule = args.rule === 'old' ? 'old' : 'new'
 const tailRule = args.tails === 'strict' ? 'strict' : 'drift'
 // --dim strict: dim colors keep the nominal limits (`greyer`, 20 degrees of hue) all the way down, as before 1:40 PM.
 const dimRule = args.dim !== 'strict'
+// --haze strict: a cool light's haze must keep the dim rule's share of the path's chroma, as before 4:15 PM.
+const hazeRule = args.haze !== 'strict'
 // Control values for the render (--at intensity=1,softness=0,horizon=0.3; horizon or light is the mood control).
 const controls = { intensity: 0.5, softness: 0.5, mood: 0.5 }
 for (const pair of list(args.at)) {
@@ -194,6 +202,7 @@ try {
       const turn = ((((h - hf) % 360) + 540) % 360) - 180
       if (turn < path.dim.hue[0] || turn > path.dim.hue[1]) return Infinity
       greyer = T.dim.greyer + (T.greyer - T.dim.greyer) * Math.min(1, Math.max(0, (L - T.dim.floorL) / (path.L0 - T.dim.floorL)))
+      if (path.dim.haze && C < greyer * Cf && C >= T.haze) return 1 + dh / T.hueTolerance
     }
     // Below nominal: a pale tint (light and greyer, like cream for Yellow) still counts; a dim one may only be a
     // little greyer than the path.
@@ -228,7 +237,9 @@ try {
       // Dark pack colors stop reading as themselves soon above nominal (Forest turns aquamarine, Plum hot pink,
       // Steel pale sky blue: perception-additive-light.md 3), so their path ends 1 stop up; light colors go to white.
       c.path = lightPath(c.lin, c.warm ? warmStops(c.lab) : 12, c.lab[0] < 0.5 ? T.darkOverStops : 8)
-      if (!c.warm && c.path.C0 >= 0.06 && dimRule) c.path.dim = { hue: T.dim.hue[c.name] ?? [-T.hueTolerance, T.hueTolerance], narrow: c.name in T.dim.hue }
+      if (!c.warm && c.path.C0 >= 0.06 && dimRule) {
+        c.path.dim = { hue: T.dim.hue[c.name] ?? [-T.hueTolerance, T.hueTolerance], narrow: c.name in T.dim.hue, haze: hazeRule && c.lab[0] >= T.lightL }
+      }
     }
     const pairs = []
     const clean = CLEAN_MIXES[packId]
@@ -712,7 +723,7 @@ try {
   await fs.mkdir(path.join(outDir, 'renders'), { recursive: true })
   if (maps) await fs.mkdir(path.join(outDir, 'maps'), { recursive: true })
   const report = { source: sourceLabel, startedAt: startedAt.toISOString(), thresholds: T, looks: {} }
-  const summary = [`# Palette check: ${sourceLabel}`, '', `Started ${startedAt.toISOString()}. Controls: intensity ${controls.intensity}, softness ${controls.softness}, mood ${controls.mood}. Rule: ${rule}${rule === 'new' ? `, lens edges up to ${T.lensEdge} of the short side` : ''}; warm tails: ${tailRule}; dim colors: ${dimRule ? 'navy rule (1:40 PM)' : 'strict'}. Thresholds in \`palette-check.mjs\` (T).`, '']
+  const summary = [`# Palette check: ${sourceLabel}`, '', `Started ${startedAt.toISOString()}. Controls: intensity ${controls.intensity}, softness ${controls.softness}, mood ${controls.mood}. Rule: ${rule}${rule === 'new' ? `, lens edges up to ${T.lensEdge} of the short side` : ''}; warm tails: ${tailRule}; dim colors: ${dimRule ? 'navy rule (1:40 PM)' : 'strict'}; haze: ${dimRule && hazeRule ? `down to chroma ${T.haze} (4:15 PM)` : 'strict'}. Thresholds in \`palette-check.mjs\` (T).`, '']
   for (const look of looks) {
     const frames = frameList(look)
     for (const f of frames) {
