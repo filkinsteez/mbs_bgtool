@@ -473,14 +473,14 @@ const DRAG_SOFTNESS = 0.12
  * nearest `from`, running along the outline the way the line points, for as long as the line is. The point is a
  * soft nearest (points up to about DRAG_SOFTNESS farther than the nearest share the weight), so it moves smoothly
  * when `from` passes between two parts of the outline; the outline's direction there is averaged the same way. A line
- * straight across the outline lights both ways alike, so the direction can flip there without a jump. Null when
- * no part of the outline is in the frame.
+ * straight across the outline lights both ways alike, so the direction can flip there without a jump. Also the
+ * line's own direction (degrees) and length (short-side units). Null when no part of the outline is in the frame.
  */
 export function dragLight(
   drag: { from: readonly number[]; to: readonly number[] },
   runs: readonly (readonly Vec2[])[],
   aspect: number,
-): { hot: Vec2; angle: number; length: number; back: number } | null {
+): { hot: Vec2; angle: number; length: number; back: number; lineAngle: number; lineLength: number } | null {
   const [fw, fh] = frameSize(aspect)
   const from: Vec2 = [(drag.from[0] - 0.5) * fw, (drag.from[1] - 0.5) * fh]
   const to: Vec2 = [(drag.to[0] - 0.5) * fw, (drag.to[1] - 0.5) * fh]
@@ -518,6 +518,8 @@ export function dragLight(
     length: Math.hypot(length, 0.35),
     // Behind the hot spot the light falls 2.5 times faster when the line runs along the outline.
     back: round4(lerp(1, 0.4, Math.abs(along))),
+    lineAngle: (Math.atan2(line[1], line[0]) * 180) / Math.PI,
+    lineLength: length,
   }
 }
 

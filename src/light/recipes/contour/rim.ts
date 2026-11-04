@@ -359,9 +359,16 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     const inside = windingNumber(shape.contours.flatMap((c) => c.primitives), probe) !== 0
     return (Math.atan2(inside ? -n[1] : n[1], inside ? -n[0] : n[0]) * 180) / Math.PI
   }
-  // The facing stays the seed's: a drag moves the light along the outline, not the side it shines from.
+  // Without a drag the facing stays the seed's, so the Light control moves the light along the outline, not the side
+  // it shines from.
   const seedHome = pointAlong(run, along(0.5)) ?? layout.anchor
   const toward = logo ? outwardAt(seedHome) : (Math.atan2(at[1], at[0]) * 180) / Math.PI
+  // A dragged line sets the light's direction and reach: the light runs from the hot spot along the line and has
+  // reached the dark at its end, edges facing the line's way catch it, and the hot spot grows with the line. A very
+  // short line has no clear direction, so its light is round and its facing fades out.
+  const dragReach = dragged ? Math.hypot(dragged.lineLength, 0.12) : 0
+  const dragT = dragged ? Math.min(1, dragged.lineLength / 0.15) : 0
+  const dragWay = dragT * dragT * (3 - 2 * dragT)
   const drift = warmDrift(light.hex)
   // A line's bright end and its direction out of the frame there, and where its two visible ends sit along the line
   // (0 to 1 from one end of the long segment to the other).
@@ -462,8 +469,8 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
           }
       : {}),
     // A Tan corner lights both its edges alike: an edge turned away would sit at a dim Tan along its whole length.
-    facing: logo && !bright ? 0.85 : 0,
-    facingAngle: round4(toward),
+    facing: round4(bright ? 0 : dragged ? (logo ? 0.85 : line ? 0 : 0.6) * dragWay : logo ? 0.85 : 0),
+    facingAngle: round4(dragged ? dragged.lineAngle : toward),
     facingPower: 1.5,
     farWidth: 0.01,
     // Along a dragged line the light is at the look's far end (10 to 30 times dimmer) where the line ends. A line of
@@ -471,10 +478,10 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     // A Tan line keeps the flat top: near full from its bright end, then a short fall.
     light1Kind: dragged ? 6 : line && !bright ? 4 : 5,
     light1At: at.map(round4),
-    light1Radius: round4(dragged ? dragged.length / Math.log(factor) ** (1 / dragPower) : line ? (bright ? lineReach : 0.04) : reach),
+    light1Radius: round4(dragged ? dragReach / Math.log(factor) ** (1 / dragPower) : line ? (bright ? lineReach : 0.04) : reach),
     light1Power: round4(dragged ? dragPower : line && bright ? FLAT_POWER : power),
     ...(dragged
-      ? { light1Length: dragged.back, light1Stretch: 1, light1Angle: round4(dragged.angle) }
+      ? { light1Length: round4(lerp(1, 0.35, dragWay)), light1Stretch: round4(lerp(1, 0.75, dragWay)), light1Angle: round4(dragged.lineAngle) }
       : line && !bright
         ? { light1Length: round4(0.35 * Math.max(fw, fh)), light1Angle: round4(lineOut) }
         : {}),
@@ -482,7 +489,9 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     light2At: at.map(round4),
     // A broad hot spot: the overexposed core covers a stretch of the edge, not a point (rim-edge reference); a
     // line's is short, at its bright end.
-    light2Radius: round4(line ? lerp(0.08, 0.14, hotDraw) : lerp(0.18, 0.36, hotDraw)),
+    light2Radius: round4(
+      (line ? lerp(0.08, 0.14, hotDraw) : lerp(0.18, 0.36, hotDraw)) * (dragged ? Math.min(1.4, Math.max(0.45, dragReach / 0.5)) : 1),
+    ),
     base: base.gain > 0 ? 3 : 0,
     baseGain: base.gain,
     gain: round4(gain),
