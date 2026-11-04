@@ -62,3 +62,6 @@ Later on 2026-11-02 the owner asked for crops of the Meta logo outline as Contou
 - Never add passive UI labels, status badges, or explanatory meta text
   ("Custom mix", "Generic previews", "Relative weight", and the like).
   If it isn't a control or a value the user acts on, leave it out.
+- One exception, asked for by the owner on 2026-11-04: the hint "Drag to
+  reposition the gradient" in the middle of the preview, shown until the
+  first drag in that browser (`src/tool/Preview.tsx`). Keep it.
