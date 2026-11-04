@@ -356,5 +356,7 @@ describe('export', () => {
       'sunset.ramp-sunset-sky-peach-925x1001-seed7.png',
     )
     expect(exportSize({ aspect: '4:5' })).toEqual({ width: 3072, height: 3840, label: '4x5' })
+    expect(exportFileName({ id: 'x', pack: 'bold', scene: { ...scene, output: { grain: 0.5 } } }, '16x9')).toBe('sunset.ramp-bold-16x9-seed7-grain50.png')
+    expect(exportFileName({ id: 'x', pack: 'bold', scene: { ...scene, output: { grain: 0 } } }, '16x9')).toBe('sunset.ramp-bold-16x9-seed7.png')
   })
 })

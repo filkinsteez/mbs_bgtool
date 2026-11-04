@@ -1,4 +1,5 @@
 import type { Preset, Scene } from '../scene'
+import { filterFileTag } from './filters'
 import { EXPORT_SIZES, type ExportAspect } from './frame'
 import { LightRenderer, type RenderOptions } from './renderer'
 
@@ -29,10 +30,13 @@ export function exportSize(request: ExportRequest): { width: number; height: num
   return { width: Math.round(request.width), height: Math.round(request.height), label: `${Math.round(request.width)}x${Math.round(request.height)}` }
 }
 
-/** `<recipe>-<pack or reference id>-<aspect>-seed<seed>.png` */
-export function exportFileName(preset: Pick<Preset, 'pack' | 'referenceId' | 'id'> & { scene: Pick<Scene, 'recipe' | 'seed'> }, sizeLabel: string): string {
+/** `<recipe>-<pack or reference id>-<aspect>-seed<seed>.png`; a filter that is on adds its name and strength after the seed (`-grain50`). */
+export function exportFileName(
+  preset: Pick<Preset, 'pack' | 'referenceId' | 'id'> & { scene: Pick<Scene, 'recipe' | 'seed'> & Partial<Pick<Scene, 'output'>> },
+  sizeLabel: string,
+): string {
   const source = preset.pack ?? preset.referenceId ?? preset.id
-  return `${preset.scene.recipe}-${source}-${sizeLabel}-seed${preset.scene.seed}.png`
+  return `${preset.scene.recipe}-${source}-${sizeLabel}-seed${preset.scene.seed}${filterFileTag(preset.scene.output)}.png`
 }
 
 /** Encodes top-down RGBA8 pixels as a PNG. */

@@ -10,6 +10,7 @@ import { EXPORT_SIZES, getPack, type ExportAspect } from '@/light'
 import { buildScene, controlsForPoint, DEFAULT_CONTROLS, MOOD_DIAL_KEY, moodForPoint, movePointWithMood, type LightPoint } from './controls'
 import { buildDialConfig, PANEL_ID, PANEL_NAME, readToolState } from './dialConfig'
 import { exportPng } from './exportImage'
+import { FILTER_DIAL_KEY, isFilterOn, withFilter } from './filterControl'
 import { panelAccessFor, usePanelAccess } from './panelAccess'
 import { Preview } from './Preview'
 import { EMPTY_SEED_HISTORY, recordShuffle, stepBack, stepForward, type SeedStep } from './seedHistory'
@@ -25,6 +26,7 @@ type ExportStatus = 'idle' | 'busy' | 'failed'
 
 const subscribePanel = (onChange: () => void) => DialStore.subscribe(PANEL_ID, onChange)
 const readPanelMood = () => DialStore.getValue(PANEL_ID, 'mood')
+const readPanelFilter = () => DialStore.getValue(PANEL_ID, FILTER_DIAL_KEY)
 const readNoMood = () => undefined
 
 const nextPaint = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
@@ -45,6 +47,8 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const [start] = useState(() => parseQuery(searchParams))
   const panelMood = useSyncExternalStore(subscribePanel, readPanelMood, readNoMood)
   const mood = isMoodId(panelMood) ? panelMood : start.mood
+  const panelFilter = useSyncExternalStore(subscribePanel, readPanelFilter, readNoMood)
+  const filterOn = isFilterOn(panelFilter ?? start.filter)
   const [exportStatus, setExportStatus] = useState<ExportStatus>('idle')
   const [seedHistory, setSeedHistory] = useState(EMPTY_SEED_HISTORY)
   const [point, setPoint] = useState(start.point)
@@ -59,15 +63,15 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const pressEndedRef = useRef(false)
 
   const exportLabel = exportStatus === 'busy' ? EXPORTING_LABEL : exportStatus === 'failed' ? EXPORT_FAILED_LABEL : EXPORT_LABEL
-  const config = useMemo(() => buildDialConfig(mood, start, exportLabel), [mood, start, exportLabel])
+  const config = useMemo(() => buildDialConfig(mood, start, exportLabel, filterOn), [mood, start, exportLabel, filterOn])
   const dial = useDialKitController(PANEL_NAME, config, { id: PANEL_ID, onAction: (action) => handleAction(action) })
   const { getValues, setValue } = dial
   const state = { ...readToolState(dial.values, mood), point }
   const query = toQuery(state)
-  const { look, pack, seed, intensity, softness, moodControl, format } = state
+  const { look, pack, seed, intensity, softness, moodControl, format, filter, strength } = state
   const scene = useMemo(
-    () => buildScene(look, getPack(pack), seed, { intensity, softness, mood: moodControl, point }, frameAspect(format)),
-    [look, pack, seed, intensity, softness, moodControl, point, format],
+    () => withFilter(buildScene(look, getPack(pack), seed, { intensity, softness, mood: moodControl, point }, frameAspect(format)), { filter, strength }),
+    [look, pack, seed, intensity, softness, moodControl, point, format, filter, strength],
   )
 
   const access = useMemo(

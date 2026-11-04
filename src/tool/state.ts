@@ -10,6 +10,7 @@ import {
   type RecipeId,
 } from '@/light'
 import { clampPoint, DEFAULT_CONTROLS, MOOD_CONTROL, type LightPoint } from './controls'
+import { DEFAULT_FILTER, filterQuery, parseFilterQuery, type FilterChoice } from './filterControl'
 
 export interface ToolState {
   mood: MoodId
@@ -23,6 +24,9 @@ export interface ToolState {
   format: ExportAspect
   /** Where the user dragged the light, in frame units (`point=x,y` in the URL). Missing until they drag. */
   point?: LightPoint
+  /** The surface filter (`filter=grain` in the URL), none by default, and its strength 0..1 (`strength=0.5`). */
+  filter: FilterChoice
+  strength: number
 }
 
 export const MOOD_IDS: readonly MoodId[] = ['sunset', 'contour']
@@ -38,6 +42,7 @@ export const DEFAULT_STATE: ToolState = {
   moodControl: DEFAULT_CONTROLS.mood,
   seed: 1,
   format: '16:9',
+  ...DEFAULT_FILTER,
 }
 
 export function isMoodId(value: unknown): value is MoodId {
@@ -107,10 +112,14 @@ export function parseQuery(query: QueryInput): ToolState {
     seed: clampSeed(readParam(query, 'seed'), DEFAULT_STATE.seed),
     format: isExportAspect(format) ? format : DEFAULT_STATE.format,
     ...(point ? { point } : {}),
+    ...parseFilterQuery(query),
   }
 }
 
-/** The URL query (without "?") that reproduces the state. The point's comma is left as it is, so the link stays readable. */
+/**
+ * The URL query (without "?") that reproduces the state. The point's comma is left as it is, so the link stays
+ * readable. The filter goes last, and only when one is on.
+ */
 export function toQuery(state: ToolState): string {
   const head = new URLSearchParams([
     ['mood', state.mood],
@@ -125,5 +134,5 @@ export function toQuery(state: ToolState): string {
     ['seed', String(state.seed)],
     ['format', formatToQuery(state.format)],
   ]).toString()
-  return [head, point, tail].filter(Boolean).join('&')
+  return [head, point, tail, filterQuery(state)].filter(Boolean).join('&')
 }

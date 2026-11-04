@@ -17,10 +17,20 @@ describe('tool state in the URL', () => {
       moodControl: 0.1,
       seed: 4321,
       format: '4:5',
+      filter: 'none',
+      strength: 0.5,
     }
     const query = toQuery(state)
     expect(query).toBe('mood=contour&look=beam&pack=atmospheric&intensity=0.8&softness=0.25&light=0.1&seed=4321&format=4x5')
     expect(parseQuery(new URLSearchParams(query))).toEqual(state)
+  })
+
+  it('writes the filter last, only when one is on', () => {
+    const state: ToolState = { ...DEFAULT_STATE, filter: 'grain', strength: 0.35 }
+    const query = toQuery(state)
+    expect(query).toBe('mood=sunset&look=ramp&pack=bold&intensity=0.5&softness=0.5&horizon=0.5&seed=1&format=16x9&filter=grain&strength=0.35')
+    expect(parseQuery(new URLSearchParams(query))).toEqual(state)
+    expect(toQuery(DEFAULT_STATE)).not.toContain('filter')
   })
 
   it('writes the mood control under the mood name', () => {
@@ -50,6 +60,8 @@ describe('dragged point in the URL', () => {
     seed: 77,
     format: '9:16',
     point: [0.312, 0.681],
+    filter: 'none',
+    strength: 0.5,
   }
 
   it('round-trips a point, written after the mood control with its comma as it is', () => {
