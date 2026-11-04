@@ -416,7 +416,6 @@ const prefixed = (prefix: string, values: Record<string, number | number[]>) =>
  */
 export function haloParts(prefix: string, hex: string): Record<string, number | number[]> {
   const outside = { Side: 2, Light: 1, LightGamma: 1, MaskSoft: 0.015 }
-  const crest = { Weight: 0.25, Width: 0.026, Shape: 8, Side: 0, Offset: -0.035, Light: 1, LightGamma: 1, Grow: 1, GrowBy: [0.5, 1.5] }
   if (warmTail(hex) === 'bright') {
     // A Tan halo keeps most of its light at or above Tan's own brightness: three bands just outside the curve, 1.3
     // widths apart so their sum has no ripple, make a flat stretch a little above Tan's level that ends in a rounded
@@ -432,16 +431,16 @@ export function haloParts(prefix: string, hex: string): Record<string, number | 
     }
     return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
   }
-  // A pale core near the hot spot: a bright part just outside the curve that is strongest where the light is and
-  // overexposes toward white, so the full color shows in a band around it and the haze stays dimmer (in the
-  // examples, bright light goes pale and full color shows only between the core and the dark).
-  const core = { Weight: 2, Width: 0.025, Shape: 4, Side: 2, Offset: -0.03, Light: 1, LightGamma: 2, MaskSoft: 0.012, Grow: 1, GrowBy: [1, 2] }
+  // A broad pale arc (the yellow-halo example's, on dark): a band about a sixth of the short side wide just outside
+  // the curve, bright enough to overexpose to a pale tint of the light, with the light's saturated color in a wide
+  // glow beyond it.
+  const band = { Weight: 4, Width: 0.05, Shape: 8, Side: 2, Offset: -0.05, Light: 1, LightGamma: 1, MaskSoft: 0.01, Grow: 1, GrowBy: [0.5, 1.5] }
   const parts: Record<string, number | number[]> = {
-    ...prefixed('n1', crest),
-    ...prefixed('n2', core),
+    ...prefixed('n1', band),
+    n2Weight: 0,
     n3Weight: 0,
     f1Weight: 0,
-    ...prefixed('f2', { ...outside, Weight: 0.525, Width: 0.27 }),
+    ...prefixed('f2', { ...outside, Weight: 0.8, Width: 0.22 }),
     f3Weight: 0,
   }
   return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))

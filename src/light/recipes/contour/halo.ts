@@ -301,9 +301,11 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   const powerDraw = rand()
   const power = bright ? FLAT_POWER : lerp(2, 3, powerDraw)
   const across = normalNear(path, hot, 12)
-  // Rims and the pale arc are lit most of the way along (3 to 5 times dimmer at the far end of the visible curve).
+  // Rims and the pale arcs are lit most of the way along (3 to 5 times dimmer at the far end of the visible curve);
+  // a Tan crescent keeps its short fall. A dragged line's light is 20 to 60 times dimmer at the line's end.
   const factorDraw = rand()
-  const factor = rings || paleArc ? lerp(3, 5, factorDraw) : lerp(20, 60, factorDraw)
+  const factor = bright && !rings ? lerp(20, 60, factorDraw) : lerp(3, 5, factorDraw)
+  const dragFactor = lerp(20, 60, factorDraw)
   const stretch = { direction: normalNear(path, home, 12), by: 6 }
   const radius = bright ? flatRadius(path, home, factor, power, stretch) : falloffRadius(path, home, factor, power, stretch)
   const dragPower = bright ? FLAT_POWER : 2
@@ -346,7 +348,7 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     // patch whose edge meets the crisp side at a corner.
     light1Kind: dragged ? 6 : bright ? 5 : 3,
     light1At: at.map(round4),
-    light1Radius: round4(dragged ? Math.hypot(dragged.length, 0.4) / Math.log(factor) ** (1 / dragPower) : radius),
+    light1Radius: round4(dragged ? Math.hypot(dragged.length, 0.4) / Math.log(dragFactor) ** (1 / dragPower) : radius),
     light1Power: round4(dragged ? dragPower : power),
     light1Stretch: dragged ? 1.5 : 6,
     light1Angle: round4(dragged ? dragged.angle : (Math.atan2(across[1], across[0]) * 180) / Math.PI),
@@ -365,6 +367,8 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
       halation: round4(lerp(0.04, 0.2, controls.intensity)),
       halationRadius: round4(0.035 * soften),
       halationTint: light.hex,
+      // Film halation spreads red farthest, which rings a white-hot band in red; only a warm light keeps that.
+      ...(warmTail(light.hex) ? {} : { halationSpread: 0 }),
     },
     output: { grain: 0, toe: warmToe(light.hex) },
   }
