@@ -63,9 +63,23 @@ void main() {
 function sceneRadianceGlsl(program: Pick<RecipeProgram, 'scatter'>): string {
   const blurs = program.scatter ?? []
   if (blurs.length === 0) return `vec3 sceneRadiance(vec2 uv, vec2 p) { return radiance(uv, p); }\n`
-  const samplers = blurs.map((_, i) => `uniform sampler2D uScatter${i};\nuniform vec4 uScatterMap${i};`).join('\n')
-  const args = blurs.map((_, i) => `sampleSmooth(uScatter${i}, uv * uScatterMap${i}.xy + uScatterMap${i}.zw)`).join(', ')
-  return `${samplers}\nvec3 sceneRadiance(vec2 uv, vec2 p) { return combine(uv, p, radiance(uv, p), ${args}); }\n`
+  // uScatterB<i> is the same blur with the edges of the edge level before, mixed in just past a switch (runScatter).
+  const reads = blurs
+    .map(
+      (_, i) => `uniform sampler2D uScatter${i};
+uniform vec4 uScatterMap${i};
+uniform sampler2D uScatterB${i};
+uniform vec4 uScatterMapB${i};
+uniform float uScatterMix${i};
+vec3 engineScatter${i}(vec2 uv) {
+  vec3 blurred = sampleSmooth(uScatter${i}, uv * uScatterMap${i}.xy + uScatterMap${i}.zw);
+  if (uScatterMix${i} <= 0.0) return blurred;
+  return mix(blurred, sampleSmooth(uScatterB${i}, uv * uScatterMapB${i}.xy + uScatterMapB${i}.zw), uScatterMix${i});
+}`,
+    )
+    .join('\n')
+  const args = blurs.map((_, i) => `engineScatter${i}(uv)`).join(', ')
+  return `${reads}\nvec3 sceneRadiance(vec2 uv, vec2 p) { return combine(uv, p, radiance(uv, p), ${args}); }\n`
 }
 
 function grainWeightGlsl(program: Pick<RecipeProgram, 'grainWeight'>): string {

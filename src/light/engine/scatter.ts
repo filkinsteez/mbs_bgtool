@@ -1,6 +1,6 @@
 import { MAX_SCATTER_BLURS, type RecipeContext, type RecipeProgram, type ScatterBlur, type UniformMap } from '../scene'
 import { LightEngineError, type Gpu, type Target } from './gl'
-import { AREA_RESAMPLE_SHADER, blurLevel, edgeLevel, halve, halvings, LENS_GRID_TEXELS, lensGather, samplingLevel, type Halvings } from './passes'
+import { AREA_RESAMPLE_SHADER, blurLevel, edgeLevels, halve, halvings, LENS_GRID_TEXELS, lensGather, samplingLevel, type Halvings } from './passes'
 import { NO_PROFILE, type Profiler } from './profile'
 import { buildRecipeShader } from './recipeShader'
 
@@ -37,9 +37,15 @@ interface SourceSpec {
 export type EngineUniforms = (width: number, height: number, origin: number[], pixel: number, subsamples: number) => UniformMap
 
 export interface ScatterOutput {
-  /** `uScatter<i>` per blur, for the radiance and composite shaders. */
+  /**
+   * `uScatter<i>` per blur, for the radiance and composite shaders, and `uScatterB<i>`: the same blur with the
+   * edges of the level before, while the blur has only just passed an edge level switch (else the same texture).
+   */
   textures: Record<string, Target>
-  /** `uScatterMap<i>` per blur: frame uv to the texture's uv (xy scale, zw offset). */
+  /**
+   * `uScatterMap<i>` and `uScatterMapB<i>` per blur: frame uv to the texture's uv (xy scale, zw offset), and
+   * `uScatterMix<i>`, the share of `uScatterB<i>` in what the shaders read.
+   */
   uniforms: UniformMap
   release(): void
 }
@@ -111,7 +117,10 @@ export function runScatter(
     const { short, width, height } = specs[i]
     const blur = radius * short
     const at = samplingLevel(blur, width, height)
-    return { blur, ...at, edge: Math.min(at.level, edgeLevel(blur, width, height)) }
+    const edges = edgeLevels(blur, width, height)
+    const edge = Math.min(at.level, edges.level)
+    const previous = Math.min(at.level, edges.previous)
+    return { blur, ...at, edge, blend: previous < edge ? { edge: previous, mix: 1 - edges.t } : null }
   })
   const owned: Target[] = []
   const textures: Record<string, Target> = {}
@@ -125,14 +134,24 @@ export function runScatter(
     const deepest = new Map<number, number>()
     blurs.forEach((_, i) => {
       const plan = plans[i]
-      if (specs[i].key === key && !lens[i] && plan.blur > 0.05 && plan.level > 0) deepest.set(plan.edge, Math.max(deepest.get(plan.edge) ?? 0, plan.level))
+      if (specs[i].key !== key || lens[i] || plan.blur <= 0.05 || plan.level === 0) return
+      for (const edge of plan.blend ? [plan.edge, plan.blend.edge] : [plan.edge]) deepest.set(edge, Math.max(deepest.get(edge) ?? 0, plan.level))
     })
     const chains = new Map<number, Halvings>()
+    const onHalvings = (edge: number, level: number, sigma: number): { target: Target; uvMap: readonly number[] } => {
+      let chain = chains.get(edge)
+      if (!chain) {
+        chain = halvings(gpu, plainLevel(edge), (deepest.get(edge) ?? level) - edge)
+        chains.set(edge, chain)
+      }
+      return { target: blurLevel(gpu, chain.level(level - edge), sigma, true), uvMap: chain.uvMap }
+    }
     blurs.forEach((_, i) => {
       if (specs[i].key !== key) return
       const plan = plans[i]
       let target = source
       let uvMap: readonly number[] = IDENTITY_MAP
+      let blend: { target: Target; uvMap: readonly number[]; mix: number } | null = null
       const grid = specs[i].grid
       if (lens[i] && grid) {
         const averaged = gpu.acquire(grid.width, grid.height)
@@ -145,17 +164,20 @@ export function runScatter(
       } else if (plan.blur > 0.05 && plan.level === 0) {
         target = blurLevel(gpu, source, plan.sigma, false)
       } else if (plan.blur > 0.05) {
-        let chain = chains.get(plan.edge)
-        if (!chain) {
-          chain = halvings(gpu, plainLevel(plan.edge), (deepest.get(plan.edge) ?? plan.level) - plan.edge)
-          chains.set(plan.edge, chain)
+        const blurred = onHalvings(plan.edge, plan.level, plan.sigma)
+        target = blurred.target
+        uvMap = blurred.uvMap
+        if (plan.blend) {
+          blend = { ...onHalvings(plan.blend.edge, plan.level, plan.sigma), mix: plan.blend.mix }
+          owned.push(blend.target)
         }
-        target = blurLevel(gpu, chain.level(plan.level - plan.edge), plan.sigma, true)
-        uvMap = chain.uvMap
       }
       if (target !== source) owned.push(target)
       textures[`uScatter${i}`] = target
+      textures[`uScatterB${i}`] = blend?.target ?? target
       uniforms[`uScatterMap${i}`] = [...uvMap]
+      uniforms[`uScatterMapB${i}`] = [...(blend?.uvMap ?? uvMap)]
+      uniforms[`uScatterMix${i}`] = blend?.mix ?? 0
       profiler.mark('scatter blurs', target)
     })
     for (const chain of chains.values()) chain.release()

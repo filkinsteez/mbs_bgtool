@@ -376,6 +376,11 @@ export function halve(gpu: Gpu, src: Target): Target {
   return next
 }
 
+/** Sigma, in texels of a blur's edge level, at which it moves to the next level. */
+const EDGE_LEVEL_TEXELS = 24
+/** A blur up to this many times wider than an edge level switch blends the edges of both levels. */
+const EDGE_BLEND_SPAN = 1.25
+
 /**
  * Past the frame edges, a blur by sigma (source pixels) repeats the edge
  * texels of the coarsest halving on which it is at most 24 texels wide: the
@@ -385,12 +390,35 @@ export function edgeLevel(sigma: number, width: number, height: number): number 
   let level = 0
   let w = width
   let h = height
-  while (sigma / 2 ** level > 24 && Math.min(w, h) > 8) {
+  while (sigma / 2 ** level > EDGE_LEVEL_TEXELS && Math.min(w, h) > 8) {
     w = Math.max(1, Math.round(w / 2))
     h = Math.max(1, Math.round(h / 2))
     level++
   }
   return level
+}
+
+export interface EdgeLevels {
+  level: number
+  /** The level before the last switch: the same as `level` unless the blur has only just passed the switch. */
+  previous: number
+  /** How far the edges have gone from `previous` toward `level`, 0..1. */
+  t: number
+}
+
+/**
+ * The edge level of a blur by sigma and, for blurs up to EDGE_BLEND_SPAN times
+ * wider than a switch to the next level, the level before and how far to blend
+ * from its edges to the new level's (smoothstep over log sigma). Repeating
+ * coarser edge texels changes the light near the frame edges, so a blur
+ * growing past a switch would otherwise change the image in one step.
+ */
+export function edgeLevels(sigma: number, width: number, height: number): EdgeLevels {
+  const level = edgeLevel(sigma, width, height)
+  const previous = edgeLevel(sigma / EDGE_BLEND_SPAN, width, height)
+  if (previous === level) return { level, previous, t: 1 }
+  const x = Math.min(1, Math.max(0, Math.log(sigma / (EDGE_LEVEL_TEXELS * 2 ** (level - 1))) / Math.log(EDGE_BLEND_SPAN)))
+  return { level, previous, t: x * x * (3 - 2 * x) }
 }
 
 /** A source extended past its edges and halved on demand, shared by the blurs of it that run on halved levels. */

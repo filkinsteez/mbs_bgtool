@@ -27,6 +27,12 @@ try {
   for (const look of RECIPE_IDS) {
     const render = (scene, [width, height, supersample]) =>
       harness.call('render', { scene: { ...scene, recipe: look }, width, height, supersample })
+    try {
+      buildScene(look, getPack('bold'), 1, { intensity: 0.5, softness: 0.5, mood: 0.5 })
+    } catch (error) {
+      console.log(`${look.padEnd(16)} skipped: its scene does not build (${error.message})`)
+      continue
+    }
     await render(buildScene(look, getPack('bold'), 1, { intensity: 0.5, softness: 0.5, mood: 0.5 }), sizes[0])
     const start = await links()
     const changes = []
@@ -39,6 +45,7 @@ try {
             ['softness', { softness: v }],
             ['mood', { mood: v }],
             ['point', { point: [v * 1.5 - 0.25, 1 - v] }],
+            ['drag', { drag: { from: [v * 1.5 - 0.25, 0.8], to: [1 - v, 0.1 + 0.3 * v] } }],
           ]) {
             const scene = buildScene(look, getPack(pack), seed, { intensity: 0.5, softness: 0.5, mood: 0.5, ...extra }, 16 / 9)
             const before = await links()
