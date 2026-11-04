@@ -10,17 +10,29 @@ export const OUT = path.join(ROOT, 'prototypes/ascii/out')
 /** A copy of src/light at one commit, so frames render from committed code while other agents edit the engine. */
 export const FROZEN = path.join(ROOT, 'artifacts/ascii/head')
 
-/** Copies src/light at `rev` into FROZEN (src/light imports nothing outside itself). Returns the short sha. */
+/** The renderer change that makes the output pass run the filter chain (with the coordinator until it lands). */
+const CHAIN_PATCH = path.join(ROOT, 'artifacts/grain/programRenderer-filter-chain.patch')
+
+/**
+ * Copies src/light at `rev` into FROZEN (src/light imports nothing outside itself), with the chain patch applied when
+ * that commit's renderer does not call prepareOutputFilters yet. Returns a label: the short sha, '+chain' if patched.
+ */
 export function freezeLight(rev = 'HEAD') {
   const sha = execFileSync('git', ['rev-parse', '--short', rev], { cwd: ROOT }).toString().trim()
   const stamp = path.join(FROZEN, 'REV')
-  if (fs.existsSync(stamp) && fs.readFileSync(stamp, 'utf8').trim() === sha) return sha
+  if (fs.existsSync(stamp) && fs.readFileSync(stamp, 'utf8').trim().split('+')[0] === sha) return fs.readFileSync(stamp, 'utf8').trim()
   fs.rmSync(FROZEN, { recursive: true, force: true })
   fs.mkdirSync(FROZEN, { recursive: true })
   const tar = execFileSync('git', ['archive', '--format=tar', sha, 'src/light'], { cwd: ROOT, maxBuffer: 64 * 1024 * 1024 })
   execFileSync('tar', ['-x', '-C', FROZEN], { input: tar })
-  fs.writeFileSync(stamp, `${sha}\n`)
-  return sha
+  let label = sha
+  const renderer = fs.readFileSync(path.join(FROZEN, 'src/light/engine/programRenderer.ts'), 'utf8')
+  if (!renderer.includes('prepareOutputFilters') && fs.existsSync(CHAIN_PATCH)) {
+    execFileSync('patch', ['-p1', '-s', '-d', FROZEN, '-i', CHAIN_PATCH])
+    label += '+chain'
+  }
+  fs.writeFileSync(stamp, `${label}\n`)
+  return label
 }
 
 /**

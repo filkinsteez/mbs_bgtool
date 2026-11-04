@@ -82,6 +82,32 @@ What differs from the tile, on purpose
 - **Background.** The tile fades its sky to 35 % on white so dark text reads on a slide. Here the background keeps the pack colors.
 - **Text color.** The tile uses one fixed ink. Here the dark ink takes a trace of the pixel's hue, and light glyphs take the light's own color.
 
-## Results
+## Results (engine, 2026-11-04)
 
-To come: engine port, strength sweep, 4K against 1080p, preview against export, color check, sheets.
+How these were made
+- The stage is `src/light/engine/filters/ascii.ts` and `src/light/engine/glsl/ascii.ts` (dc8b193), registered in `OUTPUT_FILTERS`.
+- It runs once `programRenderer.ts` calls `prepareOutputFilters` (`artifacts/grain/programRenderer-filter-chain.patch`). Until then `prototypes/ascii/engine-check.mjs` renders from a copy of `src/light` at HEAD with that patch applied.
+- The tool's Filter choice needs `'ascii'` in `TOOL_FILTERS` (`artifacts/ascii/tool-filter-ascii.patch`).
+
+Color: Oklab distance between ASCII on and off, after a gaussian blur of one cell height in linear light, at 1920 x 1080, 2x. The roadmap's limit is a mean of 0.01.
+
+| Frame | Strength 1: mean (p95) | Strength 0.5: mean (p95) |
+| --- | --- | --- |
+| Ramp, Bold, seed 1 | 0.0031 (0.0096) | 0.0016 (0.0048) |
+| Bands, Elemental, seed 3 | 0.0035 (0.0114) | 0.0019 (0.0064) |
+| Blooms, Atmospheric, seed 2 | 0.0030 (0.0111) | 0.0016 (0.0060) |
+| Rim, Bold, seed 1 | 0.0008 (0.0048) | 0.0004 (0.0025) |
+| Halo, Elemental, seed 2 | 0.0016 (0.0083) | 0.0008 (0.0042) |
+| Beam, Atmospheric, seed 1 | 0.0030 (0.0120) | 0.0015 (0.0062) |
+| Streaks, Bold, seed 3 | 0.0038 (0.0132) | 0.0019 (0.0067) |
+
+Preview against export
+- A 960 x 540 render at 1x was compared with the 3840 x 2160 export at 2x, shrunk to 960 x 540, cell by cell.
+- 0 to 4 of the 2,600 cells differ by more than 0.02 (mean linear difference). These are cells whose light sits right at a glyph threshold.
+- Contour frames: 0 to 2 cells. The grid and the frame source depend on the aspect only, so every other cell has the same glyph.
+
+4K against 1080p: the same characters in the same places, sharper (`out/engine/s100/*-1080x2-vs-4k.jpg`).
+
+Sheets (local, `prototypes/ascii/out/engine/`)
+- `sheet-full.jpg`: every look, off, 0.5 and 1.
+- `sheet-crops.jpg`: 1:1 crops at 1080 next to the Figma tile at the same 41.5 px rows.

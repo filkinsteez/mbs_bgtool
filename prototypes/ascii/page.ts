@@ -110,6 +110,8 @@ interface FrameRequest {
   width: number
   height: number
   supersample?: 1 | 2
+  /** Output settings laid over the composed scene's (e.g. { ascii: 1 }). */
+  output?: Record<string, number>
   key: string
 }
 
@@ -163,7 +165,8 @@ const api = {
     })
     if (!scene) throw new Error(`${request.recipe} has no compose`)
     const start = performance.now()
-    renderer.renderProgram(recipe, scene, { width: request.width, height: request.height, supersample: request.supersample ?? 2 })
+    const withOutput = { ...scene, output: { ...scene.output, ...request.output } }
+    renderer.renderProgram(recipe, withOutput, { width: request.width, height: request.height, supersample: request.supersample ?? 2 })
     const data = renderer.readPixels()
     const ms = performance.now() - start
     await upload(request.key, data)

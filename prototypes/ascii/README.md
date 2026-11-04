@@ -14,7 +14,11 @@ node prototypes/ascii/run.mjs glyphs                       # stage glyphs next t
 node prototypes/ascii/run.mjs filter --name v4 --strength 1 [--knobs '{"litFloor":0.5}'] [--only ramp-bold-s1]
 node prototypes/ascii/run.mjs crops --names v3,v4 --frame rim-bold-s1 --at 160,560 [--size 640x400]
 node prototypes/ascii/glyphs.mjs                           # font glyph sheets and measurements -> out/glyphs/
+node prototypes/ascii/engine-check.mjs --strength 1 [--skip4k] [--only rim-bold-s1]   # through the engine's chain -> out/engine/s100/
+node prototypes/ascii/sheets.mjs                           # out/engine/sheet-full.jpg, sheet-crops.jpg (needs s50 and s100)
 ```
+
+`engine-check.mjs` renders from a copy of `src/light` at HEAD. While `programRenderer.ts` does not call `prepareOutputFilters` yet, the copy gets `artifacts/grain/programRenderer-filter-chain.patch` (the label in `artifacts/ascii/head/REV` ends in `+chain`).
 
 Versions tried (sheets in `out/filtered/<name>/`):
 
