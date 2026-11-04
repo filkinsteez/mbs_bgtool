@@ -350,7 +350,9 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   const factor = lerp(10, 30, reachDraw)
   const lineReach = lerp(0.22, 0.34, reachDraw) * Math.max(fw, fh)
   const reach = line ? lineReach : flatRadius(run, home, factor, power) * (bright ? 0.65 : 1)
-  const dragPower = line ? 2.4 : power
+  // A dragged Tan light fades along the line like the others instead of keeping its flat top, so the arm toward the
+  // line's end dims and the line's direction shows even with both edges lit alike.
+  const dragPower = line ? 2.4 : bright ? 3 : power
   // A logo crop's edges catch the light where they face the way the outline faces at the default hot spot, so the
   // hot spot's own edge is always fully lit (around a hole tip the outline faces back toward the logo's middle).
   const outwardAt = (p: Vec2): number => {
@@ -469,7 +471,10 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
           }
       : {}),
     // A Tan corner lights both its edges alike: an edge turned away would sit at a dim Tan along its whole length.
-    facing: round4(bright ? 0 : dragged ? (logo ? 0.85 : line ? 0 : 0.6) * dragWay : logo ? 0.85 : 0),
+    // Under a dragged line it faces the line's way a little more gently than other lights, so the direction shows.
+    facing: round4(
+      dragged ? (line ? 0 : logo ? (bright ? 0.75 : 0.85) : 0.6) * dragWay : bright ? 0 : logo ? 0.85 : 0,
+    ),
     facingAngle: round4(dragged ? dragged.lineAngle : toward),
     facingPower: 1.5,
     farWidth: 0.01,
