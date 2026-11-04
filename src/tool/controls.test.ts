@@ -212,6 +212,33 @@ describe('dragging the light', () => {
     }
   })
 
+  it('moves both ends alike on each slider step, equally for equal steps where the path is straight, on the URL steps', () => {
+    const onUrlStep = (value: number) => Math.round(value * 1000) / 1000 === value
+    for (const id of RECIPE_IDS) {
+      for (const seed of [1, 2, 3]) {
+        const start: LightDrag = { from: [0.35, 0.7], to: [0.62, 0.36] }
+        const first = moodForPoint(id, PACKS[0], seed, 16 / 9, start.from) ?? 0.5
+        const direction = first > 0.5 ? -1 : 1
+        let line = start
+        const moves: number[] = []
+        for (let k = 0; k < 12; k++) {
+          const from = Math.round((first + direction * k * 0.01) * 100) / 100
+          const to = Math.round((first + direction * (k + 1) * 0.01) * 100) / 100
+          const next = moveDragWithMood(id, PACKS[0], seed, 16 / 9, line, from, to)
+          const shiftFrom = [next.from[0] - line.from[0], next.from[1] - line.from[1]]
+          const shiftTo = [next.to[0] - line.to[0], next.to[1] - line.to[1]]
+          expect(shiftFrom[0], `${id} seed ${seed} step ${k}`).toBeCloseTo(shiftTo[0], 9)
+          expect(shiftFrom[1], `${id} seed ${seed} step ${k}`).toBeCloseTo(shiftTo[1], 9)
+          expect([...next.from, ...next.to].every(onUrlStep), `${id} seed ${seed} step ${k}`).toBe(true)
+          moves.push(Math.hypot(shiftFrom[0], shiftFrom[1]))
+          line = next
+        }
+        // Beam's light moves along a straight line at an even pace, so every step moves the line the same.
+        if (id === 'contour.beam') expect(new Set(moves.map((m) => m.toFixed(6))).size, `seed ${seed}: ${moves.join(' ')}`).toBe(1)
+      }
+    }
+  })
+
   it('gives the look the line and the mood control set from its start', () => {
     const drag: LightDrag = { from: [0.8, 0.45], to: [0.2, 0.15] }
     for (const id of RECIPE_IDS) {

@@ -284,11 +284,16 @@ export function clampDrag(drag: { from: readonly number[]; to: readonly number[]
   return Math.hypot(to[0] - from[0], to[1] - from[1]) >= MIN_DRAG_LENGTH ? { from, to } : undefined
 }
 
+/** A length on the 0.001-of-the-frame steps the line's ends are kept to. */
+const onLineStep = (value: number) => Math.round(value * 1000) / 1000 || 0
+
 /**
  * Where the dragged line goes when the mood control moves from `from` to
  * `to`: both ends move as far as the look's light moves for that change, so
  * the line keeps its direction and length and the slider carries the light on
- * from where the drag left it.
+ * from where the drag left it. The move is rounded once to the ends' 0.001
+ * steps, so both ends move alike, equal slider steps move the line equally,
+ * and the ends stay on the steps the URL keeps.
  */
 export function moveDragWithMood(
   recipeId: RecipeId,
@@ -299,7 +304,7 @@ export function moveDragWithMood(
   from: number,
   to: number,
 ): LightDrag {
-  const [dx, dy] = moodShift(recipeId, pack, seed, aspect, from, to)
+  const [dx, dy] = moodShift(recipeId, pack, seed, aspect, from, to).map(onLineStep)
   return { from: clampPoint([drag.from[0] + dx, drag.from[1] + dy]), to: clampPoint([drag.to[0] + dx, drag.to[1] + dy]) }
 }
 

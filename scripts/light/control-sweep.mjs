@@ -512,16 +512,34 @@ try {
   }
   /** The tool's controls for a sweep's value: a slider at that value, or the line for that value. */
   /**
-   * The mood slider at `value` with the base line set. `afterdrag`: the line as the tool moves it when the slider goes
-   * from the value the drag gave it (set from the line's start) to `value`. `moodalone`: the line held still.
+   * The lines the tool shows for each slider value after a drag: from the value the drag gave the slider (set from
+   * the line's start), one 0.01 step at a time each way, the way the tool moves the line as the slider moves.
    */
+  const steppedLines = new Map()
+  const afterDragLine = (sweep, value) => {
+    const key = `${sweep.look}|${sweep.pack}|${sweep.seed}|${sweep.format}|${baseTag(sweep.base)}`
+    let lines = steppedLines.get(key)
+    if (!lines) {
+      const { aspect } = frameOf(sweep.format)
+      const pack = getPack(sweep.pack)
+      const line = clampDrag(lineOf(sweep, value, aspect))
+      const first = Math.round((moodForPoint(sweep.look, pack, sweep.seed, aspect, line.from) ?? base.mood) * 100)
+      lines = new Map([[first, line]])
+      for (const way of [1, -1]) {
+        let current = line
+        for (let k = first + way; k >= 0 && k <= 100; k += way) {
+          current = moveDragWithMood(sweep.look, pack, sweep.seed, aspect, current, (k - way) / 100, k / 100)
+          lines.set(k, current)
+        }
+      }
+      steppedLines.set(key, lines)
+    }
+    return lines.get(Math.round(value * 100))
+  }
+  /** The mood slider at `value` with the base line set: `afterdrag` moves the line as the tool does, `moodalone` holds it still. */
   const afterDragControls = (sweep, value) => {
-    const { aspect } = frameOf(sweep.format)
-    const pack = getPack(sweep.pack)
-    const line = clampDrag(lineOf(sweep, value, aspect))
-    if (sweep.control === 'moodalone') return { ...base, mood: value, drag: line }
-    const dragged = moodForPoint(sweep.look, pack, sweep.seed, aspect, line.from) ?? base.mood
-    return { ...base, mood: value, drag: moveDragWithMood(sweep.look, pack, sweep.seed, aspect, line, dragged, value) }
+    if (sweep.control === 'moodalone') return { ...base, mood: value, drag: clampDrag(lineOf(sweep, value, frameOf(sweep.format).aspect)) }
+    return { ...base, mood: value, drag: afterDragLine(sweep, value) }
   }
   const controlsFor = (sweep, value) => {
     if (AFTER_DRAG_CONTROLS.includes(sweep.control)) return afterDragControls(sweep, value)
