@@ -83,7 +83,7 @@ const PARAMS: ParamSpec[] = [
   ]),
   num('extinction', 'Glow extinction', 0, 4, 0.001, 0.4),
   num('horizonDim', 'Skylight dims toward the horizon', 0, 12, 0.005, 0),
-  num('horizonDimHeight', 'Skylight dimming height', 0.004, 1, 0.001, 0.05),
+  num('horizonDimHeight', 'Skylight dimming height', 0.004, 4, 0.001, 0.05),
   num('dimBelow', 'Skylight dimming below the horizon edge', 0, 1, 0.005, 1),
   num('reddenDown', 'Deeper toward the horizon', 0, 6, 0.005, 0),
   num('reddenUp', 'Paler above the glow', 0, 0.95, 0.005, 0),
