@@ -27,7 +27,7 @@ interface GrainEnd {
 /** Octave sizes relative to `size`. */
 export const GRAIN_OCTAVES = [0.5, 1, 2, 8] as const
 const FILM: GrainEnd = { amp: 0.015, size: 0.0005, weights: [0.35, 0.85, 0.35, 0], shadowEnd: 0.25, highlightCut: 0.5, inkBoost: 0 }
-const RISO: GrainEnd = { amp: 0.016, size: 0.0011, weights: [0.1, 0.6, 0.72, 0.12], shadowEnd: 0.2, highlightCut: 0, inkBoost: 0.9 }
+const RISO: GrainEnd = { amp: 0.0168, size: 0.0012, weights: [0.1, 0.6, 0.72, 0.12], shadowEnd: 0.2, highlightCut: 0, inkBoost: 0.9 }
 const FILM_UNTIL = 0.6
 /** Octaves at least this many output pixels wide use lattice noise; smaller ones per-pixel noise. */
 export const LATTICE_MIN_SIGMA_PX = 0.6

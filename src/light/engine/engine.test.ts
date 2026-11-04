@@ -253,8 +253,8 @@ describe('grain', () => {
   it('maps one strength to the film and riso ends of the grain study', () => {
     expect(grainParams(0.5).amp).toBeCloseTo(0.0125, 6)
     expect(grainParams(0.5).size).toBeCloseTo(0.0005, 8)
-    expect(grainParams(1).amp).toBeCloseTo(0.016, 6)
-    expect(grainParams(1).size).toBeCloseTo(0.0011, 8)
+    expect(grainParams(1).amp).toBeCloseTo(0.0168, 6)
+    expect(grainParams(1).size).toBeCloseTo(0.0012, 8)
     expect(grainParams(1).inkBoost).toBeCloseTo(0.9, 6)
     expect(grainParams(0).amp).toBe(0)
   })
