@@ -79,7 +79,7 @@ vec3 filterPrintScreen(vec3 display, ivec2 px, float weight) {
                         printDelta(p + vec2(0.25, 0.75), c) + printDelta(p + vec2(0.75, 0.75), c));
   float grain = (printUnit(px.x, px.y, uSeed + 3) + printUnit(px.x, px.y, uSeed + 4) + printUnit(px.x, px.y, uSeed + 5) - 1.5) * 2.0;
   float share = mix(uPrintNoise.x, uPrintNoise.y, smoothstep(0.5, 0.72, lab.x));
-  float swing = (1.0 - share) * delta + share * 0.5 * sqrt(c * (1.0 - c)) * grain;
+  float swing = smoothstep(0.0, 0.06, c) * ((1.0 - share) * delta + share * 0.5 * sqrt(c * (1.0 - c)) * grain);
   lab.x -= uPrintAmp * swing;
   return saturate(oklabToLinear(lab));
 }

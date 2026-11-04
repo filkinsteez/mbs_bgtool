@@ -257,7 +257,8 @@ export function applyScreen(image, strength, seed = 1, params = SCREEN, { dither
         // Fine noise in the same ink: zero mean, the same lightness curve as the screen (sqrt of c (1 - c)).
         const grain = (hash(x, y, seed + 3) + hash(x, y, seed + 4) + hash(x, y, seed + 5) - 1.5) * 2
         const share = params.noise + (params.lightNoise - params.noise) * smoothstep(0.5, 0.72, lab[0])
-        const swing = (1 - share) * delta + share * 0.5 * Math.sqrt(c * (1 - c)) * grain
+        // Paper white stays clean: no dots below 6 % coverage.
+        const swing = smoothstep(0, 0.06, c) * ((1 - share) * delta + share * 0.5 * Math.sqrt(c * (1 - c)) * grain)
         rgb = fromOklab(lab[0] - amp * swing, lab[1], lab[2]).map((v) => Math.min(1, Math.max(0, v)))
       }
       for (let k = 0; k < 3; k++) {

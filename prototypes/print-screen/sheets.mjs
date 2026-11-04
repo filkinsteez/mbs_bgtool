@@ -132,6 +132,10 @@ for (const name of ['bands-bold-s6-poster', 'bands-atmospheric-s6-poster']) {
   const image = await load(`${out}renders/${name}.png`)
   FRAMES.push({ name, image, plain: applyScreen(image, 0, 6), screened: Object.fromEntries(STRENGTHS.map((s) => [s, applyScreen(image, s, 6)])) })
 }
+// The screened Bold frame at strength 1, for measure.mjs (the poster's own spectrum script).
+await sharp(FRAMES[0].screened[1].data, { raw: { width: FRAMES[0].image.width, height: FRAMES[0].image.height, channels: 4 } })
+  .png()
+  .toFile(`${out}renders/bands-bold-s6-poster-screen1.png`)
 const SIZE = 160
 const Z = 4
 const ZOOM_SIZE = 48
