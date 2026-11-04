@@ -284,7 +284,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     setExportStatus('busy')
     try {
       await nextPaint()
-      const outcome = await exportPng(scene, pack, format)
+      const outcome = await exportPng(scene, pack, format, { intensity, softness, mood: moodControl, drag })
       console.info('Exported', outcome)
       setExportStatus('idle')
     } catch (error) {
