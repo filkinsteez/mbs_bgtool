@@ -108,8 +108,8 @@ export interface OutputSettings {
   /** Stops applied before the tone curve. */
   exposure: number
   /**
-   * Grain strength 0..1, mono on Oklab L, sized to the short side: 0 off,
-   * 0.5 fine film grain (about 1.25 % at mid-tones), 1 the riso prints.
+   * Grain amount 0..1, mono on Oklab L, sized to the short side: 0 off, 1 the
+   * riso prints; one grain whose amplitude rises as amount^0.6 (engine/grain.ts).
    * Presets from before this change may carry grainSize (px) and grainChroma;
    * those keys are ignored.
    */

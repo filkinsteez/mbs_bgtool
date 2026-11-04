@@ -250,22 +250,29 @@ describe('lens weights', () => {
 })
 
 describe('grain', () => {
-  it('maps one strength to the film and riso ends of the grain study', () => {
-    expect(grainParams(0.5).amp).toBeCloseTo(0.0125, 6)
-    expect(grainParams(0.5).size).toBeCloseTo(0.0005, 8)
-    expect(grainParams(1).amp).toBeCloseTo(0.0168, 6)
-    expect(grainParams(1).size).toBeCloseTo(0.0012, 8)
-    expect(grainParams(1).inkBoost).toBeCloseTo(0.9, 6)
+  it('sets only the amount: one grain, the riso end, whose amplitude rises as strength^0.6 to the prints at 1', () => {
+    const riso = grainParams(1)
+    expect(riso.amp).toBeCloseTo(0.0168, 6)
+    expect(riso.size).toBeCloseTo(0.0012, 8)
+    expect(riso.inkBoost).toBeCloseTo(0.9, 6)
     expect(grainParams(0).amp).toBe(0)
+    expect(grainParams(0.5).amp).toBeCloseTo(0.0168 * 0.5 ** 0.6, 6)
+    const character = (p: ReturnType<typeof grainParams>) => [p.size, p.weights, p.shadowEnd, p.highlightCut, p.inkBoost]
+    let last = 0
+    for (const strength of [0.1, 0.25, 0.5, 0.75, 1]) {
+      const params = grainParams(strength)
+      expect(character(params)).toEqual(character(riso))
+      expect(params.amp).toBeGreaterThan(last)
+      last = params.amp
+    }
   })
 
-  it('fades to 0 at black and eases off toward white', () => {
-    const film = grainParams(0.5)
-    expect(grainAmplitude(film, 0)).toBe(0)
-    expect(grainAmplitude(film, 0.45)).toBeCloseTo(0.0125, 6)
-    expect(grainAmplitude(film, 1)).toBeCloseTo(0.00625, 6)
+  it('fades to 0 at black, is strongest in dark ink and lighter on paper', () => {
     const riso = grainParams(1)
-    expect(grainAmplitude(riso, 0.45)).toBeGreaterThan(grainAmplitude(riso, 0.9))
+    expect(grainAmplitude(riso, 0)).toBe(0)
+    expect(grainAmplitude(riso, 0.45)).toBeCloseTo(0.0168 * 1.45, 6)
+    expect(grainAmplitude(riso, 1)).toBeCloseTo(0.0168 * 0.55, 6)
+    expect(grainAmplitude(grainParams(0.25), 0.6) / grainAmplitude(riso, 0.6)).toBeCloseTo(0.25 ** 0.6, 6)
   })
 
   it('sizes octaves to the short side and lowers the ones smaller than a pixel', () => {

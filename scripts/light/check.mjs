@@ -684,10 +684,12 @@ try {
     const stdPreview = lightnessStd(preview)
     const stdShrunk = lightnessStd(shrunk)
     const riso4k = lightnessStd(await grey(1, { width: 3840, height: 2160 }))
+    const { grainAmplitude, grainParams } = await harness.ssr('/src/light/engine/grain.ts')
+    const expected = grainAmplitude(grainParams(0.5), 0.45)
     record(
-      'grain: strength 0.5 is about 1.25 % Oklab L at mid-tones, sized to the picture',
-      Math.abs(std4k - 0.012) < 0.0015 && Math.abs(stdShrunk / stdPreview - 1) < 0.15,
-      `L 0.45 grey: std ${(std4k * 100).toFixed(2)} % at 3840x2160, ${(stdPreview * 100).toFixed(2)} % at 960x540, ${(stdShrunk * 100).toFixed(2)} % for the 4K render shrunk to 960x540; strength 1: ${(riso4k * 100).toFixed(2)} %`,
+      'grain: strength 0.5 gives the riso grain at its amount for 0.5 at mid-tones, sized to the picture',
+      Math.abs(std4k / expected - 1) < 0.12 && Math.abs(stdShrunk / stdPreview - 1) < 0.15,
+      `L 0.45 grey: std ${(std4k * 100).toFixed(2)} % at 3840x2160 (the grain's formula: ${(expected * 100).toFixed(2)} %), ${(stdPreview * 100).toFixed(2)} % at 960x540, ${(stdShrunk * 100).toFixed(2)} % for the 4K render shrunk to 960x540; strength 1: ${(riso4k * 100).toFixed(2)} %`,
     )
     const black = await harness.render({ scene: { program: 'test.flat', colors: ['#000000'], lens: noLens, output: { grain: 1 } }, width: 640, height: 360 })
     record('grain: black stays exact black at strength 1 with dither', black.data.every((v, i) => i % 4 === 3 || v === 0), 'every pixel 0,0,0')

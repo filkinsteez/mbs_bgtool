@@ -4,10 +4,9 @@ import type { OutputFilter } from './filters/types'
 /**
  * The Grain filter from prototypes/grain-study (README, lib/filter.mjs,
  * presets/grain-filter.json): mono grain on Oklab L at output size, after the
- * tone curve and before dither. One strength 0..1: up to FILM_UNTIL only the
- * film grain's amplitude grows (0.5 is about 1.25 % Oklab L at mid-tones);
- * from there to 1 every setting blends to the riso end, which matches the
- * three riso prints at 925 px.
+ * tone curve and before dither. One grain character, the riso end, which
+ * matches the three riso prints at 925 px: its size and octave mix scale with
+ * the frame. The strength 0..1 sets only its amount, up to the prints' at 1.
  *
  *   L' = L + amp(L) * G(x)
  *   G  = sum_k w_k N_k / sqrt(sum w_k^2), N_k unit noise of blob sigma rel_k * size * shortSide
@@ -26,9 +25,10 @@ interface GrainEnd {
 
 /** Octave sizes relative to `size`. */
 export const GRAIN_OCTAVES = [0.5, 1, 2, 8] as const
-const FILM: GrainEnd = { amp: 0.015, size: 0.0005, weights: [0.35, 0.85, 0.35, 0], shadowEnd: 0.25, highlightCut: 0.5, inkBoost: 0 }
+/** The grain at strength 1. */
 const RISO: GrainEnd = { amp: 0.0168, size: 0.0012, weights: [0.1, 0.6, 0.72, 0.12], shadowEnd: 0.2, highlightCut: 0, inkBoost: 0.9 }
-const FILM_UNTIL = 0.6
+/** Amplitude grows as strength^AMOUNT_POWER, so low settings already show (0.25 gives 44 % of the prints' amplitude). */
+const AMOUNT_POWER = 0.6
 /** Octaves at least this many output pixels wide use lattice noise; smaller ones per-pixel noise. */
 export const LATTICE_MIN_SIGMA_PX = 0.6
 
@@ -40,20 +40,11 @@ const smoothstep = (a: number, b: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
   return t * t * (3 - 2 * t)
 }
-const mix = (a: number, b: number, t: number) => a + (b - a) * t
 
+/** The strength sets the amplitude only. */
 export function grainParams(strength: number): GrainParams {
   const s = Math.min(1, Math.max(0, Number.isFinite(strength) ? strength : 0))
-  const toRiso = smoothstep(FILM_UNTIL, 1, s)
-  return {
-    strength: s,
-    amp: mix(FILM.amp * Math.min(s / FILM_UNTIL, 1), RISO.amp, toRiso),
-    size: mix(FILM.size, RISO.size, toRiso),
-    weights: [0, 1, 2, 3].map((k) => mix(FILM.weights[k], RISO.weights[k], toRiso)) as unknown as GrainEnd['weights'],
-    shadowEnd: mix(FILM.shadowEnd, RISO.shadowEnd, toRiso),
-    highlightCut: mix(FILM.highlightCut, RISO.highlightCut, toRiso),
-    inkBoost: mix(FILM.inkBoost, RISO.inkBoost, toRiso),
-  }
+  return { ...RISO, strength: s, amp: RISO.amp * s ** AMOUNT_POWER }
 }
 
 /** Standard deviation of the grain in Oklab L at lightness L. */
