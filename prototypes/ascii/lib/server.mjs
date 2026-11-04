@@ -13,11 +13,21 @@ export const FROZEN = path.join(ROOT, 'artifacts/ascii/head')
 /** The renderer change that makes the output pass run the filter chain (with the coordinator until it lands). */
 const CHAIN_PATCH = path.join(ROOT, 'artifacts/grain/programRenderer-filter-chain.patch')
 
+/** The ASCII agent's own engine files, copied from the working tree over the frozen copy so edits can be tried. */
+const OVERLAY = ['src/light/engine/filters/ascii.ts', 'src/light/engine/glsl/ascii.ts']
+
 /**
  * Copies src/light at `rev` into FROZEN (src/light imports nothing outside itself), with the chain patch applied when
- * that commit's renderer does not call prepareOutputFilters yet. Returns a label: the short sha, '+chain' if patched.
+ * that commit's renderer does not call prepareOutputFilters yet, and the working tree's ASCII files on top. Returns a
+ * label: the short sha, '+chain' if patched.
  */
 export function freezeLight(rev = 'HEAD') {
+  const label = freezeCommit(rev)
+  for (const file of OVERLAY) fs.copyFileSync(path.join(ROOT, file), path.join(FROZEN, file))
+  return label
+}
+
+function freezeCommit(rev) {
   const sha = execFileSync('git', ['rev-parse', '--short', rev], { cwd: ROOT }).toString().trim()
   const stamp = path.join(FROZEN, 'REV')
   if (fs.existsSync(stamp) && fs.readFileSync(stamp, 'utf8').trim().split('+')[0] === sha) return fs.readFileSync(stamp, 'utf8').trim()

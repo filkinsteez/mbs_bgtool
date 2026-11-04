@@ -47,6 +47,8 @@ const DARK_SCALE = 0.18
 /** Dark ink: Oklab lightness as a share of the pixel's, and its largest chroma. */
 const INK_LIGHTNESS = 0.32
 const INK_CHROMA = 0.035
+/** Oklab hues (degrees) where dark ink turns plain grey: fully between the middle two, easing in and out over the outer ones. */
+const OLIVE_HUES = [55, 70, 130, 145] as const
 
 export interface AsciiGrid {
   cols: number
@@ -143,11 +145,14 @@ float asciiBase() {
   return base;
 }
 
-// A deep, nearly grey shade of a light for dark ink: its Oklab hue, little chroma, a share of its lightness.
+// A deep, nearly grey shade of a light for dark ink: a share of its Oklab lightness and a trace of its hue. Yellow,
+// lime and tan hues (about 60 to 140 degrees) read olive or brown when deep, so their ink is plain grey.
 vec3 asciiDarkInk(vec3 c) {
   vec3 lab = linearToOklab(c);
   float chroma = length(lab.yz);
-  vec2 ab = chroma > 1e-5 ? lab.yz * (min(0.3 * chroma, ${f(INK_CHROMA)}) / chroma) : vec2(0.0);
+  float hue = degrees(atan(lab.z, lab.y));
+  float olive = smoothstep(${f(OLIVE_HUES[0])}, ${f(OLIVE_HUES[1])}, hue) * (1.0 - smoothstep(${f(OLIVE_HUES[2])}, ${f(OLIVE_HUES[3])}, hue));
+  vec2 ab = chroma > 1e-5 ? lab.yz * (min(0.3 * chroma, ${f(INK_CHROMA)}) * (1.0 - olive) / chroma) : vec2(0.0);
   return max(oklabToLinear(vec3(lab.x * ${f(INK_LIGHTNESS)}, ab)), 0.0);
 }
 

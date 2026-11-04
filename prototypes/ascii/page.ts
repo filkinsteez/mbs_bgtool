@@ -173,6 +173,29 @@ const api = {
     return { ms, colors: scene.colors }
   },
 
+  /** Median ms of renders that wait for the GPU (after one warm-up), for each output setting given. */
+  async timeFrame(request: Omit<FrameRequest, 'key' | 'output'> & { outputs: Record<string, number>[]; runs?: number }) {
+    const { renderer, composeScene, getPack, frameAspect } = await engine()
+    const recipe = await recipeById(request.recipe)
+    const controls = request.controls ?? { intensity: 0.5, softness: 0.5, mood: 0.5 }
+    const scene = composeScene(recipe, {
+      pack: getPack(request.pack as Parameters<typeof getPack>[0]),
+      controls,
+      seed: request.seed,
+      aspect: frameAspect(request.width, request.height),
+    })
+    if (!scene) throw new Error(`${request.recipe} has no compose`)
+    const options = { width: request.width, height: request.height, supersample: request.supersample ?? 2, measure: true }
+    return request.outputs.map((output) => {
+      const withOutput = { ...scene, output: { ...scene.output, ...output } }
+      renderer.renderProgram(recipe, withOutput, options)
+      const times: number[] = []
+      for (let i = 0; i < (request.runs ?? 5); i++) times.push(renderer.renderProgram(recipe, withOutput, options).ms)
+      times.sort((a, b) => a - b)
+      return { output, ms: +times[Math.floor(times.length / 2)].toFixed(1) }
+    })
+  },
+
   async echo(key: string, out: string) {
     const image = await download(key)
     await upload(out, image.data)

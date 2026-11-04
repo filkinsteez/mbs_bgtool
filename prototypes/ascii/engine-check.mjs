@@ -11,7 +11,12 @@ import { OUT, startPrototype } from './lib/server.mjs'
 
 const SCENES = [
   { name: 'ramp-bold-s1', recipe: 'sunset.ramp', pack: 'bold', seed: 1 },
+  { name: 'ramp-elemental-s2', recipe: 'sunset.ramp', pack: 'elemental', seed: 2 },
+  { name: 'ramp-atmospheric-s3', recipe: 'sunset.ramp', pack: 'atmospheric', seed: 3 },
+  { name: 'bands-bold-s2', recipe: 'sunset.bands', pack: 'bold', seed: 2 },
   { name: 'bands-elemental-s3', recipe: 'sunset.bands', pack: 'elemental', seed: 3 },
+  { name: 'ramp-bold-s4-9x16', recipe: 'sunset.ramp', pack: 'bold', seed: 4, portrait: true },
+  { name: 'rim-elemental-s3-9x16', recipe: 'contour.rim', pack: 'elemental', seed: 3, portrait: true },
   { name: 'blooms-atmospheric-s2', recipe: 'sunset.blooms', pack: 'atmospheric', seed: 2 },
   { name: 'rim-bold-s1', recipe: 'contour.rim', pack: 'bold', seed: 1 },
   { name: 'halo-elemental-s2', recipe: 'contour.halo', pack: 'elemental', seed: 2 },
@@ -115,27 +120,29 @@ try {
       const r = await proto.call('renderFrame', { ...s, width, height, supersample, output: { ascii }, key })
       return { width, height, data: proto.take(key), ms: r.ms }
     }
-    const off = await render(1920, 1080, 2, 0)
-    const on = await render(1920, 1080, 2, strength)
+    // Landscape 16:9 or portrait 9:16; the grid is 100 x 26 or 56 x 46 cells.
+    const [W, H] = s.portrait ? [1080, 1920] : [1920, 1080]
+    const [cols, rows] = s.portrait ? [56, 46] : [100, 26]
+    const off = await render(W, H, 2, 0)
+    const on = await render(W, H, 2, strength)
     const save = (img, file) => sharp(img.data, { raw: { width: img.width, height: img.height, channels: 4 } }).removeAlpha().jpeg({ quality: 92 }).toFile(path.join(dir, file))
     await save(on, `${s.name}-1080.jpg`)
     await save(off, `${s.name}-1080-off.jpg`)
     // Color: blur both by one cell height (41.5 px at 1080) in linear light, on a 4x smaller copy.
-    const a = blur(linearDown(off.data, 1920, 1080, 4), 1080 / 26 / 4)
-    const b = blur(linearDown(on.data, 1920, 1080, 4), 1080 / 26 / 4)
+    const a = blur(linearDown(off.data, W, H, 4), 1080 / 26 / 4)
+    const b = blur(linearDown(on.data, W, H, 4), 1080 / 26 / 4)
     const color = deltaE(a, b)
     const row = { name: s.name, msOff: +off.ms.toFixed(1), msOn: +on.ms.toFixed(1), color }
     if (!skip4k) {
-      const preview = await render(960, 540, 1, strength)
-      const big = await render(3840, 2160, 2, strength)
-      await save(big, `${s.name}-4k.jpg`)
+      const preview = await render(W / 2, H / 2, 1, strength)
+      const big = await render(W * 2, H * 2, 2, strength)
       // Preview vs export, per cell: mean linear difference of the export shrunk 4x against the preview.
-      const p = linearDown(preview.data, 960, 540, 1)
-      const e = linearDown(big.data, 3840, 2160, 4)
-      const cols = 100
-      const rows = 26
-      const cw = 960 / cols
-      const ch = 540 / rows
+      const pw = W / 2
+      const ph = H / 2
+      const p = linearDown(preview.data, pw, ph, 1)
+      const e = linearDown(big.data, W * 2, H * 2, 4)
+      const cw = pw / cols
+      const ch = ph / rows
       const cells = []
       for (let j = 0; j < rows; j++) {
         for (let i = 0; i < cols; i++) {
@@ -143,7 +150,7 @@ try {
           let n = 0
           for (let y = Math.ceil(j * ch); y < Math.floor((j + 1) * ch); y++) {
             for (let x = Math.ceil(i * cw); x < Math.floor((i + 1) * cw); x++) {
-              const k = (y * 960 + x) * 3
+              const k = (y * pw + x) * 3
               sum += Math.abs(p.data[k] - e.data[k]) + Math.abs(p.data[k + 1] - e.data[k + 1]) + Math.abs(p.data[k + 2] - e.data[k + 2])
               n++
             }
@@ -153,12 +160,11 @@ try {
       }
       const sorted = [...cells].sort((x, y) => x - y)
       const median = sorted[Math.floor(sorted.length / 2)]
-      row.previewVsExport = { medianCellDiff: +median.toFixed(5), worstCellDiff: +sorted[sorted.length - 1].toFixed(4), cellsAbove002: cells.filter((v) => v > 0.02).length, ms4k: +big.ms.toFixed(0) }
+      row.previewVsExport = { cells: cells.length, medianCellDiff: +median.toFixed(5), worstCellDiff: +sorted[sorted.length - 1].toFixed(4), cellsAbove002: cells.filter((v) => v > 0.02).length, ms4k: +big.ms.toFixed(0) }
       // 1:1 crops: 1080 at 2x (nearest) next to 4K, same frame region.
-      const cx = 640
-      const cy = 320
-      const c1080 = await sharp(on.data, { raw: { width: 1920, height: 1080, channels: 4 } }).removeAlpha().extract({ left: cx, top: cy, width: 320, height: 200 }).resize({ width: 640, kernel: 'nearest' }).png().toBuffer()
-      const c4k = await sharp(big.data, { raw: { width: 3840, height: 2160, channels: 4 } }).removeAlpha().extract({ left: cx * 2, top: cy * 2, width: 640, height: 400 }).png().toBuffer()
+      const [cx, cy] = s.portrait ? [380, 900] : [640, 320]
+      const c1080 = await sharp(on.data, { raw: { width: W, height: H, channels: 4 } }).removeAlpha().extract({ left: cx, top: cy, width: 320, height: 200 }).resize({ width: 640, kernel: 'nearest' }).png().toBuffer()
+      const c4k = await sharp(big.data, { raw: { width: W * 2, height: H * 2, channels: 4 } }).removeAlpha().extract({ left: cx * 2, top: cy * 2, width: 640, height: 400 }).png().toBuffer()
       await sharp({ create: { width: 1288, height: 400, channels: 3, background: '#000' } })
         .composite([
           { input: c1080, left: 0, top: 0 },
