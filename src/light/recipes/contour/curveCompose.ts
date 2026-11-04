@@ -419,12 +419,14 @@ export function haloParts(prefix: string, hex: string): Record<string, number | 
   if (warmTail(hex) === 'bright') {
     // A Tan halo keeps most of its light at or above Tan's own brightness: three bands just outside the curve, 1.3
     // widths apart so their sum has no ripple, make a flat stretch a little above Tan's level that ends in a rounded
-    // gaussian edge and a faint short tail.
+    // gaussian edge and a faint short tail. The inner band spills past the curve, so the inner edge fades over about
+    // a seventh of the short side instead of a crisp limb, and the outer bands widen where the light is strong, so
+    // the outer edge drifts along the curve instead of running beside it.
     const band = { ...outside, Shape: 8, Width: 0.035, Weight: 1.25 }
     const parts: Record<string, number | number[]> = {
-      ...prefixed('n1', { ...band, Offset: -0.012 }),
-      ...prefixed('n2', { ...band, Offset: -0.057 }),
-      ...prefixed('n3', { ...band, Offset: -0.102 }),
+      ...prefixed('n1', { ...band, Offset: -0.012, Side: 0 }),
+      ...prefixed('n2', { ...band, Offset: -0.057, Grow: 1, GrowBy: [0.8, 1.5] }),
+      ...prefixed('n3', { ...band, Offset: -0.102, Grow: 1, GrowBy: [1.6, 1.5] }),
       f1Weight: 0,
       ...prefixed('f2', { ...outside, Weight: 0.06, Width: 0.12 }),
       f3Weight: 0,
