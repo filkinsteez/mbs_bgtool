@@ -243,6 +243,15 @@ float clLightField(int i, vec2 q) {
     return d <= 0.0 ? 1.0 : exp(-(sqrt(r0 * r0 + d * d) - r0) / max(b.x, 1e-6));
   }
   vec2 dq = q - pos;
+  // Directional flat top: full at pos, falling over r0 ahead (along dir), over r0 * length behind and over
+  // r0 * stretch across; the power sets the shoulder. Its slope is zero at pos, so the switch between ahead and
+  // behind has no crease.
+  if (kind == 6) {
+    float u = dot(dq, dir);
+    float su = u / (r0 * (u >= 0.0 ? 1.0 : max(b.x, 0.05)));
+    float sv = dot(dq, vec2(-dir.y, dir.x)) / (r0 * max(b.z, 0.05));
+    return exp(-pow(su * su + sv * sv, 0.5 * max(b.y, 2.0)));
+  }
   float u = dot(dq, dir) / max(b.z, 1e-6);
   float v = dot(dq, vec2(-dir.y, dir.x));
   float r2 = u * u + v * v;
@@ -1010,7 +1019,7 @@ export function farParams(prefix: string, label: string, defaults: Defaults = {}
 /** Param specs for the two light fields. */
 export function lightParams(defaults: Defaults = {}): ParamSpec[] {
   const specs = [1, 2].flatMap((i): ParamSpec[] => [
-    { kind: 'number', key: `light${i}Kind`, label: `Light ${i} (0 off, 1 gauss, 2 exp, 3 power, 4 plane, 5 flat top)`, min: 0, max: 5, step: 1, default: 0 },
+    { kind: 'number', key: `light${i}Kind`, label: `Light ${i} (0 off, 1 gauss, 2 exp, 3 power, 4 plane, 5 flat top, 6 one-way flat top)`, min: 0, max: 6, step: 1, default: 0 },
     { kind: 'vector', key: `light${i}At`, label: `Light ${i} position from the shape`, min: -6, max: 6, step: 0.0005, default: [0, 0] },
     { kind: 'number', key: `light${i}Radius`, label: `Light ${i} radius`, min: 0.001, max: 6, step: 0.0005, default: 0.4 },
     { kind: 'number', key: `light${i}Length`, label: `Light ${i} falloff length`, min: 0.001, max: 6, step: 0.0005, default: 0.2 },

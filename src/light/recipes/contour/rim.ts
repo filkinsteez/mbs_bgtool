@@ -2,6 +2,7 @@ import type { ColorPack } from '../../color/packs'
 import type { ComposeInput, Composition, ParamSpec, ParamValue, RecipeContext, RecipeDefinition } from '../../scene'
 import {
   blockPlan,
+  dragLight,
   FLAT_POWER,
   flatRadius,
   frameSize,
@@ -318,13 +319,17 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   const logo = layout.shape.kind === 'logo'
   const corner = layout.shape.kind === 'corner'
   // Other shapes follow the longest piece inside the frame; a corner's hot spot starts at its vertex end.
-  const run = line ? path : longestRun(visibleRuns(shape, layout.anchor, aspect))
+  const runs = line ? [path] : visibleRuns(shape, layout.anchor, aspect)
+  const run = line ? path : longestRun(runs)
   const vertexFirst = run.length > 1 && dist(run[0], layout.anchor) <= dist(run[run.length - 1], layout.anchor)
   const start = corner ? vertexFirst : fromStart
   const along = (mood: number) => (start ? lerp(0, 0.5, mood) : lerp(1, 0.5, mood))
-  // A line is brightest where it leaves the frame; the Light control moves that end inward.
-  const hot = (line ? lineExit(path, fromStart, lerp(0.08, -0.3, controls.mood)) : pointAlong(run, along(controls.mood))) ?? layout.anchor
-  const home = pointAlong(run, along(0.5)) ?? layout.anchor
+  // A dragged line puts the hot spot on the outline nearest its start and runs the light along the outline its
+  // way (SHARED.md, "Dragging the light"); the Light control then doesn't move it again. Without one, a line is
+  // brightest where it leaves the frame and the Light control moves that end inward.
+  const dragged = controls.drag ? dragLight(controls.drag, runs, aspect) : null
+  const hot = dragged?.hot ?? (line ? lineExit(path, fromStart, lerp(0.08, -0.3, controls.mood)) : pointAlong(run, along(controls.mood))) ?? layout.anchor
+  const home = dragged?.hot ?? pointAlong(run, along(0.5)) ?? layout.anchor
   const at: Vec2 = [hot[0] - layout.anchor[0], hot[1] - layout.anchor[1]]
   const gain = geo(controls.intensity, 0.35, 1, 2.8)
   // Softness from 0.3 to 1.7 (1 at the default): wider glows change more of the frame per step, so the top
@@ -343,6 +348,7 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   const factor = lerp(10, 30, reachDraw)
   const lineReach = lerp(0.22, 0.34, reachDraw) * Math.max(fw, fh)
   const reach = line ? lineReach : flatRadius(run, home, factor, power)
+  const dragPower = line ? 2.4 : power
   // A logo crop's edges catch the light where they face the way the outline faces at the default hot spot, so the
   // hot spot's own edge is always fully lit (around a hole tip the outline faces back toward the logo's middle).
   const outwardAt = (p: Vec2): number => {
@@ -351,7 +357,9 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     const inside = windingNumber(shape.contours.flatMap((c) => c.primitives), probe) !== 0
     return (Math.atan2(inside ? -n[1] : n[1], inside ? -n[0] : n[0]) * 180) / Math.PI
   }
-  const toward = logo ? outwardAt(home) : (Math.atan2(at[1], at[0]) * 180) / Math.PI
+  // The facing stays the seed's: a drag moves the light along the outline, not the side it shines from.
+  const seedHome = pointAlong(run, along(0.5)) ?? layout.anchor
+  const toward = logo ? outwardAt(seedHome) : (Math.atan2(at[1], at[0]) * 180) / Math.PI
   const drift = warmDrift(light.hex)
   const params: Record<string, ParamValue> = {
     shape: SHAPE_KINDS.indexOf(layout.shape.kind) + 1,
@@ -380,10 +388,12 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     facingAngle: round4(toward),
     facingPower: 1.5,
     farWidth: 0.01,
-    light1Kind: line ? 3 : 5,
+    // Along a dragged line the light is at the look's far end (10 to 30 times dimmer) where the line ends.
+    light1Kind: dragged ? 6 : line ? 3 : 5,
     light1At: at.map(round4),
-    light1Radius: round4(reach),
-    light1Power: round4(power),
+    light1Radius: round4(dragged ? dragged.length / Math.log(factor) ** (1 / dragPower) : reach),
+    light1Power: round4(dragged ? dragPower : power),
+    ...(dragged ? { light1Length: dragged.back, light1Stretch: 1, light1Angle: round4(dragged.angle) } : {}),
     light2Kind: 1,
     light2At: at.map(round4),
     // A broad hot spot: the overexposed core covers a stretch of the edge, not a point (rim-edge reference).

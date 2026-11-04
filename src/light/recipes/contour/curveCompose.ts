@@ -459,6 +459,62 @@ export function falloffRadius(path: readonly Vec2[], hot: Vec2, factor: number, 
   return far / Math.sqrt(Math.max(1e-6, factor ** (2 / power) - 1))
 }
 
+/** How far past the nearest outline point (short-side units) the dragged hot spot still takes weight from. */
+const DRAG_SOFTNESS = 0.12
+
+/**
+ * The light of a dragged line on an outline (SHARED.md, "Dragging the light"): brightest at the outline point
+ * nearest `from`, running along the outline the way the line points, for as long as the line is. The point is a
+ * soft nearest (points up to about DRAG_SOFTNESS farther than the nearest share the weight), so it moves smoothly
+ * when `from` passes between two parts of the outline; the outline's direction there is averaged the same way. A line
+ * straight across the outline lights both ways alike, so the direction can flip there without a jump. Null when
+ * no part of the outline is in the frame.
+ */
+export function dragLight(
+  drag: { from: readonly number[]; to: readonly number[] },
+  runs: readonly (readonly Vec2[])[],
+  aspect: number,
+): { hot: Vec2; angle: number; length: number; back: number } | null {
+  const [fw, fh] = frameSize(aspect)
+  const from: Vec2 = [(drag.from[0] - 0.5) * fw, (drag.from[1] - 0.5) * fh]
+  const to: Vec2 = [(drag.to[0] - 0.5) * fw, (drag.to[1] - 0.5) * fh]
+  const points = runs.flatMap((run) =>
+    run.map((p, i) => {
+      const a = run[Math.max(0, i - 1)]
+      const b = run[Math.min(run.length - 1, i + 1)]
+      return { p, d: Math.hypot(p[0] - from[0], p[1] - from[1]), tangent: Math.atan2(b[1] - a[1], b[0] - a[0]) }
+    }),
+  )
+  if (points.length === 0) return null
+  const nearest = Math.min(...points.map((x) => x.d))
+  let wx = 0
+  let wy = 0
+  let ws = 0
+  let c2 = 0
+  let s2 = 0
+  for (const { p, d, tangent } of points) {
+    const w = Math.exp(-(d - nearest) / DRAG_SOFTNESS)
+    if (w < 1e-6) continue
+    wx += w * p[0]
+    wy += w * p[1]
+    ws += w
+    c2 += w * Math.cos(2 * tangent)
+    s2 += w * Math.sin(2 * tangent)
+  }
+  const axis = Math.atan2(s2, c2) / 2
+  const line: Vec2 = [to[0] - from[0], to[1] - from[1]]
+  const length = Math.hypot(line[0], line[1])
+  const along = length > 1e-6 ? (line[0] * Math.cos(axis) + line[1] * Math.sin(axis)) / length : 0
+  return {
+    hot: [wx / ws, wy / ws],
+    angle: (((along >= 0 ? axis : axis + Math.PI) * 180) / Math.PI + 360) % 360,
+    // A soft floor: a very short line still lights a stretch with soft ends instead of a patch with hard sides.
+    length: Math.hypot(length, 0.35),
+    // Behind the hot spot the light falls 2.5 times faster when the line runs along the outline.
+    back: round4(lerp(1, 0.4, Math.abs(along))),
+  }
+}
+
 /** How flat a Tan light's field is along the curve (the power of its flat-top field). */
 export const FLAT_POWER = 6
 

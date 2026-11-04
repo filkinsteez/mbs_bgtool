@@ -2,6 +2,7 @@ import type { ColorPack } from '../../color/packs'
 import type { ComposeInput, Composition, ParamSpec, ParamValue, RecipeContext, RecipeDefinition } from '../../scene'
 import {
   blockPlan,
+  dragLight,
   falloffRadius,
   FLAT_POWER,
   flatRadius,
@@ -241,7 +242,8 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   const base = pickBase(pack, rand, light.hex)
   const layout = haloLayout(plan.kind, rand, aspect, plan.place)
   // The hot spot and the falloff follow the longest piece of the curve inside the frame.
-  const path = longestRun(visibleRuns(buildShape(layout.shape), layout.anchor, aspect))
+  const runs = visibleRuns(buildShape(layout.shape), layout.anchor, aspect)
+  const path = longestRun(runs)
   const fromStart = rand() < 0.5
   // The Light control runs the hot spot from where the curve leaves the frame toward its middle, eased so equal
   // steps of the slider change the picture by about the same amount (it moves half as fast near the middle).
@@ -249,8 +251,11 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     const eased = (4 * mood - mood * mood) / 3
     return fromStart ? lerp(0, 0.5, eased) : lerp(1, 0.5, eased)
   }
-  const hot = pointAlong(path, along(controls.mood)) ?? layout.anchor
-  const home = pointAlong(path, along(0.5)) ?? layout.anchor
+  // A dragged line puts the hot spot on the curve nearest its start and runs the light along the curve its way
+  // (SHARED.md, "Dragging the light"); the Light control then doesn't move it again.
+  const dragged = controls.drag ? dragLight(controls.drag, runs, aspect) : null
+  const hot = dragged?.hot ?? pointAlong(path, along(controls.mood)) ?? layout.anchor
+  const home = dragged?.hot ?? pointAlong(path, along(0.5)) ?? layout.anchor
   const at: Vec2 = [hot[0] - layout.anchor[0], hot[1] - layout.anchor[1]]
   const gain = geo(controls.intensity, 0.35, 1, 2.8)
   const soften = geo(controls.softness, 0.45, 1, 2.4)
@@ -266,6 +271,7 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   const factor = lerp(20, 60, rand())
   const stretch = { direction: normalNear(path, home, 12), by: 6 }
   const radius = bright ? flatRadius(path, home, factor, power, stretch) : falloffRadius(path, home, factor, power, stretch)
+  const dragPower = bright ? FLAT_POWER : 2
   const drift = warmDrift(light.hex)
   const params: Record<string, ParamValue> = {
     ring1On: true,
@@ -284,12 +290,15 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     ring3On: false,
     farWidth: 0.03,
     farStep: 3,
-    light1Kind: bright ? 5 : 3,
+    // Along a dragged line the light is 20 to 60 times dimmer where the line ends, and three times longer across
+    // (rounder than the seed's own field, so a short line lights a soft patch, not a wedge).
+    light1Kind: dragged ? 6 : bright ? 5 : 3,
     light1At: at.map(round4),
-    light1Radius: round4(radius),
-    light1Power: round4(power),
-    light1Stretch: 6,
-    light1Angle: round4((Math.atan2(across[1], across[0]) * 180) / Math.PI),
+    light1Radius: round4(dragged ? dragged.length / Math.log(factor) ** (1 / dragPower) : radius),
+    light1Power: round4(dragged ? dragPower : power),
+    light1Stretch: dragged ? 3 : 6,
+    light1Angle: round4(dragged ? dragged.angle : (Math.atan2(across[1], across[0]) * 180) / Math.PI),
+    ...(dragged ? { light1Length: dragged.back } : {}),
     light2Kind: 0,
     base: base.gain > 0 ? 3 : 0,
     baseGain: base.gain,
