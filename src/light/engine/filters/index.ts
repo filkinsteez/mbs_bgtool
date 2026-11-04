@@ -1,6 +1,7 @@
 import type { OutputSettings } from '../../scene'
 import { GRAIN_FILTER } from '../grain'
 import { ASCII_FILTER } from './ascii'
+import { PIXEL_FILTER } from './pixel'
 import type { FilterKey, OutputFilter } from './types'
 
 export type { FilterFrame, FilterKey, FilterSource, OutputFilter } from './types'
@@ -14,7 +15,7 @@ export const FILTER_KEYS: readonly FilterKey[] = ['grain', 'ascii', 'pixel']
  * A filter plugs in by exporting an OutputFilter from its own file in this
  * folder and adding it here.
  */
-export const OUTPUT_FILTERS: readonly OutputFilter[] = [GRAIN_FILTER, ASCII_FILTER]
+export const OUTPUT_FILTERS: readonly OutputFilter[] = [GRAIN_FILTER, ASCII_FILTER, PIXEL_FILTER]
 
 /** The stages whose strength is above 0, in chain order. */
 export function activeFilters(output: OutputSettings): OutputFilter[] {
