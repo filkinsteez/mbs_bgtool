@@ -209,7 +209,7 @@ describe('scene resolution', () => {
     for (const recipe of RECIPE_LIST) {
       expect(recipe.defaultColors.length).toBe(recipe.colorSlots.length)
       for (const pack of PACKS) expect(recipe.fromPack(pack).length).toBe(recipe.colorSlots.length)
-      expect(recipe.fragment).toContain('vec3 radiance(vec2 uv, vec2 p)')
+      expect(recipe.fragment).toMatch(/vec3 radiance\(vec2 \w+, vec2 \w+\)/)
     }
   })
 })

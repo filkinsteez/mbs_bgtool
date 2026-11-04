@@ -61,7 +61,7 @@ describe('lab scene config', () => {
             expect(control, spec.key).toBe(spec.default)
             break
           case 'vector':
-            expect(Object.keys(control as DialConfig), spec.key).toEqual(['x', 'y', 'z', 'w'].slice(0, spec.default.length))
+            expect(Object.keys(control as DialConfig), spec.key).toEqual(spec.default.map((_, index) => ['x', 'y', 'z', 'w'][index] ?? `c${index + 1}`))
             break
           default: {
             const unknown: never = spec
