@@ -1,3 +1,4 @@
+import { linearToOklch } from '../../color/oklab'
 import type { ColorPack } from '../../color/packs'
 import { hexToLinear } from '../../color/srgb'
 import type { ControlValues } from '../../scene'
@@ -120,6 +121,43 @@ export function lineInShorts(drag: NonNullable<ControlValues['drag']>, aspect: n
 
 /** The angle in [-pi, pi]. */
 export const wrapAngle = (a: number) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI))
+
+/** Oklab chroma over lightness of a cool light's dim haze: a pale veil of its color. */
+const VEIL_CHROMA = 0.15
+
+/** Luminance of the faint haze in a cool light's darks, about Oklab L 0.1. */
+const DARK_HAZE = 0.0012
+
+/**
+ * The `veil` param [color share, full color level, band width, dark haze] for a light. A cool
+ * light's haze keeps only enough of its color for chroma VEIL_CHROMA times its lightness, with
+ * its full color in a band about an octave either side of 0.35 of its clipping luminance, and
+ * leaves a faint haze in black darks. Warm lights keep their warm tails (a pale veil of them
+ * reads brown), and so does a light over a dark of another hue, such as Meta Blue over Plum,
+ * where a pale veil would mix with the dark into mauve.
+ */
+export function veilParam(light: ContourLight): number[] {
+  if (!veiled(light)) return [1, 1, 1, 0]
+  const [l, c] = linearToOklch(hexToLinear(light.haze))
+  return [round4(Math.min(1, (VEIL_CHROMA * l) / Math.max(c, 1e-4))), 0.35, 0.8, light.base === '#000000' ? DARK_HAZE : 0]
+}
+
+/** Whether a light's haze is a pale veil: a cool light over a dark that matches it. */
+export function veiled(light: ContourLight): boolean {
+  return !light.tail && darkMatches(light)
+}
+
+/**
+ * Whether a light's dark is black, nearly grey or of about the light's own hue, so the light's
+ * dim tail can spread over it without mixing into a third color (as Meta Blue over Plum does,
+ * into indigo).
+ */
+export function darkMatches(light: ContourLight): boolean {
+  if (light.base === '#000000') return true
+  const [, , h] = linearToOklch(hexToLinear(light.haze))
+  const [, baseC, baseH] = linearToOklch(hexToLinear(light.base))
+  return baseC <= 0.02 || Math.abs(wrapAngle(((h - baseH) * Math.PI) / 180)) <= Math.PI / 3
+}
 
 /**
  * Turn param of a scene turned on screen by `turn` (radians, from +x toward +y) so that its

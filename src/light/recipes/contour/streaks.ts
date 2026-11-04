@@ -3,6 +3,7 @@ import type { ComposeInput, Composition, ParamValue, RecipeDefinition } from '..
 import {
   clipLuminanceOf,
   contourLights,
+  darkMatches,
   fallParam,
   frameHalf,
   geo,
@@ -21,6 +22,8 @@ import {
   tailParams,
   tailUniform,
   turnParam,
+  veiled,
+  veilParam,
   wrapAngle,
 } from './beam-compose'
 
@@ -72,6 +75,10 @@ uniform vec2 uFall;        // share of the clipping level below which haze falls
 uniform vec2 uLook;        // base level, vignette
 uniform vec4 uTurn;        // a dragged line: cos and sin of the scene's turn on screen, offset (scene = turn^-1 screen + offset)
 uniform float uReach;      // a dragged line's length: the shafts fade out by about there (0: they reach the frame's edges)
+uniform vec4 uNear;        // sky near the point: dark out to x, all its light from y (distance), light there (share), glare at the point (share)
+uniform vec3 uTexture;     // fine streaks inside the shafts: contrast, streaks per radian, how fast they change along their length
+uniform vec4 uVeil;        // a cool light's haze: veil color share (1: full color), level of the full color (share of the clipping luminance), band width (octaves), dark haze luminance
+uniform float uSkyPeak;    // where across the lit sky it is brightest (0: at its first end)
 
 const int SHADOW_TAPS = 20;
 const int SHORT_TAPS = 8;
@@ -125,6 +132,8 @@ vec2 skyDirection(float theta) {
   float to = uSky.y;
   float soft = uSky.z;
   float t = (theta - from) / (to - from);
+  // The brightest direction: the lit sky's first end, or a share of the way across it.
+  if (uSkyPeak > 0.0) t = abs(t - uSkyPeak) / max(uSkyPeak, 1.0 - uSkyPeak);
   float a = min(from, to);
   float b = max(from, to);
   float window = smoothstep(a - soft, a + soft, theta) * (1.0 - smoothstep(b - soft, b + soft, theta));
@@ -168,12 +177,22 @@ float skyShafts(vec2 p) {
   float r = length(d);
   float theta = atan(d.y, d.x);
   vec2 dirLight = skyDirection(theta);
-  float glare = 1.0 / (1.0 + r * r / max(0.1 * uLayer.x * uLayer.x, 1e-6));
+  float glare = uNear.w / (1.0 + r * r / max(0.1 * uLayer.x * uLayer.x, 1e-6));
   dirLight = vec2(mix(dirLight.x, uSkyLevel.x, glare), dirLight.y * (1.0 - glare));
   if (dirLight.x <= 1e-5) return 0.0;
   float rise = 1.0 + uRise.x * pow(abs(sin(theta)), uRise.w) * smoothstep(uRise.y, uRise.z, r);
   float reach = uReach > 0.0 ? 1.0 / (1.0 + pow(r / (0.75 * uReach), 3.0)) : 1.0;
-  return dirLight.x * rise * shaftLight(d, r, dirLight.y) * reach;
+  // The clouds are thickest around the light, so the sky right above the point is dark and
+  // the shafts brighten away from it.
+  float near = mix(uNear.z, 1.0, smoothstep(uNear.x, uNear.y, r));
+  // Fine streaks inside the shafts, as if the lit haze were smeared along the rays: noise
+  // around a circle (so it has no seam), changing slowly along each ray.
+  float streaks = 1.0;
+  if (uTexture.x > 0.0) {
+    vec2 dir = d / max(r, 1e-5);
+    streaks = max(0.0, 1.0 + uTexture.x * gradientNoise(dir * uTexture.y + vec2(3.1, log(max(r, 1e-3)) * uTexture.z), uSeed + 401));
+  }
+  return dirLight.x * rise * shaftLight(d, r, dirLight.y) * reach * near * streaks;
 }
 
 float floorStreaks(vec2 q) {
@@ -296,7 +315,16 @@ vec3 combine(vec2 uv, vec2 screen, vec3 line, vec3 cached) {
   float lumLight = max(luminance(uLightColor), 1e-5);
   float pale = saturate(uPale.x * smoothstep(uPale.y, uPale.z, scatter * lumHaze));
   vec3 paleColor = mix(uLightColor / lumLight, uPaleTarget, uPaleWhite) * lumHaze;
-  vec3 color = uBaseColor * uLook.x + scatter * warmFall(scatter) * mix(warmTail(scatter), paleColor, pale);
+  // A cool light's haze is a pale veil of its color, with the full color only in a band of
+  // levels; its darks are a faint haze of the veil, not black.
+  vec3 own = warmTail(scatter);
+  vec3 veil = mix(vec3(lumHaze), uHazeColor, uVeil.x);
+  if (uTail.w <= 0.0 && uVeil.x < 1.0) {
+    float clip = lumHaze / max(max(uHazeColor.r, uHazeColor.g), uHazeColor.b);
+    float octaves = log2(max(scatter * lumHaze, 1e-6) / (uVeil.y * clip)) / max(uVeil.z, 0.05);
+    own = mix(veil, uHazeColor, exp(-0.5 * octaves * octaves));
+  }
+  vec3 color = uBaseColor * uLook.x + scatter * warmFall(scatter) * mix(own, paleColor, pale) + uVeil.w * veil / lumHaze;
   vec2 half_ = 0.5 * uFrameAspect;
   float vig = 1.0 - uLook.y * dot(screen, screen) / dot(half_, half_);
   return color * max(vig, 0.0);
@@ -324,7 +352,13 @@ const HAZE_LUMINANCE = 0.12
 const LIGHT_GAIN = 4
 
 /** Smallest level of the sky past the lit side, as a share of the lit side's level. */
-const DARK_SHARE = 0.15
+const DARK_SHARE = 0.04
+
+/**
+ * The same over a dark of another hue (Meta Blue over Plum): dimmer light there would mix
+ * with the dark into a third color (indigo), so that sky keeps more of the light's own color.
+ */
+const OTHER_DARK_SHARE = 0.15
 
 /** Share of its clipping level one unit of a warm light's scattered light reaches. */
 const WARM_SHARE = 0.45
@@ -362,6 +396,11 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
   const light = pickContourLight(pack, seed, random)
   const hazeGain = hazeGainFor(light, HAZE_LUMINANCE, WARM_SHARE)
   const soft = (lo: number, hi: number) => lerp(lo, hi, softness)
+  // Over a dark that matches the light, its floor band runs wide, the floor mirrors little of
+  // the sky and the dark sky is deep. Over another dark (Meta Blue over Plum) the band stays
+  // tighter and the floor and the dark sky keep more light, which would otherwise mix with
+  // the dark into indigo.
+  const open = darkMatches(light)
   // At low Intensity the light near the point stays under about twice nominal, so its hot
   // spot keeps a rounded top instead of a flat white one.
   const power = geo(intensity, 0.22, 0.75, 1.4) * hazeGain * LIGHT_GAIN
@@ -401,26 +440,44 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
   const params: Record<string, ParamValue> = {
     center: [round4(cx), round4(cy)],
     sky: [round4(sky[0]), round4(sky[1]), round4(soft(0.35, 0.6)), round4(lerp(0.8, 1.2, random()))],
-    skyLevel: [round4(Math.min(16, 2.2 * power)), round4(0.16 * power), round4(lerp(DARK_SHARE, 1.6 * DARK_SHARE, random()))],
+    skyLevel: [round4(Math.min(16, 3 * power)), round4(0.16 * power), round4((open ? 1 : OTHER_DARK_SHARE / DARK_SHARE) * lerp(DARK_SHARE, 1.6 * DARK_SHARE, random()))],
     rise: [round4(lerp(4, 7, random())), round4(lerp(0.2, 0.32, random())), round4(lerp(0.9, 1.2, random())), round4(lerp(3.5, 5, random()))],
-    clouds: [round4(Math.min(24, lerp(7, 26, rayShare))), round4(soft(3.2, 1.6)), round4(soft(4, 1.8)), round4(soft(0.06, 0.32))],
+    // A few wide gaps with soft sides, and light between them: broad, soft shafts.
+    clouds: [round4(lerp(5, 11, rayShare)), round4(soft(2.2, 1.2)), round4(soft(4, 1.8)), round4(soft(0.25, 0.45))],
     layer: [layerIn, layerOut, round4(lerp(0.25, 0.5, random())), round4(lerp(2.5, 5, random()))],
     horizon: [round4(lerp(0.45, 0.75, random())), round4(lerp(0.03, 0.1, random())), round4(lerp(0.4, 0.8, random())), round4(soft(0.1, 0.25))],
     horizonShape: horizonShape.map(round4),
-    glow: [round4(glowSide * lerp(0, 0.05, random())), round4(Math.min(8, 1.2 * power)), round4(lerp(0.05, 0.1, random())), round4(lerp(0.2, 0.32, random()))],
+    // No glow of its own at the point: the brightest light is the floor's wide pool just below
+    // it, and the floor mirrors only a little of the sky.
+    glow: [round4(glowSide * lerp(0, 0.05, random())), round4(Math.min(8, (open ? 0.35 : 1.2) * power)), round4(lerp(0.05, 0.1, random())), round4(lerp(0.2, 0.32, random()))],
     glowShape: [round4(lerp(0.35, 0.55, random())), round4(lerp(0.3, 0.7, random()))],
     line: [round4(Math.min(4, 0.3 * power)), round4(soft(0.005, 0.014))],
     band: [round4(Math.min(6, 0.9 * power)), round4(soft(0.015, 0.03))],
-    floor: [round4(lerp(0.25, 0.45, random())), round4(Math.min(16, 1.6 * power)), round4(lerp(0.05, 0.09, random())), round4(lerp(0.12, 0.22, random()))],
+    floor: [
+      round4(open ? lerp(0.1, 0.2, random()) : lerp(0.25, 0.45, random())),
+      round4(Math.min(16, 1.8 * power)),
+      round4(open ? lerp(0.04, 0.07, random()) : lerp(0.05, 0.09, random())),
+      round4(open ? lerp(0.3, 0.45, random()) : lerp(0.12, 0.22, random())),
+    ],
     floorStreaks: [round4(lerp(0.2, 0.45, random())), 1.6, 14],
-    // The color starts toward white from 0.4 of the haze's clipping level and is there by
-    // 2.3 times it, so light passing nominal keeps whitening at the same pace.
-    pale: [0.8, round4(0.4 * clipLuminanceOf(light.haze)), round4(2.3 * clipLuminanceOf(light.haze))],
+    // A veiled light starts toward pale from 0.3 of the haze's clipping level and is all pale
+    // by 1.8 times it, so bright light reads pale over a wide range, as in the moodboard.
+    // Others start at 0.4 and are there by 2.3 times it (pale tints over Plum read indigo).
+    pale: veiled(light)
+      ? [1, round4(0.3 * clipLuminanceOf(light.haze)), round4(1.8 * clipLuminanceOf(light.haze))]
+      : [0.8, round4(0.4 * clipLuminanceOf(light.haze)), round4(2.3 * clipLuminanceOf(light.haze))],
     paleWhite: light.light === light.haze ? 0.5 : 0.2,
     ...tailParams(light, TAIL_BELOW),
     fall: fallParam(light, TAIL_BELOW, TAIL_FALL),
     base: round4(BASE_GAIN * light.baseLevel),
     vignette: round4(lerp(0.08, 0.15, random())),
+    // The sky stays dark through the cloud layer, where the light is thickest around the
+    // point, and has all its light just past it, with no glare at the point; fine streaks run
+    // in the shafts. Over a dark of another hue the sky around the point keeps its glare
+    // instead, since a wide fade from the light into that dark would cross a third color.
+    near: open ? [layerOut, round4(1.7 * layerOut), 0.12, 0] : [0, 0.001, 1, 1],
+    texture: [0.35, 11, 0.5],
+    veil: veilParam(light),
   }
   if (controls.drag) Object.assign(params, streaksOnLine(params, lineInShorts(controls.drag, aspect), skyHeight))
 
@@ -452,6 +509,7 @@ function streaksOnLine(params: Record<string, ParamValue>, line: ShortLine, skyH
   const layer = params.layer as number[]
   const rise = params.rise as number[]
   const clouds = params.clouds as number[]
+  const near = params.near as number[]
   // The lit sky's width (bright end first) and how far it can turn either way above the horizon.
   const width = sky[1] - sky[0]
   const room = Math.max(0, (Math.PI - Math.abs(width)) / 2)
@@ -473,6 +531,9 @@ function streaksOnLine(params: Record<string, ParamValue>, line: ShortLine, skyH
     layer: [round4(layer[0] * scale), round4(layer[1] * scale), layer[2], layer[3]],
     rise: [rise[0], round4(rise[1] * scale), round4(rise[2] * scale), rise[3]],
     clouds: [round4(Math.min(64, clouds[0] / scale)), clouds[1], clouds[2], clouds[3]],
+    near: [round4(near[0] * scale), round4(near[1] * scale), near[2], near[3]],
+    // The brightest shafts point along the line.
+    skyPeak: round4(Math.min(0.9, Math.max(0.1, 0.5 + (level - fan) / (Math.abs(width) > 1e-3 ? width : 1e-3)))),
   }
 }
 
@@ -510,6 +571,10 @@ export const contourStreaks: RecipeDefinition = {
     { kind: 'number', key: 'vignette', label: 'Vignette', min: 0, max: 1, step: 0.005, default: 0.1 },
     { kind: 'vector', key: 'turn', label: 'Turn', min: -8, max: 8, step: 0.0005, default: [1, 0, 0, 0] },
     { kind: 'number', key: 'reach', label: 'Reach', min: 0, max: 4, step: 0.005, default: 0 },
+    { kind: 'vector', key: 'near', label: 'Sky near the point', min: 0, max: 4, step: 0.005, default: [0, 0.001, 1, 1] },
+    { kind: 'vector', key: 'texture', label: 'Fine streaks', min: 0, max: 64, step: 0.005, default: [0, 12, 0.6] },
+    { kind: 'vector', key: 'veil', label: 'Haze veil', min: 0, max: 4, step: 0.0005, default: [1, 1, 1, 0] },
+    { kind: 'number', key: 'skyPeak', label: 'Brightest direction', min: 0, max: 1, step: 0.005, default: 0 },
   ],
   fragment: STREAKS_GLSL,
   uniforms: (ctx) => ({
@@ -539,6 +604,10 @@ export const contourStreaks: RecipeDefinition = {
     uLook: [ctx.num('base'), ctx.num('vignette')],
     uTurn: ctx.vec('turn'),
     uReach: ctx.num('reach'),
+    uNear: ctx.vec('near'),
+    uTexture: ctx.vec('texture'),
+    uVeil: ctx.vec('veil'),
+    uSkyPeak: ctx.num('skyPeak'),
   }),
   scatter: [{ source: 'aux', radius: () => SKY_CACHE_BLUR, size: () => SKY_CACHE_SIZE }],
   lens: { bloom: 0.04, bloomLevels: [1, 0.5, 0.25, 0.1, 0, 0, 0, 0], halation: 0 },
