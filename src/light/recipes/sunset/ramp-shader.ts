@@ -53,6 +53,7 @@ uniform vec3 uGlowColor[GLOW_LAYERS];
 uniform float uGlowWeight[GLOW_LAYERS];
 uniform vec2 uGlowTau[GLOW_LAYERS];   // decay length above and below the glow line
 uniform vec2 uGlowEnd;       // depth below the glow line where its lower side ends (0: never), and the width of that fade
+uniform vec3 uVeil;          // white light over the sky: at the top, more toward the horizon, and the height over which that extra fades
 uniform float uGlowOffset;
 uniform vec3 uGlowVary;      // how much the glow's upward reach changes along its length, cycles per short side,
                              // and how much higher it reaches toward the sun (the twilight arch)
@@ -345,7 +346,7 @@ vec3 rampSky(vec2 p) {
   vec3 sky = vec3(0.0);
   vec3 dusk = vec3(0.0);
   float duskCover = 0.0;
-  float zenithShade = clamp(1.0 + uZenithShade.x * (s - uZenithShade.y) + uZenithShade.z * (a / halfWidth - uZenithShade.w), 0.8, 1.2);
+  float zenithShade = clamp(1.0 + uZenithShade.x * (s - uZenithShade.y) + uZenithShade.z * (a / halfWidth - uZenithShade.w), 0.8, 2.0);
   for (int k = 0; k <= uEdges; k++) {
     float w = (k == 0 ? 1.0 : level[k - 1]) - (k < uEdges ? level[k] : 0.0);
     vec3 c = w * uStop[k] * (k == 0 ? zenithShade : 1.0);
@@ -356,6 +357,10 @@ vec3 rampSky(vec2 p) {
       sky += c;
     }
   }
+  // A veil of scattered white light over the sky's own light, thin at the top and denser toward
+  // the horizon, mutes the sky's colors and pales the middles between them. It stays off the dusk
+  // band, which is in front of it.
+  if (uVeil.x > 0.0 || uVeil.y > 0.0) sky += (uVeil.x + uVeil.y * exp(-height / max(uVeil.z, 1e-4))) * (1.0 - clamp(duskCover, 0.0, 1.0));
   sky = max(sky, vec3(0.0)) * skyGain;
   // The dusk band is a low bank of the sky's shadowed light in front of the glow and hides the
   // light behind it, so the two meet in one soft edge: the glow's light added over it would mix

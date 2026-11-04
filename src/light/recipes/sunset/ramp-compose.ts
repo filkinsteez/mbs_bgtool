@@ -209,6 +209,8 @@ interface PackLook {
   sunPath: number
   /** How much the glow's haze hides the sky behind it. */
   extinction: number
+  /** White light scattered over the sky low down, at the default Intensity (linear light). */
+  veil: number
 }
 
 /**
@@ -246,6 +248,7 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, va
     extinction: 1.2,
     glowUp: 1,
     glowRise: 1,
+    veil: 0.12,
   }
   switch (packId) {
     case 'bold': {
@@ -259,10 +262,10 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, va
         // pink or mauve the two make when mixed; under the glow line and inside the glow's dense
         // haze the skylight fades out, so the glow's body is Orange-red itself. A compact, low glow
         // leaves a band of Cyan above it.
-        return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.3, horizonGain: 0.42, skyEdge: [0.95, 0.4, 0.15], light: orangeRed, coreColor: yellow, glow: 1.2, glowUp: 0.25, glowRise: structure === 'land' ? 0.5 : 0.25, path: [-0.15, 0.55, 0.45], hue: [-0.25, 0.2], bridge: 0.9, bridgeLift: 0.5, bridgeWarmth: 0.8, bridgeFloor: 0.1, haze: 0.3, downReach: 1.5, sideDeeper: 0.3, waterDegrees: [6, 9], landHaze: 0.03, extinction: 3 }
+        return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.8, horizonGain: 0.42, skyEdge: [0.95, 0.9, 0.15], veil: 0.04, light: orangeRed, coreColor: yellow, glow: 1.2, glowUp: 0.25, glowRise: structure === 'land' ? 0.62 : 0.25, path: [-0.15, 0.55, 0.45], hue: [-0.25, 0.2], bridge: 0.9, bridgeLift: 0.5, bridgeWarmth: 0.8, bridgeFloor: 0.1, haze: 0.3, downReach: 1.5, sideDeeper: 0.3, waterDegrees: [6, 9], landHaze: 0.03, extinction: 3 }
       }
       // Yellow under a band of Cyan, so Meta Blue, Cyan and the warm light all show.
-      return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.1, skyEdge: [0.97, 0.75, 0.3], light: yellow, coreColor: yellow, glow: 0.7, glowUp: 0.5, path: [0.5, 1, 0.45], hue: [-0.3, 0.35], bridge: 0.5, haze: 0.5, sideDeeper: 0.4, core: 2 }
+      return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.6, skyEdge: [0.97, 1.0, 0.3], veil: 0.04, light: yellow, coreColor: yellow, glow: 0.7, glowUp: 0.5, path: [0.5, 1, 0.45], hue: [-0.3, 0.35], bridge: 0.5, haze: 0.5, sideDeeper: 0.4, core: 2 }
     }
     case 'elemental': {
       const [lime, forest, tan, plum] = rest
@@ -334,24 +337,28 @@ const darkAlternate = (seed: number) => seedRun(seed) % 2 !== 0
  */
 const seedVariant = (seed: number) => seedRun(seed) % 3
 
-/** Sky height (short sides) at and above which the zenith's room is the top fifth of the frame. */
+/**
+ * Share of the frame's height at the top that the sky's edges leave to the zenith's Meta Blue. It is
+ * small, so the sky still changes slowly all the way to the top instead of ending in a flat field.
+ */
+const ZENITH_ROOM = 0.05
+/** Sky height (short sides) at and above which the zenith's room is all of ZENITH_ROOM. */
 const FULL_ZENITH = 0.2 / 0.45
 
 /**
- * The room at the top of a sky of this height that holds only the zenith's Meta Blue: the top fifth
- * of the frame, shrinking with the square of a shorter sky's height. The room below it still grows
- * with the sky's height.
+ * The room at the top of a sky of this height that holds only the zenith's Meta Blue, shrinking
+ * with the square of a shorter sky's height. The room below it still grows with the sky's height.
  */
 function zenithRoomOf(height: number, tall: number): number {
   const full = FULL_ZENITH * tall
-  return height >= full ? 0.2 * tall : 0.2 * tall * (height / full) ** 2
+  return ZENITH_ROOM * tall * Math.min(1, (height / full) ** 2)
 }
 
 /** The sky height whose room below the zenith's is `reach`: the inverse of height - zenithRoomOf(height). */
 function skyTopOf(reach: number, tall: number): number {
   const full = FULL_ZENITH * tall
-  if (reach >= full - 0.2 * tall) return reach + 0.2 * tall
-  const a = (0.2 * tall) / (full * full)
+  if (reach >= full - ZENITH_ROOM * tall) return reach + ZENITH_ROOM * tall
+  const a = (ZENITH_ROOM * tall) / (full * full)
   return (1 - Math.sqrt(Math.max(0, 1 - 4 * a * reach))) / (2 * a)
 }
 
@@ -677,9 +684,9 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // Long waves: a shorter lattice puts rows of like-sized bumps along the edges.
   const lattice = lerp(0.45, 0.7, latticePick)
 
-  // The upper sky deepens slowly toward the top edge and away from the sun, 3 % and 2 % either
-  // way, so the pack's Meta Blue is the mean of the top fifth of the frame, not a flat fill.
-  let sSum = 0
+  // The zenith is the pack's Meta Blue at the top edge and gains light slowly all the way down,
+  // to twice as much at the horizon, so the sky never holds one flat blue. Away from the sun it is
+  // 2 % deeper.
   let aSum = 0
   let topSum = 0
   for (let k = 0; k <= 8; k++) {
@@ -687,17 +694,15 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
       const x = -half + (i / 16) * frameWidth
       const y = -tall / 2 + (k / 8) * 0.2 * tall
       const s = rampAt(frame, axis, x, y)
-      sSum += s
       aSum += (x * Math.cos(turn) - y * Math.sin(turn)) / half
       if (k === 0) topSum += s
     }
   }
-  const sRef = sSum / (9 * 17)
-  let zenithShade = [0.03 / Math.max(0.05, sRef - topSum / 17), sRef, 0.02 * side, aSum / (9 * 17)]
-  // Under a dragged line Meta Blue is the mean of the band just past the line's end instead.
+  let zenithShade = [1.0 / Math.max(0.2, topHeight), topSum / 17, 0.02 * side, aSum / (9 * 17)]
+  // Under a dragged line the zenith is the pack's Meta Blue at the line's end instead.
   if (line) {
     const [x, y] = line.to
-    zenithShade = [0.03 / (0.1 * tall), rampAt(frame, axis, x, y) - 0.1 * tall, 0.02 * side, (x * Math.cos(turn) - y * Math.sin(turn)) / half]
+    zenithShade = [1.0 / Math.max(0.2, topHeight), rampAt(frame, axis, x, y), 0.02 * side, (x * Math.cos(turn) - y * Math.sin(turn)) / half]
   }
 
   // The stop edges, top down. A second, lighter Meta Blue step splits the sky's edge in two: a
@@ -722,7 +727,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     const stretch = Math.max(0.1, (topHeight - zenithRoom - glowRise) / Math.max(0.05, Math.abs(topAt) + tail * topWidth - glowRise))
     for (const edge of edges) {
       edge[0] = -glowRise + (edge[0] + glowRise) * stretch
-      edge[1] *= stretch
+      edge[1] = Math.min(6, edge[1] * stretch)
     }
   } else {
     const room = (topHeight - zenithRoom) / (Math.abs(topAt) + tail * topWidth)
@@ -801,6 +806,8 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     glow: look.glow * glowGain * (arcs ? 1.2 : 1),
     glowOffset: -glowRise,
     glowEnd,
+    // Scattered daylight over the sky, denser toward the horizon.
+    veil: [0.03 * zenithGain, look.veil * zenithGain, 0.3 * Math.max(0.2, topHeight)],
     glowVary: 0,
     glowArch: 0.6,
     // More daylight gathers the glow toward the sun, so white shows only near the light.
