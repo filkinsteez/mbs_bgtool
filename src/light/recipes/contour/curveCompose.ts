@@ -584,6 +584,19 @@ export function ringPartner(pack: ColorPack, light: PackColor): PackColor | null
   return RING_PARTNERS[hex] ? has(RING_PARTNERS[hex]) : null
 }
 
+/**
+ * The pack color a cool light's line turns toward at its far end (the light-line reference runs from blue to
+ * white): Meta Blue toward Cyan or Ice, Cyan, Ice and Steel toward Meta Blue. Null for Meta Blue in Elemental and
+ * for warm lights, whose drift already changes their color along the line.
+ */
+export function linePartner(pack: ColorPack, light: PackColor): PackColor | null {
+  const has = (hex: string) => pack.colors.find((c) => c.hex.toUpperCase() === hex) ?? null
+  const hex = light.hex.toUpperCase()
+  if (hex === '#0064E0') return has('#1FCDF0') ?? has('#F2F4F7')
+  if (hex === '#1FCDF0' || hex === '#F2F4F7' || hex === '#6A7788') return has('#0064E0')
+  return null
+}
+
 /** How flat a Tan light's field is along the curve (the power of its flat-top field). */
 export const FLAT_POWER = 6
 

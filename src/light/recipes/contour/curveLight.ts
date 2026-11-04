@@ -755,7 +755,10 @@ function facingAt(p: Primitive, f: number, inside: number, facing: FacingSetting
 function packShape(shape: Shape, stops: readonly EmissionStop[], facing?: FacingSettings): PackedPrimitive[] {
   const split = splitArcs(shape, ARC_PIECE)
   const out: PackedPrimitive[] = []
-  const stopTimes = stops.map((s) => s.t).filter((t) => t > 0 && t < 1)
+  const stopTimes = stops
+    .map((s) => s.t)
+    .filter((t) => t > 0 && t < 1)
+    .sort((a, b) => a - b)
   const contours = split.contours.filter((c) => c.primitives.length > 0)
   const closures = contours.map((c) => (c.closed ? [] : closingSegments(c)))
   const maskPrimitives = contours.flatMap((c, i) => [...c.primitives, ...closures[i]])

@@ -8,6 +8,7 @@ import {
   frameSize,
   geo,
   lerp,
+  linePartner,
   logoPartsShown,
   longestRun,
   normalNear,
@@ -342,12 +343,13 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   // rounded shoulder, 10 to 30 times dimmer at the far end of the curve in the frame (the rim-edge reference stays
   // at 90% for about a third of the short side and is at 10% by 0.9; its fall fits a power of about 2.8). It is
   // sized at the default hot spot, so the Light control moves the light without resizing it. A Tan edge keeps most
-  // of its light at or above Tan's own brightness: a flatter top, a shorter fall and a glow that ends sooner.
+  // of its light at or above Tan's own brightness: a flatter top, a shorter fall and a glow that ends sooner, so the
+  // light ends partway along the curve instead of fading down it.
   const bright = warmTail(light.hex) === 'bright'
   const power = line ? lerp(1.4, 2.2, powerDraw) : bright ? FLAT_POWER : lerp(2.4, 3.2, powerDraw)
   const factor = lerp(10, 30, reachDraw)
   const lineReach = lerp(0.22, 0.34, reachDraw) * Math.max(fw, fh)
-  const reach = line ? lineReach : flatRadius(run, home, factor, power)
+  const reach = line ? lineReach : flatRadius(run, home, factor, power) * (bright ? 0.65 : 1)
   const dragPower = line ? 2.4 : power
   // A logo crop's edges catch the light where they face the way the outline faces at the default hot spot, so the
   // hot spot's own edge is always fully lit (around a hole tip the outline faces back toward the logo's middle).
@@ -361,6 +363,18 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   const seedHome = pointAlong(run, along(0.5)) ?? layout.anchor
   const toward = logo ? outwardAt(seedHome) : (Math.atan2(at[1], at[0]) * 180) / Math.PI
   const drift = warmDrift(light.hex)
+  // A line's bright end and its direction out of the frame there, and where its two visible ends sit along the line
+  // (0 to 1 from one end of the long segment to the other).
+  const brightEnd = path.length > 1 ? (fromStart ? path[0] : path[path.length - 1]) : layout.anchor
+  const farEnd = path.length > 1 ? (fromStart ? path[path.length - 1] : path[0]) : layout.anchor
+  const lineOut = (Math.atan2(brightEnd[1] - farEnd[1], brightEnd[0] - farEnd[0]) * 180) / Math.PI
+  const along1 = (p: Vec2) => {
+    const r = (layout.shape.rotate * Math.PI) / 180
+    return 0.5 + ((p[0] - layout.anchor[0]) * Math.cos(r) + (p[1] - layout.anchor[1]) * Math.sin(r)) / layout.shape.size
+  }
+  const partner = line && !warmTail(light.hex) ? linePartner(pack, light) : null
+  const littleRed = (hex: string) => parseInt(hex.slice(1, 3), 16) < 64
+  const lineColor = partner ? { partner, bright: along1(brightEnd), far: along1(farEnd) } : null
   const params: Record<string, ParamValue> = {
     shape: SHAPE_KINDS.indexOf(layout.shape.kind) + 1,
     at: toFrame(layout.anchor, aspect).map(round4),
@@ -369,41 +383,92 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     aspect: 1,
     rotate: round4(layout.shape.rotate),
     flip: layout.shape.flip,
-    stops: 1,
-    stopColor: [2, 2, 2],
+    // A cool light's line turns toward a second pack color at its far end (the light-line reference runs blue to
+    // white); a warm one changes color along the line by its drift.
+    ...(lineColor ? { stops: 2, stopAt: [round4(lineColor.bright), round4(lineColor.far), 1], stopColor: [2, 4, 4] } : { stops: 1, stopColor: [2, 2, 2] }),
     ...productionParts('', {
       side: layout.oneSided ? 1 : 0,
       soften,
-      // The rim-edge reference's face glows navy near the corner, about 8% of the light's own level.
-      face: layout.oneSided ? 0.12 : 0,
+      // The rim-edge reference's face glows navy near the corner, about 8% of the light's own level. A Tan face
+      // stays dark: a wide dim Tan fill reads grey-brown.
+      face: layout.oneSided && !bright ? 0.12 : 0,
       glow: line ? 0.006 : 0.005,
       fan: line ? 4 : 3,
-      spread: line ? 0.003 : 0,
+      // A blue line's glow splits its colors to the two sides (the light-line reference: a different hue on each
+      // side). The split moves red one way and blue the other, so it stays off where either end has much red: a
+      // warm line's blue side turns green, and Ice or Steel gets a peach fringe.
+      spread: lineColor && littleRed(light.hex) && littleRed(lineColor.partner.hex) ? 0.011 : 0,
     }),
-    // Lines widen gradually toward the bright end (growth follows the long light, not the hot spot) and open into a haze there.
-    ...(line ? { n2Grow: 1, n2GrowBy: [6, 1.5], n3Weight: 9, f1Grow: 1, f1GrowBy: [2, 1.5], f1Weight: 0.24, f1Width: 0.028 } : {}),
+    // A line's glow widens steadily toward its bright end, following the slow light along it, with a small hot core
+    // and little haze, so the end opens as a cone rather than a cloud.
+    ...(line ? { n2Grow: 1, n2GrowBy: [6.5, 1], n3Weight: 2, f1Grow: 1, f1GrowBy: [2, 1], f1Weight: 0.12, f1Width: 0.02 } : {}),
     ...(drift ? { drift: drift.ratios, driftShape: [drift.knee, drift.sharpness] } : {}),
-    ...(bright ? { n2Shape: 8, n2Weight: 1.6, n2Width: 0.01, f1Weight: 0.02, f2Weight: 0.02 } : {}),
-    facing: logo ? 0.85 : 0,
+    // A Tan edge's glow is two bands side by side just inside the edge, a flat stretch a little above Tan's level
+    // that ends in a short rounded fall (the Halo's Tan bands at a rim's scale); a Tan line's are one either side.
+    ...(bright
+      ? line
+        ? {
+            n2Shape: 8,
+            n2Weight: 1.2,
+            n2Width: 0.008,
+            n2Side: 0,
+            n2Offset: 0.008,
+            n2Grow: 0,
+            n3Shape: 8,
+            n3Weight: 1.2,
+            n3Width: 0.008,
+            n3Side: 0,
+            n3Offset: -0.008,
+            n3Light: 1,
+            n3LightGamma: 1,
+            f1Weight: 0.02,
+            f2Weight: 0.02,
+          }
+        : {
+            n2Shape: 8,
+            n2Weight: 1.4,
+            n2Width: 0.008,
+            n2Offset: 0.008,
+            n2Grow: 0,
+            n3Shape: 8,
+            n3Weight: 1.4,
+            n3Width: 0.008,
+            n3Offset: 0.021,
+            n3Side: 1,
+            n3Light: 1,
+            n3LightGamma: 1,
+            f1Weight: 0.02,
+            f2Weight: 0.02,
+          }
+      : {}),
+    // A Tan corner lights both its edges alike: an edge turned away would sit at a dim Tan along its whole length.
+    facing: logo && !bright ? 0.85 : 0,
     facingAngle: round4(toward),
     facingPower: 1.5,
     farWidth: 0.01,
-    // Along a dragged line the light is at the look's far end (10 to 30 times dimmer) where the line ends.
-    light1Kind: dragged ? 6 : line ? 3 : 5,
+    // Along a dragged line the light is at the look's far end (10 to 30 times dimmer) where the line ends. A line of
+    // light fades slowly from its bright end: full at the frame edge, then e times dimmer every 0.35 of the long side.
+    // A Tan line keeps the flat top: near full from its bright end, then a short fall.
+    light1Kind: dragged ? 6 : line && !bright ? 4 : 5,
     light1At: at.map(round4),
-    light1Radius: round4(dragged ? dragged.length / Math.log(factor) ** (1 / dragPower) : reach),
-    light1Power: round4(dragged ? dragPower : power),
-    ...(dragged ? { light1Length: dragged.back, light1Stretch: 1, light1Angle: round4(dragged.angle) } : {}),
+    light1Radius: round4(dragged ? dragged.length / Math.log(factor) ** (1 / dragPower) : line ? (bright ? lineReach : 0.04) : reach),
+    light1Power: round4(dragged ? dragPower : line && bright ? FLAT_POWER : power),
+    ...(dragged
+      ? { light1Length: dragged.back, light1Stretch: 1, light1Angle: round4(dragged.angle) }
+      : line && !bright
+        ? { light1Length: round4(0.35 * Math.max(fw, fh)), light1Angle: round4(lineOut) }
+        : {}),
     light2Kind: 1,
     light2At: at.map(round4),
-    // A broad hot spot: the overexposed core covers a stretch of the edge, not a point (rim-edge reference).
-    light2Radius: round4(lerp(0.18, 0.36, hotDraw)),
+    // A broad hot spot: the overexposed core covers a stretch of the edge, not a point (rim-edge reference); a
+    // line's is short, at its bright end.
+    light2Radius: round4(line ? lerp(0.08, 0.14, hotDraw) : lerp(0.18, 0.36, hotDraw)),
     base: base.gain > 0 ? 3 : 0,
     baseGain: base.gain,
     gain: round4(gain),
     soften: round4(soften),
   }
-  const colors = ['#000000', light.hex, base.gain > 0 ? base.hex : '#000000', '#000000', '#000000', '#000000', '#000000', '#000000']
+  const colors = ['#000000', light.hex, base.gain > 0 ? base.hex : '#000000', lineColor?.partner.hex ?? '#000000', '#000000', '#000000', '#000000', '#000000']
   return {
     colors,
     params,
