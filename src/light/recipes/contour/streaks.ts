@@ -329,7 +329,9 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
   const light = pickContourLight(pack, seed, random)
   const hazeGain = hazeGainFor(light, HAZE_LUMINANCE, WARM_SHARE)
   const soft = (lo: number, hi: number) => lerp(lo, hi, softness)
-  const power = geo(intensity, 0.35, 0.75, 1.4) * hazeGain * LIGHT_GAIN
+  // At low Intensity the light near the point stays under about twice nominal, so its hot
+  // spot keeps a rounded top instead of a flat white one.
+  const power = geo(intensity, 0.22, 0.75, 1.4) * hazeGain * LIGHT_GAIN
 
   // The seed's layout (seedLayout, so seeds 1-8 differ in at least two of these): the point
   // near the lit side's frame edge or past the middle, high in the frame or low (down to just
