@@ -77,13 +77,17 @@ export interface BloomsLayout {
   bridge: number
   /** Lowest Oklab L each bridge aims for (0: the lighter side's L only). */
   bridgeFloor: number
+  /** 1: the glows' haze hides at most as much sky light as they add, so no glow has a ring darker than the sky. */
+  hazeFloor: number
+  /** 1: on the sky side a bridge is pale light of the sky's own hue, on the light side the light's tint. */
+  bridgeSky: number
 }
 
 /**
  * The pack's bridge floor. A warm light and a blue sky are nearly opposite hues, so where they weigh the
  * same the blend loses its color; below this L it reads as mauve-grey, above it as pale light.
  */
-const BRIDGE_FLOOR = 0.78
+const BRIDGE_FLOOR = 0.86
 
 /** The tool's three controls, 0..1. `rise` is the mood control (Horizon): how high the light rises. */
 export interface BloomsControls {
@@ -758,6 +762,8 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     warpScale: lerp(0.9, 1.35, r()),
     bridge: lerp(0.85, 1.2, soft),
     bridgeFloor: BRIDGE_FLOOR,
+    hazeFloor: 1,
+    bridgeSky: 1,
   }
   return controls.drag ? followDrag(layout, controls.drag, aspect, sizeDark, awayAngle) : layout
 }

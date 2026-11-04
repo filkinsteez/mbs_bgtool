@@ -88,6 +88,8 @@ const PARAMS: readonly ParamSpec[] = [
   num('lensRadius', 'Lens radius, short sides; the scene is seen through it (0: off)', 0, 0.3, 0.0005, 0),
   num('glowCore', 'Glow core: extra light in a narrower core at each source, over its peak', 0, 2, 0.01, 0),
   num('bridgeFloor', 'Lowest Oklab L a bridge aims for (0: the lighter side only)', 0, 1, 0.005, 0),
+  num('hazeFloor', 'How far the glows haze is kept from hiding more sky light than they add (0: no limit)', 0, 1, 0.01, 0),
+  num('bridgeSky', 'How much a bridge takes the sky hue on the sky side (0: the lights tint throughout)', 0, 1, 0.01, 0),
 ]
 
 /** The one lens: without it (radius 0, the 1:1 presets) the aux source is unused, so it stays tiny. */
@@ -131,6 +133,8 @@ function readLayout(ctx: RecipeContext): BloomsLayout {
     warpScale: ctx.num('warpScale'),
     bridge: ctx.num('bridge'),
     bridgeFloor: ctx.num('bridgeFloor'),
+    hazeFloor: ctx.num('hazeFloor'),
+    bridgeSky: ctx.num('bridgeSky'),
   }
 }
 
@@ -160,6 +164,8 @@ function layoutParams(layout: BloomsLayout): Record<string, ParamValue> {
     warpScale: layout.warpScale,
     bridge: layout.bridge,
     bridgeFloor: layout.bridgeFloor,
+    hazeFloor: layout.hazeFloor,
+    bridgeSky: layout.bridgeSky,
   }
   layout.glows.forEach((glow, i) => {
     const n = i + 1
@@ -337,6 +343,8 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     uSkyRamp: [layout.sky.top, layout.sky.mid, layout.sky.tilt, layout.sky.vary],
     uSkyTurn: [Math.cos((layout.sky.turn * Math.PI) / 180), Math.sin((layout.sky.turn * Math.PI) / 180)],
     uSkyVeil: [...scale(skyPale, luminance(scale(sky, skyGain))), layout.sky.veil],
+    uHazeFloor: clamp(layout.hazeFloor, 0, 1),
+    uBridgeSky: clamp(layout.bridgeSky, 0, 1),
     uZenithShape: [z.at[0], z.at[1], clamp(z.amount, 0, 2), z.falloff],
     uZenithHold: clamp(z.hold, 0, 1),
     uZenithMeet: clamp(z.meet, 0, 0.9),
@@ -418,6 +426,8 @@ uniform vec3 uDeep;
 uniform vec4 uSkyRamp;                // stops darker at the top, height of the exact hex, tilt, light variation
 uniform vec2 uSkyTurn;                // cos, sin of the angle the sky ramp is turned by about the frame middle
 uniform vec4 uSkyVeil;                // pale light in the sky's own hue at the sky's luminance, and how much of it toward the light
+uniform float uHazeFloor;             // 1: the glows' haze hides at most as much sky light as they add (0: no limit)
+uniform float uBridgeSky;             // 1: on the sky side a bridge is pale light of the sky's hue (0: the lights' tint throughout)
 uniform vec4 uZenithShape;           // center (frame fractions), amount, falloff exponent
 uniform float uZenithHold;           // 1: the deep area keeps its hex under the darker top; 0: it darkens with the sky
 uniform float uZenithMeet;           // share of the blue's light taken away where the deep area comes in
@@ -615,13 +625,24 @@ vec3 bloomsScene(vec2 uv) {
     lit += f * k[i];
     bridge += uGlowBridge[i] * (k[i] * ill * (1.0 - deepArea));
   }
+  // The glows' haze is lit by their light, so it hides at most as much of the sky's light as they add: no
+  // ring darker than the open sky around a glow, below it or where the sky is pale.
+  if (uHazeFloor > 0.0) {
+    vec3 luma = vec3(0.2126, 0.7152, 0.0722);
+    float need = (dot(sky, luma) - dot(front, luma)) / max(dot(behind, luma), 1e-5);
+    T = mix(T, max(T, clamp(need, 0.0, 1.0)), uHazeFloor);
+  }
   // Pale light where the glows and the sky weigh about the same, reaching further out on the sky
   // side, where faint warm light over blue would read as a lavender ring; zero at both ends, and
   // overlapping glows share one bridge instead of stacking theirs.
   float t = lit / (lit + T);
   t = t < 0.5 ? 0.5 * pow(2.0 * t, 0.7) : t;
   float bell = 4.0 * t * (1.0 - t);
-  front += bridge / max(lit, 1e-4) * bell * sqrt(bell);
+  vec3 pale = bridge / max(lit, 1e-4) * bell * sqrt(bell);
+  // On the sky side the bridge is pale light of the sky's own hue and on the light side the lights' own pale
+  // tint, so the blend runs from pale blue through near-white to the light's tint, not through lavender.
+  pale = mix(pale, uSkyVeil.rgb / max(dot(uSkyVeil.rgb, vec3(0.2126, 0.7152, 0.0722)), 1e-5) * dot(pale, vec3(0.2126, 0.7152, 0.0722)), uBridgeSky * (1.0 - smoothstep(0.3, 0.6, t)));
+  front += pale;
   return behind * T + front;
 }
 
