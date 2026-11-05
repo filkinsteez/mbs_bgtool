@@ -4,7 +4,7 @@ import { hexToLinear, type Rgb } from '../../color/srgb'
 import type { ControlValues, LensSettings, OutputSettings, ParamValue } from '../../scene'
 import { closeHues, dimDrift, isLightColor, isWarm, needsBridge, paleLight } from './bands-light'
 import { BAND_MAX, bandKey, BUMP_MAX, LIGHT_MAX, LIGHT_SHADE, lightKey, MODE_ADD, MODE_COVER, MODE_LIGHT, PATCH_MAX, patchKey } from './bands-params'
-import { edgeAt, edgeSeed, type Bump, type EdgeShape } from './bands-shape'
+import { edgeAt, edgeSeed, STACK_WOBBLE, type Bump, type EdgeShape } from './bands-shape'
 import { placeHorizon } from './horizon'
 
 export interface BandsComposeInput {
@@ -822,10 +822,11 @@ const dragAlong = (drag: NonNullable<BandsComposeInput['drag']>, frameW: number,
  * the top of the sky at its end, so the line's length is the stack's span from the light to the deep sky. A line
  * shorter than the seed's span has already tightened the bands above the light (`stack`); a longer one draws the
  * whole stack out, at most MAX_ZOOM times. The map takes a frame point p (short sides from the frame's center, y
- * down) to the scene point (a b; c d) p + (e, f); without a drag it is the identity.
+ * down) to the scene point (a b; c d) p + (e, f); without a drag it is the identity. `frame` is the shader's
+ * `stackFrame`: the edge wobble on the frame, how far the stack is drawn out and the light's scene point.
  */
-function stackMap(scene: Scene, drag: BandsComposeInput['drag'], frameW: number, frameH: number): number[] {
-  const identity = [1, 0, 0, 1, 0, 0]
+function stackMap(scene: Scene, drag: BandsComposeInput['drag'], frameW: number, frameH: number): { map: number[]; frame: number[] } {
+  const identity = { map: [1, 0, 0, 1, 0, 0], frame: [0, 1, 0, 0] }
   if (!drag) return identity
   const from = [(drag.from[0] - 0.5) * frameW, (drag.from[1] - 0.5) * frameH]
   const along = dragAlong(drag, frameW, frameH)
@@ -837,7 +838,10 @@ function stackMap(scene: Scene, drag: BandsComposeInput['drag'], frameW: number,
   // Along the line toward `to` is up the stack, toward the sky; across it to the line's right is the stack's x.
   const [a, b, c, d] = [-uy / zoom, ux / zoom, -ux / zoom, -uy / zoom]
   const light = [(scene.sun[0] - 0.5) * frameW, (scene.lightAt - 0.5) * frameH]
-  return [a, b, c, d, light[0] - (a * from[0] + b * from[1]), light[1] - (c * from[0] + d * from[1])]
+  return {
+    map: [a, b, c, d, light[0] - (a * from[0] + b * from[1]), light[1] - (c * from[0] + d * from[1])],
+    frame: [STACK_WOBBLE * (1 - 1 / zoom), zoom, light[0], light[1]],
+  }
 }
 
 /** Ice is close to white: below white at the default Intensity. */
@@ -845,8 +849,8 @@ function iceCap(hex: string, level: number): number {
   return lightness(hex) > 0.95 ? Math.min(1, 0.58 / level ** 0.4) : 1
 }
 
-function writeScene(scene: Scene, R: number, stack: number[]): BandsComposition {
-  const params: Record<string, ParamValue> = { stack }
+function writeScene(scene: Scene, R: number, stack: ReturnType<typeof stackMap>): BandsComposition {
+  const params: Record<string, ParamValue> = { stack: stack.map, stackFrame: stack.frame }
   const colors = [scene.sky]
   scene.bands.slice(0, BAND_MAX).forEach((b, i) => {
     const key = (name: Parameters<typeof bandKey>[1]) => bandKey(i, name)

@@ -158,6 +158,9 @@ export const BANDS_PARAMS: readonly ParamSpec[] = [
   // The stack along the dragged line: a frame point p (short sides from the frame's center, y down) shows the scene
   // at (a b; c d) p + (e, f). The identity without a drag.
   { kind: 'vector', key: 'stack', label: 'Stack along the drag: a, b, c, d, e, f', min: -20, max: 20, step: 0.0001, default: [1, 0, 0, 1, 0, 0] },
+  // A drag that draws the stack out k times: how far every edge wobbles on the frame (frame heights), k, and the
+  // light's scene point (short sides). Edge wobble, softness change and light change are then frame-sized again.
+  { kind: 'vector', key: 'stackFrame', label: 'Drawn-out stack: edge wobble, k, light x, light y', min: -20, max: 20, step: 0.0001, default: [0, 1, 0, 0] },
   ...Array.from({ length: BAND_MAX }, (_, i) => bandSpecs(i)).flat(),
   ...Array.from({ length: PATCH_MAX }, (_, i) => patchSpecs(i)).flat(),
   ...Array.from({ length: LIGHT_MAX }, (_, i) => lightSpecs(i)).flat(),

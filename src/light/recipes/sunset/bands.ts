@@ -5,7 +5,7 @@ import { composeBands } from './bands-compose'
 import type { Rgb } from '../../color/srgb'
 import { bridgeLight, closeHues, dimDrift, paleLight } from './bands-light'
 import { BAND_MAX, BANDS_COLOR_SLOTS, BANDS_PARAMS, bandKey, BUMP_MAX, LIGHT_MAX, LIGHT_PALE, lightKey, PATCH_MAX, patchKey } from './bands-params'
-import { BANDS_SHAPE_GLSL, edgeSeed } from './bands-shape'
+import { BANDS_SHAPE_GLSL, edgeSeed, STACK_WOBBLE_LATTICE } from './bands-shape'
 
 /** Gaussian sigma over the lens radius: the same 10-90 edge width as a disc of that radius. */
 export const LENS_SIGMA = 0.53
@@ -166,6 +166,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     uLensDisc: discRadius(ctx) > 0 ? 1 : 0,
     uStackMap: ctx.vec('stack').slice(0, 4),
     uStackShift: ctx.vec('stack').slice(4, 6),
+    uStackFrame: ctx.vec('stackFrame'),
   }
 }
 
@@ -192,6 +193,7 @@ ${BANDS_SHAPE_GLSL}
 #define BAND_MAX ${BAND_MAX}
 #define PATCH_MAX ${PATCH_MAX}
 #define LIGHT_MAX ${LIGHT_MAX}
+#define STACK_WOBBLE_LATTICE ${STACK_WOBBLE_LATTICE.toFixed(3)}
 
 uniform int uBandCount;
 uniform int uPatchCount;
@@ -244,6 +246,7 @@ uniform float uBaseLum;
 uniform float uLensDisc;             // 1: the disc lens result, 0: the gaussian one
 uniform vec4 uStackMap;              // the stack along a drag: a frame point p shows the scene at (a b; c d) p + shift
 uniform vec2 uStackShift;
+uniform vec4 uStackFrame;            // a drag that draws the stack out k times: edge wobble on the frame (frame heights), k, the light's scene point
 
 // Set by combine() for grainWeight(), which the engine calls right after it for the same point.
 float gGrainWeight = 1.0;
@@ -291,11 +294,15 @@ vec3 scene(float x, float v, vec2 p) {
   float frameH = uFrameAspect.y;
   float sharpest = 1.5 * uPixel / frameH;
   float sunFall = 1.0 / (1.0 + pow(abs(x - uSun.x) / max(uSun.y, 1e-3), 1.6));
+  // The same point at the frame's scale, from the light: a drawn-out stack keeps frame-sized wobble and light change.
+  // Softness changes stay on the stack's scale: its edges are k times softer on the frame, and a wide edge whose
+  // softness changes quickly bends into a V.
+  vec2 f = uStackFrame.zw + (p - uStackFrame.zw) * uStackFrame.y;
 
   // A dim sky keeps its own hue (Meta Blue sinks to deep navy); a warm one deepens like warm light.
   vec3 base = toMix(deepen(uBase, uIntensity, uBaseDrift));
   float skyGain = (1.0 + uSky.x * sunFall) * exp2(-uSky.y * max(0.0, uSky.z - v));
-  if (uLightVary.x > 0.0) skyGain *= max(0.0, 1.0 + uLightVary.x * lightChange(p, BAND_MAX));
+  if (uLightVary.x > 0.0) skyGain *= max(0.0, 1.0 + uLightVary.x * lightChange(f, BAND_MAX));
 
   // Glows, pale glows and domes: light in the sky with no edge of their own. Where a glow is strong the sky's
   // own light gives way to it (as at dusk the blue fades near the glow), so the glow shows its own color.
@@ -362,6 +369,7 @@ vec3 scene(float x, float v, vec2 p) {
     }
     if (wave.x != 0.0) shift += wave.x * edgeWave(p.x, wave.z, float(2 * i), uEdgeSeed);
     if (wave.y != 0.0) shiftBottom += wave.y * edgeWave(p.x, wave.z, float(2 * i + 1), uEdgeSeed);
+    if (uStackFrame.x > 0.0) shift += uStackFrame.x / uStackFrame.y * edgeWave(f.x, STACK_WOBBLE_LATTICE, float(2 * i) + 0.5, uEdgeSeed + 43);
     float top = edge.x + shift;
     // A bottom at 2 or more is none: the band runs on past the frame, and past the scene's own frame when a drag
     // draws the stack tighter.
@@ -382,7 +390,7 @@ vec3 scene(float x, float v, vec2 p) {
     if (shape <= 1e-5) continue;
     cover = max(cover, 0.0) * mix(1.0, sunFall, sun.y);
     light = max(light, 0.0) * mix(1.0, sunFall, sun.x) * exp(2.0 * tilt.w * dx);
-    if (uLightVary.x > 0.0 && sun.z > 0.0) light *= max(0.0, 1.0 + uLightVary.x * sun.z * lightChange(p, i));
+    if (uLightVary.x > 0.0 && sun.z > 0.0) light *= max(0.0, 1.0 + uLightVary.x * sun.z * lightChange(f, i));
     for (int k = 0; k < LIGHT_MAX; k++) {
       if (k >= uLightCount) break;
       vec4 l = uLightLook[k];
