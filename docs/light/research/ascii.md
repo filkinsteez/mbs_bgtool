@@ -82,6 +82,31 @@ What differs from the tile, on purpose
 - **Background.** The tile fades its sky to 35 % on white so dark text reads on a slide. Here the background keeps the pack colors.
 - **Text color.** The tile uses one fixed ink. Here the dark ink takes a trace of the pixel's hue, and light glyphs take the light's own color.
 
+## Density goes higher (2026-11-05, owner: "ascii density can go higher")
+
+The top of the Density slider is now 104 rows on the short side, twice the old 52. Rows = round(13 x 8^value):
+
+| Value | 0 | 0.25 | 1/3 (the tile) | 0.5 | 0.75 | 1 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Rows | 13 | 22 | 26 | 37 | 62 | 104 |
+
+The ratio per step is the same everywhere: 8^0.01, about 2 % more rows per 0.01. Near the top one step adds two rows.
+
+Why 104
+- **1600 x 900 preview:** at 104 rows a cell is 4 x 8.7 px with a 6.7 px font. `+ - = : . *` still read as characters there; `# % @` become small dense marks. Rows of about 130 or more turn the preview's glyphs into blobs. The preview sets the limit.
+- **3840 x 2160 export:** a cell is 9.6 x 20.8 px with a 16 px font, crisp.
+- **Frame source:** at 16:9 the densest grid is 401 x 104, and the chain allows 512 texels a side.
+
+Frame source
+- One texel per cell of the densest grid, each the mean of 4 x 4 samples, so the densest cells are read exactly. Coarser cells average whole texels; at 13 rows that is 4 x 4 bilinear reads over 8 texels a side.
+- It costs as many samples as the old source (16:9: 1604 x 416).
+- A frame too wide for 512 texels at the densest grid, for example 4:1, gets fewer, larger texels.
+
+Checks (`prototypes/ascii/top.mjs`, sheet `prototypes/ascii/out/top/sheet.jpg`, close-up `out/top/density1-crops.jpg`)
+- Bands Bold seed 1, Rim Bold seed 1 and Beam Atmospheric seed 1, at densities 0, 0.5, 0.75 and 1. Each has a whole frame and 1:1 crops of the 1600 x 900 preview (1x) and the 4K export (2x) around the same point.
+- No moire or beating rows at the top in either; the rim's core line stays whole.
+- **4K export cost**, Beam Atmospheric, the median of 5 renders that wait for the GPU: 37.9 ms with ASCII off, 39.8 ms at Density 1, 40.2 ms at 0.5 and 41.7 ms at 0. Big cells read more texels.
+
 ## Fidelity against the tile (2026-11-05)
 
 `prototypes/ascii/fidelity.mjs` puts the tool's output next to the tile (44:275) at 1:1 and at 3x, with the tile scaled to the same row height. It covers Ramp Bold seed 1, Halo Elemental seed 2 and Beam Atmospheric seed 1, at densities 0.25, 0.5 and 0.75 (18, 26 and 37 rows). `before-after.mjs` makes the sheets.

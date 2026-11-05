@@ -9,10 +9,13 @@ import type { FilterFrame, OutputFilter } from './types'
  * docs/light/research/ascii.md, prototype in prototypes/ascii/).
  *
  * - The slider sets density: rows of characters on the short side, from 13 at
- *   0 to 52 at 1 on a log scale, 26 at 0.5 (the tile). Cells are 0.6 x 1.3 em,
- *   whole cells across and down, so the grid depends on the frame's aspect and
- *   the density only and a 4K export has the same characters in the same
- *   places as the preview. Between whole row counts nothing changes.
+ *   0 to 104 at 1 on a log scale (37 at 0.5, the tile's 26 at 1/3). At 104 rows
+ *   a 1600 x 900 preview's cells are 4 x 8.7 px, about as small as glyphs still
+ *   read as characters there; a 3840 x 2160 export's are 9.6 x 20.8 px. Cells
+ *   are 0.6 x 1.3 em, whole cells across and down, so the grid depends on the
+ *   frame's aspect and the density only and a 4K export has the same
+ *   characters in the same places as the preview. Between whole row counts
+ *   nothing changes.
  * - Each cell aims for a level of the ramp from its mean light (read from the
  *   frame source) and picks its glyph uniformly from a 5-level window around
  *   it, seeded per cell, as the tile does. Levels stay within 2..7, the tile's
@@ -24,19 +27,22 @@ import type { FilterFrame, OutputFilter } from './types'
  *   that brightens by the light the ink takes. Every density gets this in full.
  */
 
-/** Rows of characters on the short side at density 0.5: the tile's 26 rows in 440 px. */
-export const ASCII_ROWS_ON_SHORT_SIDE = 26
+/** The deck tile's rows on its short side: 26 in 440 px (density 1/3). */
+export const ASCII_TILE_ROWS = 26
 /** Rows on the short side at density 0 and 1; between them the row count grows by the same ratio per step. */
 export const ASCII_MIN_ROWS = 13
-export const ASCII_MAX_ROWS = 52
+export const ASCII_MAX_ROWS = 104
 export const ASCII_LINE_EM = 1.3
 export const ASCII_ADVANCE_EM = 0.6
 /**
- * The frame source has twice the densest grid's texels each way, each the mean
- * of 2 x 2 samples, so a cell's mean is read from whole pairs of texels at every
- * density. Its size depends on the frame's aspect only, as the chain asks.
+ * The frame source has one texel per cell of the densest grid, each the mean of
+ * 4 x 4 samples over it, so the densest cells are read exactly and coarser cells
+ * average whole texels. The chain allows 512 texels a side; a frame too wide for
+ * that at the densest grid gets fewer, larger texels. The size depends on the
+ * frame's aspect only, as the chain asks.
  */
-const SOURCE_SAMPLES = 2
+const SOURCE_SAMPLES = 4
+const MAX_SOURCE_SIDE = 512
 
 /** Glyph ids (see asciiGlyph) from sparse to dense, sorted by ink: ' .:-+=*#%@'. */
 export const ASCII_RAMP = [0, 1, 2, 3, 5, 4, 6, 7, 8, 9] as const
@@ -79,7 +85,7 @@ export interface AsciiGrid {
   cellH: number
 }
 
-/** Rows of characters on the short side for a density 0..1 (a missing value gives the tile's 26). */
+/** Rows of characters on the short side for a density 0..1 (a missing value counts as 0.5). */
 export function asciiRows(density: number): number {
   const d = Number.isFinite(density) ? Math.min(1, Math.max(0, density)) : 0.5
   return Math.round(ASCII_MIN_ROWS * (ASCII_MAX_ROWS / ASCII_MIN_ROWS) ** d)
@@ -99,10 +105,13 @@ export function asciiGrid(frame: Pick<FilterFrame, 'width' | 'height'>, density 
   return gridOf(frame, asciiRows(density))
 }
 
-/** The frame source's texels, the same at every density: twice the densest grid each way. */
+/** The frame source's texels, the same at every density: the densest grid, within 512 a side. */
 export function asciiSourceGrid(frame: Pick<FilterFrame, 'width' | 'height'>): AsciiGrid {
   const densest = gridOf(frame, ASCII_MAX_ROWS)
-  return { cols: 2 * densest.cols, rows: 2 * densest.rows, cellW: densest.cellW / 2, cellH: densest.cellH / 2 }
+  const shrink = Math.min(1, MAX_SOURCE_SIDE / Math.max(densest.cols, densest.rows))
+  const cols = Math.max(1, Math.floor(densest.cols * shrink))
+  const rows = Math.max(1, Math.floor(densest.rows * shrink))
+  return { cols, rows, cellW: frame.width / cols, cellH: frame.height / rows }
 }
 
 /** The slider's value is the density. */
@@ -116,7 +125,7 @@ export function asciiUniforms(density: number, frame: FilterFrame): UniformMap {
     uAsciiCellPx: [grid.cellW, grid.cellH],
     uAsciiFramePx: [frame.width, frame.height],
     uAsciiEmPx: grid.cellH / ASCII_LINE_EM,
-    uAsciiTaps: Math.min(8, Math.max(1, Math.ceil(texelsPerCell / 2 - 1e-6))),
+    uAsciiTaps: Math.min(8, Math.max(1, Math.ceil((texelsPerCell - 0.1) / 2))),
   }
 }
 

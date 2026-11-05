@@ -20,7 +20,10 @@ node prototypes/ascii/density.mjs                          # the slider as densi
 node prototypes/ascii/fidelity.mjs --name before --committed   # output next to the tile at 1:1 and 3x, ASCII files as committed
 node prototypes/ascii/fidelity.mjs --name after                # the same with the working tree's ASCII files
 node prototypes/ascii/before-after.mjs                     # out/fidelity/before-after-crops.jpg and before-after-full.jpg
+node prototypes/ascii/top.mjs                              # Density 0, 0.5, 0.75, 1: whole frames, 1600 preview and 4K crops, 4K cost
 ```
+
+Since the top went to 104 rows, Density is rows = round(13 x 8^value). The scripts written for the old 13 x 4^value scale (`density.mjs`, `engine-check.mjs`, `fidelity.mjs`) label their row counts with it.
 
 Since 777788d the slider value is the density (rows on the short side, 13 x 4^value), so `--strength` in `engine-check.mjs` picks the row count too.
 
