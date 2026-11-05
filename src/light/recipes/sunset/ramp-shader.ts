@@ -403,8 +403,11 @@ vec3 rampSky(vec2 p) {
     float open = (1.0 - clamp(duskCover, 0.0, 1.0)) * far;
     // An overcast haze greys the sky toward the veil's own hue at the same light, so the blue
     // turns grey-blue instead of the periwinkle that white light over it makes.
-    // Near the light the sky keeps its own color.
-    if (uVeilMute > 0.0) sky = mix(sky, luminance(sky) * uVeilTint, uVeilMute * open * (1.0 - low));
+    // Near the light the sky keeps its own color, and only blue greys: a warm low sky keeps its own.
+    if (uVeilMute > 0.0) {
+      float blue = clamp(-linearToOklab(max(sky, vec3(0.0))).z / 0.04, 0.0, 1.0);
+      sky = mix(sky, luminance(sky) * uVeilTint, uVeilMute * open * (1.0 - low) * blue);
+    }
     sky += (uVeil.x + uVeil.y * low) * open * mix(uVeilTint, uVeilNear.x > 0.0 ? uVeilNear : uBridgeTint, low);
   }
   sky = max(sky, vec3(0.0)) * skyGain;

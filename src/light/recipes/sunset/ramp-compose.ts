@@ -323,7 +323,7 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, va
       // Over water the sky stays a deeper Meta Blue that sinks toward the dark at the far edge, with
       // little veil: paled, its reflection over the dark water turns periwinkle and mauve.
       const bank = structure === 'water' ? { bank: 0.17, veil: [0.08, 0.1] as [number, number], farSink: 0.45, ...(pickLight < 0.5 ? { landTop: [forest, 1.8] as Tone, landBottom: [forest, 0.7] as Tone } : {}) } : {}
-      return { ...sky, ...dark, ...bank, extinction: 3, glowUp: 0.5, glowRise: 0.4, horizonGain: 0.42, landHaze: 0.05, landLit: 0.25, light: tan, coreColor: tan, lowSky: structure === 'water' ? metaBlue : tan, lowSkyGain: structure === 'water' ? 1.3 : 1.2, glow: 1.6, path: [0.1, 0.1, 0.4], hue: [-0.3, 0.1], bridge: 1.8, bridgeLift: 0.5, bridgeWarmth: 1, bridgeFloor: 0.1, haze: 0.8, sideDeeper: 0, waterDegrees: [1, 1.5], waterMirror: 1, ...dusk([plum, 1.0]) }
+      return { ...sky, ...dark, ...bank, extinction: 3, glowUp: 0.5, glowRise: 0.4, horizonGain: 0.42, landHaze: 0.05, landLit: 0.25, light: tan, coreColor: tan, lowSky: structure === 'water' ? metaBlue : tan, lowSkyGain: structure === 'water' ? 1.3 : 1.2, glow: 1.6, path: [0.1, 0.1, 0.4], hue: [-0.3, 0.1], bridge: 1.8, bridgeLift: structure === 'land' ? 0.25 : 0.5, bridgeWarmth: 1, bridgeFloor: 0.1, haze: 0.8, sideDeeper: 0, waterDegrees: [1, 1.5], waterMirror: 1, ...dusk([plum, 1.0]) }
     }
     case 'atmospheric': {
       const [ice, steel, slate, nearBlack] = rest
