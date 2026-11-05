@@ -11,6 +11,14 @@ const TAP_SLOP: Readonly<Record<string, number>> = { mouse: 4, pen: 6, touch: 12
 const TAP_MS = 500
 /** Two taps this close in time, and within twice the slop of each other, make a double-click. */
 const DOUBLE_TAP_MS = 400
+/**
+ * The dragged line is drawn twice, wide and dark under thin and light, each with a dot at the line's start and an
+ * arrowhead at its end. `outline` widens the dark dot and arrowhead past the light ones.
+ */
+const DRAG_LINE_LAYERS = [
+  { id: 'shadow', color: '#000', opacity: 0.35, width: 3, outline: 2.5 },
+  { id: 'light', color: '#fff', opacity: 0.9, width: 1.25, outline: 0 },
+] as const
 
 interface Box {
   width: number
@@ -334,8 +342,25 @@ export function Preview({ scene, aspect, paused, onDrag, onDragging, onReset }: 
           aria-hidden="true"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible', pointerEvents: 'none', display: dragging ? 'block' : 'none' }}
         >
-          <line ref={(element) => void (lineRefs.current[0] = element)} stroke="rgba(0, 0, 0, 0.35)" strokeWidth={3} strokeLinecap="round" />
-          <line ref={(element) => void (lineRefs.current[1] = element)} stroke="rgba(255, 255, 255, 0.9)" strokeWidth={1.25} strokeLinecap="round" />
+          {DRAG_LINE_LAYERS.map((layer, index) => (
+            // The opacity is on the group, so the line doesn't show through its own dot and arrowhead.
+            <g key={layer.id} opacity={layer.opacity}>
+              <marker id={`tool-drag-start-${layer.id}`} markerUnits="userSpaceOnUse" markerWidth={12} markerHeight={12} refX={6} refY={6} overflow="visible">
+                <circle cx={6} cy={6} r={5} fill={layer.color} stroke={layer.color} strokeWidth={layer.outline} />
+              </marker>
+              <marker id={`tool-drag-end-${layer.id}`} markerUnits="userSpaceOnUse" markerWidth={12} markerHeight={10} refX={9.4} refY={5} orient="auto" overflow="visible">
+                <path d="M 1 1 L 10 5 L 1 9 Z" fill={layer.color} stroke={layer.color} strokeWidth={layer.outline} strokeLinejoin="round" />
+              </marker>
+              <line
+                ref={(element) => void (lineRefs.current[index] = element)}
+                stroke={layer.color}
+                strokeWidth={layer.width}
+                strokeLinecap="round"
+                markerStart={`url(#tool-drag-start-${layer.id})`}
+                markerEnd={`url(#tool-drag-end-${layer.id})`}
+              />
+            </g>
+          ))}
         </svg>
         {!dragHintSeenAtLoad && (
           <p aria-hidden="true" className="tool-hint" data-shown={showDragHint || undefined}>
