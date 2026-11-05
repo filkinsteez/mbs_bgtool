@@ -110,8 +110,13 @@ const DRAG_RADIUS: readonly [number, number] = [0.1, 1.6]
 const DARK_PAST_EDGE = 0.04
 /** Leans the sky's direction upward as the lead nears the frame's middle, so it never jumps there. */
 const AWAY_UP = 0.12
-/** Pale light over the sky at the light's side, in units of the sky luminance: the sky pales toward the light. */
-const SKY_VEIL = 2
+/**
+ * How far the sky pales toward the light, from a seed's own draw: pale light over the sky at the light's side
+ * (units of the sky luminance), and the shift of the line where the sky is its exact hex (frame heights,
+ * positive toward the light). The low end keeps more of the blue, the high end is pale over most of the frame.
+ */
+const SKY_VEIL: readonly [number, number] = [0.6, 2.6]
+const SKY_MID_SHIFT: readonly [number, number] = [0.16, -0.05]
 
 /**
  * Where a ray from `start` (short-side units from the frame's middle, held inside the frame) in direction
@@ -119,12 +124,22 @@ const SKY_VEIL = 2
  * corners included.
  */
 function farEdge(start: readonly number[], angle: number, frame: readonly number[], past = DARK_PAST_EDGE): [number, number] {
-  const half = [frame[0] / 2, frame[1] / 2]
-  const origin = [clamp(start[0], -half[0], half[0]), clamp(start[1], -half[1], half[1])]
+  const origin = insideFrame(start, frame)
+  const exit = toEdge(start, angle, frame) + past
+  return [(origin[0] + Math.cos(angle) * exit) / frame[0] + 0.5, (origin[1] + Math.sin(angle) * exit) / frame[1] + 0.5]
+}
+
+/** `start` (short-side units from the frame's middle) held inside the frame. */
+function insideFrame(start: readonly number[], frame: readonly number[]): [number, number] {
+  return [clamp(start[0], -frame[0] / 2, frame[0] / 2), clamp(start[1], -frame[1] / 2, frame[1] / 2)]
+}
+
+/** Length of the ray from `start` (held inside the frame) in direction `angle` to the frame's edge, short-side units. */
+function toEdge(start: readonly number[], angle: number, frame: readonly number[]): number {
+  const origin = insideFrame(start, frame)
   const dir = [Math.cos(angle), Math.sin(angle)]
   const reach = (o: number, d: number, h: number) => (d > 1e-9 ? (h - o) / d : d < -1e-9 ? (-h - o) / d : Infinity)
-  const exit = Math.min(reach(origin[0], dir[0], half[0]), reach(origin[1], dir[1], half[1])) + past
-  return [(origin[0] + dir[0] * exit) / frame[0] + 0.5, (origin[1] + dir[1] * exit) / frame[1] + 0.5]
+  return Math.min(reach(origin[0], dir[0], frame[0] / 2), reach(origin[1], dir[1], frame[1] / 2))
 }
 
 /**
@@ -487,6 +502,8 @@ const MIN_LEAD_Y = 0.22
 /** The inner and far blooms against the lead's radius: small accents beside its large field. */
 const ACCENT_SCALE = 0.5
 const CYAN_ACCENT_SCALE = 0.7
+/** Nearest a cyan lead's middle comes to a side edge from outside, in frame widths. */
+const CYAN_EDGE = 0.02
 
 /**
  * The pack composition: one dominant bloom at the shared light height, from
@@ -531,6 +548,8 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const plan = planFor(arrangementFor(seed))
   const [ux, uy] = [r(), r()]
   const at: [number, number] = [0.5 + side * lerp(plan.offset[0], plan.offset[1], ux), height + lerp(plan.lift[0], plan.lift[1], uy)]
+  // A cyan lead is a medium bloom, so its middle stays on or inside a side edge, where the frame shows it.
+  if (cyanLead) at[0] = clamp(at[0], CYAN_EDGE, 1 - CYAN_EDGE)
   // The way the light runs: from the lead through the middle of the frame, leaning upward as the lead
   // nears the middle, so it never jumps there. The sky darkens along it.
   const frameP: [number, number] = [Math.sqrt(aspect), 1 / Math.sqrt(aspect)]
@@ -541,9 +560,10 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // bloom and the other way round, so seeds differ in how much of each pack color shows.
   const leadShare = r()
   // A cyan lead stays a medium bloom: as a large field its pale cyan light lies under the warm light beside
-  // it, turning Yellow pale and olive and Orange-red pink.
+  // it, turning Yellow pale and olive and Orange-red pink. In a tall frame it is smaller still, or it would
+  // cross the frame and lie under the warm light there (cyan and yellow light together make mint).
   const fieldRadius = lerp(0.5, 0.88, leadShare) * size
-  let radius = fieldRadius * (cyanLead ? 0.65 : 1)
+  let radius = fieldRadius * (cyanLead ? 0.65 * lerp(0.72, 1, smoothstep(0.5, 1, aspect)) : 1)
   const aniso = lerp(1.6, 2.8, r())
   // The lead stays narrower than the frame, so there is sky beside it for the other blooms.
   radius *= Math.min(1, LEAD_MAX_LONG_RADIUS / (radius * Math.sqrt(aniso)))
@@ -646,11 +666,14 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     const ux = r()
     // The warm light under a cool lead sits in the middle of the sky, about halfway along the way the light
     // runs and off to one side: in the dark end a dim warm light reads olive, and on the cyan it makes mint.
-    const midWay = lerp(0.5, 0.7, ux)
+    // A cyan lead is a medium bloom held at a side edge, so under it the warm light sits a third of the way
+    // from the lead to the far edge, in every format.
+    const midWay = cyanLead ? toEdge(leadP, awayAngle, frameP) * lerp(0.28, 0.42, ux) : lerp(0.5, 0.7, ux)
     const aside = lerp(-0.28, 0.28, r())
+    const from = cyanLead ? insideFrame(leadP, frameP) : leadP
     const warmP = [
-      leadP[0] + Math.cos(awayAngle) * midWay - Math.sin(awayAngle) * aside,
-      leadP[1] + Math.sin(awayAngle) * midWay + Math.cos(awayAngle) * aside,
+      from[0] + Math.cos(awayAngle) * midWay - Math.sin(awayAngle) * aside,
+      from[1] + Math.sin(awayAngle) * midWay + Math.cos(awayAngle) * aside,
     ]
     const farAt: [number, number] = warmUnderCool
       ? [clamp(warmP[0] / frameP[0] + 0.5, 0.1, 0.9), clamp(warmP[1] / frameP[1] + 0.5, 0.15, 0.88)]
@@ -700,14 +723,17 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // sky in one direction: its exact hex sits partway along, beyond it Meta Blue dims 1.2 to 2.3 stops along
   // its own falloff toward deep navy, and it varies slowly by about 4 % everywhere. A small seeded skew keeps
   // the darkening off a straight line.
+  // How far the pale light reaches differs by seed, so some frames keep more of the blue and others are pale
+  // over most of the frame. It is a draw of its own, so the seed's other choices stay as they were.
   const skew = lerp(-0.2, 0.2, r())
+  const paleReach = random(seed * 6151 + 29)()
   const sky: SkySpec = {
     top: lerp(1.2, 2.3, r()),
-    mid: lerp(0.52, 0.38, rise) + plan.mid + lerp(-0.08, 0.08, r()),
+    mid: lerp(0.52, 0.38, rise) + plan.mid + lerp(-0.08, 0.08, r()) + lerp(SKY_MID_SHIFT[0], SKY_MID_SHIFT[1], paleReach),
     tilt: skew,
     vary: lerp(0.03, 0.05, r()),
     turn: rampTurn(skew, awayAngle, frameP),
-    veil: SKY_VEIL,
+    veil: lerp(SKY_VEIL[0], SKY_VEIL[1], paleReach),
   }
   // With dark colors in the pack (Plum and Forest, Slate and Near-black), the corner away from the
   // light deepens all the way to one of them, so the pack's ground shows as an area of its own. A grey
