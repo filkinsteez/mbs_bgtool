@@ -1,4 +1,5 @@
 import { getPack, type PackId } from '../../color/packs'
+import { hexToSrgb, srgbToLinearRgb } from '../../color/srgb'
 import type { Composition, ControlValues, ParamValue } from '../../scene'
 import { horizonRise, horizonScene, placeHorizon } from './horizon'
 import { limitTilt, rampLine } from './ramp-drag'
@@ -17,6 +18,15 @@ const smoothstep = (from: number, to: number, t: number) => {
 const stops2 = (t: number, stops: number) => 2 ** ((t - 0.5) * stops)
 /** Width of a 16:9 frame in short sides. */
 const WIDE = 16 / 9
+
+/** A pale tint of a pack color in linear light at luminance 1; `depth` 0 is white, 1 the color itself. */
+function paleTint(hex: string, depth: number): number[] {
+  const c = srgbToLinearRgb(hexToSrgb(hex))
+  const m = Math.max(c[0], c[1], c[2], 1e-6)
+  const tint = c.map((v) => Math.max(v / m, 0.004) ** depth)
+  const luma = 0.2126 * tint[0] + 0.7152 * tint[1] + 0.0722 * tint[2]
+  return tint.map((v) => v / luma)
+}
 /** Largest tilt of the horizon, in degrees, that a dragged line gives water and land. */
 const WATER_MOST_TILT = 10
 const LAND_MOST_TILT = 18
@@ -217,6 +227,11 @@ interface PackLook {
   veil: [main: number, low: number]
   /** White haze in front of far land (linear light); none over Elemental's Plum and Forest, which it would turn mauve. */
   groundVeil: number
+  /**
+   * The pack color whose pale tint the veil takes away from the light, so a frame that is all sky
+   * still reads as its pack: white over Meta Blue would make the same periwinkle in every pack.
+   */
+  veilColor: string
 }
 
 /**
@@ -234,7 +249,9 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, va
     lowSky: metaBlue,
     lowSkyGain: 1.3,
     horizonGain: 0.9,
-    skyEdge: [0.55, 1.1, 0.3] as [number, number, number],
+    // The low sky reaches high, so most of the sky is its own pale color and Meta Blue holds a
+    // band at the far edge.
+    skyEdge: [0.95, 1.1, 0.3] as [number, number, number],
     bridgeLift: 0.12,
     bridgeWarmth: 0.6,
     bridgeFloor: 0.3,
@@ -256,11 +273,12 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, va
     glowRise: 1,
     veil: [0.22, 0.12] as [number, number],
     groundVeil: 0.1,
+    veilColor: metaBlue,
   }
   switch (packId) {
     case 'bold': {
       const [cyan, yellow, orangeRed] = rest
-      const dark = { landTop: [metaBlue, 0.6] as Tone, landBottom: [metaBlue, 0.12] as Tone, water: [metaBlue, 0.3] as Tone }
+      const dark = { landTop: [metaBlue, 0.6] as Tone, landBottom: [metaBlue, 0.12] as Tone, water: [metaBlue, 0.3] as Tone, veilColor: cyan }
       // Orange-red over a Cyan low sky: the two add up to a pale neutral, which keeps its bridge
       // at low light too. It lights every water and land frame: reflected in water or spilled
       // over land, Yellow turns khaki.
@@ -276,10 +294,14 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, va
     }
     case 'elemental': {
       const [lime, forest, tan, plum] = rest
-      const dark = { landTop: [plum, 1.7] as Tone, landBottom: [plum, 0.6] as Tone, water: [metaBlue, 0.3] as Tone, groundVeil: 0 }
+      // Little veil far from the light, where white over Meta Blue turns lavender; more near it, in
+      // the light's own color.
+      const dark = { landTop: [plum, 1.7] as Tone, landBottom: [plum, 0.6] as Tone, water: [metaBlue, 0.3] as Tone, groundVeil: 0, veil: [0.06, 0.18] as [number, number] }
       // Lime or Tan is the one light. Lime pales into Meta Blue through added light; it lights some
       // open skies and the Forest land, never water, where its dim reflection turns olive.
-      const limeLight = { light: lime, coreColor: lime, glow: 1.0, path: [-0.2, 0, 0.35], hue: [-0.15, 0.1], bridge: 0.3, bridgeLift: 0.3, haze: 0.8, sideDeeper: 0, core: 1 } satisfies Partial<PackLook>
+      // The sky's pale side is the light's own color, so a frame that is all sky still reads as
+      // Elemental.
+      const limeLight = { light: lime, coreColor: lime, glow: 1.0, path: [-0.2, 0, 0.35], hue: [-0.15, 0.1], bridge: 0.3, bridgeLift: 0.3, haze: 0.8, sideDeeper: 0, core: 1, lowSky: lime, lowSkyGain: 1.0 } satisfies Partial<PackLook>
       // Open skies end in a dark dusk band in front of the glow, Forest under Lime and Plum under
       // Tan, so three pack colors show.
       const dusk = (tone: Tone) => (ground ? {} : { dusk: tone, downReach: 0.35, glowUp: 0.6 })
@@ -292,7 +314,7 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, va
       // Deepened, Tan turns brown, so it barely deepens toward the horizon or away from the sun.
       // Water has a far bank of Forest or Plum land on its horizon.
       const bank = structure === 'water' ? { bank: 0.17, ...(pickLight < 0.5 ? { landTop: [forest, 1.8] as Tone, landBottom: [forest, 0.7] as Tone } : {}) } : {}
-      return { ...sky, ...dark, ...bank, extinction: 3, glowUp: 0.5, glowRise: 0.4, horizonGain: 0.42, landHaze: 0.05, landLit: 0.25, light: tan, coreColor: tan, glow: 1.6, path: [0.1, 0.1, 0.4], hue: [-0.3, 0.1], bridge: 1.8, bridgeLift: 0.5, bridgeWarmth: 1, bridgeFloor: 0.1, haze: 0.8, sideDeeper: 0, waterDegrees: [1, 1.5], waterMirror: 1, ...dusk([plum, 1.0]) }
+      return { ...sky, ...dark, ...bank, extinction: 3, glowUp: 0.5, glowRise: 0.4, horizonGain: 0.42, landHaze: 0.05, landLit: 0.25, light: tan, coreColor: tan, lowSky: structure === 'water' ? metaBlue : tan, lowSkyGain: structure === 'water' ? 1.3 : 1.2, glow: 1.6, path: [0.1, 0.1, 0.4], hue: [-0.3, 0.1], bridge: 1.8, bridgeLift: 0.5, bridgeWarmth: 1, bridgeFloor: 0.1, haze: 0.8, sideDeeper: 0, waterDegrees: [1, 1.5], waterMirror: 1, ...dusk([plum, 1.0]) }
     }
     case 'atmospheric': {
       const [ice, steel, slate, nearBlack] = rest
@@ -306,7 +328,8 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, va
       ]
       // The band is bright enough near its line to read as Ice; under it the light fades to Steel,
       // and open skies end in a Slate dusk band.
-      return { ...sky, ...grounds[variant], ...(variant === 1 ? { lowSky: steel } : variant === 2 ? { lowSky: ice } : {}), lowSkyGain: 1.2, horizonGain: structure === 'water' ? 0.8 : 0.5, light: ice, coreColor: ice, glow: 0.62 * [1.3, 0.85, 1][variant], path: [0, 0, 0], hue: [0, 0], bridge: 0.3, haze: 0.8, downReach: 0.8, sideDeeper: 0, sunGlow: 0, core: 0, minFloor: 0.5, minLift: 0.08, ...(ground ? {} : { dusk: [slate, 1.0] as Tone, downReach: 0.45 }) }
+      // The sky's pale side is an overcast grey: Steel, or Ice in the third variant.
+      return { ...sky, ...grounds[variant], lowSky: variant === 2 ? ice : steel, veilColor: steel, lowSkyGain: [1.5, 1.2, 1.2][variant], horizonGain: structure === 'water' ? 0.8 : 0.5, light: ice, coreColor: ice, glow: 0.62 * [1.3, 0.85, 1][variant], path: [0, 0, 0], hue: [0, 0], bridge: 0.3, haze: 0.8, downReach: 0.8, sideDeeper: 0, sunGlow: 0, core: 0, minFloor: 0.5, minLift: 0.08, ...(ground ? {} : { dusk: [slate, 1.0] as Tone, downReach: 0.45 }) }
     }
     default: {
       const unknown: never = packId
@@ -826,8 +849,16 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // Scattered daylight over the sky, denser toward the horizon, mutes and pales it toward the
     // light. A band of full Meta Blue stays at the far edge: the top twentieth of the frame, fading
     // into the veil over the next sixth.
-    veil: [look.veil[0] * zenithGain, look.veil[1] * zenithGain, 0.3 * Math.max(0.2, topHeight)],
+    // Elemental's warm side reaches farther, so its light's own color shows over more of the sky.
+    veil: [look.veil[0] * zenithGain, look.veil[1] * zenithGain, (packId === 'elemental' ? 0.6 : 0.3) * Math.max(0.2, topHeight)],
     veilFar: [topHeight - 0.22 * tall, topHeight - 0.05 * tall],
+    veilTint: paleTint(look.veilColor, packId === 'bold' ? 0.35 : packId === 'elemental' ? 0.25 : 0.6),
+    // Under the far band the sky's blue greys at its own hue (Elemental, whose pale side is its
+    // light's color), or toward Steel (Atmospheric, overcast), instead of turning periwinkle.
+    veilMute: packId === 'atmospheric' ? 0.55 : packId === 'elemental' ? 0.5 : 0,
+    // Elemental's veil takes its light's own color near the light, so the pale side reads Tan or
+    // Lime; the other packs take the bridge's warm white there.
+    veilNear: packId === 'elemental' ? paleTint(look.light, 0.6) : [0, 0, 0],
     glowVary: 0,
     glowArch: 0.6,
     // More daylight gathers the glow toward the sun, so white shows only near the light.
