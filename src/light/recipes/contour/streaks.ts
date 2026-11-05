@@ -87,6 +87,7 @@ uniform float uVeilTint;   // a cool light's least chroma along its haze's hue, 
 uniform vec2 uNearShape;   // the darker sky near the point: distance it starts at, its depth toward the lit sky's bright end (share of the full depth)
 uniform vec4 uAirGlow;     // a point outside the frame: level of its glow in the air (scattered units; 0: off), falloff, sharpness (power), scale (1 at the frame's brightest point)
 uniform vec4 uGlowLine;    // where that point is (screen, unturned), twice
+uniform float uVeilBand;   // how much more chroma the veil keeps in its band of levels (1: twice the share)
 ${AIR_GLOW_GLSL}
 const int SHADOW_TAPS = 20;
 const int SHORT_TAPS = 8;
@@ -332,14 +333,15 @@ vec3 combine(vec2 uv, vec2 screen, vec3 line, vec3 cached) {
   vec3 paleColor = mix(uLightColor / lumLight, uPaleTarget, uPaleWhite) * lumHaze;
   // A cool light's haze is a pale veil of its color: its whole color path, the pale core too,
   // keeps only a share of its chroma at the same Oklab lightness and hue, rising to twice that
-  // share in a wide band of levels; its darks are a faint blue-black haze, not black.
+  // share in a wide band of levels (less by uVeilBand); its darks are a faint blue-black haze,
+  // not black.
   vec3 path = mix(warmTail(scatter), paleColor, pale);
   vec3 veil = uHazeColor;
   if (uTail.w <= 0.0 && uVeil.x < 1.0) {
     float clip = lumHaze / max(max(uHazeColor.r, uHazeColor.g), uHazeColor.b);
     float octaves = log2(max(scatter * lumHaze, 1e-6) / (uVeil.y * clip)) / max(uVeil.z, 0.05);
     vec3 lab = linearToOklab(path);
-    path = oklabToLinear(vec3(lab.x, lab.yz * min(1.0, uVeil.x * (1.0 + exp(-0.5 * octaves * octaves)))));
+    path = oklabToLinear(vec3(lab.x, lab.yz * min(1.0, uVeil.x * (1.0 + uVeilBand * exp(-0.5 * octaves * octaves)))));
   }
   // Over a dark of another hue (Meta Blue over Plum) the light and the dark both dim toward
   // black before they meet: the dark fades out where the light is, and the light's faint tail
@@ -513,6 +515,7 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
     veil: veilParam(light),
     darkMeet: darkMeetParam(light, BASE_GAIN),
     veilTint: veiled(light) ? VEIL_TINT : 0,
+    veilBand: light.band,
   }
   if (controls.drag) {
     const line = lineInShorts(controls.drag, aspect)
@@ -626,6 +629,7 @@ export const contourStreaks: RecipeDefinition = {
     { kind: 'vector', key: 'nearShape', label: 'Sky near the point, shape', min: 0, max: 4, step: 0.0005, default: [0, 1] },
     { kind: 'vector', key: 'airGlow', label: 'Glow past the frame', min: 0, max: 100, step: 0.0001, default: [0, 0.18, 2, 1] },
     { kind: 'vector', key: 'glowLine', label: 'Point past the frame', min: -8, max: 8, step: 0.0005, default: [0, 0, 0, 0] },
+    { kind: 'number', key: 'veilBand', label: 'More color in the band', min: 0, max: 2, step: 0.005, default: 1 },
   ],
   fragment: STREAKS_GLSL,
   uniforms: (ctx) => ({
@@ -664,6 +668,7 @@ export const contourStreaks: RecipeDefinition = {
     uNearShape: ctx.vec('nearShape'),
     uAirGlow: ctx.vec('airGlow'),
     uGlowLine: ctx.vec('glowLine'),
+    uVeilBand: ctx.num('veilBand'),
   }),
   scatter: [{ source: 'aux', radius: () => SKY_CACHE_BLUR, size: () => SKY_CACHE_SIZE }],
   lens: { bloom: 0.04, bloomLevels: [1, 0.5, 0.25, 0.1, 0, 0, 0, 0], halation: 0 },

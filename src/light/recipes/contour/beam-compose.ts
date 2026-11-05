@@ -410,7 +410,19 @@ export interface ContourLight {
    * frame never reads as Atmospheric's steel-blue veil.
    */
   veil: boolean
+  /**
+   * Share a veiled light keeps of a look's band of extra chroma near its clipping level: 1, or
+   * OVERCAST_BAND for Atmospheric, whose veil goes to Steel and Ice greys.
+   */
+  band: number
 }
+
+/**
+ * Atmospheric's share of the extra chroma near the clipping level: Streaks' bright shafts then
+ * have about the radial-streaks example's chroma (0.085 at Oklab L 0.6 to 0.8, 0.05 above),
+ * a grey-blue instead of a pale cornflower.
+ */
+const OVERCAST_BAND = 0.5
 
 /** The red a warm haze ends on as it fades, deeper than Orange-red. */
 const DEEP_RED = '#FF1A00'
@@ -435,10 +447,10 @@ function halfway(a: string, b: string): number[] {
   return unitPeak(pa.map((v, i) => (v + pb[i]) / 2))
 }
 
-const cool = { toe: 0, tail: null, tailFrom: null, fall: 1, lift: 1, veil: true }
+const cool = { toe: 0, tail: null, tailFrom: null, fall: 1, lift: 1, veil: true, band: 1 }
 
-function warm(hex: string, tail: [number[], number[]], tailFrom: number | null, fall = 1, lift = 1): Pick<ContourLight, 'toe' | 'tail' | 'tailFrom' | 'fall' | 'lift' | 'veil'> {
-  return { toe: warmToe(hex), tail, tailFrom, fall, lift, veil: false }
+function warm(hex: string, tail: [number[], number[]], tailFrom: number | null, fall = 1, lift = 1): Pick<ContourLight, 'toe' | 'tail' | 'tailFrom' | 'fall' | 'lift' | 'veil' | 'band'> {
+  return { toe: warmToe(hex), tail, tailFrom, fall, lift, veil: false, band: 1 }
 }
 
 /**
@@ -489,9 +501,9 @@ export function contourLights(pack: ColorPack): ContourLight[] {
     }
     case 'atmospheric':
       return [
-        { light: hexByName(pack, 'Ice'), haze: hexByName(pack, 'Steel'), base: hexByName(pack, 'Near-black'), baseLevel: 0.2, ...cool },
-        { light: hexByName(pack, 'Ice'), haze: blue, base: hexByName(pack, 'Near-black'), baseLevel: 0.18, ...cool },
-        { light: blue, haze: blue, base: hexByName(pack, 'Slate'), baseLevel: 0.1, ...cool },
+        { light: hexByName(pack, 'Ice'), haze: hexByName(pack, 'Steel'), base: hexByName(pack, 'Near-black'), baseLevel: 0.2, ...cool, band: OVERCAST_BAND },
+        { light: hexByName(pack, 'Ice'), haze: blue, base: hexByName(pack, 'Near-black'), baseLevel: 0.18, ...cool, band: OVERCAST_BAND },
+        { light: blue, haze: blue, base: hexByName(pack, 'Slate'), baseLevel: 0.1, ...cool, band: OVERCAST_BAND },
       ]
     default: {
       const unknown: never = pack.id
