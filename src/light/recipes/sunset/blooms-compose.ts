@@ -108,14 +108,17 @@ const DRAG_RADIUS: readonly [number, number] = [0.1, 1.6]
 
 /** How far past the frame edge a dark area sits, in units of sqrt(width * height). */
 const DARK_PAST_EDGE = 0.04
-/** Leans the sky's direction upward as the lead nears the frame's middle, so it never jumps there. */
+/**
+ * How far above the frame's middle (below it for a light from an upper corner) the sky's direction aims, in short
+ * sides, so it never jumps as a lead nears the middle.
+ */
 const AWAY_UP = 0.12
 /**
  * How far the sky pales toward the light, from a seed's own draw: pale light over the sky at the light's side
  * (units of the sky luminance), and the shift of the line where the sky is its exact hex (frame heights,
  * positive toward the light). The low end keeps more of the blue, the high end is pale over most of the frame.
  */
-const SKY_VEIL: readonly [number, number] = [0.6, 2.6]
+const SKY_VEIL: readonly [number, number] = [0.8, 2.6]
 const SKY_MID_SHIFT: readonly [number, number] = [0.16, -0.05]
 
 /**
@@ -416,11 +419,13 @@ function lightHeight(horizonY: number): number {
  * Which light slot leads: the warm light more often than not; with no warm
  * light, the lighter one, since a dark color brightened is not a light (Steel
  * never reaches a light color, so Ice leads in every Atmospheric seed).
- * Green-yellow light leads less often (it has no match in a sky). Under a cool
- * lead the warm light comes in as a small bloom across the frame, apart from
- * it: cyan and yellow light on top of each other make mint.
+ * Green-yellow light leads less often (it has no match in a sky). Cyan is sky
+ * light: it leads when the light comes from a side edge or from above, and the
+ * warm light leads from below, as a low sun does. Under a cool lead the warm
+ * light comes in as a small bloom across the frame, apart from it: cyan and
+ * yellow light on top of each other make mint.
  */
-function pickLead(colors: readonly Rgb[], u: number): { lead: number; other: number } {
+function pickLead(colors: readonly Rgb[], u: number, arrangement: Arrangement): { lead: number; other: number } {
   const a = SLOT.light1
   const b = SLOT.light2
   const warmA = isWarm(colors[a])
@@ -431,8 +436,8 @@ function pickLead(colors: readonly Rgb[], u: number): { lead: number; other: num
     // Red-orange light (Orange-red) comes in only as the warm bloom beside a cyan lead: as the lead, its
     // large body and second bloom let the blue through and turn pink.
     const redWarm = linearToOklch(colors[warm])[2] < 50
-    const coolOdds = redWarm ? 1 : isCyan(colors[cool]) ? 0.15 : isGreen(colors[cool]) ? 0.25 : 0.35
-    return u < 1 - coolOdds ? { lead: warm, other: cool } : { lead: cool, other: warm }
+    const coolLeads = redWarm || (isCyan(colors[cool]) ? arrangement === 'side' || arrangement === 'high' : u >= 1 - (isGreen(colors[cool]) ? 0.25 : 0.35))
+    return coolLeads ? { lead: cool, other: warm } : { lead: warm, other: cool }
   }
   const lighter = luminance(colors[a]) >= luminance(colors[b]) ? a : b
   return { lead: lighter, other: lighter === a ? b : a }
@@ -458,30 +463,51 @@ interface Plan {
   balance: readonly [number, number]
   /** The soft inner bloom sits below the lead instead of above it. */
   innerBelow: boolean
+  /**
+   * The sky darkens from the lead toward a point at this height, in short sides from the frame's middle
+   * (negative is up), and `across` of the lead's own distance from the middle line to its side (0: on the middle
+   * line, 1: straight above or below the lead). The lead never comes near it, so the way the light runs never jumps.
+   */
+  toward: number
+  across: number
+  /** The share of the frame a grey or blue dark ground covers, against a corner's (CORNER_SHARE): along an edge it is wider. */
+  darkScale: number
 }
 
 function planFor(arrangement: Arrangement): Plan {
   switch (arrangement) {
     case 'low':
-      // The light from the bottom edge, the sky darkening upward.
-      return { offset: [0, 0.32], lift: [0.12, 0.24], mid: 0, pair: 0.3, balance: [0, 0.6], innerBelow: false }
+      // The light from the bottom edge, the sky darkening straight up to the top edge.
+      return { offset: [0, 0.18], lift: [0.12, 0.24], mid: 0.1, pair: 0.3, balance: [0, 0.6], innerBelow: false, toward: -0.6, across: 1, darkScale: 1.5 }
     case 'diagonal':
       // The light from a lower corner, the sky darkening toward the opposite upper corner.
-      return { offset: [0.42, 0.6], lift: [0.1, 0.22], mid: 0.04, pair: 0.2, balance: [0, 0.5], innerBelow: false }
+      return { offset: [0.42, 0.6], lift: [0.1, 0.22], mid: 0.04, pair: 0.2, balance: [0, 0.5], innerBelow: false, toward: -AWAY_UP, across: 0, darkScale: 1 }
     case 'side':
       // The light from a side edge at mid height, the sky darkening toward the other side.
-      return { offset: [0.58, 0.7], lift: [-0.3, -0.12], mid: 0.06, pair: 0.25, balance: [0, 0.6], innerBelow: true }
+      return { offset: [0.58, 0.7], lift: [-0.3, -0.12], mid: 0.06, pair: 0.25, balance: [0, 0.6], innerBelow: true, toward: -AWAY_UP, across: 0, darkScale: 1.5 }
     case 'high':
       // The light from an upper corner, the sky darkening toward the opposite lower corner.
-      return { offset: [0.35, 0.6], lift: [-0.9, -0.72], mid: 0, pair: 0.3, balance: [0, 0.6], innerBelow: true }
+      return { offset: [0.35, 0.6], lift: [-0.9, -0.72], mid: 0, pair: 0.3, balance: [0, 0.6], innerBelow: true, toward: AWAY_UP, across: 0, darkScale: 1 }
     case 'pair':
       // Two lights from the two lower corners, one a little stronger.
-      return { offset: [0.4, 0.58], lift: [0.06, 0.18], mid: 0, pair: 1, balance: [0.6, 0.85], innerBelow: false }
+      return { offset: [0.4, 0.58], lift: [0.06, 0.18], mid: 0, pair: 1, balance: [0.6, 0.85], innerBelow: false, toward: -AWAY_UP, across: 0, darkScale: 1 }
     default: {
       const unknown: never = arrangement
       throw new Error(`Unknown arrangement: ${String(unknown)}`)
     }
   }
+}
+
+/**
+ * The side each arrangement's light comes from in the first run of five seeds; the next run takes the other
+ * side, and so on, so a run spreads its lights over both sides and an arrangement that comes back is mirrored.
+ */
+const ARRANGEMENT_SIDE: Readonly<Record<Arrangement, -1 | 1>> = { low: 1, diagonal: -1, side: 1, high: -1, pair: 1 }
+
+function sideFor(seed: number): -1 | 1 {
+  const run = Math.floor((Math.round(seed) - 1) / ARRANGEMENTS.length)
+  const side = ARRANGEMENT_SIDE[arrangementFor(seed)]
+  return run % 2 === 0 ? side : side === 1 ? -1 : 1
 }
 
 /** Seeds come in runs of five; each run takes every arrangement once, in a seeded order, so neighbours differ. */
@@ -515,8 +541,9 @@ const CYAN_EDGE = 0.02
  * far side. The sky is its exact hex in mid-sky and deepens toward the top
  * edge, all the way to the pack's dark color (Plum, Forest, Slate, Near-black)
  * in the corner away from the light, or only darker in a pack without one.
- * Seeds pick the side, place, height, sizes, glow count and which light leads;
- * Softness widens and softens; Rise lifts the light and moves the others with it.
+ * Seeds pick the arrangement, which sets the side and the way the sky darkens,
+ * then the place, height, sizes, glow count and which light leads; Softness
+ * widens and softens; Rise lifts the light and moves the others with it.
  */
 export function composeLayout(colors: readonly Rgb[], seed: number, controls: BloomsControls, aspect: number): BloomsLayout {
   const r = random(seed)
@@ -524,11 +551,17 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // With a dragged line the line alone places the blooms: the tool still sets Horizon from the line's start
   // for the slider's sake, so Horizon is read at its default here and moves nothing.
   const rise = controls.drag ? DRAG_RISE : clamp(controls.rise, 0, 1)
-  const { lead, other } = pickLead(colors, r())
-  // A cyan light along the bottom edge reads as a horizon (a sea), so it sits higher and comes in level.
+  const arrangement = arrangementFor(seed)
+  const plan = planFor(arrangement)
+  const { lead, other } = pickLead(colors, r(), arrangement)
+  // A cyan light along the bottom edge reads as a horizon (a sea), so it sits higher and comes in level. From
+  // an upper corner it is clear of that edge already.
   const cyanLead = isCyan(colors[lead])
-  const height = lightHeight(placeHorizon(rise, seed, aspect).y) - (cyanLead ? lerp(0.24, 0.32, r()) : 0)
-  const side = r() < 0.5 ? -1 : 1
+  const cyanRaise = cyanLead ? lerp(0.24, 0.32, r()) : 0
+  const height = lightHeight(placeHorizon(rise, seed, aspect).y) - (arrangement === 'high' ? 0 : cyanRaise)
+  // An unused draw: without it every later choice of each seed would change.
+  r()
+  const side = sideFor(seed)
 
   // Softness changes how the light falls off, not how far it reaches: the radius is scaled so the
   // half-brightness extent stays put while the tail gets longer. Rise lifts and widens the light.
@@ -545,16 +578,14 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // (planFor) sets which edge or corner, relative to the shared light height. The Horizon control only
   // moves it: low, it sinks toward the bottom edge as a setting light does. A cyan light stays well clear
   // of the bottom edge, where a warm light may sit.
-  const plan = planFor(arrangementFor(seed))
   const [ux, uy] = [r(), r()]
   const at: [number, number] = [0.5 + side * lerp(plan.offset[0], plan.offset[1], ux), height + lerp(plan.lift[0], plan.lift[1], uy)]
   // A cyan lead is a medium bloom, so its middle stays on or inside a side edge, where the frame shows it.
   if (cyanLead) at[0] = clamp(at[0], CYAN_EDGE, 1 - CYAN_EDGE)
-  // The way the light runs: from the lead through the middle of the frame, leaning upward as the lead
-  // nears the middle, so it never jumps there. The sky darkens along it.
+  // The way the light runs: from the lead toward its arrangement's point (Plan.toward). The sky darkens along it.
   const frameP: [number, number] = [Math.sqrt(aspect), 1 / Math.sqrt(aspect)]
   const leadP: [number, number] = [(at[0] - 0.5) * frameP[0], (at[1] - 0.5) * frameP[1]]
-  const awayAngle = Math.atan2(-leadP[1] - AWAY_UP, -leadP[0])
+  const awayAngle = Math.atan2(plan.toward - leadP[1], (plan.across - 1) * leadP[0])
   const tilt = lerp(-8, 8, r())
   // How much of the frame the lead takes against the inner bloom: a smaller lead gets a larger cyan or grey
   // bloom and the other way round, so seeds differ in how much of each pack color shows.
@@ -775,7 +806,9 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
         meet: 0,
       }
   const zenithLobes = lobes(ZENITH_VARY, seed, ZENITH_LOBE_INDEX)
-  const sizeDark = (z: ZenithSpec) => (darkGround ? sizeCorner(z, aspect, skyFamily ? CORNER_SHARE : OTHER_HUE_CORNER_SHARE, zenithLobes) : z.radius)
+  // One of another hue keeps a corner's share along an edge too: wider, its meeting with the blue reads indigo.
+  const darkShare: readonly [number, number] = skyFamily ? [CORNER_SHARE[0] * plan.darkScale, CORNER_SHARE[1] * plan.darkScale] : OTHER_HUE_CORNER_SHARE
+  const sizeDark = (z: ZenithSpec) => (darkGround ? sizeCorner(z, aspect, darkShare, zenithLobes) : z.radius)
   zenith.radius = sizeDark(zenith)
 
   const layout: BloomsLayout = {
