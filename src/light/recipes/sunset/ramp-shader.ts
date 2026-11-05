@@ -24,6 +24,8 @@ uniform vec3 uStop[RAMP_COLORS];
 uniform float uEdgeAt[RAMP_EDGES];
 uniform float uEdgeWidth[RAMP_EDGES];
 uniform float uEdgeWarp[RAMP_EDGES];
+uniform vec2 uEdgeShape[RAMP_EDGES]; // per edge: lean across the frame's extent along it, and bow (both in base units at its ends)
+uniform vec2 uGlowShape;     // the same for the glow's line
 uniform float uEdgeSoft[RAMP_EDGES];
 uniform int uEdges;
 uniform int uHorizonEdge;    // -1: the anchor line is the horizon
@@ -276,8 +278,13 @@ vec3 rampSky(vec2 p) {
   float horizon = uHorizonEdge < 0 ? uWarp.x * warpNoise : 0.0;
   // Loops run to the scene's own count: with the constant count the compiler writes the body out
   // once per edge, and the shader takes a second or more to compile.
+  // Each edge and the glow line lean and bend a little on their own, across the frame's extent
+  // along them in any direction, so neighbouring boundaries are never parallel.
+  float acrossHalf = abs(halfWidth * uAxis.y) + abs(0.5 * uFrameAspect.y * uAxis.x);
+  float ua = a / max(acrossHalf, 1e-3);
+  float bowed = ua * ua - 1.0 / 3.0;
   for (int j = 0; j < uEdges; j++) {
-    float m = uEdgeAt[j] + uWarp.x * warpNoise * uEdgeWarp[j];
+    float m = uEdgeAt[j] + uWarp.x * warpNoise * uEdgeWarp[j] + uEdgeShape[j].x * ua + uEdgeShape[j].y * bowed;
     float w = uEdgeWidth[j] * exp((uSoftVary.x * softNoise + uSoftFollow * warpNoise) * uEdgeSoft[j]);
     if (drifting) {
       vec2 q = vec2(across * uDrift.y, uEdgeAt[j] * uDrift.y);
@@ -302,7 +309,7 @@ vec3 rampSky(vec2 p) {
   LightMix mixed = LightMix(vec3(0.0), 0.0, 0.0);
   vec3 glow = vec3(0.0);
   float glowDepth = 0.0;
-  float dh = s - horizon - uGlowOffset;
+  float dh = s - horizon - uGlowOffset - uGlowShape.x * ua - uGlowShape.y * bowed;
   float side = roundFalloff(across - sunAcross, uGlowSpread.y * widen, uLateral.x);
   float far = 1.0 - uGlowSpread.x;
   if (uGlowSpread.z > 0.0) far *= 1.0 - exp(-height / uGlowSpread.z);

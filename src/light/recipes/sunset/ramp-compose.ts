@@ -3,6 +3,7 @@ import type { Composition, ControlValues, ParamValue } from '../../scene'
 import { horizonRise, horizonScene, placeHorizon } from './horizon'
 import { limitTilt, rampLine } from './ramp-drag'
 import { edgeFbm } from './ramp-noise'
+import { RAMP_EDGES } from './ramp-shader'
 
 const clamp01 = (t: number) => Math.min(1, Math.max(0, t))
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
@@ -606,6 +607,9 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const ownRise = ground ? 0 : openRiseAt(anchorBelow(frame, ownAxis, 0.02))
   if (!ground && line) {
     const riseFor = (bend: number) => Math.max(beyondFrame(frame, { anchorX: line.from[0], anchorY: line.from[1], turn, drop: bend }) + 0.02, 0.03, look.minLift)
+    // A turned line sees the bands across the frame's height or its diagonal, not its width; they
+    // bend as much over that as over the width at the seed's own tilt, so they stay curved.
+    drop *= (half / (Math.abs(half * Math.cos(turn)) + Math.abs(0.5 * tall * Math.sin(turn)))) ** 2
     // The bands bend around the sun, so with the horizon far behind the glow they bend less, and
     // the glow and the dusk band never close into a ring around a disc.
     drop *= Math.min(1, ownRise / riseFor(drop))
@@ -774,6 +778,11 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     stopParams[`width${j + 1}`] = width
   })
   gains.forEach((gain, k) => (stopParams[`gain${k + 1}`] = gain))
+  // Each edge and the glow's line lean and bow a little on their own, so neighbours are never
+  // parallel in any direction the sky runs. A stream of its own leaves the other picks as they are.
+  const shapePick = seeded(Math.round(seed) * 31 + 7)
+  const edgeShape = Array.from({ length: 2 * RAMP_EDGES }, (_, i) => (shapePick() * 2 - 1) * (i % 2 === 0 ? 0.07 : 0.05))
+  const glowShape = [(shapePick() * 2 - 1) * 0.05, (shapePick() * 2 - 1) * 0.04].map((v) => v * clamp01(glowRise / 0.15))
 
   // Over land the sun sits just above the crest at its x; over water just under the line.
   const underLine = line ? (line.from[1] + sunBelow * Math.cos(turn)) / tall + 0.5 : horizonY + (arcs ? 0 : 0.03 / tall)
@@ -785,6 +794,8 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     drop,
     stops: gains.length,
     ...stopParams,
+    edgeShape,
+    glowShape,
     horizonEdge: 0,
     zenithShade,
     warp: 0,
