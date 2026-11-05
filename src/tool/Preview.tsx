@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent } from 'react'
 import { EXPORT_SIZES, type ExportAspect, type Scene } from '@/light'
-import type { LightDrag, LightPoint } from './controls'
+import { clampPoint, type LightDrag, type LightPoint } from './controls'
 import { PreviewLoop } from './previewLoop'
 
 const MAX_LONG_SIDE = 2560
@@ -54,9 +54,12 @@ function renderSize(box: Box, pixelRatio: number): Box {
 
 const slopFor = (pointerType: string) => TAP_SLOP[pointerType] ?? TAP_SLOP.touch
 
-/** The pointer's place on the frame in frame units: x from the left edge, y from the top edge. */
-function framePoint(event: PointerEvent<HTMLElement>): LightPoint {
-  const rect = event.currentTarget.getBoundingClientRect()
+/**
+ * The pointer's place in frame units, measured from the image (x from its left edge, y from its top edge), so a
+ * pointer in the stage around the image is below 0 or above 1.
+ */
+function framePoint(event: PointerEvent<HTMLElement>, frame: HTMLElement): LightPoint {
+  const rect = frame.getBoundingClientRect()
   return [(event.clientX - rect.left) / Math.max(rect.width, 1), (event.clientY - rect.top) / Math.max(rect.height, 1)]
 }
 
@@ -119,11 +122,14 @@ export interface PreviewProps {
   scene: Scene
   aspect: ExportAspect
   paused: boolean
-  /** The line being dragged on the image, from the press point to the pointer, in frame units: at most once per animation frame. */
+  /**
+   * The line being dragged, from the press point to the pointer, in frame units measured from the image: at most
+   * once per animation frame. A drag can start anywhere in the stage around the image.
+   */
   onDrag: (line: LightDrag) => void
-  /** A drag on the image starts (true) or ends (false). A click without moving is not a drag. */
+  /** A drag starts (true) or ends (false). A click without moving is not a drag. */
   onDragging: (dragging: boolean) => void
-  /** A double-click or double-tap on the image. */
+  /** A double-click or double-tap in the stage. */
   onReset: () => void
 }
 
@@ -244,12 +250,15 @@ export function Preview({ scene, aspect, paused, onDrag, onDragging, onReset }: 
 
   useEffect(() => () => cancelAnimationFrame(lineFrameRef.current), [])
 
+  // The line shown is the one the image uses: both ends within the drag's reach.
   const drawLine = (line: LightDrag) => {
+    const from = clampPoint(line.from)
+    const to = clampPoint(line.to)
     for (const element of lineRefs.current) {
-      element?.setAttribute('x1', percent(line.from[0]))
-      element?.setAttribute('y1', percent(line.from[1]))
-      element?.setAttribute('x2', percent(line.to[0]))
-      element?.setAttribute('y2', percent(line.to[1]))
+      element?.setAttribute('x1', percent(from[0]))
+      element?.setAttribute('y1', percent(from[1]))
+      element?.setAttribute('x2', percent(to[0]))
+      element?.setAttribute('y2', percent(to[1]))
     }
   }
 
@@ -268,16 +277,18 @@ export function Preview({ scene, aspect, paused, onDrag, onDragging, onReset }: 
   }
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (pressRef.current || !event.isPrimary || event.button !== 0) return
+    const frame = frameRef.current
+    if (pressRef.current || !event.isPrimary || event.button !== 0 || !frame || frame.offsetWidth < 1) return
     event.currentTarget.setPointerCapture(event.pointerId)
-    pressRef.current = { id: event.pointerId, type: event.pointerType, x: event.clientX, y: event.clientY, time: event.timeStamp, from: framePoint(event), dragging: false }
+    pressRef.current = { id: event.pointerId, type: event.pointerType, x: event.clientX, y: event.clientY, time: event.timeStamp, from: framePoint(event, frame), dragging: false }
     setPressed(true)
   }
 
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
     const press = pressRef.current
-    if (!press || event.pointerId !== press.id) return
-    const line = { from: press.from, to: framePoint(event) }
+    const frame = frameRef.current
+    if (!press || event.pointerId !== press.id || !frame) return
+    const line = { from: press.from, to: framePoint(event, frame) }
     if (!press.dragging) {
       if (Math.hypot(event.clientX - press.x, event.clientY - press.y) <= slopFor(press.type)) return
       press.dragging = true
@@ -316,28 +327,20 @@ export function Preview({ scene, aspect, paused, onDrag, onDragging, onReset }: 
     if (double) handlersRef.current.onReset()
   }
 
-  const frameStyle: CSSProperties = {
-    ...(box ? { width: box.width, height: box.height } : { visibility: 'hidden' }),
-    position: 'relative',
-    cursor: pressed ? 'grabbing' : 'grab',
-    touchAction: 'none',
-    userSelect: 'none',
-    WebkitUserSelect: 'none',
-    WebkitTouchCallout: 'none',
-  }
+  const frameStyle: CSSProperties = box ? { width: box.width, height: box.height } : { visibility: 'hidden' }
 
   return (
-    <div ref={stageRef} className="tool-stage">
-      <div
-        ref={frameRef}
-        className="tool-frame"
-        style={frameStyle}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={(event) => finishPress(event, false)}
-        onPointerCancel={(event) => finishPress(event, true)}
-        onLostPointerCapture={(event) => finishPress(event, true)}
-      >
+    <div
+      ref={stageRef}
+      className="tool-stage"
+      data-pressed={pressed || undefined}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={(event) => finishPress(event, false)}
+      onPointerCancel={(event) => finishPress(event, true)}
+      onLostPointerCapture={(event) => finishPress(event, true)}
+    >
+      <div ref={frameRef} className="tool-frame" style={frameStyle}>
         <svg
           aria-hidden="true"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible', pointerEvents: 'none', display: dragging ? 'block' : 'none' }}

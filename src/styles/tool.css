@@ -11,9 +11,23 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  /* A drag starts anywhere here, on or off the image. The line drawn while dragging may reach past the image, up to
+     the stage's edges, but not over the panel. */
+  position: relative;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.tool-stage[data-pressed] {
+  cursor: grabbing;
 }
 
 .tool-frame {
+  position: relative;
   flex: none;
   background: #000;
 }
