@@ -232,6 +232,8 @@ interface PackLook {
    * still reads as its pack: white over Meta Blue would make the same periwinkle in every pack.
    */
   veilColor: string
+  /** The zenith's light at the far edge of the sky, as a share of the pack's Meta Blue (1: the hex itself). */
+  farSink: number
 }
 
 /**
@@ -274,6 +276,7 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, va
     veil: [0.22, 0.12] as [number, number],
     groundVeil: 0.1,
     veilColor: metaBlue,
+    farSink: 1,
   }
   switch (packId) {
     case 'bold': {
@@ -313,7 +316,9 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, va
       // dark blue: seen through Plum, the mirrored Tan and cream turn mauve and grey, the blue violet.
       // Deepened, Tan turns brown, so it barely deepens toward the horizon or away from the sun.
       // Water has a far bank of Forest or Plum land on its horizon.
-      const bank = structure === 'water' ? { bank: 0.17, ...(pickLight < 0.5 ? { landTop: [forest, 1.8] as Tone, landBottom: [forest, 0.7] as Tone } : {}) } : {}
+      // Over water the sky stays a deeper Meta Blue that sinks toward the dark at the far edge, with
+      // little veil: paled, its reflection over the dark water turns periwinkle and mauve.
+      const bank = structure === 'water' ? { bank: 0.17, veil: [0.08, 0.1] as [number, number], farSink: 0.45, ...(pickLight < 0.5 ? { landTop: [forest, 1.8] as Tone, landBottom: [forest, 0.7] as Tone } : {}) } : {}
       return { ...sky, ...dark, ...bank, extinction: 3, glowUp: 0.5, glowRise: 0.4, horizonGain: 0.42, landHaze: 0.05, landLit: 0.25, light: tan, coreColor: tan, lowSky: structure === 'water' ? metaBlue : tan, lowSkyGain: structure === 'water' ? 1.3 : 1.2, glow: 1.6, path: [0.1, 0.1, 0.4], hue: [-0.3, 0.1], bridge: 1.8, bridgeLift: 0.5, bridgeWarmth: 1, bridgeFloor: 0.1, haze: 0.8, sideDeeper: 0, waterDegrees: [1, 1.5], waterMirror: 1, ...dusk([plum, 1.0]) }
     }
     case 'atmospheric': {
@@ -737,6 +742,8 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     const [x, y] = line.to
     zenithShade = [1.0 / Math.max(0.2, topHeight), rampAt(frame, axis, x, y), 0.02 * side, (x * Math.cos(turn) - y * Math.sin(turn)) / half]
   }
+  // Where the sky sinks toward the dark at its far edge, the zenith there is that share of the hex.
+  zenithShade[1] += (1 - look.farSink) / zenithShade[0]
 
   // The stop edges, top down. A second, lighter Meta Blue step splits the sky's edge in two: a
   // wide one higher up and a narrower one lower down, each with its own shape.
@@ -855,7 +862,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     veilTint: paleTint(look.veilColor, packId === 'bold' ? 0.35 : packId === 'elemental' ? 0.25 : 0.6),
     // Under the far band the sky's blue greys at its own hue (Elemental, whose pale side is its
     // light's color), or toward Steel (Atmospheric, overcast), instead of turning periwinkle.
-    veilMute: packId === 'atmospheric' ? 0.55 : packId === 'elemental' ? 0.5 : 0,
+    veilMute: packId === 'atmospheric' ? 0.8 : packId === 'elemental' ? 0.5 : 0,
     // Elemental's veil takes its light's own color near the light, so the pale side reads Tan or
     // Lime; the other packs take the bridge's warm white there.
     veilNear: packId === 'elemental' ? paleTint(look.light, 0.6) : [0, 0, 0],

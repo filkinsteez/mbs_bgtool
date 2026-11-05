@@ -249,6 +249,23 @@ float skyPatch(vec2 p) {
   return max(0.0, 1.0 + uSkyPatch.x * (n - uSkyPatch.z));
 }
 
+// Meta Blue's Oklab hue, in radians (259 degrees).
+const float BLUE_HUE = -1.7628;
+
+// White light over Meta Blue turns its hue toward violet, which reads periwinkle or lavender. A
+// blue up to 30 degrees past Meta Blue's hue on the violet side goes back to it, and the
+// correction fades out by 60 degrees past it, so mauve and Plum keep their own hues.
+vec3 keepBlueHue(vec3 c) {
+  vec3 lab = linearToOklab(max(c, vec3(0.0)));
+  float chroma = length(lab.yz);
+  if (chroma < 1e-5) return c;
+  float over = mod(atan(lab.z, lab.y) - BLUE_HUE + 3.14159265, 6.28318531) - 3.14159265;
+  if (over <= 0.0) return c;
+  float h = BLUE_HUE + over * smoothstep(0.5236, 1.0472, over);
+  lab.yz = chroma * vec2(cos(h), sin(h));
+  return max(oklabToLinear(lab), vec3(0.0));
+}
+
 // The sky at a point: the stop ramp, the glow, the sun glow and the bridge, without anything in front.
 vec3 rampSky(vec2 p) {
   float halfWidth = 0.5 * uFrameAspect.x;
@@ -359,7 +376,7 @@ vec3 rampSky(vec2 p) {
   vec3 sky = vec3(0.0);
   vec3 dusk = vec3(0.0);
   float duskCover = 0.0;
-  float zenithShade = clamp(1.0 + uZenithShade.x * (s - uZenithShade.y) + uZenithShade.z * (a / halfWidth - uZenithShade.w), 0.8, 2.0);
+  float zenithShade = clamp(1.0 + uZenithShade.x * (s - uZenithShade.y) + uZenithShade.z * (a / halfWidth - uZenithShade.w), 0.5, 2.0);
   for (int k = 0; k <= uEdges; k++) {
     float w = (k == 0 ? 1.0 : level[k - 1]) - (k < uEdges ? level[k] : 0.0);
     vec3 c = w * uStop[k] * (k == 0 ? zenithShade : 1.0);
@@ -406,7 +423,7 @@ vec3 rampSky(vec2 p) {
   }
   // The bridge leaves the dusk band alone: lifted where the glow meets it, the band would draw a
   // pale line between the two.
-  return (light + dusk) * hazeLight;
+  return keepBlueHue((light + dusk) * hazeLight);
 }
 
 // The 1:1 presets' land layer in front of the sky.
