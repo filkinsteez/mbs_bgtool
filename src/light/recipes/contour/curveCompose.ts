@@ -409,7 +409,7 @@ const prefixed = (prefix: string, values: Record<string, number | number[]>) =>
 /**
  * A halo's point-spread function under a key prefix, laid out like a 22 degree
  * halo: dark inside, a fairly sharp rise at the curve, a crest band 0.035
- * outside it (near part 1, the pack color, wider where the light is strong)
+ * outside it (near part 1, the pack color, wider where the light dims)
  * and a long fade outward (far part 2, outside only, half at about 0.15 to 0.19
  * from the crest and close to the base by 0.5). The inside keeps the base level
  * past the crest's inner side. All parts follow light field 1.
@@ -420,13 +420,13 @@ export function haloParts(prefix: string, hex: string): Record<string, number | 
     // A Tan halo keeps most of its light at or above Tan's own brightness: three bands just outside the curve, 1.3
     // widths apart so their sum has no ripple, make a flat stretch a little above Tan's level that ends in a rounded
     // gaussian edge and a faint short tail. The inner band spills past the curve, so the inner edge fades over about
-    // a seventh of the short side instead of a crisp limb, and the outer bands widen where the light is strong, so
-    // the outer edge drifts along the curve instead of running beside it.
-    const band = { ...outside, Shape: 8, Width: 0.035, Weight: 1.25 }
+    // a seventh of the short side instead of a crisp limb. The bands widen where the light dims, so the crescent's
+    // ends spread and fade instead of narrowing to a point, and its outer edge drifts away from the curve there.
+    const band = { ...outside, Shape: 8, Width: 0.035, Weight: 1.25, Grow: 1 }
     const parts: Record<string, number | number[]> = {
-      ...prefixed('n1', { ...band, Offset: -0.012, Side: 0 }),
-      ...prefixed('n2', { ...band, Offset: -0.057, Grow: 1, GrowBy: [0.8, 1.5] }),
-      ...prefixed('n3', { ...band, Offset: -0.102, Grow: 1, GrowBy: [1.6, 1.5] }),
+      ...prefixed('n1', { ...band, Offset: -0.012, Side: 0, Width: 0.07, GrowBy: [-0.5, 0.5] }),
+      ...prefixed('n2', { ...band, Offset: -0.057, Width: 0.07, GrowBy: [-0.1, 0.5] }),
+      ...prefixed('n3', { ...band, Offset: -0.102, Width: 0.1, GrowBy: [-0.09, 0.5] }),
       f1Weight: 0,
       ...prefixed('f2', { ...outside, Weight: 0.06, Width: 0.12 }),
       f3Weight: 0,
@@ -436,8 +436,9 @@ export function haloParts(prefix: string, hex: string): Record<string, number | 
   // A broad pale arc (the yellow-halo example's, on dark): a band about a sixth of the short side wide just outside
   // the curve, bright enough to overexpose to a pale tint of the light, with the light's saturated color in a wide
   // glow beyond it. The band spills past the curve, so its inner edge fades over about a tenth of the short side
-  // like the example's, instead of a hard limb.
-  const band = { Weight: 4, Width: 0.05, Shape: 8, Side: 0, Offset: -0.05, Light: 1, LightGamma: 1, Grow: 1, GrowBy: [0.5, 1.5] }
+  // like the example's, instead of a hard limb. It widens where the light dims, so its ends fade out broad instead of
+  // narrowing to a point.
+  const band = { Weight: 4, Width: 0.12, Shape: 8, Side: 0, Offset: -0.05, Light: 1, LightGamma: 1, Grow: 1, GrowBy: [-0.375, 0.5] }
   const parts: Record<string, number | number[]> = {
     ...prefixed('n1', band),
     n2Weight: 0,
@@ -548,9 +549,9 @@ export function ringParts(prefix: string): Record<string, number | number[]> {
  * color shows only in a band between the pale arc and the dark. All parts follow light field 1.
  */
 export function arcParts(prefix: string): Record<string, number | number[]> {
-  // The band widens where the light is strong, so its two edges spread apart along the curve instead of running
-  // parallel.
-  const band = { Shape: 8, Side: 0, Light: 1, LightGamma: 1, Grow: 1, GrowBy: [1.4, 1.5], Width: 0.025 }
+  // The band widens where the light dims, so its two edges spread apart along the curve instead of running parallel,
+  // and its ends fade out broad instead of narrowing to a point.
+  const band = { Shape: 8, Side: 0, Light: 1, LightGamma: 1, Grow: 1, GrowBy: [-0.4, 0.5], Width: 0.1 }
   const parts: Record<string, number | number[]> = {
     ...prefixed('n1', { ...band, Weight: 1.5, Offset: 0 }),
     ...prefixed('n2', { ...band, Weight: 1.1, Offset: 0.04 }),

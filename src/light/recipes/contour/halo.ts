@@ -310,7 +310,8 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   const radius = bright ? flatRadius(path, home, factor, power, stretch) : falloffRadius(path, home, factor, power, stretch)
   // A dragged light stays near full along the curve and then falls over a rounded shoulder: with a gaussian fall a
   // short line's patch is a long thin ellipse whose ends read as points, most of all where the curve leaves the frame.
-  const dragPower = bright ? FLAT_POWER : 4
+  // A Tan light's flat top falls too fast here: the patch's end reads as a cut edge.
+  const dragPower = 4
   const drift = warmDrift(light.hex)
   const params: Record<string, ParamValue> = {
     ring1On: true,
