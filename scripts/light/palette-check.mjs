@@ -525,6 +525,11 @@ try {
     const own = new Float64Array(k.colors.length) // at or below the color's own nominal brightness, not overexposed
     const sat = new Float64Array(k.colors.length) // saturated (Oklab chroma 0.12 or more)
     const near = new Float64Array(k.colors.length) // at 60% of the color's nominal lightness or more: an area of that color, not a dim base
+    // Bold's Yellow lighter than halfway between Orange-red's and Yellow's hexes (L 0.78): its deep amber tail below
+    // that looks like Orange-red.
+    const yellow = packId === 'bold' ? k.colors.findIndex((c) => c.name === 'Yellow') : -1
+    const clearYellowL = yellow >= 0 ? (k.colors[yellow].path.L0 + k.colors.find((c) => c.name === 'Orange-red').path.L0) / 2 : Infinity
+    let clearYellow = 0
     const bridges = new Float64Array(k.pairs.length)
     const outside = {}
     let dark = 0
@@ -574,6 +579,7 @@ try {
         if (L <= k.colors[fam].path.L0) own[fam]++
         if (C >= 0.12) sat[fam]++
         if (L >= 0.6 * k.colors[fam].path.L0) near[fam]++
+        if (fam === yellow && L >= clearYellowL) clearYellow++
       } else if (bridge >= 0) {
         bucket[p] = 100 + bridge
         bridges[bridge]++
@@ -808,6 +814,7 @@ try {
       shares: Object.fromEntries(k.colors.map((c, i) => [c.name, frac(shares[i])])),
       own: Object.fromEntries(k.colors.map((c, i) => [c.name, frac(own[i])])),
       near: Object.fromEntries(k.colors.map((c, i) => [c.name, frac(near[i])])),
+      clearYellow: frac(clearYellow),
       // The share of the frame that is a pack color at any lightness (Atmospheric's white is Ice).
       shown: frac(shares.reduce((s, v) => s + v, 0)),
       meanL: frac(Ls.reduce((s, v) => s + v, 0)),
@@ -880,7 +887,9 @@ try {
       if (m.shares[c.name] >= share) present.push(c.name)
     }
     if (warmGroup.length && warmGroup.reduce((s, name) => s + m.shares[name], 0) >= share) {
-      if (drag && warmGroup.every((name) => m.own[name] >= share)) present.push(...warmGroup)
+      // Under a drag a flat orange field with an amber glow is one color: Yellow counts only where it is clearly
+      // lighter than Orange-red.
+      if (drag && m.clearYellow >= share && m.own['Orange-red'] >= share) present.push(...warmGroup)
       else {
         const named = warmGroup.reduce((a, b) => (m.own[b] > m.own[a] ? b : a))
         const brightest = warmGroup.reduce((a, b) => (m.saturated[b] > m.saturated[a] ? b : a))
