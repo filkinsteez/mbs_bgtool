@@ -20,11 +20,14 @@ import {
   CONTROL_MAPPINGS,
   controlsForDrag,
   DEFAULT_CONTROLS,
+  KEEP_LINE_DISTANCE,
+  keepsLine,
   lightPlace,
   moodForPoint,
   moveDragWithMood,
   type ControlValues,
   type LightDrag,
+  type LightPoint,
 } from './controls'
 
 const STEPS = [0, 0.25, 0.5, 0.75, 1]
@@ -236,6 +239,43 @@ describe('dragging the light', () => {
         // Beam's light moves along a straight line at an even pace, so every step moves the line the same.
         if (id === 'contour.beam') expect(new Set(moves.map((m) => m.toFixed(6))).size, `seed ${seed}: ${moves.join(' ')}`).toBe(1)
       }
+    }
+  })
+
+  describe('a new seed, look, pack or format', () => {
+    it('keeps a Sunset line wherever it starts', () => {
+      const starts: LightPoint[] = [[0.35, 0.7], [-0.25, -0.25], [1.25, 0.5], [0.5, 1.25]]
+      for (const id of sunsetLooks) {
+        for (const seed of SEEDS) {
+          for (const start of starts) expect(keepsLine(id, PACKS[1], seed, 16 / 9, start), `${id} seed ${seed} ${start}`).toBe(true)
+        }
+      }
+    })
+
+    for (const id of contourLooks) {
+      it(`${id}: keeps the line when the light can come within ${KEEP_LINE_DISTANCE} of its start, and drops it when it can't`, () => {
+        const fine = 64
+        for (const aspect of [16 / 9, 9 / 16]) {
+          const [fw, fh] = aspect >= 1 ? [aspect, 1] : [1, 1 / aspect]
+          for (const seed of [1, 2, 3, 4]) {
+            const pack = PACKS[seed % PACKS.length]
+            const places = Array.from({ length: fine + 1 }, (_, i) =>
+              lightPlace(buildScene(id, pack, seed, { ...DEFAULT_CONTROLS, mood: i / fine }, aspect), aspect),
+            ).filter((place) => place !== null)
+            expect(places.length).toBe(fine + 1)
+            for (const place of places) expect(keepsLine(id, pack, seed, aspect, place), `seed ${seed} ${place}`).toBe(true)
+            for (let x = -0.25; x <= 1.25; x += 0.125) {
+              for (let y = -0.25; y <= 1.25; y += 0.125) {
+                const near = Math.min(...places.map((place) => Math.hypot((place[0] - x) * fw, (place[1] - y) * fh)))
+                if (Math.abs(near - KEEP_LINE_DISTANCE) < 0.02) continue
+                expect(keepsLine(id, pack, seed, aspect, [x, y]), `${pack.id} seed ${seed} aspect ${aspect.toFixed(2)} start ${x},${y}: ${near.toFixed(3)}`).toBe(
+                  near < KEEP_LINE_DISTANCE,
+                )
+              }
+            }
+          }
+        }
+      })
     }
   })
 

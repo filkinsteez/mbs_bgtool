@@ -188,8 +188,11 @@ function pathAt(path: readonly LightPoint[], value: number): LightPoint {
  */
 const NEAR_WIDTH = 0.03
 
-/** The control value whose place on the path lies nearest the point. */
-function nearestOnPath(path: readonly LightPoint[], point: LightPoint, aspect: number): number {
+/**
+ * For each stretch of the path between two samples, its place nearest the point: the control value there and how far
+ * it is from the point (short-side units).
+ */
+function nearestOnStretches(path: readonly LightPoint[], point: LightPoint, aspect: number): { value: number; distance: number }[] {
   const [fw, fh] = frameShorts(aspect)
   const px = point[0] * fw
   const py = point[1] * fh
@@ -204,6 +207,12 @@ function nearestOnPath(path: readonly LightPoint[], point: LightPoint, aspect: n
     const t = length2 > 1e-12 ? clamp01(((px - ax) * dx + (py - ay) * dy) / length2) : 0
     found.push({ value: (i + t) / last, distance: Math.hypot(ax + t * dx - px, ay + t * dy - py) })
   }
+  return found
+}
+
+/** The control value whose place on the path lies nearest the point. */
+function nearestOnPath(path: readonly LightPoint[], point: LightPoint, aspect: number): number {
+  const found = nearestOnStretches(path, point, aspect)
   // Each part of the path that comes near the point counts once, at its nearest place.
   const parts = found.filter(
     (f, i) => (i === 0 || f.distance <= found[i - 1].distance) && (i === found.length - 1 || f.distance <= found[i + 1].distance),
@@ -236,6 +245,35 @@ export function moodForPoint(recipeId: RecipeId, pack: ColorPack, seed: number, 
     case 'contour': {
       const path = lightPath(recipeId, pack, seed, aspect)
       return path ? onSliderStep(nearestOnPath(path, point, aspect)) : null
+    }
+    default: {
+      const unknown: never = mood
+      throw new Error(`Unknown mood: ${String(unknown)}`)
+    }
+  }
+}
+
+/**
+ * How near (short-side units) a Contour look's light must be able to come to a dragged line's start for the line to
+ * stay through a new seed, look, pack or format.
+ */
+export const KEEP_LINE_DISTANCE = 0.1
+
+/**
+ * Whether a dragged line stays when the seed, look, pack or format changes. Sunset: always, as the shared horizon can
+ * sit at the line's height for every seed. Contour: only when the look's light path in the new scene comes within
+ * KEEP_LINE_DISTANCE of the line's start; farther away, the place on the path nearest the start is mostly an end of
+ * the path, where the light is at the end of its track. A Contour path that can't be read keeps the line.
+ */
+export function keepsLine(recipeId: RecipeId, pack: ColorPack, seed: number, aspect: number, start: LightPoint): boolean {
+  const mood = moodOf(recipeId)
+  switch (mood) {
+    case 'sunset':
+      return true
+    case 'contour': {
+      const path = lightPath(recipeId, pack, seed, aspect)
+      if (!path) return true
+      return Math.min(...nearestOnStretches(path, start, aspect).map((f) => f.distance)) <= KEEP_LINE_DISTANCE
     }
     default: {
       const unknown: never = mood

@@ -12,6 +12,7 @@ import {
   clampDrag,
   controlsForDrag,
   DEFAULT_CONTROLS,
+  keepsLine,
   MOOD_DIAL_KEY,
   moodForPoint,
   moveDragWithMood,
@@ -240,13 +241,21 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
 
   useEffect(() => DialStore.subscribe(PANEL_ID, () => onPanelChange()), [])
 
-  // A new look, pack, seed or format keeps the line; the mood control moves to show its start in the new scene.
+  // A new look, pack, seed or format keeps the line when the new scene's light can come near its start, and the mood
+  // control moves to show the start in the new scene. A Contour light whose new path passes far from the start would
+  // only reach an end of its track, so there the line goes and the mood control stays where it is.
   const sceneKey = `${look}|${pack}|${seed}|${format}`
   const sceneKeyRef = useRef(sceneKey)
   const followScene = useEffectEvent(() => {
     const current = dragRef.current
     if (!current) return
-    const next = moodForPoint(look, getPack(pack), seed, frameAspect(format), current.from)
+    const scenePack = getPack(pack)
+    const aspect = frameAspect(format)
+    if (!keepsLine(look, scenePack, seed, aspect, current.from)) {
+      placeDrag(undefined)
+      return
+    }
+    const next = moodForPoint(look, scenePack, seed, aspect, current.from)
     if (next !== null && next !== moodControl) setMoodControl(next)
   })
 
