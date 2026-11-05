@@ -17,6 +17,9 @@ node prototypes/ascii/glyphs.mjs                           # font glyph sheets a
 node prototypes/ascii/engine-check.mjs --strength 1 [--skip4k] [--only rim-bold-s1]   # through the engine's chain -> out/engine/s100/
 node prototypes/ascii/sheets.mjs                           # out/engine/sheet-full.jpg, sheet-crops.jpg (needs s50 and s100)
 node prototypes/ascii/density.mjs                          # the slider as density: out/density/ sheets and the 0..1 sweep
+node prototypes/ascii/fidelity.mjs --name before --committed   # output next to the tile at 1:1 and 3x, ASCII files as committed
+node prototypes/ascii/fidelity.mjs --name after                # the same with the working tree's ASCII files
+node prototypes/ascii/before-after.mjs                     # out/fidelity/before-after-crops.jpg and before-after-full.jpg
 ```
 
 Since 777788d the slider value is the density (rows on the short side, 13 x 4^value), so `--strength` in `engine-check.mjs` picks the row count too.

@@ -82,6 +82,30 @@ What differs from the tile, on purpose
 - **Background.** The tile fades its sky to 35 % on white so dark text reads on a slide. Here the background keeps the pack colors.
 - **Text color.** The tile uses one fixed ink. Here the dark ink takes a trace of the pixel's hue, and light glyphs take the light's own color.
 
+## Fidelity against the tile (2026-11-05)
+
+`prototypes/ascii/fidelity.mjs` puts the tool's output next to the tile (44:275) at 1:1 and at 3x, with the tile scaled to the same row height. It covers Ramp Bold seed 1, Halo Elemental seed 2 and Beam Atmospheric seed 1, at densities 0.25, 0.5 and 0.75 (18, 26 and 37 rows). `before-after.mjs` makes the sheets.
+
+Gaps, biggest first
+1. **Characters over light areas were faint or missing.** In the tile every character is a crisp, fully dark glyph, and pale areas carry text too. Before, dark ink lost contrast where a bright cell had little room to give back the light it takes, so characters over pale sky turned to faint grey ghosts. Where a channel was at full brightness, as in Ramp's pale cyan sky, a third of the frame had no text at all. Fixed below.
+2. **Spacing.** The tile sets Optimistic proportionally, so rows of narrow glyphs (`. : - =`) pack tighter than a monospace grid. Not changed: the grid is the original Roboto Mono tile's, and the font choice is open for the owner.
+3. **Matching already:**
+   - glyph shapes and stroke weight at the same size;
+   - the dark ink's darkness on pale areas: the tile's `#1C2B33` is about Oklab L 0.27, ours is 0.32 of the pixel's L (0.29 on Yellow);
+   - density following smooth gradients without steps;
+   - whole cells, so no glyphs are cut at the frame's edges.
+4. **Light text on dark.** The tile has no example of it. In Contour it reads as the caption's "pack-colored text on the dark base"; no change.
+
+What changed
+- Dark ink is always at full contrast. A bright cell's density comes from its room instead: the ink takes on average 60 % of 1 minus its brightest channel, plus a spare 2 % of its light that the background does not give back.
+- So text is densest over the deeper colors and thins to dots and dashes, then a few dots, as the light nears white. Pale skies carry the tile's sparse rows instead of nothing, and the hottest light keeps only scattered dots.
+- The spare ink darkens the palest cells by up to about 2 % of their light.
+
+Checks
+- Color, blurred by one cell height, at density 0.5 over the 12 check frames: mean 0.0007 to 0.0041 with the spare ink (Ramp Bold 0.0041; limit 0.01).
+- The density sweep still has 39 even row steps and no change between them. Ramp's change per row step is now 0.072 to 0.077, because more of the frame carries text.
+- Sheets: `prototypes/ascii/out/fidelity/before-after-crops.jpg` (per density: the tile, then each look before and after at 1:1) and `before-after-full.jpg` (each look at 0.5, before and after). Also `fidelity/after/d0.25.jpg`, `d0.5.jpg` and `d0.75.jpg` (with 3x zooms), and the live tool at `out/app/app-ramp-0.5-halo-0.25.jpg`.
+
 ## The slider is density (2026-11-04, 777788d)
 
 The owner, trying the filters: "same with ascii maybe it should be more like density". The slider now sets how many rows of characters fit on the short side, with the full glyph treatment at every value.

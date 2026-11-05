@@ -21,10 +21,13 @@ const OVERLAY = ['src/light/engine/filters/ascii.ts', 'src/light/engine/glsl/asc
  * that commit's renderer does not call prepareOutputFilters yet, and the working tree's ASCII files on top. Returns a
  * label: the short sha, '+chain' if patched.
  */
-export function freezeLight(rev = 'HEAD') {
+export function freezeLight(rev = 'HEAD', { overlay = true } = {}) {
   const label = freezeCommit(rev)
-  for (const file of OVERLAY) fs.copyFileSync(path.join(ROOT, file), path.join(FROZEN, file))
-  return label
+  for (const file of OVERLAY) {
+    if (overlay) fs.copyFileSync(path.join(ROOT, file), path.join(FROZEN, file))
+    else fs.writeFileSync(path.join(FROZEN, file), execFileSync('git', ['show', `${rev}:${file}`], { cwd: ROOT }))
+  }
+  return overlay ? label : `${label} (committed ASCII files)`
 }
 
 function freezeCommit(rev) {
@@ -50,8 +53,8 @@ function freezeCommit(rev) {
  * Pixels move over HTTP: Node registers blobs the page downloads (/__ascii/blob/<key>)
  * and the page posts results back (/__ascii/upload/<key>). Same pattern as scripts/light/lib/harness.mjs.
  */
-export async function startPrototype({ verbose = false, rev = 'HEAD' } = {}) {
-  const frozen = freezeLight(rev)
+export async function startPrototype({ verbose = false, rev = 'HEAD', overlay = true } = {}) {
+  const frozen = freezeLight(rev, { overlay })
   if (verbose) console.error(`frames render from src/light at ${frozen}`)
   const blobs = new Map()
   const uploads = new Map()
