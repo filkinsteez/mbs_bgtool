@@ -163,6 +163,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     uSky: ctx.vec('sky'),
     uWater: ctx.vec('water'),
     uWaterLook: ctx.vec('waterLook'),
+    uWaterAxis: ctx.num('waterAxis'),
     uEdgeSeed: edgeSeed(ctx.seed),
     uBaseLum: Math.max(luminance(ctx.colors[0]), 1e-4),
     uLensDisc: discRadius(ctx) > 0 ? 1 : 0,
@@ -243,8 +244,9 @@ uniform vec3 uLightVary;             // RMS share of the light change inside ban
 uniform float uOverlap;
 uniform float uExtinction;           // how much a glow's light takes the place of the sky's own light
 uniform vec3 uSky;                   // sky light toward the sun, stops less per frame height above the nominal height, that height
-uniform vec4 uWater;                 // horizon (frame heights; above 1.5 off), squeeze, smear, reflection at the bottom edge
+uniform vec4 uWater;                 // horizon (frame heights; 2 is off, above 1 in front of the frame), squeeze, smear, reflection at the bottom edge
 uniform vec4 uWaterLook;             // own light, strip gain, strip width (frame heights), ripple lattice (short sides)
+uniform float uWaterAxis;            // water in front of the frame: the height it mirrors about (frame heights); below 0, water in the frame, mirrored about its own line
 uniform int uEdgeSeed;
 uniform float uBaseLum;
 uniform float uLensDisc;             // 1: the disc lens result, 0: the gaussian one
@@ -493,22 +495,23 @@ vec3 scene(float x, float v, vec2 p) {
 
 // Water below a level horizon: the sky mirrored about the line, squeezed toward it, smeared up and down by
 // ripples and dimmer with depth, over the water's own light; a soft lighter strip runs under the line.
-vec3 water(float x, float v, vec2 p) {
+vec3 water(float x, float v, vec2 p, float line) {
   float frameH = uFrameAspect.y;
-  float d = v - uWater.x;
+  float d = v - line;
   float ripple = gradientNoise(vec2(p.x / max(uWaterLook.w, 1e-3), d * frameH / max(0.35 * uWaterLook.w, 1e-3)), uEdgeSeed + 503) / 0.3052;
   float smear = uWater.z * d;
-  float mirrored = uWater.x - uWater.y * d;
+  float mirrored = (uWaterAxis < 0.0 ? line : uWaterAxis) - uWater.y * d;
   vec2 pm = vec2(p.x, (mirrored - 0.5) * frameH);
   vec3 sky = 0.5 * (scene(x, mirrored + smear * (0.6 + 0.4 * ripple), pm) + scene(x, mirrored - smear * (0.6 - 0.4 * ripple), pm));
   // The water's own color shows only in the near half; the far water is a clean mirror, since the own color
-  // mixed under mirrored warm light turns it mauve.
-  float depth = smoothstep(0.5, 1.0, d / max(1.0 - uWater.x, 0.05));
+  // mixed under mirrored warm light turns it mauve. The near half is the lower half of the frame, or for water
+  // in front of the frame (below it, only a drag shows it) the stretch from 0.4 to 0.8 frame heights below its line.
+  float depth = smoothstep(0.5, 1.0, d / (uWaterAxis >= 0.0 ? 0.8 : max(1.0 - line, 0.05)));
   float reflect = mix(0.95, uWater.w, depth);
   vec3 own = uWaterColor * uWaterLook.x * uIntensity;
   // The bright line on the far water: ripples there catch the glow's brightest light, so the strip adds the
   // light found at the glow's peak.
-  float peak = uWater.x - 0.08;
+  float peak = line - 0.08;
   for (int k = 0; k < LIGHT_MAX; k++) {
     if (k >= uLightCount) break;
     if (uLightLook[k].z < -0.5 && int(uLightLook[k].y + 0.5) == 0) {
@@ -516,7 +519,7 @@ vec3 water(float x, float v, vec2 p) {
       break;
     }
   }
-  vec3 caught = scene(x, peak, vec2(p.x, (peak - 0.5) * frameH));
+  vec3 caught = uWaterLook.y > 0.0 ? scene(x, peak, vec2(p.x, (peak - 0.5) * frameH)) : vec3(0.0);
   float strip = uWaterLook.y * exp(-d / max(uWaterLook.z, 1e-4)) * max(0.0, 1.0 + 0.5 * gradientNoise(vec2(p.x / 0.3 + 2.1, 4.4), uEdgeSeed + 509) / 0.3052);
   return reflect * (sky + strip * caught) + (1.0 - reflect) * own;
 }
@@ -525,7 +528,9 @@ vec3 auxRadiance(vec2 uv, vec2 p) {
   // The scene point this frame point shows: the stack runs along the dragged line (the same point without a drag).
   vec2 q = vec2(dot(uStackMap.xy, p), dot(uStackMap.zw, p)) + uStackShift;
   vec2 s = q / uFrameAspect + 0.5;
-  if (uWater.x < 1.5 && s.y > uWater.x) return water(s.x, s.y, q);
+  // Water in front of the frame meets the bank along a shore that wanders, not a ruled line.
+  float line = uWaterAxis >= 0.0 ? uWater.x + 0.035 * edgeWave(q.x, 0.9, 13.0, uEdgeSeed + 61) : uWater.x;
+  if (uWater.x < 1.99 && s.y > line) return water(s.x, s.y, q, line);
   return scene(s.x, s.y, q);
 }
 

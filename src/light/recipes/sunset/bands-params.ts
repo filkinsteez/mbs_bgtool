@@ -150,6 +150,9 @@ export const BANDS_PARAMS: readonly ParamSpec[] = [
   // Water below a level horizon (frame heights; 2 is off): the sky mirrored, squeezed, smeared by ripples, dimmer with depth.
   { kind: 'vector', key: 'water', label: 'Water horizon, squeeze, smear, reflection at the bottom', min: 0, max: 2, step: 0.0005, default: [2, 1.25, 0.3, 0.4] },
   { kind: 'vector', key: 'waterLook', label: 'Water own light, strip gain, strip width, ripple length', min: 0, max: 2, step: 0.0005, default: [0.5, 0, 0.008, 0.05] },
+  // The height the water mirrors about (frame heights); below 0, its own line. Water in front of the frame mirrors
+  // about the top of the bank, so just below the shore it shows the light and then the sky.
+  { kind: 'number', key: 'waterAxis', label: 'Water mirror height', min: -1, max: 2, step: 0.0005, default: -1 },
   // The sky pales toward the light below it: pale light of the sky's own hue rising from 0 at `from` to `amount` at
   // `to` (frame heights), and the sky's own light rising by `gain` over the same span.
   { kind: 'vector', key: 'skyVeil', label: 'Sky veil amount, from, to, light gain', min: -1, max: 2, step: 0.0005, default: [0, 0, 1, 0] },

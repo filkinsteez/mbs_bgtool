@@ -215,6 +215,8 @@ interface Scene {
   skyTint: number[]
   /** Under a long line: the dark pack color the farthest sky sinks toward, how far, and where (frame heights). */
   farSky?: { hex: string; amount: number; full: number; gone: number }
+  /** Water in front of the frame: its line (frame heights, below the frame), the height it mirrors about, squeeze, smear, far reflection, ripple length. */
+  foreWater: { line: number; axis: number; squeeze: number; smear: number; reflect: number; ripple: number }
 }
 
 /** A color of the stack: its hex and the share of nominal light it gets (a deep band is the same color under less light). */
@@ -705,6 +707,7 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   const lightBand = Math.max(0, bands.findIndex((b, i) => b.color === light && under[i] === 1))
   const spanOf = (h: readonly number[]) => h.slice(0, lightBand + 1).reduce((s, v) => s + v, 0) + h[lightBand + 1] / 2
   const ownSpan = spanOf(now)
+  const lastTopOwn = now.slice(0, n - 1).reduce((s, v) => s + v, 0)
   let lineSky: { blueTo: number; crisp: number; far?: { hex: string; amount: number; full: number; gone: number } } = { blueTo: 0, crisp: 0 }
   if (along !== undefined && along < ownSpan) {
     const room = now.slice(0, lightBand + 1).map((v, j) => Math.max(0, v - leastNow[j]))
@@ -759,14 +762,33 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     b.edge = { ...b.edge, base: edgeTop, tilt: b.edge.tilt * s, bumps: b.edge.bumps.map(([bx, bw, sh]) => [bx, bw, sh * s] as Bump), wave: b.edge.wave * s }
   })
 
+  // In front of the frame, below its bottom edge, the ground is water that mirrors the light and the sky beyond the
+  // bank, so a drag that shows only ground still shows the pack's colors. Its line lies a seed's distance below the
+  // light, below the frame and the lens's reach, and keeps its distance below the bank as a drag moves the bands.
+  // It mirrors about the top of the bank (the light's middle when the light's band is the last), so just below
+  // the shore it shows the light, then the bands above it and the sky. It is a dimmed clean mirror: its own blue
+  // under mirrored warm light would turn it pink. Its ripples stay small and broad: ripples that reach across two
+  // mirrored colors far apart (Orange-red and Meta Blue) speckle them, and the lens mixes the speckles to pink.
+  const shore = random(seed * 3571 + pack.id.length * 7 + 13)
+  const shoreAt = Math.max(1 + R / frameH + 0.05, ownSpan + shore.between(0.45, 0.7))
+  const bankTop = bands[bands.length - 1].edge.base
+  const foreWater = {
+    line: Math.min(1.98, shoreAt + bankTop - lastTopOwn),
+    axis: lightBand === bands.length - 1 ? seedSpan : bankTop,
+    squeeze: shore.between(1, 1.8),
+    smear: shore.between(0.03, 0.07),
+    reflect: shore.between(0.6, 0.85),
+    ripple: shore.between(0.15, 0.3),
+  }
+  const zoom = along === undefined ? 1 : zoomOf(along, seedSpan)
+  if (lineSky.crisp > 0) bands.forEach((b) => (b.fade /= zoom ** lineSky.crisp))
+
   // Light: the image's light rises most with Intensity, and above the middle the extra light gathers around the
   // light's column, so white shows only near the light, never as a flat band across the frame. Below the middle
   // the whole scene dims (`dim`), warm bands half as much in stops (much dimmer, and mixed with their neighbours
   // through the lens, they read khaki and mauve), and each band's color deepens as it dims: warm ones toward amber
   // or deep red, a lime toward deep green (`drift`). Next to a dark band, where the lens dims a warm color
   // further, its light changes half as much.
-  const zoom = along === undefined ? 1 : zoomOf(along, seedSpan)
-  if (lineSky.crisp > 0) bands.forEach((b) => (b.fade /= zoom ** lineSky.crisp))
   const haze = hazeOf(list, bands, lightBand, paling, zoom, lineSky.blueTo)
   const dim = Math.min(1, level) ** 1.6
   const darkAt = (j: number) => j >= 0 && j < bands.length && lightness(bands[j].color) * Math.cbrt(under[j]) < 0.45
@@ -838,6 +860,7 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     skyVeil,
     skyTint,
     farSky: lineSky.far,
+    foreWater,
   }
 }
 
@@ -969,7 +992,9 @@ function writeScene(scene: Scene, R: number, stack: ReturnType<typeof stackMap>)
   const far = scene.farSky
   params.farSky = far ? [...hexToLinear(far.hex), far.amount] : [0, 0, 0, 0]
   params.farSpan = far ? [far.full, far.gone] : [0, 0.1]
-  params.water = [2, 1.25, 0.3, 0.4]
-  params.waterLook = [0.5, 0, 0.008, 0.05]
+  const fore = scene.foreWater
+  params.water = [fore.line, fore.squeeze, fore.smear, fore.reflect]
+  params.waterLook = [0, 0, 0.008, fore.ripple]
+  params.waterAxis = fore.axis
   return { colors, params, lens: { bloom: 0, halation: 0 }, output: { grain: 0, exposure: 0 } }
 }
