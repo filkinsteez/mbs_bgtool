@@ -35,10 +35,10 @@ describe('filter control', () => {
     })
   })
 
-  it('shows the slider only while a filter is chosen, named for what it sets: Amount for Grain, Density for ASCII and Pixel', () => {
+  it('shows the slider only while a filter is chosen, named for what it sets: Density for every filter', () => {
     expect(Object.keys(filterDials(DEFAULT_FILTER, 'none'))).toEqual([FILTER_DIAL_KEY])
-    expect(STRENGTH_DIAL_KEYS).toEqual({ grain: 'amount', ascii: 'density', pixel: 'density' })
-    expect(filterDials({ filter: 'grain', strength: 0.8 }, 'grain').amount).toEqual([0.8, 0, 1, 0.01])
+    expect(STRENGTH_DIAL_KEYS).toEqual({ grain: 'density', ascii: 'density', pixel: 'density' })
+    expect(filterDials({ filter: 'grain', strength: 0.8 }, 'grain').density).toEqual([0.8, 0, 1, 0.01])
     expect(Object.keys(filterDials({ filter: 'grain', strength: 0.8 }, 'ascii'))).toEqual([FILTER_DIAL_KEY, 'density'])
     expect(Object.keys(filterDials(DEFAULT_FILTER, 'pixel'))).toEqual([FILTER_DIAL_KEY, 'density'])
     expect(readChoice('ascii')).toBe('ascii')
@@ -53,7 +53,8 @@ describe('filter control', () => {
 
   it('reads the panel values, falling back to no filter at 0.5', () => {
     expect(readFilter({})).toEqual(DEFAULT_FILTER)
-    expect(readFilter({ filter: 'grain', amount: 0.734 })).toEqual({ filter: 'grain', strength: 0.73 })
+    expect(readFilter({ filter: 'grain', density: 0.734 })).toEqual({ filter: 'grain', strength: 0.73 })
+    expect(readFilter({ filter: 'grain', amount: 0.9 })).toEqual({ filter: 'grain', strength: 0.5 })
     expect(readFilter({ filter: 'ascii', density: 1.4 })).toEqual({ filter: 'ascii', strength: 1 })
     expect(readFilter({ filter: 'pixel', amount: 0.9 })).toEqual({ filter: 'pixel', strength: 0.5 })
     expect(readFilter({ filter: 'sepia', density: 0.3 })).toEqual(DEFAULT_FILTER)
@@ -77,7 +78,7 @@ describe('filter control', () => {
     expect(scene.output).toEqual({ grain: 0, exposure: 0.25 })
   })
 
-  it('keeps a Density filter on at 0, its coarsest grid, while Grain at 0 is off', () => {
+  it('keeps ASCII and Pixel on at Density 0, their coarsest grid, while Grain at Density 0 is off', () => {
     expect(withFilter(scene, { filter: 'ascii', strength: 0 }).output.ascii).toBeGreaterThan(0)
     expect(withFilter(scene, { filter: 'ascii', strength: 0 }).output.ascii).toBeLessThan(0.005)
     expect(withFilter(scene, { filter: 'pixel', strength: 0 }).output.pixel).toBeGreaterThan(0)

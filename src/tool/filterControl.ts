@@ -17,7 +17,7 @@ export const FILTER_DIAL_KEY = 'filter'
  * The key of the slider under Filter for each filter, which DialKit shows as its label: what the slider sets for
  * that filter. Its value is the filter's strength, `strength` in the URL.
  */
-export const STRENGTH_DIAL_KEYS: Readonly<Record<FilterKey, string>> = { grain: 'amount', ascii: 'density', pixel: 'density' }
+export const STRENGTH_DIAL_KEYS: Readonly<Record<FilterKey, string>> = { grain: 'density', ascii: 'density', pixel: 'density' }
 
 /** Filters the tool offers, in panel order. A filter joins once it runs in the tool. */
 export const TOOL_FILTERS: readonly FilterKey[] = ['grain', 'ascii', 'pixel']
@@ -26,10 +26,11 @@ export const TOOL_FILTERS: readonly FilterKey[] = ['grain', 'ascii', 'pixel']
 export const DEFAULT_FILTER: FilterState = { filter: 'none', strength: 0.5 }
 
 /**
- * The least value a Density filter gets in the scene: the filter chain leaves out a filter at 0, but Density 0 is the
- * coarsest grid, not off. Grain's Amount 0 is no grain.
+ * The least value ASCII and Pixel get in the scene: the filter chain leaves out a filter at 0, but their Density 0 is
+ * the coarsest grid, not off. Grain's Density 0 is no grain.
  */
 const DENSITY_FLOOR = 0.001
+const FLOORED: readonly FilterKey[] = ['ascii', 'pixel']
 
 const LABELS: Readonly<Record<FilterChoice, string>> = { none: 'None', grain: 'Grain', ascii: 'ASCII', pixel: 'Pixel' }
 
@@ -52,8 +53,8 @@ export function isFilterOn(value: unknown): boolean {
 }
 
 /**
- * The Filter choice, and under it the slider for the chosen filter (Amount for Grain, Density for ASCII and Pixel)
- * only while one is chosen, so the panel never shows a slider that does nothing.
+ * The Filter choice, and under it the chosen filter's Density slider only while one is chosen, so the panel never
+ * shows a slider that does nothing.
  */
 export function filterDials(initial: FilterState, chosen: FilterChoice): DialConfig {
   return {
@@ -98,7 +99,7 @@ export function withFilter(scene: Scene, state: FilterState): Scene {
   const filter = readChoice(state.filter)
   if (filter !== 'none') {
     const strength = readStrength(state.strength)
-    output[filter] = STRENGTH_DIAL_KEYS[filter] === 'density' ? Math.max(strength, DENSITY_FLOOR) : strength
+    output[filter] = FLOORED.includes(filter) ? Math.max(strength, DENSITY_FLOOR) : strength
   }
   return { ...scene, output }
 }

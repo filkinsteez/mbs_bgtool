@@ -5,8 +5,7 @@ import path from 'node:path'
 import sharp from 'sharp'
 import { list, parseArgs } from './lib/args.mjs'
 import { ROOT, startHarness } from './lib/harness.mjs'
-import { composeRow, cropRgba, loadRgba, resizeRgba, savePng, zoom } from './lib/images.mjs'
-import { loadReferences } from './lib/references.mjs'
+import { composeRow, cropRgba, resizeRgba, savePng, zoom } from './lib/images.mjs'
 import { lensBlur, lensKernel } from '../../prototypes/organic-principle/lib/lens.mjs'
 
 const args = parseArgs()
@@ -124,26 +123,6 @@ function highpassStd(values, width, height, r) {
   }
   const mean = sum / n
   return Math.sqrt(Math.max(0, sum2 / n - mean * mean))
-}
-
-/** The size x size window with the lowest mean luma (densest ink), on a 20 px grid, clear of ignore rects. */
-function darkestWindow(image, size, ignore) {
-  let best = { left: 0, top: 0, luma: Infinity }
-  for (let top = 0; top + size <= image.height; top += 20) {
-    for (let left = 0; left + size <= image.width; left += 20) {
-      const overlaps = ignore.some(({ rect: [x, y, w, h] }) => left < x + w && left + size > x && top < y + h && top + size > y)
-      if (overlaps) continue
-      let sum = 0
-      for (let y = top; y < top + size; y += 4) {
-        for (let x = left; x < left + size; x += 4) {
-          const i = (y * image.width + x) * 4
-          sum += 0.2126 * image.data[i] + 0.7152 * image.data[i + 1] + 0.0722 * image.data[i + 2]
-        }
-      }
-      if (sum < best.luma) best = { left, top, luma: sum }
-    }
-  }
-  return best
 }
 
 const started = Date.now()
@@ -683,14 +662,46 @@ try {
     const std4k = lightnessStd(export4k)
     const stdPreview = lightnessStd(preview)
     const stdShrunk = lightnessStd(shrunk)
-    const riso4k = lightnessStd(await grey(1, { width: 3840, height: 2160 }))
-    const { grainAmplitude, grainParams } = await harness.ssr('/src/light/engine/grain.ts')
-    const expected = grainAmplitude(grainParams(0.5), 0.45)
+    const full4k = await grey(1, { width: 3840, height: 2160 }, true)
     record(
-      'grain: strength 0.5 gives the riso grain at its amount for 0.5 at mid-tones, sized to the picture',
-      Math.abs(std4k / expected - 1) < 0.12 && Math.abs(stdShrunk / stdPreview - 1) < 0.15,
-      `L 0.45 grey: std ${(std4k * 100).toFixed(2)} % at 3840x2160 (the grain's formula: ${(expected * 100).toFixed(2)} %), ${(stdPreview * 100).toFixed(2)} % at 960x540, ${(stdShrunk * 100).toFixed(2)} % for the 4K render shrunk to 960x540; strength 1: ${(riso4k * 100).toFixed(2)} %`,
+      'grain: Density 0.5 gives 1 to 2 % L of fine specks at mid-tones, and a preview shows what the export shows at its size',
+      std4k > 0.01 && std4k < 0.02 && Math.abs(stdShrunk / stdPreview - 1) < 0.15,
+      `L 0.45 grey: std ${(std4k * 100).toFixed(2)} % at 3840x2160, ${(stdPreview * 100).toFixed(2)} % at 960x540, ${(stdShrunk * 100).toFixed(2)} % for the 4K render shrunk to 960x540; Density 1: ${(lightnessStd(full4k) * 100).toFixed(2)} % at 4K`,
     )
+    let sum = 0
+    for (let i = 1; i < full4k.data.length; i += 4) sum += full4k.data[i]
+    const meanShift = sum / (full4k.data.length / 4) - 0x55
+    record('grain: a flat grey keeps its mean within 0.1 code values at Density 1 (4K, dither on)', Math.abs(meanShift) < 0.1, `mean shift ${meanShift.toFixed(3)} code values`)
+    const shares = []
+    for (const density of [0.1, 0.25, 0.5, 0.75, 1]) {
+      const image = await grey(density, { width: 1920, height: 1080 })
+      let changed = 0
+      for (let i = 1; i < image.data.length; i += 4) if (Math.abs(image.data[i] - 0x55) >= 3) changed++
+      shares.push(changed / (image.data.length / 4))
+    }
+    record(
+      'grain: more pixels change the higher the Density (1080p, no dither, 3 code values or more)',
+      shares.every((share, i) => i === 0 || share > shares[i - 1]),
+      `Density 0.1 to 1: ${shares.map((s) => `${(s * 100).toFixed(1)} %`).join(', ')}`,
+    )
+    // Speck size: correlation of horizontally adjacent pixels of the 4K render, the same at every Density.
+    const neighbours = (image) => {
+      const { width, data } = image
+      let mean = 0
+      for (let i = 1; i < data.length; i += 4) mean += data[i]
+      mean /= data.length / 4
+      let together = 0
+      let alone = 0
+      for (let i = 1; i + 4 < data.length; i += 4) {
+        if (((i - 1) / 4) % width === width - 1) continue
+        together += (data[i] - mean) * (data[i + 4] - mean)
+        alone += (data[i] - mean) ** 2
+      }
+      return together / alone
+    }
+    const sparse = neighbours(await grey(0.25, { width: 3840, height: 2160 }))
+    const dense = neighbours(await grey(1, { width: 3840, height: 2160 }))
+    record('grain: the speck size stays the same at every Density (4K)', Math.abs(sparse - dense) < 0.06, `neighbour correlation ${sparse.toFixed(3)} at Density 0.25, ${dense.toFixed(3)} at 1`)
     const black = await harness.render({ scene: { program: 'test.flat', colors: ['#000000'], lens: noLens, output: { grain: 1 } }, width: 640, height: 360 })
     record('grain: black stays exact black at strength 1 with dither', black.data.every((v, i) => i % 4 === 3 || v === 0), 'every pixel 0,0,0')
 
@@ -719,45 +730,7 @@ try {
       halves.map(({ program, left, right }) => `${program}: fine L std ${(left * 100).toFixed(2)} % at weight 1, ${(right * 100).toFixed(2)} % at 0.25`).join('; '),
     )
 
-    // Riso crops: a flat field of each crop's mean color at strength 1, weighted the way a riso recipe can weight its
-    // ink: by how much the ink darkens the paper, saturate((L paper - L ink) / 0.5) with paper at L 0.95.
-    const { references } = await loadReferences(harness)
-    const riso = references.filter((ref) => ref.id.endsWith('-riso'))
-    const rows = []
-    let within = 0
-    for (const ref of riso) {
-      const target = await loadRgba(ref.file)
-      const crop = darkestWindow(target, 160, ref.ignore)
-      const targetCrop = await cropRgba(target, crop.left, crop.top, 160, 160)
-      const meanLinear = [0, 1, 2].map((k) => {
-        let sum = 0
-        for (let i = k; i < targetCrop.data.length; i += 4) sum += SRGB_TO_LINEAR[targetCrop.data[i]]
-        return sum / (targetCrop.data.length / 4)
-      })
-      const mean = meanLinear.map((v) => linearToSrgb(v))
-      const hex = `#${mean.map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('')}`
-      const inkL = linearToOklab(meanLinear)[0]
-      const weight = Math.min(1, Math.max(0, (0.95 - inkL) / 0.5))
-      const scene = { program: 'test.grainweight', colors: [hex], params: { left: weight, right: weight }, lens: noLens, output: { grain: 1 } }
-      const render = await harness.render({ scene, width: ref.width, height: ref.height })
-      const scale = 3840 / Math.max(ref.width, ref.height)
-      const size = Math.round(160 * scale)
-      const big = await harness.render({ scene, width: Math.round(ref.width * scale), height: Math.round(ref.height * scale) })
-      const bigCrop = await cropRgba(big, Math.round(crop.left * scale), Math.round(crop.top * scale), size, size)
-      await composeRow(path.join(outDir, `grain-${ref.id}.png`), [
-        { image: await zoom(targetCrop, 3), caption: `${ref.id} 1:1, shown 3x` },
-        { image: await zoom(await cropRgba(render, crop.left, crop.top, 160, 160), 3), caption: `grain 1, weight ${weight.toFixed(2)}, on ${hex} at ${ref.width} px, 3x` },
-        { image: await resizeRgba(targetCrop, size, size, 'lanczos3'), caption: 'target enlarged to 4K' },
-        { image: bigCrop, caption: `the same at ${big.width}x${big.height}, 1:1` },
-      ])
-      const renderCrop = await cropRgba(render, crop.left, crop.top, 160, 160)
-      const targetStd = fine(targetCrop)
-      const renderStd = fine(renderCrop)
-      if (Math.abs(renderStd / targetStd - 1) <= 0.2) within++
-      rows.push(`${ref.id} (ink L ${inkL.toFixed(2)}, weight ${weight.toFixed(2)}): fine Oklab L std target ${(targetStd * 100).toFixed(2)} %, render ${(renderStd * 100).toFixed(2)} % (${(((renderStd / targetStd) - 1) * 100).toFixed(0)} %)`)
-    }
-    record('grain: riso crops within 20 % of their prints with an ink weight', within === riso.length, rows.join('; '))
-    record('grain images written', true, `grain-strength-0.5.png, grain-strength-1.png; ${riso.map((ref) => `grain-${ref.id}.png`).join(', ')}`)
+    record('grain images written', true, 'grain-strength-0.5.png, grain-strength-1.png')
   }
 
   if (wanted('speed')) {

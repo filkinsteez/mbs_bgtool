@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { linearToOklch } from '../color/oklab'
+import { linearToOklab, linearToOklch, oklabToLinear } from '../color/oklab'
 import { PACKS } from '../color/packs'
-import { hexToLinear } from '../color/srgb'
+import { hexToLinear, linearToSrgb, srgbToLinear } from '../color/srgb'
 import { getRecipe, RECIPE_LIST } from '../recipes'
 import { DEFAULT_LENS, RECIPE_IDS, type RecipeContext, type RecipeProgram } from '../scene'
 import { exportFileName, exportSize } from './export'
 import { EXPORT_ASPECTS, EXPORT_SIZES, frameAspect, type ExportAspect } from './frame'
-import { grainAmplitude, grainParams, grainUniforms } from './grain'
+import { grainAmplitude, grainCellPx, grainField, grainParams, grainUniforms } from './grain'
 import { bloomLevelFactors, halationLevelFactors, lensBaseSize, levelForRadius } from './lens'
 import { paperToeInverse, TONE_CROSSTALK, TONE_TIE_BAND, toneCurve } from './output'
 import { radianceScaleFor } from './programRenderer'
@@ -250,37 +250,89 @@ describe('lens weights', () => {
 })
 
 describe('grain', () => {
-  it('sets only the amount: one grain, the riso end, whose amplitude rises as strength^0.6 to the prints at 1', () => {
-    const riso = grainParams(1)
-    expect(riso.amp).toBeCloseTo(0.0168, 6)
-    expect(riso.size).toBeCloseTo(0.0012, 8)
-    expect(riso.inkBoost).toBeCloseTo(0.9, 6)
-    expect(grainParams(0).amp).toBe(0)
-    expect(grainParams(0.5).amp).toBeCloseTo(0.0168 * 0.5 ** 0.6, 6)
-    const character = (p: ReturnType<typeof grainParams>) => [p.size, p.weights, p.shadowEnd, p.highlightCut, p.inkBoost]
-    let last = 0
-    for (const strength of [0.1, 0.25, 0.5, 0.75, 1]) {
-      const params = grainParams(strength)
-      expect(character(params)).toEqual(character(riso))
-      expect(params.amp).toBeGreaterThan(last)
-      last = params.amp
+  // A flat grey through the CPU copy of the stage, as 8-bit code values (green channel) before rounding and dither.
+  const grainedGrey = (code: number, density: number, cellPx: number, size = 192) => {
+    const linear = srgbToLinear(code / 255)
+    const [L, a, b] = linearToOklab([linear, linear, linear])
+    const amp = grainAmplitude(grainParams(density), L)
+    const out = new Float64Array(size * size)
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const g = amp > 0 ? grainField(x, y, density, cellPx, 3) : 0
+        const rgb = oklabToLinear([L + amp * g, a, b]).map((v) => Math.min(1, Math.max(0, v)))
+        out[y * size + x] = linearToSrgb(rgb[1]) * 255
+      }
+    }
+    return out
+  }
+  const mean = (values: Float64Array) => values.reduce((s, v) => s + v, 0) / values.length
+
+  it('is fine specks one pixel across at 1080 px on the short side, the same size and strength at every density', () => {
+    expect(grainCellPx(1920, 1080)).toBe(1)
+    expect(grainCellPx(1080, 1920)).toBe(1)
+    expect(grainCellPx(3840, 2160)).toBe(2)
+    const full = grainUniforms(1, 3840, 2160)
+    for (const density of [0.1, 0.25, 0.5, 0.75, 1]) {
+      const uniforms = grainUniforms(density, 3840, 2160)
+      expect(uniforms.uGrainCell).toBe(2)
+      expect(uniforms.uGrainAmp).toBe(full.uGrainAmp)
+      expect(uniforms.uGrainDensity).toBe(density)
+    }
+    expect(grainUniforms(0, 3840, 2160).uGrainAmp).toBe(0)
+  })
+
+  it('fades to 0 at black and at white and is even in between', () => {
+    const params = grainParams(1)
+    expect(grainAmplitude(params, 0)).toBe(0)
+    expect(grainAmplitude(params, 1)).toBe(0)
+    expect(grainAmplitude(params, 0.3)).toBeCloseTo(grainAmplitude(params, 0.8), 10)
+    expect(grainAmplitude(grainParams(0.25), 0.5)).toBe(grainAmplitude(params, 0.5))
+  })
+
+  it('changes nothing at Density 0 and leaves black exact at Density 1', () => {
+    // At 0 the output pass leaves the stage out, and there are no specks.
+    expect(grainUniforms(0, 1920, 1080).uGrainAmp).toBe(0)
+    let specks = 0
+    for (let y = 0; y < 128; y++) for (let x = 0; x < 128; x++) specks += grainField(x, y, 0, 2, 3) === 0 ? 0 : 1
+    expect(specks).toBe(0)
+    expect(grainedGrey(0, 1, 2).every((v) => v === 0)).toBe(true)
+  })
+
+  it('keeps a flat grey at its mean within 0.1 code values at Density 1', () => {
+    for (const cellPx of [1, 2, 0.83]) {
+      for (const code of [60, 128, 200]) expect(Math.abs(mean(grainedGrey(code, 1, cellPx)) - code)).toBeLessThan(0.1)
     }
   })
 
-  it('fades to 0 at black, is strongest in dark ink and lighter on paper', () => {
-    const riso = grainParams(1)
-    expect(grainAmplitude(riso, 0)).toBe(0)
-    expect(grainAmplitude(riso, 0.45)).toBeCloseTo(0.0168 * 1.45, 6)
-    expect(grainAmplitude(riso, 1)).toBeCloseTo(0.0168 * 0.55, 6)
-    expect(grainAmplitude(grainParams(0.25), 0.6) / grainAmplitude(riso, 0.6)).toBeCloseTo(0.25 ** 0.6, 6)
+  it('changes more pixels the higher the density', () => {
+    for (const cellPx of [1, 2]) {
+      let last = 0
+      for (const density of [0.1, 0.25, 0.5, 0.75, 1]) {
+        const values = grainedGrey(128, density, cellPx)
+        const changed = values.reduce((n, v) => n + (Math.abs(v - 128) >= 3 ? 1 : 0), 0) / values.length
+        expect(changed).toBeGreaterThan(last)
+        last = changed
+      }
+    }
   })
 
-  it('sizes octaves to the short side and lowers the ones smaller than a pixel', () => {
-    const preview = grainUniforms(0.5, 960, 540)
-    const exported = grainUniforms(0.5, 3840, 2160)
-    expect((exported.uGrainSigmaPx as number[])[1]).toBeCloseTo(4 * (preview.uGrainSigmaPx as number[])[1], 6)
-    expect((preview.uGrainWeight as number[])[0]).toBeLessThan((exported.uGrainWeight as number[])[0])
-    expect(grainUniforms(0, 960, 540).uGrainAmp).toBe(0)
+  it('keeps the speck size at every density', () => {
+    // Correlation of horizontally adjacent pixels: set by the speck's shape, not by how many specks there are.
+    const neighbours = (density: number) => {
+      const size = 192
+      const values = grainedGrey(128, density, 2, size)
+      const m = mean(values)
+      let together = 0
+      let alone = 0
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x + 1 < size; x++) {
+          together += (values[y * size + x] - m) * (values[y * size + x + 1] - m)
+          alone += (values[y * size + x] - m) ** 2
+        }
+      }
+      return together / alone
+    }
+    expect(Math.abs(neighbours(0.25) - neighbours(1))).toBeLessThan(0.06)
   })
 
   it('ignores grain settings from before the strength scale', () => {

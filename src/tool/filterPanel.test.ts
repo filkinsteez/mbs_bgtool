@@ -7,7 +7,7 @@ import { DEFAULT_STATE, parseQuery, toQuery } from './state'
 import { getPack } from '@/light'
 
 describe('filter control in the panel', () => {
-  it('adds Amount for Grain and Density for ASCII and Pixel, keeps the pick, and removes the slider for None', () => {
+  it('adds Density for every filter, keeps the pick, and removes the slider for None', () => {
     const id = 'filter-check'
     const config = () => buildDialConfig('sunset', DEFAULT_STATE, 'Export PNG', readChoice(DialStore.getValue(id, FILTER_DIAL_KEY)))
     DialStore.registerPanel(id, 'Check', buildDialConfig('sunset', DEFAULT_STATE, 'Export PNG', 'none'))
@@ -18,12 +18,12 @@ describe('filter control in the panel', () => {
 
     DialStore.updateValue(id, FILTER_DIAL_KEY, 'grain')
     DialStore.updatePanel(id, 'Check', config())
-    expect(paths()).toEqual(['mood', 'look', 'colors', 'filter', 'amount', 'intensity', 'softness', 'horizon', 'format', 'export'])
-    expect(labels()).toContain('Amount')
+    expect(paths()).toEqual(['mood', 'look', 'colors', 'filter', 'density', 'intensity', 'softness', 'horizon', 'format', 'export'])
+    expect(labels()).toContain('Density')
     expect(DialStore.getValue(id, 'filter')).toBe('grain')
-    expect(DialStore.getValue(id, 'amount')).toBe(0.5)
+    expect(DialStore.getValue(id, 'density')).toBe(0.5)
 
-    DialStore.updateValue(id, 'amount', 0.8)
+    DialStore.updateValue(id, 'density', 0.8)
     const state = readToolState(DialStore.getValues(id), 'sunset', 1)
     expect(state).toMatchObject({ filter: 'grain', strength: 0.8 })
     expect(toQuery(state)).toBe('mood=sunset&look=ramp&pack=bold&intensity=0.5&softness=0.5&horizon=0.5&seed=1&format=16x9&filter=grain&strength=0.8')
@@ -45,7 +45,7 @@ describe('filter control in the panel', () => {
     expect(toQuery(off)).not.toContain('filter')
 
     const linked = parseQuery(new URLSearchParams('mood=contour&look=rim&filter=grain&strength=0.3'))
-    expect(buildDialConfig('contour', linked, 'Export PNG', readChoice(linked.filter)).amount).toEqual([0.3, 0, 1, 0.01])
+    expect(buildDialConfig('contour', linked, 'Export PNG', readChoice(linked.filter)).density).toEqual([0.3, 0, 1, 0.01])
     DialStore.unregisterPanel(id)
   })
 })

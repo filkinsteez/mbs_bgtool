@@ -20,7 +20,7 @@ const PACK_OPTIONS = PACKS.map((pack) => ({ value: pack.id, label: pack.name }))
  * The seed is not in the panel: the tool shows it as a typed field next to
  * Back and Shuffle, after the mood control.
  * The look options and the mood control's key change with the mood, and the
- * slider under Filter (Amount or Density) with the filter chosen in the panel,
+ * Density slider under Filter with the filter chosen in the panel,
  * none while no filter is; DialKit keeps the other values and resets controls
  * whose old value no longer fits.
  */

@@ -1,5 +1,17 @@
 # Grain: what the moodboard shows and what the tool makes
 
+## Now: fine specks with a Density slider (2026-11-05)
+
+The owner replaced the riso grain on 2026-11-05 (11:07 AM; `artifacts/agent-context/SHARED.md`, "Grain is fine specks with a Density slider"). Seen 1:1 on frames at the poster's size, the riso grain was blotches several pixels across, and 20 px clouds in a 4K export. It had been matched to the riso tiles, a 567 px scan that Figma shows about 3 times larger, so their grain is 2 px clumps. The rest of this note, from "Measured on 2026-11-04" on, describes that riso grain and the measurements behind it.
+
+The grain now (`src/light/engine/grain.ts`):
+
+- Fine specks like Figma's Noise effect, which is what the deck's Grain picture (44:204) is, and the brief's "fine film grain, 1 to 2 percent" (44:274). A speck is one pixel at 1080 px on the short side: about 2 px with soft edges in a 4K export (a one-pixel core with half-strength edges), and under a pixel in a small preview, where each pixel averages the specks it covers. There are no larger clumps or clouds.
+- The slider is Density: the share of cells with a speck. 0 is no grain; 1 is a speck in every cell. Speck size and strength are the same at every Density, and the specks at a lower Density are a subset of those at a higher one.
+- Each speck is lighter or darker by 0.025 to 0.05 Oklab L before blending, so the mean stays (a flat grey moves 0.04 code values at Density 1 in a 4K export). Lightness only, so no new colors. It fades to 0 at black, so black stays exact, and near white (from L 0.94), where lighter specks would clip and leave only dark ones.
+- Measured with `scripts/light/check.mjs` on an L 0.45 grey: Density 0.5 is 1.7 % L in a 4K export, Density 1 2.4 % (the deck's picture: 2.2 % on its gradient). A 960x540 preview at Density 0.5 shows 1.02 %, and the 4K export shrunk to 960x540 shows 1.03 %. At 1080p, Density 0.1 changes 10 % of the pixels by 3 code values or more, and Density 1 changes 92 %.
+- Sheet: `prototypes/grain-density/results/grain-density.jpg`, 1:1 crops of Bands Bold, Ramp Atmospheric and Rim Bold at 4K and at 1600 px, Density 0.1 to 1, next to the riso grain at 1 and the deck's picture.
+
 Measured on 2026-11-04 with `scripts/light/grain-measure.mjs`, the same code for the reference images and for our renders (usage in `scripts/light/README.md`, "Grain measurement"). Numbers, sheets and crops are in `artifacts/grain/measure/` (`refs.md`, `renders.md`, `sheets/`, `crops/`); the script writes them again.
 
 How to read the numbers:

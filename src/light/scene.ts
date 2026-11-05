@@ -108,8 +108,8 @@ export interface OutputSettings {
   /** Stops applied before the tone curve. */
   exposure: number
   /**
-   * Grain amount 0..1, mono on Oklab L, sized to the short side: 0 off, 1 the
-   * riso prints; one grain whose amplitude rises as amount^0.6 (engine/grain.ts).
+   * Grain density 0..1: fine specks on Oklab L, one pixel at 1080 px on the
+   * short side; 0 off, 1 a speck in every cell (engine/grain.ts).
    * Presets from before this change may carry grainSize (px) and grainChroma;
    * those keys are ignored.
    */

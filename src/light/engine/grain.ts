@@ -2,38 +2,42 @@ import type { UniformMap } from '../scene'
 import type { OutputFilter } from './filters/types'
 
 /**
- * The Grain filter from prototypes/grain-study (README, lib/filter.mjs,
- * presets/grain-filter.json): mono grain on Oklab L at output size, after the
- * tone curve and before dither. One grain character, the riso end, which
- * matches the three riso prints at 925 px: its size and octave mix scale with
- * the frame. The strength 0..1 sets only its amount, up to the prints' at 1.
+ * Grain: fine specks on Oklab L at output size, after the tone curve and
+ * before dither, like Figma's Noise effect (the deck's Grain picture, 44:204)
+ * and the brief's fine film grain. A speck is one pixel at 1080 px on the short
+ * side: cells are shortSide / 1080 px, about 2 px in a 4K export and under a
+ * pixel in a small preview. The strength is the Density: the share of cells
+ * with a speck, from none at 0 to every cell at 1. Each speck is lighter or
+ * darker by a fixed amount, so the mean stays, and neither its size nor its
+ * strength changes with Density.
  *
- *   L' = L + amp(L) * G(x)
- *   G  = sum_k w_k N_k / sqrt(sum w_k^2), N_k unit noise of blob sigma rel_k * size * shortSide
- *   amp(L) = ampMid * smoothstep(0, shadowEnd, L) * (1 - highlightCut * smoothstep(0.5, 1, L))
- *                   * (1 + inkBoost * (smoothstep(0.85, 0.45, L) - 0.5))
+ *   L' = L + amp(L) * weight * G(x)
+ *   G  = the cells' specks blended bilinearly between cell centres (which sit
+ *        on pixel centres), averaged over the output pixel, so a 4K speck is a
+ *        pixel with soft edges and a pixel larger than a cell shows what a
+ *        larger render shrunk to its size shows
+ *   speck = 0, or +-(0.5..1) for a share `density` of cells
+ *   amp(L) = SPECK * smoothstep(0, shadowEnd, L) * (1 - smoothstep(highlightStart, 1, L))
+ *
+ * Black stays black, and the grain fades out near white, where lighter specks
+ * would clip and leave only dark ones.
  */
-interface GrainEnd {
-  amp: number
-  /** Blob sigma as a fraction of the short side. */
-  size: number
-  weights: readonly [number, number, number, number]
+
+/** Cells across the short side: a speck is one pixel at 1080 px. */
+export const GRAIN_CELLS_PER_SHORT_SIDE = 1080
+/** Oklab L change of a full speck: Density 0.5 gives about 1.7 % L of grain in mid-tones, Density 1 about 2.4 %. */
+const SPECK = 0.05
+const SHADOW_END = 0.2
+const HIGHLIGHT_START = 0.94
+/** Cells averaged per axis at most; frames under about 300 px on the short side lose a little grain. */
+const SPAN = 6
+
+export interface GrainParams {
+  /** Share of cells with a speck, 0..1. */
+  density: number
+  speck: number
   shadowEnd: number
-  highlightCut: number
-  inkBoost: number
-}
-
-/** Octave sizes relative to `size`. */
-export const GRAIN_OCTAVES = [0.5, 1, 2, 8] as const
-/** The grain at strength 1. */
-const RISO: GrainEnd = { amp: 0.0168, size: 0.0012, weights: [0.1, 0.6, 0.72, 0.12], shadowEnd: 0.2, highlightCut: 0, inkBoost: 0.9 }
-/** Amplitude grows as strength^AMOUNT_POWER, so low settings already show (0.25 gives 44 % of the prints' amplitude). */
-const AMOUNT_POWER = 0.6
-/** Octaves at least this many output pixels wide use lattice noise; smaller ones per-pixel noise. */
-export const LATTICE_MIN_SIGMA_PX = 0.6
-
-export interface GrainParams extends GrainEnd {
-  strength: number
+  highlightStart: number
 }
 
 const smoothstep = (a: number, b: number, x: number) => {
@@ -41,98 +45,152 @@ const smoothstep = (a: number, b: number, x: number) => {
   return t * t * (3 - 2 * t)
 }
 
-/** The strength sets the amplitude only. */
+/** The strength is the Density; speck size and strength stay the same. */
 export function grainParams(strength: number): GrainParams {
-  const s = Math.min(1, Math.max(0, Number.isFinite(strength) ? strength : 0))
-  return { ...RISO, strength: s, amp: RISO.amp * s ** AMOUNT_POWER }
+  const density = Math.min(1, Math.max(0, Number.isFinite(strength) ? strength : 0))
+  return { density, speck: SPECK, shadowEnd: SHADOW_END, highlightStart: HIGHLIGHT_START }
 }
 
-/** Standard deviation of the grain in Oklab L at lightness L. */
+/** Oklab L change of a full speck at lightness L. */
 export function grainAmplitude(params: GrainParams, L: number): number {
-  const shadow = smoothstep(0, params.shadowEnd, L)
-  const highlight = 1 - params.highlightCut * smoothstep(0.5, 1, L)
-  const ink = 1 + params.inkBoost * (1 - smoothstep(0.45, 0.85, L) - 0.5)
-  return params.amp * shadow * highlight * ink
+  return params.speck * smoothstep(0, params.shadowEnd, L) * (1 - smoothstep(params.highlightStart, 1, L))
 }
 
-/**
- * Uniforms for GRAIN_GLSL at an output size. Octave k's weight includes
- * sqrt(1 / (1 + 1 / (4 pi sigma^2))): an octave smaller than a pixel loses
- * the variance a pixel would average away, so a preview shows the grain an
- * export shows at the same viewing size.
- */
+/** A cell's size in output pixels. */
+export function grainCellPx(width: number, height: number): number {
+  return Math.min(width, height) / GRAIN_CELLS_PER_SHORT_SIDE
+}
+
+/** Uniforms for GRAIN_GLSL at an output size. */
 export function grainUniforms(strength: number, width: number, height: number): UniformMap {
   const params = grainParams(strength)
-  const short = Math.min(width, height)
-  const sigmas = GRAIN_OCTAVES.map((rel) => rel * params.size * short)
-  const norm = Math.sqrt(params.weights.reduce((sum, w) => sum + w * w, 0)) || 1
-  const weights = params.weights.map((w, k) => (w * Math.sqrt(1 / (1 + 1 / (4 * Math.PI * sigmas[k] * sigmas[k])))) / norm)
   return {
-    uGrainAmp: params.strength > 0 ? params.amp : 0,
-    uGrainSigmaPx: sigmas,
-    uGrainWeight: weights,
-    uGrainCurve: [params.shadowEnd, params.highlightCut, params.inkBoost],
+    uGrainAmp: params.density > 0 ? params.speck : 0,
+    uGrainDensity: params.density,
+    uGrainCell: grainCellPx(width, height),
+    uGrainCurve: [params.shadowEnd, params.highlightStart],
   }
+}
+
+// The same math on the CPU, for tests and scripts.
+
+function pcg3d(a: number, b: number, c: number): [number, number, number] {
+  let x = (Math.imul(a, 1664525) + 1013904223) >>> 0
+  let y = (Math.imul(b, 1664525) + 1013904223) >>> 0
+  let z = (Math.imul(c, 1664525) + 1013904223) >>> 0
+  x = (x + Math.imul(y, z)) >>> 0
+  y = (y + Math.imul(z, x)) >>> 0
+  z = (z + Math.imul(x, y)) >>> 0
+  x = (x ^ (x >>> 16)) >>> 0
+  y = (y ^ (y >>> 16)) >>> 0
+  z = (z ^ (z >>> 16)) >>> 0
+  x = (x + Math.imul(y, z)) >>> 0
+  y = (y + Math.imul(z, x)) >>> 0
+  z = (z + Math.imul(x, y)) >>> 0
+  return [x, y, z]
+}
+
+const unit = (v: number) => (v >>> 8) / 16777216
+
+/** A cell's speck: 0, or lighter or darker by 0.5 to 1, for a share `density` of cells (GLSL grainSpeck). */
+export function grainSpeck(cx: number, cy: number, seed: number, density: number): number {
+  const [hx, hy, hz] = pcg3d(cx + 1048576, cy + 1048576, grainSeed(seed) + 1048576)
+  if (unit(hx) >= density) return 0
+  return (unit(hy) < 0.5 ? -0.5 : 0.5) * (1 + unit(hz))
+}
+
+function grainSeed(seed: number): number {
+  return seed * 131 + 1048576
+}
+
+/** Integral of the unit tent (1 - |t|) from -1 to t. */
+function tentArea(t: number): number {
+  const s = Math.min(1, Math.max(-1, t))
+  return s < 0 ? 0.5 * (1 + s) * (1 + s) : 1 - 0.5 * (1 - s) * (1 - s)
+}
+
+function axisWeights(a: number, len: number): { first: number; weights: number[] } {
+  const first = Math.floor(a)
+  const count = Math.min(Math.ceil(a + len) - first + 1, SPAN)
+  const weights = []
+  for (let k = 0; k < count; k++) weights.push((tentArea(a + len - (first + k)) - tentArea(a - (first + k))) / len)
+  return { first, weights }
+}
+
+/** The speck field G at output pixel (x, y) (GLSL grainField). */
+export function grainField(x: number, y: number, density: number, cellPx: number, seed: number): number {
+  const len = 1 / cellPx
+  const ax = axisWeights((x - 0.5) * len, len)
+  const ay = axisWeights((y - 0.5) * len, len)
+  let g = 0
+  ay.weights.forEach((wy, j) => {
+    if (wy <= 0) return
+    ax.weights.forEach((wx, i) => {
+      if (wx > 0) g += wy * wx * grainSpeck(ax.first + i, ay.first + j, seed, density)
+    })
+  })
+  return g
 }
 
 /** Needs CHUNK_LIBRARY (hashes, Oklab) and uSeed. */
 export const GRAIN_GLSL = /* glsl */ `
-uniform float uGrainAmp;
-uniform vec4 uGrainSigmaPx;
-uniform vec4 uGrainWeight;
-uniform vec3 uGrainCurve;  // shadowEnd, highlightCut, inkBoost
+uniform float uGrainAmp;      // Oklab L change of a full speck; 0 is off
+uniform float uGrainDensity;  // share of cells with a speck
+uniform float uGrainCell;     // cell size in output pixels: short side / ${GRAIN_CELLS_PER_SHORT_SIDE}
+uniform vec2 uGrainCurve;     // lightness where the grain is full above black, where it starts to fade below white
 
-// Unit-variance noise from three hashed uniforms (close to gaussian once blended).
-float grainValue(ivec2 cell, int seed) {
+// A cell's speck: 0, or lighter or darker by 0.5 to 1, for a share uGrainDensity of cells.
+float grainSpeck(ivec2 cell, int seed) {
   vec3 u = unitFromUint(hashKey(ivec3(cell, seed)));
-  return (u.x + u.y + u.z - 1.5) * 2.0;
+  if (u.x >= uGrainDensity) return 0.0;
+  return (u.y < 0.5 ? -0.5 : 0.5) * (1.0 + u.z);
 }
 
-vec4 bsplineWeights4(float t) {
-  float t2 = t * t;
-  float t3 = t2 * t;
-  return vec4(1.0 - 3.0 * t + 3.0 * t2 - t3, 4.0 - 6.0 * t2 + 3.0 * t3, 1.0 + 3.0 * t + 3.0 * t2 - 3.0 * t3, t3) / 6.0;
+// Integral of the unit tent (1 - |t|) from -1 to t.
+float grainTentArea(float t) {
+  t = clamp(t, -1.0, 1.0);
+  return t < 0.0 ? 0.5 * (1.0 + t) * (1.0 + t) : 1.0 - 0.5 * (1.0 - t) * (1.0 - t);
 }
 
-// Lattice values blended with cubic B-spline weights over 4 x 4 cells, divided by the weights' root sum of
-// squares so the variance is the same everywhere. A blob sigma is about 0.577 lattice cells.
-float latticeNoise(vec2 u, int seed) {
-  vec2 cell = floor(u);
-  vec4 wx = bsplineWeights4(u.x - cell.x);
-  vec4 wy = bsplineWeights4(u.y - cell.y);
-  ivec2 base = ivec2(cell) - 1;
-  float sum = 0.0;
-  for (int j = 0; j < 4; j++) {
-    float row = 0.0;
-    for (int i = 0; i < 4; i++) row += wx[i] * grainValue(base + ivec2(i, j), seed);
-    sum += wy[j] * row;
-  }
-  return sum / sqrt(dot(wx, wx) * dot(wy, wy));
-}
-
+// The cells' specks blended bilinearly, averaged over the pixel. Cell centres sit on pixel centres (cell i on pixel
+// i * uGrainCell), so a 2 px cell gives a speck with a one-pixel core and soft edges rather than a soft 2 x 2 block.
 float grainField(ivec2 px) {
+  float len = 1.0 / uGrainCell;
+  vec2 a = (vec2(px) - 0.5) * len;
+  ivec2 first = ivec2(floor(a));
+  ivec2 count = min(ivec2(ceil(a + len)) - first + 1, ivec2(${SPAN}));
+  float wx[${SPAN}];
+  float wy[${SPAN}];
+  for (int k = 0; k < ${SPAN}; k++) {
+    vec2 cell = vec2(first + k);
+    wx[k] = k < count.x ? (grainTentArea(a.x + len - cell.x) - grainTentArea(a.x - cell.x)) / len : 0.0;
+    wy[k] = k < count.y ? (grainTentArea(a.y + len - cell.y) - grainTentArea(a.y - cell.y)) / len : 0.0;
+  }
+  int seed = uSeed * 131 + 1048576;
   float g = 0.0;
-  for (int k = 0; k < 4; k++) {
-    float w = uGrainWeight[k];
-    if (w <= 0.0) continue;
-    float sigma = uGrainSigmaPx[k];
-    int seed = uSeed * 131 + k * 7919 + 1048576;
-    g += w * (sigma >= ${LATTICE_MIN_SIGMA_PX.toFixed(1)} ? latticeNoise((vec2(px) + 0.5) * 0.577 / sigma, seed) : grainValue(px, seed));
+  for (int j = 0; j < ${SPAN}; j++) {
+    if (j >= count.y) break;
+    if (wy[j] <= 0.0) continue;
+    float row = 0.0;
+    for (int i = 0; i < ${SPAN}; i++) {
+      if (i >= count.x) break;
+      if (wx[i] > 0.0) row += wx[i] * grainSpeck(first + ivec2(i, j), seed);
+    }
+    g += wy[j] * row;
   }
   return g;
 }
 
 float grainAmplitude(float L) {
-  float shadow = smoothstep(0.0, uGrainCurve.x, L);
-  float highlight = 1.0 - uGrainCurve.y * smoothstep(0.5, 1.0, L);
-  float ink = 1.0 + uGrainCurve.z * (0.5 - smoothstep(0.45, 0.85, L));
-  return uGrainAmp * shadow * highlight * ink;
+  return uGrainAmp * smoothstep(0.0, uGrainCurve.x, L) * (1.0 - smoothstep(uGrainCurve.y, 1.0, L));
 }
 
 // Display-linear in, display-linear out: grain moves Oklab L only, scaled by the recipe's 0..1 weight at this pixel.
 vec3 applyGrain(vec3 display, ivec2 px, float weight) {
   vec3 lab = linearToOklab(display);
-  lab.x += grainAmplitude(lab.x) * weight * grainField(px);
+  float amp = grainAmplitude(lab.x) * weight;
+  if (amp <= 0.0) return display;
+  lab.x += amp * grainField(px);
   return saturate(oklabToLinear(lab));
 }
 `
