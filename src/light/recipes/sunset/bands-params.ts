@@ -153,6 +153,8 @@ export const BANDS_PARAMS: readonly ParamSpec[] = [
   // The sky pales toward the light below it: pale light of the sky's own hue rising from 0 at `from` to `amount` at
   // `to` (frame heights), and the sky's own light rising by `gain` over the same span.
   { kind: 'vector', key: 'skyVeil', label: 'Sky veil amount, from, to, light gain', min: -1, max: 2, step: 0.0005, default: [0, 0, 1, 0] },
+  // The light that veil adds, in linear light: a tint of the pack's own colors (Cyan, Lime, Steel).
+  { kind: 'vector', key: 'skyTint', label: 'Sky veil light, linear red, green, blue', min: 0, max: 4, step: 0.0005, default: [1, 1, 1] },
   // The stack along the dragged line: a frame point p (short sides from the frame's center, y down) shows the scene
   // at (a b; c d) p + (e, f). The identity without a drag.
   { kind: 'vector', key: 'stack', label: 'Stack along the drag: a, b, c, d, e, f', min: -20, max: 20, step: 0.0001, default: [1, 0, 0, 1, 0, 0] },

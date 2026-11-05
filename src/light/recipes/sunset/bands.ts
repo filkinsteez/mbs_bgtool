@@ -133,7 +133,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     uBandPale: pale,
     uBandCore: core,
     uBandVeil: veil,
-    uSkyVeilColor: paleLight(ctx.colors[0] as Rgb).map((v) => v * Math.max(0, ctx.vec('skyVeil')[0])),
+    uSkyVeilColor: ctx.vec('skyTint').map((v) => v * Math.max(0, ctx.vec('skyVeil')[0])),
     uSkyVeilSpan: ctx.vec('skyVeil').slice(1, 4),
     uBumpAt: bumps.at,
     uBumpWidth: bumps.width,
@@ -211,8 +211,8 @@ uniform vec3 uBandDrift[BAND_MAX];  // how fast red, green and blue deepen as th
 uniform vec3 uBandPale[BAND_MAX];   // pale light of the band's own hue at its core, near the light's column (0: none)
 uniform vec2 uBandCore[BAND_MAX];   // the band's height (frame heights) and where its core is (0 its top, 1 its height below)
 uniform vec4 uBandVeil[BAND_MAX];   // pale light of the band's own hue at its lower edge (rgb, 0: none), the band's height
-uniform vec3 uSkyVeilColor;          // pale light of the sky's own hue where the sky meets the light's side (0: none)
-uniform vec3 uSkyVeilSpan;           // where that veil starts and is full (frame heights), the sky's light gain there
+uniform vec3 uSkyVeilColor;          // light of the pack's own tint where the sky meets the light's side (0: none)
+uniform vec3 uSkyVeilSpan;           // where that veil starts and is full (frame heights), the sky's own light change there
 uniform vec4 uBumpAt[BAND_MAX];
 uniform vec4 uBumpWidth[BAND_MAX];
 uniform vec4 uBumpTop[BAND_MAX];
@@ -328,8 +328,8 @@ vec3 scene(float x, float v, vec2 p) {
   float giveWay = exp(-uExtinction * glowDepth);
   vec3 c = base * skyGain * giveWay;
   if (uSkyVeilColor != vec3(0.0) || uSkyVeilSpan.z != 0.0) {
-    // The sky pales toward the light: its full color only at the far edge, then more light and a pale tint of its
-    // own hue all the way down to where the bands begin.
+    // The sky pales toward the light: its full color only at the far edge, then it gives way to a tint of the pack's
+    // own colors all the way down to where the bands begin.
     float t = smoothstep(uSkyVeilSpan.x, uSkyVeilSpan.y, v);
     c = c * (1.0 + uSkyVeilSpan.z * t) + toMix(uSkyVeilColor) * t * skyGain * giveWay;
   }
