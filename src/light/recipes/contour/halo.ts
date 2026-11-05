@@ -324,7 +324,7 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     ring1Flip: layout.shape.flip,
     ring1Color: 2,
     ring1Gain: 1,
-    ...(rings ? ringParts('ring1') : paleArc ? arcParts('ring1') : haloParts('ring1', light.hex)),
+    ...(rings ? ringParts('ring1') : paleArc ? arcParts('ring1', light.hex) : haloParts('ring1', light.hex)),
     ...(rings && partner ? { ring1Color2: 4 } : {}),
     ...(drift ? { ring1Drift: drift.ratios, ring1DriftShape: [drift.knee, drift.sharpness] } : {}),
     ring2On: Boolean(second),

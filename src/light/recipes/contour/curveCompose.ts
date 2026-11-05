@@ -1,6 +1,7 @@
 import { linearToOklab } from '../../color/oklab'
 import type { ColorPack, PackColor } from '../../color/packs'
 import { hexToLinear } from '../../color/srgb'
+import { toneCurve } from '../../engine/output'
 import { primitiveLength, primitivePoint, transformShape, type Shape, type Vec2 } from './shapes'
 
 /** Helpers that turn a pack, the tool controls, a seed and a frame aspect into curve light params. */
@@ -406,6 +407,40 @@ export function productionParts(prefix: string, light: ProductionLight): Record<
 const prefixed = (prefix: string, values: Record<string, number | number[]>) =>
   Object.fromEntries(Object.entries(values).map(([key, value]) => [`${prefix}${key}`, value]))
 
+/** Oklab chroma a light still has where it is overexposed to near white: a little above the palette check's white. */
+const NEAR_WHITE_CHROMA = 0.04
+const nearWhiteLevels = new Map<string, number>()
+
+/**
+ * How many times its own level a light can reach before the tone curve fades it to near white, at most `cap`. Cyan
+ * and Lime get there by about 3, Yellow at about 8, Orange-red only past 12. A band brighter than this at its peak
+ * is pure white there and no longer shows which light it is.
+ */
+export function nearWhiteLevel(hex: string, cap = 12): number {
+  const key = `${hex}:${cap}`
+  const known = nearWhiteLevels.get(key)
+  if (known !== undefined) return known
+  const light = hexToLinear(hex)
+  const chroma = (level: number) => {
+    const [, a, b] = linearToOklab(toneCurve(light.map((v) => v * level)))
+    return Math.hypot(a, b)
+  }
+  let level = cap
+  if (chroma(1) <= NEAR_WHITE_CHROMA) level = 1
+  else if (chroma(cap) <= NEAR_WHITE_CHROMA) {
+    let lo = 1
+    let hi = cap
+    for (let i = 0; i < 30; i++) {
+      const mid = (lo + hi) / 2
+      if (chroma(mid) > NEAR_WHITE_CHROMA) lo = mid
+      else hi = mid
+    }
+    level = hi
+  }
+  nearWhiteLevels.set(key, level)
+  return level
+}
+
 /**
  * A halo's point-spread function under a key prefix, laid out like a 22 degree
  * halo: dark inside, a fairly sharp rise at the curve, a crest band 0.035
@@ -439,14 +474,18 @@ export function haloParts(prefix: string, hex: string): Record<string, number | 
   // inner edge fades over about a tenth of the short side like the example's, instead of a hard limb. It widens where
   // the light dims, so its ends fade out broad instead of narrowing to a point. The tone curve turns a yellow light
   // between about 1.5 and 5 times its own level into one flat lemon, so the band's body stays near the light's level
-  // and only a narrow core (near part 2) goes near white where the light is strong.
+  // and only a narrow core (near part 2) goes near white where the light is strong, up to the light's near-white level.
+  // A white or grey light has no color to keep, so its band keeps a broad bright body that overexposes to white.
   const band = { Side: 0, Offset: -0.05, Light: 1, Grow: 1, GrowBy: [-0.375, 0.5] }
+  const white = nearWhiteLevel(hex) <= 1
+  const body = white ? { Weight: 4, Width: 0.12, Shape: 8 } : { Weight: 1.6, Width: 0.17, Shape: 6 }
+  const core = white ? 0 : round4(Math.min(9, Math.max(0, nearWhiteLevel(hex) - body.Weight)))
   const parts: Record<string, number | number[]> = {
-    ...prefixed('n1', { ...band, Weight: 1.6, Width: 0.17, Shape: 6, LightGamma: 1 }),
-    ...prefixed('n2', { ...band, Weight: 9, Width: 0.055, Shape: 8, LightGamma: 2.5 }),
+    ...prefixed('n1', { ...band, ...body, LightGamma: 1 }),
+    ...prefixed('n2', { ...band, Weight: core, Width: 0.055, Shape: 8, LightGamma: 2.5 }),
     n3Weight: 0,
     f1Weight: 0,
-    ...prefixed('f2', { ...outside, Weight: 0.7, Width: 0.22, MaskSoft: 0.04 }),
+    ...prefixed('f2', { ...outside, Weight: white ? 0.8 : 0.7, Width: 0.22, MaskSoft: 0.04 }),
     f3Weight: 0,
   }
   return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
@@ -534,11 +573,13 @@ export function dragLight(
  * light field 1.
  */
 export function ringParts(prefix: string): Record<string, number | number[]> {
+  // The inside glow fades across the line instead of stopping at it: where two rings cross, their inside glows add,
+  // and with a crisp edge the overlap read as a filled sail between the arcs, most of all under a drag.
   const parts: Record<string, number | number[]> = {
     ...prefixed('n1', { Weight: 0.9, Width: 0.0035, Shape: 8, Side: 0, Offset: 0, Light: 1, LightGamma: 1, Grow: 0 }),
     ...prefixed('n2', { Weight: 0.4, Width: 0.02, Shape: 4, Side: 0, Offset: 0, Light: 1, LightGamma: 1, Grow: 0 }),
     n3Weight: 0,
-    ...prefixed('f1', { Weight: 0.2, Width: 0.09, Side: 1, Light: 1, LightGamma: 1, MaskSoft: 0.01 }),
+    ...prefixed('f1', { Weight: 0.2, Width: 0.12, Side: 1, Light: 1, LightGamma: 1, MaskSoft: 0.14 }),
     ...prefixed('f2', { Weight: 0.05, Width: 0.09, Side: 2, Light: 1, LightGamma: 1, MaskSoft: 0.01 }),
     f3Weight: 0,
   }
@@ -550,15 +591,18 @@ export function ringParts(prefix: string): Record<string, number | number[]> {
  * toward a near-white core, the light's own saturated color falling off inside it, and a short edge outside, so the
  * full color shows only in a band between the pale arc and the dark. All parts follow light field 1.
  */
-export function arcParts(prefix: string): Record<string, number | number[]> {
+export function arcParts(prefix: string, hex: string): Record<string, number | number[]> {
   // The band widens where the light dims, so its two edges spread apart along the curve instead of running parallel,
   // and its ends fade out broad instead of narrowing to a point. As in haloParts, the two bands stay near the light's
-  // own level and only a narrow core between them (near part 3) goes near white where the light is strong.
-  const band = { Shape: 6, Side: 0, Light: 1, LightGamma: 1, Grow: 1, GrowBy: [-0.4, 0.5], Width: 0.11 }
+  // own level and only a narrow core between them (near part 3) goes near white where the light is strong, up to the
+  // light's near-white level (the two bands add to about 1.7 there). A white or grey light keeps brighter bands.
+  const white = nearWhiteLevel(hex) <= 1
+  const band = { Shape: white ? 8 : 6, Side: 0, Light: 1, LightGamma: 1, Grow: 1, GrowBy: [-0.4, 0.5], Width: white ? 0.1 : 0.11 }
+  const core = white ? 0 : round4(Math.min(8, Math.max(0, nearWhiteLevel(hex) - 1.7)))
   const parts: Record<string, number | number[]> = {
-    ...prefixed('n1', { ...band, Weight: 1, Offset: 0 }),
-    ...prefixed('n2', { ...band, Weight: 0.7, Offset: 0.04 }),
-    ...prefixed('n3', { ...band, Weight: 8, Width: 0.04, Shape: 8, Offset: 0.02, LightGamma: 2.5 }),
+    ...prefixed('n1', { ...band, Weight: white ? 1.5 : 1, Offset: 0 }),
+    ...prefixed('n2', { ...band, Weight: white ? 1.1 : 0.7, Offset: 0.04 }),
+    ...prefixed('n3', { ...band, Weight: core, Width: 0.04, Shape: 8, Offset: 0.02, LightGamma: 2.5 }),
     ...prefixed('f1', { Weight: 0.55, Width: 0.09, Side: 1, Light: 1, LightGamma: 1, MaskSoft: 0.015 }),
     ...prefixed('f2', { Weight: 0.12, Width: 0.03, Side: 2, Light: 1, LightGamma: 1, MaskSoft: 0.015 }),
     f3Weight: 0,
