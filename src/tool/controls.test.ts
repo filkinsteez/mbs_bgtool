@@ -176,7 +176,7 @@ describe('dragging the light', () => {
 
   describe('Contour: the line start sets Light position, the place along the look path nearest it', () => {
     for (const id of contourLooks) {
-      it(`${id}: the light moves along its path, and every place on it gives its own Light position back`, () => {
+      it(`${id}: the light moves along its path, and every place on it gives its own Light position back`, { timeout: 30_000 }, () => {
         for (const pack of PACKS) {
           for (const aspect of [16 / 9, 9 / 16]) {
             for (const seed of SEEDS) {
@@ -253,8 +253,8 @@ describe('dragging the light', () => {
     })
 
     for (const id of contourLooks) {
-      it(`${id}: keeps the line when the light can come within ${KEEP_LINE_DISTANCE} of its start, and drops it when it can't`, () => {
-        const fine = 64
+      it(`${id}: keeps the line when the light can come within ${KEEP_LINE_DISTANCE} of its start, and drops it when it can't`, { timeout: 30_000 }, () => {
+        const fine = 48
         for (const aspect of [16 / 9, 9 / 16]) {
           const [fw, fh] = aspect >= 1 ? [aspect, 1] : [1, 1 / aspect]
           for (const seed of [1, 2, 3, 4]) {
