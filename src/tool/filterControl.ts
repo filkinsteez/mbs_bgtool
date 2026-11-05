@@ -25,6 +25,12 @@ export const TOOL_FILTERS: readonly FilterKey[] = ['grain', 'ascii', 'pixel']
 /** Off by default (the brief); a filter turned on starts at 0.5. */
 export const DEFAULT_FILTER: FilterState = { filter: 'none', strength: 0.5 }
 
+/**
+ * The least value a Density filter gets in the scene: the filter chain leaves out a filter at 0, but Density 0 is the
+ * coarsest grid, not off. Grain's Amount 0 is no grain.
+ */
+const DENSITY_FLOOR = 0.001
+
 const LABELS: Readonly<Record<FilterChoice, string>> = { none: 'None', grain: 'Grain', ascii: 'ASCII', pixel: 'Pixel' }
 
 const CHOICES: readonly FilterChoice[] = ['none', ...TOOL_FILTERS]
@@ -90,6 +96,9 @@ export function withFilter(scene: Scene, state: FilterState): Scene {
   const output: Partial<OutputSettings> = { ...scene.output }
   for (const key of FILTER_KEYS) output[key] = 0
   const filter = readChoice(state.filter)
-  if (filter !== 'none') output[filter] = readStrength(state.strength)
+  if (filter !== 'none') {
+    const strength = readStrength(state.strength)
+    output[filter] = STRENGTH_DIAL_KEYS[filter] === 'density' ? Math.max(strength, DENSITY_FLOOR) : strength
+  }
   return { ...scene, output }
 }

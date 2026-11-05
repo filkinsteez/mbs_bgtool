@@ -76,4 +76,12 @@ describe('filter control', () => {
     expect(withFilter(scene, { filter: 'grain', strength: 0.5 }).params).toBe(scene.params)
     expect(scene.output).toEqual({ grain: 0, exposure: 0.25 })
   })
+
+  it('keeps a Density filter on at 0, its coarsest grid, while Grain at 0 is off', () => {
+    expect(withFilter(scene, { filter: 'ascii', strength: 0 }).output.ascii).toBeGreaterThan(0)
+    expect(withFilter(scene, { filter: 'ascii', strength: 0 }).output.ascii).toBeLessThan(0.005)
+    expect(withFilter(scene, { filter: 'pixel', strength: 0 }).output.pixel).toBeGreaterThan(0)
+    expect(withFilter(scene, { filter: 'ascii', strength: 0.3 }).output.ascii).toBe(0.3)
+    expect(withFilter(scene, { filter: 'grain', strength: 0 }).output.grain).toBe(0)
+  })
 })
