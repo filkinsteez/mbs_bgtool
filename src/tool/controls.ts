@@ -64,15 +64,18 @@ export function buildScene(recipeId: RecipeId, pack: ColorPack, seed: number, co
 /** The light's place in frame units: x from the left edge, y from the top edge (`ControlValues.point`). */
 export type LightPoint = readonly [number, number]
 
-/** How far past each frame edge a drag may carry the light, in frame units. */
-export const POINT_REACH = 0.25
+/**
+ * How far past each frame edge a drag may carry the light, in frame units. A drag can start anywhere in the stage
+ * around the image; past this, the line's ends stay at the reach.
+ */
+export const POINT_REACH = 0.5
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value))
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
 /** The mood control's own steps: the panel and the URL keep it to 0.01. */
 const onSliderStep = (value: number) => Math.round(clamp01(value) * 100) / 100
 
-/** The point within the drag's reach (-0.25..1.25 on each axis), rounded to 0.001 of the frame. */
+/** The point within the drag's reach (-0.5..1.5 on each axis), rounded to 0.001 of the frame. */
 export function clampPoint(point: readonly number[]): LightPoint {
   const axis = (value: number) => Math.round(Math.min(1 + POINT_REACH, Math.max(-POINT_REACH, value)) * 1000) / 1000 || 0
   return [axis(point[0]), axis(point[1])]

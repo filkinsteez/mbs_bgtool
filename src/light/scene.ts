@@ -338,8 +338,8 @@ export interface ControlValues {
   mood: number
   /**
    * The line the user dragged on the image, in frame units: x from the left
-   * edge, y from the top edge, 0..1 inside the frame and up to 0.25 past each
-   * edge (-0.25..1.25). `from` is where the light is strongest; the light runs
+   * edge, y from the top edge, 0..1 inside the frame and up to 0.5 past each
+   * edge (-0.5..1.5). `from` is where the light is strongest; the light runs
    * from there in the line's direction, and at `to` it has reached the look's
    * far end. A longer line gives a longer, slower gradient. Undefined: the
    * seed sets the direction and reach.

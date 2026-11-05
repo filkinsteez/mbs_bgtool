@@ -120,10 +120,11 @@ describe('dragging the light', () => {
   const length = (drag: LightDrag) => Math.hypot(drag.to[0] - drag.from[0], drag.to[1] - drag.from[1])
 
   it('keeps line ends within the drag reach, on 0.001 of the frame, and drops lines too short to have a direction', () => {
-    expect(clampPoint([-1, 2])).toEqual([-0.25, 1.25])
+    expect(clampPoint([-1, 2])).toEqual([-0.5, 1.5])
+    expect(clampPoint([-0.45, 1.45])).toEqual([-0.45, 1.45])
     expect(clampPoint([0.12345, 0.5])).toEqual([0.123, 0.5])
     expect(Object.is(clampPoint([-0.0001, 0])[0], 0)).toBe(true)
-    expect(clampDrag({ from: [-1, 0.5], to: [2, 0.5] })).toEqual({ from: [-0.25, 0.5], to: [1.25, 0.5] })
+    expect(clampDrag({ from: [-1, 0.5], to: [2, 0.5] })).toEqual({ from: [-0.5, 0.5], to: [1.5, 0.5] })
     expect(clampDrag({ from: [0.4, 0.4], to: [0.4004, 0.4] })).toBeUndefined()
   })
 

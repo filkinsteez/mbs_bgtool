@@ -73,9 +73,9 @@ describe('dragged line in the URL', () => {
   })
 
   it('keeps line ends past the frame edges within the drag reach', () => {
-    const state = { ...dragged, mood: 'contour', look: 'contour.halo', drag: { from: [-0.25, 1.25], to: [1.25, -0.25] } } as const
+    const state = { ...dragged, mood: 'contour', look: 'contour.halo', drag: { from: [-0.5, 1.5], to: [1.5, -0.5] } } as const
     expect(parseQuery(new URLSearchParams(toQuery(state)))).toEqual(state)
-    expect(parseQuery({ from: '-3,9', to: '0.5,0.5' }).drag).toEqual({ from: [-0.25, 1.25], to: [0.5, 0.5] })
+    expect(parseQuery({ from: '-3,9', to: '0.5,0.5' }).drag).toEqual({ from: [-0.5, 1.5], to: [0.5, 0.5] })
     expect(parseQuery({ from: '0.12345,0.98765', to: '0.5,0.5' }).drag).toEqual({ from: [0.123, 0.988], to: [0.5, 0.5] })
   })
 

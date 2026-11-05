@@ -81,7 +81,7 @@ const seeds = parseSeeds(args.seeds, grid ? range(1, 3) : quick ? range(1, 6) : 
 const formats = list(args.format).length ? list(args.format) : quick || grid ? ['16x9'] : ['16x9', '9x16']
 const base = parseBase(args.at)
 const values = range(Math.round(Number(args.from ?? 0) * 100), Math.round(Number(args.to ?? 1) * 100)).map((i) => i / 100)
-/** Line sweeps: the base lines they start from, and each control's values (the drag reaches 0.25 past each edge). */
+/** Line sweeps: the base lines they start from, and each control's values (starts to 0.25 past each edge; --reach for more). */
 const baseLines = args.line === undefined ? (quick ? BASE_LINES.slice(0, 1) : BASE_LINES) : [].concat(args.line).map(parseLine)
 /** --reach R runs the start sweeps from -R to 1 + R, past the image's edges. */
 const reach = args.reach === undefined ? null : Number(args.reach)
