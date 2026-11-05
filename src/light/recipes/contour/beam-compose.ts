@@ -122,6 +122,113 @@ export function lineInShorts(drag: NonNullable<ControlValues['drag']>, aspect: n
 /** The angle in [-pi, pi]. */
 export const wrapAngle = (a: number) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI))
 
+/**
+ * GLSL for airGlowAt: the light of every point of a segment (screen, short-side units), each
+ * falling off as c^2 / (r^2 + c^2) through thin haze, averaged over the segment.
+ */
+export const AIR_GLOW_GLSL = /* glsl */ `
+float airGlow(vec2 p, vec4 seg, float c) {
+  vec2 q = p - seg.xy;
+  vec2 d = seg.zw - seg.xy;
+  float len = length(d);
+  if (len < 1e-4) return c * c / (dot(q, q) + c * c);
+  float t = dot(q, d) / len;
+  float k = sqrt(max(dot(q, q) - t * t, 0.0) + c * c);
+  return c * c / (len * k) * (atan(t / k) - atan((t - len) / k));
+}
+`
+
+/** airGlow (AIR_GLOW_GLSL) at p for the segment [x0, y0, x1, y1] and falloff c. */
+export function airGlowAt(p: readonly [number, number], seg: readonly number[], c: number): number {
+  const q = [p[0] - seg[0], p[1] - seg[1]]
+  const d = [seg[2] - seg[0], seg[3] - seg[1]]
+  const len = Math.hypot(d[0], d[1])
+  const qq = q[0] * q[0] + q[1] * q[1]
+  if (len < 1e-4) return (c * c) / (qq + c * c)
+  const t = (q[0] * d[0] + q[1] * d[1]) / len
+  const k = Math.sqrt(Math.max(qq - t * t, 0) + c * c)
+  return ((c * c) / (len * k)) * (Math.atan(t / k) - Math.atan((t - len) / k))
+}
+
+/** Falloff (short-side units) of the glow a light outside the frame casts into it. */
+const AIR_GLOW_CORE = 0.18
+
+/**
+ * Least luminance of a cool light's glow at its brightest point in the frame (about Oklab L
+ * 0.55): bright enough that a veiled light shows its hue.
+ */
+const AIR_GLOW_LUMINANCE = 0.17
+
+/** How far (short-side units) outside the frame the light is when its glow is all there. */
+const AIR_GLOW_FROM = 0.15
+
+/**
+ * How much brighter than that least level the glow is at its brightest point in the frame: the
+ * very edge turns paler toward white, and the glow shows over more of the frame at thumbnail
+ * size while it keeps its shape near the edge.
+ */
+const AIR_GLOW_GAIN = 1.6
+
+/**
+ * The `airGlow` [level, falloff, sharpness, scale] and `glowLine` [x0, y0, x1, y1] params for a light
+ * at a segment of the screen (a point if both ends are the same), for a dragged line. A light
+ * outside the frame still lights the air near it, so the frame's nearest edge glows in its
+ * color and fades into the frame. At its brightest point in the frame the glow is at least as
+ * light as the haze's own hex (a warm glow dimmer than that reads dark gold or brown), at
+ * least AIR_GLOW_LUMINANCE for a cool light, and for a warm one at least the level where its
+ * haze starts to fall off faster (`fallFrom`, a share of its clipping level), so it shows its
+ * own color before it fades; times `intensity`, the look's Intensity gain. The glow is squared
+ * (sharpness 2), so it stays near the edge as haze keeps light near its source. Tan's glow is
+ * cubed, so its dim amber is a narrow band under its pale edge instead of a wide dark gold or
+ * brown field (Yellow and Orange-red dim through red, Lime toward Forest), and so is a glow
+ * over a dark of another hue (Meta Blue over Plum), so the dark shows in most of the frame
+ * instead of mixing with the light into a third color. It
+ * comes in as the light leaves the frame, and is off (level 0) while any of the light is in the
+ * frame. The glow is (scale * airGlow)^sharpness times the level, where scale makes airGlow 1
+ * at the frame's brightest point; the level is in scattered-light units (one unit has the
+ * haze's luminance).
+ */
+export function airGlowParams(light: ContourLight, seg: readonly number[], aspect: number, intensity: number, fallFrom: number): { airGlow: number[]; glowLine: number[] } {
+  const { halfW, halfH } = frameHalf(aspect)
+  const outside = segmentOutside(seg, halfW, halfH)
+  const clip = clipLuminanceOf(light.haze)
+  const target = AIR_GLOW_GAIN * Math.max(luminanceOf(light.haze), light.tail ? fallFrom * clip : AIR_GLOW_LUMINANCE)
+  const sharpness = light.fall > 1 || !darkMatches(light) ? 3 : 2
+  const share = outside <= 0 ? 0 : smoothstep(0, AIR_GLOW_FROM, outside)
+  let brightest = 0
+  const n = 48
+  for (let i = 0; i <= n; i++) {
+    const x = -halfW + (2 * halfW * i) / n
+    const y = -halfH + (2 * halfH * i) / n
+    for (const p of [
+      [x, -halfH],
+      [x, halfH],
+      [-halfW, y],
+      [halfW, y],
+    ] as [number, number][])
+      brightest = Math.max(brightest, airGlowAt(p, seg, AIR_GLOW_CORE))
+  }
+  const level = share > 0 && brightest > 0 ? (share * target * intensity) / Math.max(luminanceOf(light.haze), 1e-6) : 0
+  return { airGlow: [round4(level), AIR_GLOW_CORE, sharpness, round4(1 / Math.max(brightest, 0.01))], glowLine: seg.map(round4) }
+}
+
+const smoothstep = (a: number, b: number, x: number) => {
+  const t = clamp01((x - a) / (b - a))
+  return t * t * (3 - 2 * t)
+}
+
+/** How far (short-side units) a segment is outside the frame's rectangle; 0 if it touches it. */
+function segmentOutside(seg: readonly number[], halfW: number, halfH: number): number {
+  let least = Infinity
+  const steps = 64
+  for (let i = 0; i <= steps; i++) {
+    const x = seg[0] + ((seg[2] - seg[0]) * i) / steps
+    const y = seg[1] + ((seg[3] - seg[1]) * i) / steps
+    least = Math.min(least, Math.hypot(Math.max(0, Math.abs(x) - halfW), Math.max(0, Math.abs(y) - halfH)))
+  }
+  return least
+}
+
 /** Oklab chroma over lightness of a cool light's haze: a pale veil of its color. */
 const VEIL_CHROMA = 0.12
 
@@ -137,22 +244,32 @@ const DARK_HAZE = 0.0012
 export const VEIL_TINT = 0.07
 
 /**
- * The `veil` param [chroma share, band level, band width, dark haze] for a light. A cool
+ * The `veil` param [chroma share, band level, band width, dark haze] for a light. A veiled
  * light's haze keeps only enough of its chroma for VEIL_CHROMA times its lightness (the
  * moodboard's beams and shafts), up to twice that in a band about 1.2 octaves either side of
- * its clipping luminance (where the moodboard's light is most colorful), and leaves a faint
- * haze in black darks. Warm lights keep their warm tails (a pale veil of them reads brown).
+ * its clipping luminance (where the moodboard's light is most colorful). A cool light leaves
+ * a faint haze in black darks. Warm lights keep their warm tails (a pale veil of them reads
+ * brown).
  */
 export function veilParam(light: ContourLight, chroma = VEIL_CHROMA): number[] {
-  if (!veiled(light)) return [1, 1, 1, 0]
+  if (light.tail) return [1, 1, 1, 0]
+  const darkHaze = light.base === '#000000' ? DARK_HAZE : 0
+  if (!veiled(light)) return [1, 1, 1, darkHaze]
   const [l, c] = linearToOklch(hexToLinear(light.haze))
-  return [round4(Math.min(1, (chroma * l) / Math.max(c, 1e-4))), 1, 1.2, light.base === '#000000' ? DARK_HAZE : 0]
+  return [round4(Math.min(1, (chroma * l) / Math.max(c, 1e-4))), 1, 1.2, darkHaze]
 }
 
-/** Whether a light's haze is a pale veil: any cool light. */
+/** Whether a light's haze is a pale veil of its color. */
 export function veiled(light: ContourLight): boolean {
-  return !light.tail
+  return light.veil
 }
+
+/**
+ * How far an unveiled cool light's bright light turns to its light color (Bold's Meta Blue to
+ * Cyan): partway, so it reads as a paler, cyan-leaning Meta Blue instead of Bold's Cyan light
+ * or a mint patch where Cyan meets the blue.
+ */
+export const UNVEILED_PALE = 0.6
 
 /**
  * The `darkMeet` param for a light, given the gain on its dark base: over a dark of another
@@ -287,6 +404,12 @@ export interface ContourLight {
   fall: number
   /** Gain on the light's haze (1: as the look's). */
   lift: number
+  /**
+   * Whether the light's haze is a pale veil of its color (veilParam): cool lights, except
+   * Bold's Meta Blue, which keeps its full color and turns Cyan as it brightens, so a Bold
+   * frame never reads as Atmospheric's steel-blue veil.
+   */
+  veil: boolean
 }
 
 /** The red a warm haze ends on as it fades, deeper than Orange-red. */
@@ -312,10 +435,10 @@ function halfway(a: string, b: string): number[] {
   return unitPeak(pa.map((v, i) => (v + pb[i]) / 2))
 }
 
-const cool = { toe: 0, tail: null, tailFrom: null, fall: 1, lift: 1 }
+const cool = { toe: 0, tail: null, tailFrom: null, fall: 1, lift: 1, veil: true }
 
-function warm(hex: string, tail: [number[], number[]], tailFrom: number | null, fall = 1, lift = 1): Pick<ContourLight, 'toe' | 'tail' | 'tailFrom' | 'fall' | 'lift'> {
-  return { toe: warmToe(hex), tail, tailFrom, fall, lift }
+function warm(hex: string, tail: [number[], number[]], tailFrom: number | null, fall = 1, lift = 1): Pick<ContourLight, 'toe' | 'tail' | 'tailFrom' | 'fall' | 'lift' | 'veil'> {
+  return { toe: warmToe(hex), tail, tailFrom, fall, lift, veil: false }
 }
 
 /**
@@ -334,8 +457,9 @@ function hexByName(pack: ColorPack, name: string): string {
 
 /**
  * The lights a pack offers, the first the one the look starts from. Each keeps
- * to one hue family, and its light and haze are the color that shows as the
- * area of light. Dark pack colors (Forest, Plum, Slate, Near-black) only appear
+ * to one hue family, and its haze is the color that shows as the area of light;
+ * its light is the color its brightest part turns (Bold's Meta Blue turns Cyan,
+ * Atmospheric's Ice). Dark pack colors (Forest, Plum, Slate, Near-black) only appear
  * as bases, never as light. Warm lights stay on black: over a Meta Blue room,
  * Yellow haze turns grey-khaki and Orange-red pink, and Tan over Plum maroon.
  */
@@ -348,7 +472,7 @@ export function contourLights(pack: ColorPack): ContourLight[] {
       const orange = hexByName(pack, 'Orange-red')
       return [
         { light: cyan, haze: cyan, base: blue, baseLevel: 0.05, ...cool },
-        { light: blue, haze: blue, base: '#000000', baseLevel: 0, ...cool },
+        { light: cyan, haze: blue, base: '#000000', baseLevel: 0, ...cool, veil: false },
         { light: yellow, haze: yellow, base: '#000000', baseLevel: 0, ...warm(yellow, [peakColor(orange), peakColor(DEEP_RED)], 1) },
         { light: orange, haze: orange, base: '#000000', baseLevel: 0, ...warm(orange, [peakColor(orange), peakColor(DEEP_RED)], 1) },
       ]

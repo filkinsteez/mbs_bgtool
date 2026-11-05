@@ -1,7 +1,10 @@
 import type { ColorPack } from '../../color/packs'
 import type { ComposeInput, Composition, ParamValue, RecipeContext, RecipeDefinition } from '../../scene'
 import {
+  AIR_GLOW_GLSL,
+  airGlowParams,
   clipLuminanceOf,
+  type ContourLight,
   contourLights,
   darkMatches,
   fallParam,
@@ -22,6 +25,7 @@ import {
   tailParams,
   tailUniform,
   turnParam,
+  UNVEILED_PALE,
   VEIL_TINT,
   veiled,
   veilParam,
@@ -86,7 +90,9 @@ uniform vec4 uVeil;       // a cool light's haze: chroma share (1: full color), 
 uniform vec4 uDarkMeet;   // over a dark of another hue: light level its faint tail falls off below (from, to), level the dark is gone by (from, to); 0: off
 uniform float uVeilTint;  // a cool light's least chroma along its haze's hue, over Oklab lightness (0: off)
 uniform float uVeilBand;  // how much more chroma the veil keeps in its band of levels (1: twice the share)
-
+uniform vec4 uAirGlow;    // a light outside the frame: level of its glow in the air (scattered units; 0: off), falloff, sharpness (power), scale (1 at the frame's brightest point)
+uniform vec4 uGlowLine;   // where that light is: its segment on screen (unturned)
+${AIR_GLOW_GLSL}
 const int BEAM_STEPS = 16;
 
 float beamSoftDisk(float r, float k) { return exp(-0.5 * pow(max(r, 0.0), k)); }
@@ -344,6 +350,7 @@ vec3 radiance(vec2 uv, vec2 screen) {
     floorLight = rounded * (spill * uBeamLight.x + reflection) * tex;
   }
   scatter += floorLight;
+  if (uAirGlow.x > 0.0) scatter += uAirGlow.x * pow(uAirGlow.w * airGlow(screen, uGlowLine, uAirGlow.y), uAirGlow.z);
 
   float lum = scatter * lumHaze;
   float pale = saturate(uPale.x * smoothstep(uPale.y, uPale.z, lum + direct * lumLight));
@@ -447,6 +454,20 @@ const WARM_FLOOR_LIGHT = 0.4
  * about 0.06 at lightness 0.4 to 0.8, 0.04 at 0.2 to 0.4).
  */
 const BEAM_VEIL_CHROMA = 0.115
+
+/**
+ * The `pale` param for a light, given the seed's share (drawn whatever the light, so the seed's
+ * later numbers stay in place). The color starts toward the pale color from 0.4 of the haze's
+ * clipping level, by the seed's share (half of it for a warm light), and is there by 1.3 times
+ * it, so light passing nominal keeps whitening at the same pace. A cool light over a dark that
+ * matches it starts at 0.3 and goes all the way, or UNVEILED_PALE of the way if it keeps its
+ * full color.
+ */
+function paleParam(light: ContourLight, share: number): number[] {
+  const clip = clipLuminanceOf(light.haze)
+  if (!light.tail && darkMatches(light)) return [veiled(light) ? 1 : UNVEILED_PALE, round4(0.3 * clip), round4(1.3 * clip)]
+  return [round4(share * (light.tail ? 0.5 : 1)), round4(0.4 * clip), round4(1.3 * clip)]
+}
 
 /**
  * Pack output. A wide, nearly parallel beam lands on the stage's edge and is seen
@@ -561,12 +582,7 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     // floor's rays stay thin and smooth under any beam instead of breaking into spikes.
     lanes: [round4(lerp(1.4, 1.8, random())), round4(lerp(0.8, 1.2, random()) * Math.min(1, NARROW_WIDTH / width))],
     laneShape: [0, 0.025],
-    // The color starts toward white from 0.4 of the haze's clipping level (0.3 for a veiled
-    // light, all the way) and is there by 1.3 times it, so light passing nominal keeps
-    // whitening at the same pace.
-    pale: veiled(light) && darkMatches(light)
-      ? [Math.max(1, lerp(0.5, 0.7, random())), round4(0.3 * clipLuminanceOf(light.haze)), round4(1.3 * clipLuminanceOf(light.haze))]
-      : [round4(lerp(0.5, 0.7, random()) * (light.tail ? 0.5 : 1)), round4(0.4 * clipLuminanceOf(light.haze)), round4(1.3 * clipLuminanceOf(light.haze))],
+    pale: paleParam(light, lerp(0.5, 0.7, random())),
     paleWhite: light.light === light.haze ? 0.5 : 0.2,
     ...tailParams(light, TAIL_BELOW),
     fall: fallParam(light, TAIL_BELOW, TAIL_FALL),
@@ -581,7 +597,10 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     veilBand: 0,
     veilTint: veiled(light) && darkMatches(light) ? VEIL_TINT : 0,
   }
-  if (controls.drag) Object.assign(params, beamOnLine(params, lineInShorts(controls.drag, aspect), halfH))
+  if (controls.drag) {
+    const line = lineInShorts(controls.drag, aspect)
+    Object.assign(params, beamOnLine(params, line, halfH), airGlowParams(light, [...line.from, ...line.to], aspect, geo(intensity, 0.35, 0.75, 1.6) / 0.75, (params.fall as number[])[0]))
+  }
 
   return {
     colors: [light.light, light.haze, light.base],
@@ -630,11 +649,19 @@ function beamOnLine(params: Record<string, ParamValue>, line: ShortLine, halfH: 
   const full = start + (0.03 + 0.25 * line.length) * down
   const heightAt = (e: number) => Math.min(2, Math.max(-50, ((e - horizon) * (landingZ - tiltZ)) / (focal - (e - horizon) * tiltZ)))
   const startHeight = round4(heightAt(start))
+  // A beam longer than the frame's short side keeps the haze layers' share of its length, and
+  // the room's haze thickens a little with it, so a beam crossing the whole frame still shows
+  // along its length instead of only at its ends beyond the frame's corners.
+  const grow = Math.max(1, line.length)
   const ceiling = params.ceiling as number[]
+  const floorHaze = params.floorHaze as number[]
+  const depth = round4(ceiling[1] * grow)
   return {
     tilt: [round4(Math.min(1, Math.max(-1, tiltX))), tiltZ],
-    ceiling: [ceiling[0], ceiling[1], round4(Math.min(4, Math.max(-2, start + halfH + ceiling[2])))],
-    ceilingTop: ceiling[1],
+    ceiling: [ceiling[0], depth, round4(Math.min(4, Math.max(-2, start + halfH + ceiling[2])))],
+    ceilingTop: depth,
+    floorHaze: [floorHaze[0], round4(floorHaze[1] * grow)],
+    haze: round4(num('haze') * Math.sqrt(grow)),
     turn: turnParam(fromDown - lean, line.to, pool),
     source: [startHeight, round4(Math.max(heightAt(full), startHeight + 0.001))],
   }
@@ -705,6 +732,8 @@ export const contourBeam: RecipeDefinition = {
     { kind: 'vector', key: 'darkMeet', label: 'Meeting another dark', min: 0, max: 4, step: 0.0005, default: [0, 0, 0, 0] },
     { kind: 'number', key: 'veilTint', label: 'Trace of the haze hue', min: 0, max: 0.2, step: 0.0005, default: 0 },
     { kind: 'number', key: 'veilBand', label: 'More color in the band', min: 0, max: 2, step: 0.005, default: 1 },
+    { kind: 'vector', key: 'airGlow', label: 'Glow past the frame', min: 0, max: 100, step: 0.0001, default: [0, 0.18, 2, 1] },
+    { kind: 'vector', key: 'glowLine', label: 'Light past the frame', min: -8, max: 8, step: 0.0005, default: [0, 0, 0, 0] },
   ],
   fragment: BEAM_GLSL,
   uniforms: (ctx) => {
@@ -748,6 +777,8 @@ export const contourBeam: RecipeDefinition = {
       uDarkMeet: ctx.vec('darkMeet'),
       uVeilTint: ctx.num('veilTint'),
       uVeilBand: ctx.num('veilBand'),
+      uAirGlow: ctx.vec('airGlow'),
+      uGlowLine: ctx.vec('glowLine'),
     }
   },
   radianceScale: (ctx) => (ctx.num('edgeSoftness') >= HALF_SCALE_EDGE ? 0.5 : 1),

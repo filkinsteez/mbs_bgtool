@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { getPack, type PackId } from '../../color/packs'
+import { compositionProblems } from '../../compose'
 import type { ControlValues, ParamValue } from '../../scene'
 import { contourBeam } from './beam'
+import { airGlowAt } from './beam-compose'
 import { contourStreaks } from './streaks'
 
 const MIDDLE = { intensity: 0.5, softness: 0.5, mood: 0.5 }
@@ -120,6 +122,79 @@ describe('without a line', () => {
         expect(compose(contourBeam, pack, seed)).not.toHaveProperty('source')
         expect(compose(contourStreaks, pack, seed)).not.toHaveProperty('turn')
         expect(compose(contourStreaks, pack, seed)).not.toHaveProperty('reach')
+      }
+    }
+  })
+})
+
+/** The SHARED.md test line high above the frame, pointing up. */
+const HIGH_ABOVE = { from: [0.5, -0.3] as [number, number], to: [0.5, -0.5] as [number, number] }
+
+describe('a light outside the frame', () => {
+  it('lights the frame edge nearest it at least as light as its own color, and only then', () => {
+    for (const recipe of [contourBeam, contourStreaks]) {
+      for (const pack of PACKS) {
+        for (const seed of SEEDS) {
+          const [level, falloff, sharpness, scale] = compose(recipe, pack, seed, HIGH_ABOVE).airGlow as number[]
+          const glowLine = compose(recipe, pack, seed, HIGH_ABOVE).glowLine as number[]
+          // The top edge's middle is the frame point nearest the light; one scattered unit has the haze's own luminance.
+          expect(level * (scale * airGlowAt([0, -0.5], glowLine, falloff)) ** sharpness, `${recipe.id} ${pack} ${seed}`).toBeGreaterThan(0.999)
+          // Beam's light is its whole beam, which these lines put in the frame; Streaks' is the point where its shafts meet.
+          const inFrame = LINES.filter((d) => recipe === contourBeam || d.from.every((v) => v >= 0 && v <= 1))
+          for (const drag of inFrame) expect((compose(recipe, pack, seed, drag).airGlow as number[])[0], `${recipe.id} ${pack} ${seed}`).toBe(0)
+        }
+      }
+    }
+  })
+})
+
+describe('every dragged composition', () => {
+  it('fits the recipe params, the test lines and a light as far outside the frame as a line reaches', () => {
+    const lines = [
+      HIGH_ABOVE,
+      { from: [1.011, 1.224] as [number, number], to: [-0.078, -0.067] as [number, number] },
+      { from: [-0.011, 1.224] as [number, number], to: [1.078, -0.067] as [number, number] },
+      { from: [0.9, 0.5] as [number, number], to: [0.1, 0.5] as [number, number] },
+      { from: [1.5, 1.5] as [number, number], to: [1.45, 1.4] as [number, number] },
+      { from: [-0.5, 0.5] as [number, number], to: [-0.5, 0.4] as [number, number] },
+    ]
+    for (const recipe of [contourBeam, contourStreaks]) {
+      for (const pack of PACKS) {
+        for (const seed of SEEDS) {
+          for (const aspect of [16 / 9, 9 / 16]) {
+            for (const drag of lines) {
+              const composition = recipe.compose!({ pack: getPack(pack), controls: { ...MIDDLE, drag }, seed, aspect })
+              expect(compositionProblems(recipe, getPack(pack), composition), `${recipe.id} ${pack} ${seed} ${aspect}`).toEqual([])
+            }
+          }
+        }
+      }
+    }
+  })
+})
+
+describe('the packs that share Meta Blue', () => {
+  it("keep Bold's Meta Blue saturated and turning Cyan, and veil Atmospheric's", () => {
+    for (const recipe of [contourBeam, contourStreaks]) {
+      const bold = recipe.compose!({ pack: getPack('bold'), controls: MIDDLE, seed: 1, aspect: ASPECT })
+      const atmospheric = recipe.compose!({ pack: getPack('atmospheric'), controls: MIDDLE, seed: 1, aspect: ASPECT })
+      expect(bold.colors.slice(0, 2), recipe.id).toEqual([getPack('bold').colors[1].hex, getPack('bold').colors[0].hex])
+      expect((bold.params.veil as number[])[0], recipe.id).toBe(1)
+      expect(atmospheric.colors[1], recipe.id).toBe(getPack('atmospheric').colors[0].hex)
+      expect((atmospheric.params.veil as number[])[0], recipe.id).toBeLessThan(0.5)
+    }
+  })
+})
+
+describe("Beam under a line longer than the frame's short side", () => {
+  it('thickens its haze layers with the line, so the beam shows along it', () => {
+    const owner = { from: [1.011, 1.224] as [number, number], to: [-0.078, -0.067] as [number, number] }
+    for (const pack of PACKS) {
+      for (const seed of SEEDS) {
+        const own = compose(contourBeam, pack, seed)
+        const dragged = compose(contourBeam, pack, seed, owner)
+        expect((dragged.ceiling as number[])[1] / (own.ceiling as number[])[1]).toBeGreaterThan(2)
+        expect((dragged.floorHaze as number[])[1] / (own.floorHaze as number[])[1]).toBeGreaterThan(2)
       }
     }
   })

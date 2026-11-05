@@ -1,6 +1,8 @@
 import type { ColorPack } from '../../color/packs'
 import type { ComposeInput, Composition, ParamValue, RecipeDefinition } from '../../scene'
 import {
+  AIR_GLOW_GLSL,
+  airGlowParams,
   clipLuminanceOf,
   contourLights,
   darkMeetParam,
@@ -10,7 +12,6 @@ import {
   hazeGainFor,
   lerp,
   lineInShorts,
-  luminanceOf,
   paleTarget,
   pickContourLight,
   round4,
@@ -22,6 +23,7 @@ import {
   tailParams,
   tailUniform,
   turnParam,
+  UNVEILED_PALE,
   VEIL_TINT,
   veiled,
   veilParam,
@@ -83,7 +85,9 @@ uniform float uSkyPeak;    // where across the lit sky it is brightest (0: at it
 uniform vec4 uDarkMeet;    // over a dark of another hue: light level its faint tail falls off below (from, to), level the dark is gone by (from, to); 0: off
 uniform float uVeilTint;   // a cool light's least chroma along its haze's hue, over Oklab lightness (0: off)
 uniform vec2 uNearShape;   // the darker sky near the point: distance it starts at, its depth toward the lit sky's bright end (share of the full depth)
-
+uniform vec4 uAirGlow;     // a point outside the frame: level of its glow in the air (scattered units; 0: off), falloff, sharpness (power), scale (1 at the frame's brightest point)
+uniform vec4 uGlowLine;    // where that point is (screen, unturned), twice
+${AIR_GLOW_GLSL}
 const int SHADOW_TAPS = 20;
 const int SHORT_TAPS = 8;
 
@@ -321,6 +325,7 @@ vec3 combine(vec2 uv, vec2 screen, vec3 line, vec3 cached) {
   float far = exp(-below / max(2.0 * uBand.y, 1e-3));
   float sky = cached.x * mix(uFloorA.x * cached.z, 1.0, far);
   float scatter = sky + cached.y + line.x;
+  if (uAirGlow.x > 0.0) scatter += uAirGlow.x * pow(uAirGlow.w * airGlow(screen, uGlowLine, uAirGlow.y), uAirGlow.z);
   float lumHaze = max(luminance(uHazeColor), 1e-5);
   float lumLight = max(luminance(uLightColor), 1e-5);
   float pale = saturate(uPale.x * smoothstep(uPale.y, uPale.z, scatter * lumHaze));
@@ -429,11 +434,11 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
   const light = pickContourLight(pack, seed, random)
   const hazeGain = hazeGainFor(light, HAZE_LUMINANCE, WARM_SHARE)
   const soft = (lo: number, hi: number) => lerp(lo, hi, softness)
-  // A cool light's pale veil reads as light only when bright, as in the moodboard (shafts at
-  // Oklab L about 0.77, the floor's pool at 0.97), so its sky and pool are brighter; a warm
-  // light this bright would turn into a white plateau.
-  const coolGain = veiled(light) ? COOL_SKY_GAIN : 1
-  const poolGain = veiled(light) ? COOL_POOL_GAIN : 1
+  // A cool light reads as light only when bright, as in the moodboard (shafts at Oklab L about
+  // 0.77, the floor's pool at 0.97), so its sky and pool are brighter; a warm light this bright
+  // would turn into a white plateau.
+  const coolGain = light.tail ? 1 : COOL_SKY_GAIN
+  const poolGain = light.tail ? 1 : COOL_POOL_GAIN
   // At low Intensity the light near the point stays under about twice nominal, so its hot
   // spot keeps a rounded top instead of a flat white one.
   const power = geo(intensity, 0.22, 0.75, 1.4) * hazeGain * LIGHT_GAIN
@@ -491,8 +496,8 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
     // A cool light starts toward pale from 0.3 of the haze's clipping level and is all pale by
     // 1.8 times it, so bright light reads pale over a wide range, as in the moodboard. A warm
     // light starts at 0.4 and is there by 2.3 times it, keeping its own color longer.
-    pale: veiled(light)
-      ? [1, round4(0.3 * clipLuminanceOf(light.haze)), round4(1.8 * clipLuminanceOf(light.haze))]
+    pale: !light.tail
+      ? [veiled(light) ? 1 : UNVEILED_PALE, round4(0.3 * clipLuminanceOf(light.haze)), round4(1.8 * clipLuminanceOf(light.haze))]
       : [0.8, round4(0.4 * clipLuminanceOf(light.haze)), round4(2.3 * clipLuminanceOf(light.haze))],
     paleWhite: light.light === light.haze ? 0.5 : 0.2,
     ...tailParams(light, TAIL_BELOW),
@@ -509,7 +514,10 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
     darkMeet: darkMeetParam(light, BASE_GAIN),
     veilTint: veiled(light) ? VEIL_TINT : 0,
   }
-  if (controls.drag) Object.assign(params, streaksOnLine(params, lineInShorts(controls.drag, aspect), skyHeight))
+  if (controls.drag) {
+    const line = lineInShorts(controls.drag, aspect)
+    Object.assign(params, streaksOnLine(params, line, skyHeight), airGlowParams(light, [...line.from, ...line.from], aspect, geo(intensity, 0.22, 0.75, 1.4) / 0.75, (params.fall as number[])[0]))
+  }
 
   return {
     colors: [light.light, light.haze, light.base],
@@ -616,6 +624,8 @@ export const contourStreaks: RecipeDefinition = {
     { kind: 'vector', key: 'darkMeet', label: 'Meeting another dark', min: 0, max: 4, step: 0.0005, default: [0, 0, 0, 0] },
     { kind: 'number', key: 'veilTint', label: 'Trace of the haze hue', min: 0, max: 0.2, step: 0.0005, default: 0 },
     { kind: 'vector', key: 'nearShape', label: 'Sky near the point, shape', min: 0, max: 4, step: 0.0005, default: [0, 1] },
+    { kind: 'vector', key: 'airGlow', label: 'Glow past the frame', min: 0, max: 100, step: 0.0001, default: [0, 0.18, 2, 1] },
+    { kind: 'vector', key: 'glowLine', label: 'Point past the frame', min: -8, max: 8, step: 0.0005, default: [0, 0, 0, 0] },
   ],
   fragment: STREAKS_GLSL,
   uniforms: (ctx) => ({
@@ -652,6 +662,8 @@ export const contourStreaks: RecipeDefinition = {
     uDarkMeet: ctx.vec('darkMeet'),
     uVeilTint: ctx.num('veilTint'),
     uNearShape: ctx.vec('nearShape'),
+    uAirGlow: ctx.vec('airGlow'),
+    uGlowLine: ctx.vec('glowLine'),
   }),
   scatter: [{ source: 'aux', radius: () => SKY_CACHE_BLUR, size: () => SKY_CACHE_SIZE }],
   lens: { bloom: 0.04, bloomLevels: [1, 0.5, 0.25, 0.1, 0, 0, 0, 0], halation: 0 },
