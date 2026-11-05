@@ -6,6 +6,7 @@ import { getPack, type PackId } from '../../../src/light/color/packs'
 import { srgbToLinear } from '../../../src/light/color/srgb'
 import { composeScene } from '../../../src/light/compose'
 import type { OutputFilter } from '../../../src/light/engine/filters/types'
+import { GRAIN_FILTER } from '../../../src/light/engine/grain'
 import { buildOutputShader } from '../../../src/light/engine/output'
 import { ProgramRenderer } from '../../../src/light/engine/programRenderer'
 import { isRecipeId, RECIPE_IDS, type ControlValues, type RecipeDefinition, type RecipeId, type Scene } from '../../../src/light/scene'
@@ -62,6 +63,33 @@ export interface ScreenRequest {
   upload: string
 }
 
+export interface TimeRequest {
+  scene: Scene & { recipe: string }
+  sizes: { width: number; height: number }[]
+  repeats: number
+}
+
+/** Median GPU time (timer query; null without the extension) and wall time to finished pixels, in ms. */
+export interface PassTime {
+  width: number
+  height: number
+  stage: 'none' | 'grain' | 'print'
+  gpuMs: number | null
+  wallMs: number
+}
+
+const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)]
+
+function renderInput(request: { scene: Scene & { recipe: string }; width: number; height: number }) {
+  const { scene, width, height } = request
+  if (!isRecipeId(scene.recipe)) throw new Error(`Unknown recipe ${scene.recipe}`)
+  const recipe = recipes.get(scene.recipe)
+  if (!recipe) throw new Error(`${scene.recipe} did not load`)
+  const plain = { ...scene, output: { ...scene.output, grain: 0, ascii: 0, pixel: 0 } }
+  renderer.renderProgram(recipe, plain, { width, height, supersample: 2, dither: false })
+  return renderer.readPixels()
+}
+
 const api = {
   compose(recipeId: RecipeId, packId: PackId, controls: ControlValues, seed: number, aspect: number): Scene | null {
     const recipe = recipes.get(recipeId)
@@ -70,13 +98,8 @@ const api = {
 
   async render(request: ScreenRequest): Promise<{ ms: number }> {
     const { scene, width, height } = request
-    if (!isRecipeId(scene.recipe)) throw new Error(`Unknown recipe ${scene.recipe}`)
-    const recipe = recipes.get(scene.recipe)
-    if (!recipe) throw new Error(`${scene.recipe} did not load`)
     const seed = scene.seed ?? 1
-    const plain = { ...scene, output: { ...scene.output, grain: 0, ascii: 0, pixel: 0 } }
-    renderer.renderProgram(recipe, plain, { width, height, supersample: 2, dither: false })
-    const input = renderer.readPixels()
+    const input = renderInput(request)
     await upload(`${request.upload}-input`, input)
     const gpu = renderer.gpu
     const start = performance.now()
@@ -94,6 +117,49 @@ const api = {
     gpu.release(out)
     gpu.release(frame)
     return { ms }
+  },
+
+  /** Times the output pass at full strength with no filter, with Grain and with the print screen, at each size. */
+  async time(request: TimeRequest): Promise<PassTime[]> {
+    const gpu = renderer.gpu
+    const seed = request.scene.seed ?? 1
+    const stages = { none: null, grain: GRAIN_FILTER, print: PRINT_SCREEN_FILTER as unknown as OutputFilter } as const
+    const results: PassTime[] = []
+    for (const { width, height } of request.sizes) {
+      const frame = uploadLinear(gpu, renderInput({ scene: request.scene, width, height }), width, height)
+      const out = gpu.acquire(width, height, 'rgba8')
+      for (const [name, stage] of Object.entries(stages) as [PassTime['stage'], OutputFilter | null][]) {
+        const program = gpu.program(buildOutputShader(stage ? [stage] : []))
+        const options = {
+          textures: { uSrc: frame },
+          uniforms: { uTileOrigin: [0, 0], uFactor: 1, uApron: 0, uSeed: seed, uDither: true, ...(stage ? stage.uniforms(1, { width, height, seed }) : {}) },
+        }
+        gpu.draw(program, out, options)
+        gpu.readPixels(out, 0, 0, 1, 1)
+        const gpuTimes: number[] = []
+        const wallTimes: number[] = []
+        for (let r = 0; r < request.repeats; r++) {
+          const start = performance.now()
+          const timer = gpu.beginTimer()
+          gpu.draw(program, out, options)
+          gpu.endTimer(timer)
+          gpu.readPixels(out, 0, 0, 1, 1)
+          wallTimes.push(performance.now() - start)
+          if (!timer) continue
+          const deadline = performance.now() + 2000
+          let ms = gpu.timerMs(timer)
+          while (ms === undefined && performance.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5))
+            ms = gpu.timerMs(timer)
+          }
+          if (typeof ms === 'number') gpuTimes.push(ms)
+        }
+        results.push({ width, height, stage: name, gpuMs: gpuTimes.length ? median(gpuTimes) : null, wallMs: median(wallTimes) })
+      }
+      gpu.release(out)
+      gpu.release(frame)
+    }
+    return results
   },
 }
 

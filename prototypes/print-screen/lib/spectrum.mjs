@@ -135,6 +135,60 @@ export function hannGain(n) {
 }
 
 /**
+ * How directional a texture is, from the luma power spectrum summed over n x n windows (half overlapping) inside
+ * `rect` ([x, y, w, h]):
+ * - peakShare: high-pass energy (periods of 16 px or less) within 2 bins of the main peak (and its mirror), as a
+ *   share of all high-pass energy; bothShare: the same for the main and second peaks together. The main peak is
+ *   the strongest bin at periods of 3 to 7 px; the second is the strongest there at least 20 deg from it.
+ * - dirShare: energy at periods of 3 to 7 px within 15 deg of the main peak's angle, as a share of all energy at
+ *   those periods. A texture with no direction has 30 / 180 = 0.17.
+ */
+export function directionality(plane, w, rect, n = 128) {
+  const [rx, ry, rw, rh] = rect
+  const power = new Float64Array(n * n)
+  let windows = 0
+  for (let y = ry; y + n <= ry + rh; y += n / 2) {
+    for (let x = rx; x + n <= rx + rw; x += n / 2) {
+      const s = windowSpectrum(plane, w, x, y, n)
+      for (let i = 0; i < n * n; i++) power[i] += s.re[i] ** 2 + s.im[i] ** 2
+      windows++
+    }
+  }
+  const bins = []
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const fx = x < n / 2 ? x : x - n
+      const fy = y < n / 2 ? y : y - n
+      const r = Math.hypot(fx, fy)
+      if (r === 0) continue
+      bins.push({ fx, fy, r, angle: (((Math.atan2(fy, fx) * 180) / Math.PI) + 360) % 180, p: power[y * n + x] })
+    }
+  }
+  const hp = bins.filter((b) => b.r >= n / 16)
+  const band = bins.filter((b) => b.r >= n / 7 && b.r <= n / 3)
+  const total = hp.reduce((s, b) => s + b.p, 0)
+  const bandTotal = band.reduce((s, b) => s + b.p, 0)
+  const angleGap = (a, b) => {
+    const d = Math.abs(a - b) % 180
+    return Math.min(d, 180 - d)
+  }
+  const main = band.reduce((best, b) => (b.p > best.p ? b : best), band[0])
+  const second = band.filter((b) => angleGap(b.angle, main.angle) >= 20).reduce((best, b) => (b.p > best.p ? b : best), { p: -1 })
+  const near = (peak) => hp.filter((b) => Math.hypot(b.fx - peak.fx, b.fy - peak.fy) <= 2 || Math.hypot(b.fx + peak.fx, b.fy + peak.fy) <= 2).reduce((s, b) => s + b.p, 0)
+  const mainEnergy = near(main)
+  const secondEnergy = second.p >= 0 ? near(second) : 0
+  const dirEnergy = band.filter((b) => angleGap(b.angle, main.angle) <= 15).reduce((s, b) => s + b.p, 0)
+  return {
+    windows,
+    main: { periodPx: n / main.r, angleDeg: main.angle },
+    second: second.p >= 0 ? { periodPx: n / second.r, angleDeg: second.angle } : null,
+    peakShare: mainEnergy / total,
+    bothShare: (mainEnergy + secondEnergy) / total,
+    dirShare: dirEnergy / bandTotal,
+  }
+}
+
+/**
  * Peaks of a (summed) power spectrum: local maxima at least `ratio` times the median power at their radius,
  * in the half-plane fy > 0 or (fy = 0 and fx > 0). Returns frequency, period, angle of the wave vector (0 deg =
  * along x, positive toward +y, i.e. down the image), and strength.

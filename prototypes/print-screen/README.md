@@ -26,71 +26,68 @@ The film poster reference (`sunset-film-poster-bands`, Figma 41:25) has a fine d
 
 It is strongest in mid-dark ink (grey, L 0.43) and weaker toward near-black and toward light ink. These totals include the scan's JPEG noise.
 
+- **Direction.** Seen at 1:1 the poster is a fine, even mesh with mottle, not rows. `direction.mjs` measures, per area, the share of the high-pass energy (periods up to 16 px) in the main spectral peak and in the two strongest peaks, and the share of the 3 to 7 px energy within 15° of the main angle (17 % for a texture with no direction). The poster: red 0.6 / 1.3 / 21 %, near black 7.1 / 8.1 / 35 %, blue 2.2 / 2.9 / 21 %, grey 9.9 / 11.5 / 45 %.
+
 ## The stage
 
-`lib/screen.mjs` is the CPU reference. `stage.mjs` has the same math in GLSL, in the shape of the engine's `OutputFilter`. It runs after the tone curve on display-linear color, like the Grain stage, and changes Oklab lightness only:
+`lib/screen.mjs` is the CPU reference. `stage.mjs` has the same math in GLSL, in the shape of the engine's `OutputFilter`. It runs after the tone curve on display-linear color, like the Grain stage, and changes Oklab lightness only. Sizes are shares of the short side.
 
-- Ink coverage comes from lightness: 0 at paper white (L 0.97) and 1 at full ink (L 0.12).
-- The screen is a halftone of elongated dots ("cross" 0.45, so dashes along the rows): 0.0049 of the short side per cell (4.7 px at 960, 5.3 px at 1080p, 10.6 px at 4K), at a 51° angle.
-- A dot's area is its coverage, found from each spot value's rank within its cell. Dots grow from the cell centres in light ink, meet as a checker at half coverage, and become light holes in dark ink.
-- Every cell keeps its mean lightness exactly: the stage subtracts the mean of the soft-edged ink over the cell. Hue and chroma stay the frame's own, so there are no new colors and packs never mix.
-- Edges are soft (0.3 of coverage). The rows waver (a seeded warp of 0.3 cells over about 6 cells) and dot size varies from dot to dot (0.15), so it doesn't look machine-made.
-- 35 % of the swing is fine noise in the same ink, rising to 75 % in light ink, where the poster's texture is finer.
-- Paper white and black stay exact: there are no dots below 6 % coverage, and pure black stays 0.
-- The pixel is sampled 2 x 2. When a cell is under 3.6 px, as on small thumbnails, the screen fades out, so it never aliases. The seed sets the warp, the jitter and the noise.
-- Strength 0..1 scales the swing: 0.058 Oklab L at 1, which is about 1.3 % L of texture in mid-tones.
+- Ink coverage comes from lightness: 0 at paper white (L 0.97) and 1 at full ink (L 0.12). The dots and the mottle use coverage^1.5, which puts the strongest texture at L 0.43, where the poster's is.
+- **A mesh, not rows.** In mid and dark ink the halftone is made of two waves: the poster's 4.7 px at 51° and its weaker 3.8 px at 16° (at 960 px; weight 0.55 against the main wave). Each wave is warped by short seeded noise (0.42 cells over 2.5 cells), so no row lines up for more than a few cells, and each dot's coverage varies from dot to dot (0.2). The mean pitch stays 4.7 px.
+- **Fine dots in light ink.** Between L 0.45 and 0.62 the mesh hands over to round two-pixel dots at 57° and 147°, as on the poster's light red and blue. They fade from 2.4 px down and are gone at 1.6 px (at 960 px they are 2.05 px, at 59 %).
+- **Mottle.** Part of the swing is broadband mottle in the same ink: value noise at two sizes (1.1 and 2.5 px at 960). It is 68 % of the swing with the mesh and 55 % with the fine dots.
+- A dot's area is its coverage, found from each spot value's rank within its cell, and every cell keeps its mean lightness exactly: the stage subtracts the mean of the soft-edged ink over the cell. Hue and chroma stay the frame's own, so there are no new colors and packs never mix.
+- Paper white and black stay exact: the screen fades out within 6 % of paper white and of full ink, and the pixel is left as it is there.
+- The pixel is sampled 2 x 2. On frames under about 735 px on the short side the whole screen fades out (gone at 450 px), so thumbnails don't alias. The seed sets the warps, the jitter and the mottle.
+- **Strength sets the amount only, as Grain's does** (5f42419): the swing is 0.0977 Oklab L x strength^0.6, so 1 is the poster and 0.5 is two thirds of it. The character is the same at every setting.
 
-`gpu-check.mjs` runs the stage in the engine's own output pass, through `buildOutputShader([stage])` on a page in `harness/`, as the Pixel prototype does. On Bands Bold at 1920 x 1080 and at 960 x 1345, GPU and CPU are 0.01 code values apart on average and at most 2, with no channel more than 1 apart. Flat greys keep their mean within 0.06 code values; 0, 245, 250 and 255 come out exact.
+`gpu-check.mjs` runs the stage in the engine's own output pass, through `buildOutputShader([stage])` on a page in `harness/`, as the Pixel prototype does, and times it:
+
+- On Bands Bold at 1920 x 1080 and at 960 x 1345, GPU and CPU are 0.01 code values apart on average and at most 1.
+- Flat greys keep their mean within 0.05 code values; 0 and 255 come out exact, and 245 and 250 only get the dither.
+- GPU time of the output pass (timer query, median of 9, Bands Bold): with no filter 0.35 ms at 1080p and 0.7 ms at 4K; the print screen adds 2.6 ms at 1080p and 6 to 10 ms at 4K (the machine was shared, and runs differed); Grain 1 adds 5.4 ms and 13 to 16 ms. The screen costs about half as much as Grain.
 
 ## Ours against the poster
 
-`sheets.mjs` screens our own renders only (`render.mjs`: the engine harness, no grain, no dither) and finds, for each poster area, the window of our frames with the closest mean color. The frames are Bands Bold seed 6 and Bands Atmospheric seed 6 at the poster's size. Below, each crop's luma std in code values, its L std, and its strongest peak, measured the same way for both.
+`render.mjs` renders our frames through the engine harness, without grain or dither, plus the same frames with the tool's Grain at 1. For each of the poster's areas, the frames are the ones with the even area nearest in color, found over Ramp, Bands and Blooms, three packs, seeds 1 to 8 and Intensity 0, 0.25 and 0.5: Bands Bold seed 2 for the red (ΔE 0.027), Bands Atmospheric seed 8 at Intensity 0 for the near-black (L 0.20 against 0.17, ΔE 0.034), Bands Atmospheric seed 7 for the blue (ΔE 0.018) and at Intensity 0.25 for the grey (ΔE 0.034). Matching counts the window's own spread of lightness as distance, so a dark window with a bright edge in it doesn't pass for an even one.
 
-| Area | Poster | Ours, no screen | Ours, screen 0.5 | Ours, screen 1 |
+`strength.mjs` and `direction.mjs` measure the poster's band and 384 x 256 px of ours around the matched window the same way: strength as the grain measurement's high-pass RMS (`scripts/light/lib/grain.mjs`), and direction as above. At strength 1:
+
+| Area | Strength, % L (poster / ours) | Main peak | Both peaks | Within 15° |
 | --- | --- | --- | --- | --- |
-| red (ours: Bold Orange-red, ΔE 0.028) | 4.0, 1.08 %, 2.0 px at 149° | 0.5, 0.11 % | 2.7, 0.63 %, 4.5 px at 51° | 5.3, 1.24 %, 4.5 px at 51° |
-| near black (ours: Atmospheric, ΔE 0.16) | 2.8, 1.26 %, 4.8 px at 48° | 0.4, 0.14 % | 1.7, 0.64 %, 4.5 px at 51° | 3.2, 1.25 %, 4.5 px at 51° |
-| blue (ours: Atmospheric, ΔE 0.022) | 3.4, 1.13 %, 4.8 px at 48° | 0.4, 0.14 % | 1.9, 0.64 %, 4.5 px at 51° | 3.8, 1.26 %, 4.5 px at 51° |
-| grey (ours: Atmospheric, ΔE 0.045) | 6.0, 2.16 %, 4.8 px at 48° | 0.4, 0.14 % | 2.1, 0.75 %, 4.5 px at 51° | 4.1, 1.47 %, 4.5 px at 51° |
+| red | 1.17 / 1.29 | 0.6 / 0.4 % | 1.3 / 0.9 % | 21 / 16 % |
+| near black | 1.26 / 1.32 | 7.1 / 5.4 % | 8.1 / 7.6 % | 35 / 35 % |
+| blue | 1.64 / 1.43 | 2.2 / 1.4 % | 2.9 / 1.8 % | 21 / 23 % |
+| grey | 2.01 / 1.98 | 9.9 / 9.2 % | 11.5 / 10.7 % | 45 / 49 % |
 
-Over a whole screened frame, the poster's spectrum script finds our main peak at 4.74 px (211 per 1000 px) and 51.0°, where the poster's is 4.5 to 5.1 px at 48 to 55°. At strength 1 our texture is 1.2 to 1.5 % L, against the poster's 1.1 to 2.2 % (its grey band is the strongest).
+The amplitude, 0.0977, is the one at which the geometric mean of poster over ours is 1 over the four areas. Ours is within 13 % of the poster's strength in each area. The screen before this one had rows: its main peak held 42 to 52 % of the energy and 55 to 80 % lay within 15°. The tool's Grain at 1 has no direction at all in the same areas (main peak 0.8 to 0.9 %, 17 to 19 % within 15°) and coarser grains.
 
-![Poster crops next to ours on the nearest colors, 1:1 with a 4x zoom](results/poster-vs-ours.jpg)
+![Poster crops next to ours at print screen 1 and 0.5 and the tool's Grain 1, all 1:1; below, full frames shrunk](results/print-vs-poster.jpg)
 
-At normal viewing size the screen disappears. In the frames shrunk to 480 px, Ramp, Bands and Blooms look the same with and without it, and every edge stays soft. At 1:1 it shows as fine diagonal dashes.
+At 1:1 the print screen reads as the same kind of texture as the poster: a fine, even mesh with mottle and a slight diagonal, no rows. Grain 1 is a different kind: random blotches a few times larger. At normal viewing size the screen disappears; the full frames shrunk to a quarter look as they do without it, with every edge soft.
 
-![Ramp, Bands and Blooms (Bold, seed 1) at 1080p: screen 0, 0.5 and 1](results/full-frames.jpg)
+Moiré check (`moire.mjs`): shrunk to 50, 40 and 33 % with nearest-neighbour sampling the screen turns into fine noise; with linear or lanczos it averages away. No coarse moiré bands appear.
 
-Moiré check: a viewer that shrinks the image with nearest-neighbour sampling shows a fine cross-hatch at 33 to 50 %. With linear or lanczos shrinking the screen averages away. No coarse moiré bands appear in any case, because the warp, jitter and noise break up the period.
-
-![Bands Bold at 1080p, screen 1, shrunk to 50, 40 and 33 % with three filters](results/moire.jpg)
+![Bands Bold at 1080p, screen 1, shrunk to 50, 40 and 33 %](results/moire.jpg)
 
 ## How it could reach the owner, with no new controls
 
-Two ways:
+No Grain setting looks like the poster: Grain is random and coarser at every strength, and since 5f42419 its strength only sets the amount. So the print screen can't be a Grain preset. The two ways:
 
-1. **As Grain's top range** (Grain 1 the riso prints, a print screen above that). This means remapping the slider, for example film to 0.5, riso to 0.8 and the screen at 1. Partway along one slider, random grain would turn into an ordered pattern with a direction. That is a change of kind, which the slider rules forbid for the looks ("never switch a structure"), and it would read the same way here. It would also move the riso match from 1, which round 11 confirmed.
-2. **As its own filter option, "Print"**, next to Grain, ASCII and Pixel, one at a time, with the existing strength slider. 0.5 is a light screen (about 0.65 % L, the poster's lighter areas) and 1 is the poster (about 1.3 % L).
+1. **Its own filter option, "Print"**, next to Grain, ASCII and Pixel, one at a time, with the existing strength slider, which keeps Grain's meaning (the amount only, strength^0.6, 1 is the poster). Wiring it in would take: an `output.print` setting and `'print'` in `FilterKey` (`src/light/scene.ts`, `src/light/engine/filters/types.ts`); the stage as `src/light/engine/filters/print.ts` (from `stage.mjs` and the per-frame values in `lib/screen.mjs`) in `OUTPUT_FILTERS`; `'print'` in the tool's `TOOL_FILTERS` and the file name tag; and tests that the mean is kept, black and white stay exact and GPU matches CPU.
+2. **Grain's character changed to the print screen.** Grain 1 would stop being the riso prints, which round 11 confirmed, and every look's grain would gain a direction.
 
-**Option 2 reads better.**
-- Each filter stays one kind of surface: Grain random, ASCII characters, Pixel LED cells, Print a halftone screen.
-- Picking Grain still gives grain.
-- Grain 1 stays the riso prints.
-- It adds no control: the Filter choice and Strength already exist.
-
-The cost is a fourth entry in the brief's filter list (Grain, ASCII or Pixel), so the owner decides. Wiring it in would take an `output.print` setting, `PRINT_SCREEN_FILTER` (`stage.mjs`, already checked on the GPU) in `OUTPUT_FILTERS`, and `'print'` in the tool's `TOOL_FILTERS`. On Contour it is safe: black stays black, and the dark falloffs get a faint screen, as the poster's near-black has.
+**Option 1 is better.** Each filter stays one kind of surface (Grain random, ASCII characters, Pixel LED cells, Print a halftone screen), picking Grain still gives the riso grain, and no control is added. The cost is a fourth entry in the brief's filter list (Grain, ASCII or Pixel), so the owner decides. On Contour it is safe: black stays black, and dark falloffs get a faint screen, as the poster's near-black has.
 
 ## Not done
 
-- Ours is more regular than the poster's. Its peaks are much sharper (thousands of times the background against the poster's 50 to 230 times), because the poster's screen is smeared by moiré and the scan. More warp or noise would close that gap but move it toward grain.
-- The poster's weaker second direction (3.8 px at 16°) and the two-pixel dot pair in light red are not copied. Fine noise in light ink stands in for the latter.
-- Bands seed 6 in Bold and Atmospheric has nothing as dark as the poster's near-black (nearest L 0.34 against 0.19, ΔE 0.16), so that row compares a darker slate, not black.
-- Not profiled in the engine. Per pixel it is 4 samples of two value noises, a hash and two cosines, plus one Oklab round trip.
+- Light ink is a little less directional than the poster's (blue's main peak 1.4 % against 2.2 %), and red a little stronger (1.29 % against 1.17 %). On the poster, the red and the blue at nearly the same lightness differ by 40 % in strength. The stage works on lightness only, so it can't follow that.
+- The Bands frames were rendered with another agent's uncommitted Bands edits in the tree. Only their colors matter here, but a re-render can pick different windows.
 
 ## Files
 
 - `measure.mjs`: spectra and peaks per band and channel (`--file` for any image), written to `out/`. `bands.mjs`: texture strength per band. `look.mjs`: 8x crops and high-passed crops.
-- `lib/screen.mjs`: the stage, CPU reference. `lib/spectrum.mjs`: windowed 2D spectra, peaks, coherence.
+- `lib/screen.mjs`: the stage, CPU reference. `lib/spectrum.mjs`: windowed 2D spectra, peaks, coherence, direction. `lib/areas.mjs`: the poster's four areas and the matching of our frames.
 - `stage.mjs`: the GLSL and uniforms in the shape of an engine `OutputFilter`.
-- `render.mjs`: our input frames through the engine harness. `sheets.mjs`: the sheets and numbers. `moire.mjs`: the shrink check. `gpu-check.mjs` and `harness/`: the stage in the engine's output pass against the CPU reference.
+- `render.mjs`: our input frames through the engine harness. `strength.mjs` and `direction.mjs`: the numbers above. `sheets.mjs`: the sheet. `moire.mjs`: the shrink check. `gpu-check.mjs` and `harness/`: the stage in the engine's output pass against the CPU reference, levels and timing.
 - `results/`: the sheets above.
