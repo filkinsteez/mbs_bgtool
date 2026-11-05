@@ -22,6 +22,7 @@ import {
   tailParams,
   tailUniform,
   turnParam,
+  VEIL_TINT,
   veiled,
   veilParam,
   wrapAngle,
@@ -80,6 +81,8 @@ uniform vec3 uTexture;     // fine streaks inside the shafts: contrast, streaks 
 uniform vec4 uVeil;        // a cool light's haze: veil color share (1: full color), level of the full color (share of the clipping luminance), band width (octaves), dark haze luminance
 uniform float uSkyPeak;    // where across the lit sky it is brightest (0: at its first end)
 uniform vec4 uDarkMeet;    // over a dark of another hue: light level its faint tail falls off below (from, to), level the dark is gone by (from, to); 0: off
+uniform float uVeilTint;   // a cool light's least chroma along its haze's hue, over Oklab lightness (0: off)
+uniform vec2 uNearShape;   // the darker sky near the point: distance it starts at, its depth toward the lit sky's bright end (share of the full depth)
 
 const int SHADOW_TAPS = 20;
 const int SHORT_TAPS = 8;
@@ -183,9 +186,15 @@ float skyShafts(vec2 p) {
   if (dirLight.x <= 1e-5) return 0.0;
   float rise = 1.0 + uRise.x * pow(abs(sin(theta)), uRise.w) * smoothstep(uRise.y, uRise.z, r);
   float reach = uReach > 0.0 ? 1.0 / (1.0 + pow(r / (0.75 * uReach), 3.0)) : 1.0;
-  // The clouds are thickest around the light, so the sky right above the point is dark and
-  // the shafts brighten away from it.
-  float near = mix(uNear.z, 1.0, smoothstep(uNear.x, uNear.y, r));
+  // The clouds are thickest around the light, so the sky above the point is darker and the
+  // shafts brighten away from it. That darker sky is a wedge opening into the dark side
+  // (deepest toward the lit sky's dim end and past it) instead of a hole in the light, and it
+  // starts a little away from the point, which sits in the horizon's glow.
+  float across = (theta - uSky.x) / (uSky.y - uSky.x);
+  if (uSkyPeak > 0.0) across = abs(across - uSkyPeak) / max(uSkyPeak, 1.0 - uSkyPeak);
+  float toDark = max(saturate(across), dirLight.y);
+  float dip = smoothstep(uNearShape.x, max(uNear.x, uNearShape.x + 1e-3), r) * (1.0 - smoothstep(uNear.x, uNear.y, r));
+  float near = 1.0 - (1.0 - uNear.z) * mix(uNearShape.y, 1.0, toDark) * dip;
   // Fine streaks inside the shafts, as if the lit haze were smeared along the rays: noise
   // around a circle (so it has no seam), changing slowly along each ray.
   float streaks = 1.0;
@@ -337,6 +346,20 @@ vec3 combine(vec2 uv, vec2 screen, vec3 line, vec3 cached) {
     darkShows = 1.0 - smoothstep(uDarkMeet.z, uDarkMeet.w, scatter);
   }
   vec3 color = uBaseColor * uLook.x * darkShows + scatter * meet * warmFall(scatter) * path + uVeil.w * veil / lumHaze;
+  // A cool light's pale light keeps its haze's hue, as the moodboard's white pool does: most
+  // just around the core, less in the white core itself, and never more than half the haze's
+  // own chroma for its lightness (a grey haze such as Steel stays grey). A neutral white or
+  // grey beside the blue haze would read warm (an orange-brown ring) by contrast. Only what
+  // falls short of that along the hue is added.
+  if (uVeilTint > 0.0) {
+    vec3 lab = linearToOklab(max(color, vec3(0.0)));
+    vec3 hazeLab = linearToOklab(uHazeColor);
+    vec2 hue = normalize(hazeLab.yz);
+    float trace = min(uVeilTint, 0.5 * length(hazeLab.yz) / max(hazeLab.x, 1e-4));
+    float least = trace * lab.x * mix(1.0, 0.4, smoothstep(0.8, 1.0, lab.x));
+    lab.yz += hue * max(0.0, least - dot(lab.yz, hue));
+    color = max(oklabToLinear(lab), vec3(0.0));
+  }
   vec2 half_ = 0.5 * uFrameAspect;
   float vig = 1.0 - uLook.y * dot(screen, screen) / dot(half_, half_);
   return color * max(vig, 0.0);
@@ -480,16 +503,20 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
     // point, and has all its light just past it, with no glare at the point; fine streaks run
     // in the shafts.
     near: [layerOut, round4(1.7 * layerOut), 0.25, 0],
+    nearShape: [round4(0.3 * layerIn), 0.35],
     texture: [0.35, 11, 0.5],
     veil: veilParam(light),
     darkMeet: darkMeetParam(light, BASE_GAIN),
+    veilTint: veiled(light) ? VEIL_TINT : 0,
   }
   if (controls.drag) Object.assign(params, streaksOnLine(params, lineInShorts(controls.drag, aspect), skyHeight))
 
   return {
     colors: [light.light, light.haze, light.base],
     params,
-    lens: { bloom: round4(soft(0.03, 0.06)), bloomLevels: [1, 0.5, 0.25, 0.1, 0, 0, 0, 0], halation: 0 },
+    // Film halation spreads red farthest, which rings a white-hot core in red; only a warm
+    // light keeps that, should halation be turned on.
+    lens: { bloom: round4(soft(0.03, 0.06)), bloomLevels: [1, 0.5, 0.25, 0.1, 0, 0, 0, 0], halation: 0, ...(light.tail ? {} : { halationSpread: 0 }) },
     output: { grain: 0, toe: light.toe },
   }
 }
@@ -540,6 +567,7 @@ function streaksOnLine(params: Record<string, ParamValue>, line: ShortLine, skyH
     rise: [round4(0.25 * rise[0]), round4(rise[1] * scale), round4(rise[2] * scale), rise[3]],
     clouds: [round4(Math.min(64, clouds[0] / scale)), clouds[1], clouds[2], clouds[3]],
     near: [round4(near[0] * scale), round4(near[1] * scale), near[2], near[3]],
+    nearShape: [round4((params.nearShape as number[])[0] * scale), (params.nearShape as number[])[1]],
     // The brightest shafts point along the line, and the rest of the fan keeps a good share of
     // their light, so the shafts spread broadly instead of gathering into one column.
     skyPeak: round4(Math.min(0.9, Math.max(0.1, 0.5 + (level - fan) / (Math.abs(width) > 1e-3 ? width : 1e-3)))),
@@ -586,6 +614,8 @@ export const contourStreaks: RecipeDefinition = {
     { kind: 'vector', key: 'veil', label: 'Haze veil', min: 0, max: 4, step: 0.0005, default: [1, 1, 1, 0] },
     { kind: 'number', key: 'skyPeak', label: 'Brightest direction', min: 0, max: 1, step: 0.005, default: 0 },
     { kind: 'vector', key: 'darkMeet', label: 'Meeting another dark', min: 0, max: 4, step: 0.0005, default: [0, 0, 0, 0] },
+    { kind: 'number', key: 'veilTint', label: 'Trace of the haze hue', min: 0, max: 0.2, step: 0.0005, default: 0 },
+    { kind: 'vector', key: 'nearShape', label: 'Sky near the point, shape', min: 0, max: 4, step: 0.0005, default: [0, 1] },
   ],
   fragment: STREAKS_GLSL,
   uniforms: (ctx) => ({
@@ -620,6 +650,8 @@ export const contourStreaks: RecipeDefinition = {
     uVeil: ctx.vec('veil'),
     uSkyPeak: ctx.num('skyPeak'),
     uDarkMeet: ctx.vec('darkMeet'),
+    uVeilTint: ctx.num('veilTint'),
+    uNearShape: ctx.vec('nearShape'),
   }),
   scatter: [{ source: 'aux', radius: () => SKY_CACHE_BLUR, size: () => SKY_CACHE_SIZE }],
   lens: { bloom: 0.04, bloomLevels: [1, 0.5, 0.25, 0.1, 0, 0, 0, 0], halation: 0 },

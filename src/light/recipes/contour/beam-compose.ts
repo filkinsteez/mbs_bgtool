@@ -129,16 +129,24 @@ const VEIL_CHROMA = 0.12
 const DARK_HAZE = 0.0012
 
 /**
+ * A cool light's least chroma along its haze's hue, over Oklab lightness, easing to 0.4 of it
+ * in the white core: the moodboard's pool keeps chroma about 0.06 just around its core and
+ * 0.02 to 0.035 in it, and a neutral white or grey beside blue haze reads warm, as an
+ * orange-brown ring.
+ */
+export const VEIL_TINT = 0.07
+
+/**
  * The `veil` param [chroma share, band level, band width, dark haze] for a light. A cool
  * light's haze keeps only enough of its chroma for VEIL_CHROMA times its lightness (the
  * moodboard's beams and shafts), up to twice that in a band about 1.2 octaves either side of
  * its clipping luminance (where the moodboard's light is most colorful), and leaves a faint
  * haze in black darks. Warm lights keep their warm tails (a pale veil of them reads brown).
  */
-export function veilParam(light: ContourLight): number[] {
+export function veilParam(light: ContourLight, chroma = VEIL_CHROMA): number[] {
   if (!veiled(light)) return [1, 1, 1, 0]
   const [l, c] = linearToOklch(hexToLinear(light.haze))
-  return [round4(Math.min(1, (VEIL_CHROMA * l) / Math.max(c, 1e-4))), 1, 1.2, light.base === '#000000' ? DARK_HAZE : 0]
+  return [round4(Math.min(1, (chroma * l) / Math.max(c, 1e-4))), 1, 1.2, light.base === '#000000' ? DARK_HAZE : 0]
 }
 
 /** Whether a light's haze is a pale veil: any cool light. */

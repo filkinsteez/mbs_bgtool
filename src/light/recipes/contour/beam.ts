@@ -22,6 +22,7 @@ import {
   tailParams,
   tailUniform,
   turnParam,
+  VEIL_TINT,
   veiled,
   veilParam,
   wrapAngle,
@@ -83,6 +84,8 @@ uniform float uCeilingTop; // how far above its ceiling the ceiling haze thins o
 uniform vec2 uLaneShape;  // floor gloss lanes: weight of the finer, blotchier lanes, how fast a lane changes along its length
 uniform vec4 uVeil;       // a cool light's haze: chroma share (1: full color), level of the most color (share of the clipping luminance), band width (octaves), dark haze luminance
 uniform vec4 uDarkMeet;   // over a dark of another hue: light level its faint tail falls off below (from, to), level the dark is gone by (from, to); 0: off
+uniform float uVeilTint;  // a cool light's least chroma along its haze's hue, over Oklab lightness (0: off)
+uniform float uVeilBand;  // how much more chroma the veil keeps in its band of levels (1: twice the share)
 
 const int BEAM_STEPS = 16;
 
@@ -351,16 +354,7 @@ vec3 radiance(vec2 uv, vec2 screen) {
   float level = scatter + direct * lumLight / lumHaze;
   float fall = warmFall(level);
   vec3 tail = warmTail(level);
-  // A cool light's haze is a pale veil of its color: its whole color path, the pale core too,
-  // keeps only a share of its chroma at the same Oklab lightness and hue, rising to twice that
-  // share in a wide band of levels; its darks are a faint blue-black haze, not black.
   vec3 path = mix(tail, paleColor, pale);
-  if (uTail.w <= 0.0 && uVeil.x < 1.0) {
-    float clip = lumHaze / max(max(uHazeColor.r, uHazeColor.g), uHazeColor.b);
-    float octaves = log2(max(level * lumHaze, 1e-6) / (uVeil.y * clip)) / max(uVeil.z, 0.05);
-    vec3 lab = linearToOklab(path);
-    path = oklabToLinear(vec3(lab.x, lab.yz * min(1.0, uVeil.x * (1.0 + exp(-0.5 * octaves * octaves)))));
-  }
   // Over a dark of another hue (Meta Blue over Plum) the light and the dark both dim toward
   // black before they meet: the dark fades out where the light is, and the light's faint tail
   // falls off faster, so they never blend into a third color over a wide fade.
@@ -374,7 +368,31 @@ vec3 radiance(vec2 uv, vec2 screen) {
   vec3 ownColor = uTail.w > 0.0 ? fall * tail * (lumLight / lumHaze) : uLightColor;
   vec3 directColor = mix(ownColor, uPaleTarget * lumLight, uPaleWhite * pale);
   vec3 ambient = uBaseColor * darkShows * mix(uAmbient.x * (1.0 - uAmbient.y + uAmbient.y * hazeHere), uAmbient.z, onFloor);
-  vec3 color = ambient + scattered + directColor * direct + uVeil.w * uHazeColor / lumHaze;
+  // A cool light is a pale veil of its color: its haze and its pool alike, the pale core too,
+  // keep only a share of their chroma at the same Oklab lightness and hue (more in a band of
+  // levels, by uVeilBand); its darks are a faint blue-black haze, not black.
+  vec3 lit = scattered + directColor * direct;
+  if (uTail.w <= 0.0 && uVeil.x < 1.0) {
+    float clip = lumHaze / max(max(uHazeColor.r, uHazeColor.g), uHazeColor.b);
+    float octaves = log2(max(level * lumHaze, 1e-6) / (uVeil.y * clip)) / max(uVeil.z, 0.05);
+    vec3 lab = linearToOklab(max(lit, vec3(0.0)));
+    lit = max(oklabToLinear(vec3(lab.x, lab.yz * min(1.0, uVeil.x * (1.0 + uVeilBand * exp(-0.5 * octaves * octaves))))), vec3(0.0));
+  }
+  vec3 color = ambient + lit + uVeil.w * uHazeColor / lumHaze;
+  // A cool light's pale light keeps its haze's hue, as the moodboard's white pool does: most
+  // just around the core, less in the white core itself, and never more than half the haze's
+  // own chroma for its lightness (a grey haze such as Steel stays grey). A neutral white or
+  // grey beside the blue haze would read warm (an orange-brown ring) by contrast. Only what
+  // falls short of that along the hue is added.
+  if (uVeilTint > 0.0) {
+    vec3 lab = linearToOklab(max(color, vec3(0.0)));
+    vec3 hazeLab = linearToOklab(uHazeColor);
+    vec2 hue = normalize(hazeLab.yz);
+    float trace = min(uVeilTint, 0.5 * length(hazeLab.yz) / max(hazeLab.x, 1e-4));
+    float least = trace * lab.x * mix(1.0, 0.4, smoothstep(0.8, 1.0, lab.x));
+    lab.yz += hue * max(0.0, least - dot(lab.yz, hue));
+    color = max(oklabToLinear(lab), vec3(0.0));
+  }
 
   vec2 half_ = 0.5 * uFrameAspect;
   float vig = 1.0 - uVignette * dot(screen, screen) / dot(half_, half_);
@@ -420,6 +438,15 @@ const NARROW_WIDTH = 0.11
  * and pool stay the light's own warm color instead of a wide white area (Tan).
  */
 const WARM_FLOOR_HAZE = 0.45
+
+/** Share of the floor's own light (pool, spill, reflection; the pool's glow gets its root) a warm light gets. */
+const WARM_FLOOR_LIGHT = 0.4
+
+/**
+ * Oklab chroma over lightness of a cool beam's haze, as in the beam-pool example (chroma
+ * about 0.06 at lightness 0.4 to 0.8, 0.04 at 0.2 to 0.4).
+ */
+const BEAM_VEIL_CHROMA = 0.115
 
 /**
  * Pack output. A wide, nearly parallel beam lands on the stage's edge and is seen
@@ -486,9 +513,12 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
   }
 
   const power = geo(intensity, 0.35, 0.75, 1.6) * hazeGain * lerp(0.9, 1.1, random())
-  // Warm light already sits near nominal over the whole beam, so its pool is less hot and
-  // never a wide white area.
-  const pool = lerp(6, 8.5, random()) * (luminanceOf(light.haze) / Math.max(luminanceOf(light.light), 0.01)) * (light.toe > 0 ? 0.3 : 1)
+  // A warm light whitens (Tan, Lime) or holds a flat saturated color (Yellow, Orange-red) a
+  // little past its clipping level, so its floor (pool, spill, the pool's glow, the floor's
+  // reflection) is far less bright: its pool keeps a smooth ramp up to a pale center instead
+  // of a wide flat top whose outline follows every bump of the light under it.
+  const warmFloor = light.tail ? WARM_FLOOR_LIGHT : 1
+  const pool = lerp(6, 8.5, random()) * (luminanceOf(light.haze) / Math.max(luminanceOf(light.light), 0.01)) * (light.tail ? 0.3 * WARM_FLOOR_LIGHT : 1)
 
   const params: Record<string, ParamValue> = {
     horizon: round4(horizon),
@@ -519,11 +549,13 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     // The pool lights the haze above it in a dome that falls off faster sideways than upward,
     // and the haze spills its light onto the floor just around the pool, so the floor beside
     // the pool stays dark instead of glowing across the frame.
-    bounce: [round4(lerp(0.7, 1, random())), round4(soft(0.5, 0.8) * Math.min(1, 0.5 + halfH)), round4(lerp(0.5, 0.7, random())), round4(lerp(0.12, 0.2, random()))],
-    pool: [round4(Math.min(10, pool)), round4(lerp(1.3, 2, random())), round4(soft(0.8, 1.1))],
+    bounce: [round4(lerp(0.7, 1, random()) * Math.sqrt(warmFloor)), round4(soft(0.5, 0.8) * Math.min(1, 0.5 + halfH)), round4(lerp(0.5, 0.7, random())), round4(lerp(0.12, 0.2, random()))],
+    pool: [round4(Math.min(10, pool)), round4(lerp(1.3, 2, random()) * warmFloor), round4(soft(0.8, 1.1))],
     edgeSoftness: round4(soft(HALF_SCALE_EDGE, 0.024)),
     edgeHaze: EDGE_HAZE,
-    gloss: [round4(lerp(2.8, 3.4, random())), round4(soft(0.22, 0.32))],
+    // The floor's mirror of a warm beam is dimmer still: its bright column under the pool
+    // would square off the pool's outline.
+    gloss: [round4(lerp(2.8, 3.4, random()) * warmFloor * (light.tail ? 0.5 : 1)), round4(soft(0.22, 0.32))],
     texture: [0.05, 0.006],
     // Boards about as wide whatever the beam's width, each even along its length, so the
     // floor's rays stay thin and smooth under any beam instead of breaking into spikes.
@@ -543,14 +575,20 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     // A light over a dark of another hue (Meta Blue over Plum) keeps its full color: a pale
     // veil would blend with the dark into a third color, and dimming the dark where the beam's
     // faint glow reaches would outline the beam's shape in the dark.
-    veil: darkMatches(light) ? veilParam(light) : [1, 1, 1, 0],
+    // The beam-pool example's haze has about the same chroma for its lightness everywhere
+    // (about 0.1 times it, near the pool too), so Beam's veil has no band of extra color.
+    veil: darkMatches(light) ? veilParam(light, BEAM_VEIL_CHROMA) : [1, 1, 1, 0],
+    veilBand: 0,
+    veilTint: veiled(light) && darkMatches(light) ? VEIL_TINT : 0,
   }
   if (controls.drag) Object.assign(params, beamOnLine(params, lineInShorts(controls.drag, aspect), halfH))
 
   return {
     colors: [light.light, light.haze, light.base],
     params,
-    lens: { bloom: round4(soft(0.04, 0.07)), bloomLevels: [1, 0.6, 0.3, 0.15, 0.1, 0.05, 0, 0], halation: 0 },
+    // Film halation spreads red farthest, which rings a white-hot core in red; only a warm
+    // light keeps that, should halation be turned on.
+    lens: { bloom: round4(soft(0.04, 0.07)), bloomLevels: [1, 0.6, 0.3, 0.15, 0.1, 0.05, 0, 0], halation: 0, ...(light.tail ? {} : { halationSpread: 0 }) },
     output: { grain: 0, toe: light.toe },
   }
 }
@@ -665,6 +703,8 @@ export const contourBeam: RecipeDefinition = {
     { kind: 'vector', key: 'laneShape', label: 'Floor lane shape', min: 0, max: 1, step: 0.0005, default: [0.35, 0.08] },
     { kind: 'vector', key: 'veil', label: 'Haze veil', min: 0, max: 4, step: 0.0005, default: [1, 1, 1, 0] },
     { kind: 'vector', key: 'darkMeet', label: 'Meeting another dark', min: 0, max: 4, step: 0.0005, default: [0, 0, 0, 0] },
+    { kind: 'number', key: 'veilTint', label: 'Trace of the haze hue', min: 0, max: 0.2, step: 0.0005, default: 0 },
+    { kind: 'number', key: 'veilBand', label: 'More color in the band', min: 0, max: 2, step: 0.005, default: 1 },
   ],
   fragment: BEAM_GLSL,
   uniforms: (ctx) => {
@@ -706,6 +746,8 @@ export const contourBeam: RecipeDefinition = {
       uLaneShape: ctx.vec('laneShape'),
       uVeil: ctx.vec('veil'),
       uDarkMeet: ctx.vec('darkMeet'),
+      uVeilTint: ctx.num('veilTint'),
+      uVeilBand: ctx.num('veilBand'),
     }
   },
   radianceScale: (ctx) => (ctx.num('edgeSoftness') >= HALF_SCALE_EDGE ? 0.5 : 1),
