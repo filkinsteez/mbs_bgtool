@@ -78,18 +78,22 @@ const T = {
   // at least `tailOwner` of the lit area (an Orange-red light shows no Yellow at all).
   tailPartners: { Yellow: ['Orange-red'], Lime: ['Forest'] },
   tailOwner: 0.25,
-  // Seed variety (SHARED.md, decided 2026-11-03 10:15 AM): two of seeds 1-8 (16:9) look like the same frame when the
-  // light sits in the same places (layout) and the pack colors cover about the same shares (mix). Layout: Oklab L at
-  // 40x23, blurred by 1 px and stretched to 0-1 per frame, compared as sum |a - b| / sum (a + b), so a dark frame's
-  // shared black does not count as alike. Mix: half the summed difference of the color shares outside the dark base.
-  // Set by eye in round 9 of the compare agent: Bands Bold seeds 1 and 2 at 6c86ad2 (0.07, 0.08) and Beam Bold seeds
-  // 1 and 5 at 9784f4d (0.16, 0.00) look alike; pairs that clearly differ were at layout 0.25+ or mix 0.47+.
-  variety: { layout: 0.2, mix: 0.3 },
+  // Seed variety (SHARED.md, decided 2026-11-03 10:15 AM, and under any line, 11:31 AM on 2026-11-05): two of seeds
+  // 1-8 (16:9) look like the same frame when the light sits in the same places (layout) and they show about the same
+  // colors in the same amounts (colors). Both come from Oklab at 40x23, blurred by 1 px. Layout: the summed difference
+  // in L over the summed L of both, each with its darkest level taken off up to `variety.baseL`, so shared black does
+  // not count. Colors: half the summed difference of the colored light in each hue family, as a share of each
+  // frame's lit pixels (L `variety.litL` and up); see colorFamilies. Set by eye in compare round 14
+  // (artifacts/compare/rounds/14/check/SEEDS.md): under the owner's line, Bands Bold seeds 1, 5, 7 and 8 (layout up
+  // to 0.16, colors up to 0.08), Ramp Atmospheric seeds 1-6 at controls 0.37 (0.09, 0.12) and 12 of 15 pairs of Ramp
+  // Bold seeds 1-6 look alike; Bands Bold's orange and yellow seeds 2 and 4 against the rest (colors 0.26 and up)
+  // don't; at the default light Contour seeds stay apart as before.
+  variety: { layout: 0.2, colors: 0.15, baseL: 0.35, litL: 0.1, chroma: [0.035, 0.07] },
   // Packs never look alike (SHARED.md, owner 2026-11-05 10:48 AM): two packs at the same seed and drag look like the
   // same frame when the mean Oklab distance of their 80x45 thumbnails, over the pixels lit in either (L `cross.litL`
   // and up, so shared black does not count), is `cross.color` or less. The layout measure of the seed check is left
-  // out: two packs of one seed share their geometry, and it calls two near-even skies different. Set by eye in
-  // compare round 14 (artifacts/compare/checkdev/pairs/): Ramp Elemental and Atmospheric at the owner's line at
+  // out: two packs of one seed share their geometry. Set by eye in compare round 14
+  // (artifacts/compare/rounds/14/check/): Ramp Elemental and Atmospheric at the owner's line at
   // a89fc5c, seed 1 (0.011, the owner's "feel identical"), Beam and Streaks Bold and Atmospheric at seed 1 (0.008,
   // 0.018) and Halo's identical packs look alike; a cyan sky next to a pale lime one (Ramp seed 6, 0.053), a cyan rim
   // next to a green one (Rim seed 1, 0.105) and the same blue with a cream or a grey band (Bands seed 4, 0.047) don't.
@@ -103,16 +107,24 @@ const T = {
   // high above: L 0.40 over a mean of 0.02) and Beam's empty slate, navy and Forest fields (brightest under L 0.3)
   // fail.
   black: { peakL: 0.5, meanL: 0.06, darkPeakL: 0.35, darkMeanL: 0.25 },
-  // A frame shows no pack color when its pack colors, at any lightness (Atmospheric's white is Ice), cover under
-  // `noPack` of it.
+  // A Contour frame shows no pack color when its pack colors, at any lightness (Atmospheric's white is Ice), cover
+  // under `noPack` of it.
   noPack: 0.01,
-  // --main bright (SHARED.md, decided 2026-11-05 11:30 AM): the main light is the color of the frame's brightest
-  // `bright.share`, short of the near-white core (L `bright.whiteL` and up at chroma under `bright.whiteC`), where a
-  // pixel is a colored light's when it keeps `bright.onPath` of that color's path chroma. Not the default: an Ice
-  // light whose core a blue haze tints (Beam and Streaks Atmospheric seeds 2, 4 and 8 at 569d806, chroma 0.03 to
-  // 0.05 there) is as blue as the moodboard's own Meta Blue lights (rim-edge 0.06, radial streaks 0.03, beam pool
-  // 0.04), so a share that calls those Ice calls the rim-edge and radial-streaks examples Ice in Atmospheric too,
-  // and the check would fail the references it was built from (artifacts/compare/rounds/14/check/MAIN-LIGHT.md).
+  // Under a drag, a Sunset frame needs at least two pack colors, each over `drag.visible` of the frame, one of them a
+  // color only its pack has; it needs no warm color and no Meta Blue (SHARED.md, decided 2026-11-05 12:45 and
+  // 12:50 PM). Two of Atmospheric's greys are two colors when their L spreads `drag.greySpan` or more (10th to 90th
+  // percentile; Near-black to Slate is 0.11). Set by eye in compare round 14 (artifacts/compare/rounds/14/check/
+  // visible-share.jpg): a second color over 1.3 to 2.6% of the frame (a Yellow corner, an Ice band, a gold bloom)
+  // shows at thumbnail size; Atmospheric's flat Slate fields under the line high above (a lighter top read as 4 to
+  // 5% Steel) are one color.
+  drag: { visible: 0.02, greySpan: 0.1 },
+  // --main bright (the 11:30 AM rule of 2026-11-05, withdrawn at 12:50 PM): the main light is the color of the frame's
+  // brightest `bright.share`, short of the near-white core (L `bright.whiteL` and up at chroma under `bright.whiteC`),
+  // where a pixel is a colored light's when it keeps `bright.onPath` of that color's path chroma. An Ice light whose
+  // core a blue haze tints (Beam and Streaks Atmospheric seeds 2, 4 and 8 at 569d806, chroma 0.03 to 0.05 there) is
+  // as blue as the moodboard's own Meta Blue lights (rim-edge 0.06, radial streaks 0.03, beam pool 0.04), so a share
+  // that calls those Ice calls the rim-edge and radial-streaks examples Ice in Atmospheric too, and the check would
+  // fail the references it was built from (artifacts/compare/rounds/14/check/MAIN-LIGHT.md).
   bright: { share: 0.005, onPath: 0.7, whiteL: 0.9, whiteC: 0.03 },
 }
 // Hues that are neither neighbour, so a lens edge never excuses them (SHARED.md palette rules).
@@ -158,6 +170,16 @@ const DRAGS = {
   side: { from: [0.9, 0.5], to: [0.1, 0.5], name: 'sideways' },
 }
 const dragText = (d) => `${DRAGS[d].name}, from=${DRAGS[d].from.join(',')}&to=${DRAGS[d].to.join(',')}`
+// The hue families the seed check compares (Oklab hue, each up to its degree): red to orange, yellow and tan, green,
+// blue (Cyan to Meta Blue) and purple.
+const HUE_FAMILIES = [
+  [55, 'red'],
+  [105, 'yellow'],
+  [190, 'green'],
+  [290, 'blue'],
+  [345, 'purple'],
+  [360, 'red'],
+]
 
 const args = parseArgs()
 const lookArg = list(args.look)
@@ -188,9 +210,9 @@ const dimRule = args.dim !== 'strict'
 // --haze narrow: the haze keeps the dim rule's hue window, as before 2026-11-05.
 const hazeRule = args.haze === 'strict' ? 'strict' : args.haze === 'narrow' ? 'narrow' : 'wide'
 // The main light is the pack color with the most lit area, Atmospheric's greys weighed against all of the colored
-// light's (bc1cdc9). --main bright: the color of the frame's brightest part (SHARED.md, 2026-11-05 11:30 AM; T.bright
-// says why it isn't the default). --main own: the greys against the colored light's part at or below its own nominal
-// brightness only, as before 2026-11-05.
+// light's (bc1cdc9). --main bright: the color of the frame's brightest part (the 11:30 AM rule of 2026-11-05,
+// withdrawn because it fails the moodboard examples; T.bright). --main own: the greys against the colored light's part
+// at or below its own nominal brightness only, as before 2026-11-05.
 const mainRule = args.main === 'own' ? 'own' : args.main === 'bright' ? 'bright' : 'all'
 // --drags owner,mirror,above,side|all|none: the test drags every frame is also judged at (default all).
 const dragArg = list(args.drags)
@@ -741,6 +763,9 @@ try {
     const Lsorted = Float32Array.from(Ls.filter((v, p) => !skip[p])).sort()
     const p99L = Lsorted.length ? Lsorted[Math.floor(0.99 * (Lsorted.length - 1))] : 0
     const peakL = Lsorted.length ? Lsorted[Math.floor(0.999 * (Lsorted.length - 1))] : 0
+    // Atmospheric's greys are told apart by lightness only: how far their L spreads (10th to 90th percentile).
+    const greyLs = Float32Array.from(Ls.filter((v, p) => k.neutrals.includes(bucket[p]))).sort()
+    const greySpan = greyLs.length ? greyLs[Math.floor(0.9 * (greyLs.length - 1))] - greyLs[Math.floor(0.1 * (greyLs.length - 1))] : 0
     let base = 0
     let baseOut = 0
     let lit = 0
@@ -788,6 +813,7 @@ try {
       meanL: frac(Ls.reduce((s, v) => s + v, 0)),
       p99L,
       peakL,
+      greySpan,
       bright: brightN ? { n: brightN, L: brightL, votes: Object.fromEntries(k.colors.map((c, i) => [c.name, brightVotes[i] / brightN]).filter(([, v]) => v > 0)) } : null,
       bridges: Object.fromEntries(k.pairs.map(([i, j], b) => [`${k.colors[i].name} + ${k.colors[j].name}`, frac(bridges[b])])),
       dark: frac(dark),
@@ -825,49 +851,74 @@ try {
       ? "main light: the color of the frame's brightest part (--main bright)"
       : `main light: the most lit area, Atmospheric's grey light against ${mainRule === 'own' ? "the colored light's own-brightness part (--main own)" : "the colored light's whole lit area"}`
   const hazeLabel = `haze: ${!dimRule || hazeRule === 'strict' ? 'strict' : `down to chroma ${T.haze} (4:15 PM), ${hazeRule === 'wide' ? `Meta Blue's up to ${-T.hazeHue['Meta Blue'][0]} degrees toward cyan in Elemental and Atmospheric` : 'in the dim hue window (--haze narrow)'}`}`
-  function judge(look, packId, m) {
+  // The colors only one pack has (every pack shares Meta Blue).
+  const OWN_COLORS = Object.fromEntries(PACK_ORDER.map((id) => [id, classifiers[id].colors.map((c) => c.name).filter((name) => PACK_ORDER.every((other) => other === id || !classifiers[other].colors.some((c) => c.name === name)))]))
+  // A frame's fails, each with a short reason (`reasons`, same order) for counting. `drag` is the test drag it is at.
+  function judge(look, packId, m, { drag = null } = {}) {
     const k = classifiers[packId]
+    const sunset = look.startsWith('sunset.')
     const fails = []
+    const reasons = []
+    const fail = (reason, text) => {
+      reasons.push(reason)
+      fails.push(text)
+    }
     const notes = []
-    if (look.startsWith('sunset.') && m.dark >= 0.99) return { fails: ['blank frame (no light)'], notes }
-    const empty = !look.startsWith('sunset.') && m.peakL < T.black.darkPeakL && m.meanL < T.black.darkMeanL
+    if (sunset && m.dark >= 0.99) return { fails: ['blank frame (no light)'], reasons: ['blank'], notes }
+    const empty = !sunset && m.peakL < T.black.darkPeakL && m.meanL < T.black.darkMeanL
     m.nearlyBlack = (m.peakL < T.black.peakL && m.meanL < T.black.meanL) || empty
-    if (m.nearlyBlack) fails.push(`nearly black (brightest at L ${m.peakL.toFixed(2)}, mean L ${m.meanL.toFixed(2)})`)
-    if (m.shown < T.noPack) fails.push('no pack color')
+    if (m.nearlyBlack) fail('nearly black', `nearly black (brightest at L ${m.peakL.toFixed(2)}, mean L ${m.meanL.toFixed(2)})`)
+    if (!sunset && m.shown < T.noPack) fail('no pack color', 'no pack color')
     // Bold's two warm colors count as one warm light: Yellow's deeper tones and Orange-red's overexposed ones
     // overlap (orange, peach, cream), so a frame shows two warm colors only when both appear at their own
     // brightness or dimmer.
+    const share = sunset && drag ? T.drag.visible : T.present
     const warmGroup = packId === 'bold' ? WARM.bold : []
     const present = []
     for (const c of k.colors) {
       if (warmGroup.includes(c.name)) continue
-      if (m.shares[c.name] >= T.present) present.push(c.name)
+      if (m.shares[c.name] >= share) present.push(c.name)
     }
-    if (warmGroup.length && warmGroup.reduce((s, name) => s + m.shares[name], 0) >= T.present) {
-      const named = warmGroup.reduce((a, b) => (m.own[b] > m.own[a] ? b : a))
-      const brightest = warmGroup.reduce((a, b) => (m.saturated[b] > m.saturated[a] ? b : a))
-      present.push(m.own[named] >= 0.01 ? named : m.saturated[brightest] >= 0.02 ? `${brightest} (overexposed)` : 'pale warm light')
+    if (warmGroup.length && warmGroup.reduce((s, name) => s + m.shares[name], 0) >= share) {
+      if (drag && warmGroup.every((name) => m.own[name] >= share)) present.push(...warmGroup)
+      else {
+        const named = warmGroup.reduce((a, b) => (m.own[b] > m.own[a] ? b : a))
+        const brightest = warmGroup.reduce((a, b) => (m.saturated[b] > m.saturated[a] ? b : a))
+        present.push(m.own[named] >= 0.01 ? named : m.saturated[brightest] >= 0.02 ? `${brightest} (overexposed)` : 'pale warm light')
+      }
     }
     m.present = present
     if (m.largestPatch >= T.largestPatch || m.wideShare >= T.wideShare) {
       const named = m.wideNames.slice(0, 2).map((x) => x.name).join(' and ')
-      fails.push(`wide ${named} ${pct(m.wideShare)} (largest ${pct(m.largestPatch)})`)
+      fail('wide outside area', `wide ${named} ${pct(m.wideShare)} (largest ${pct(m.largestPatch)})`)
     }
     if (m.darkLine >= T.darkLine) notes.push(`thin dark ${m.darkLineNames[0]?.name ?? ''} line ${pct(m.darkLine)}`)
-    if (look.startsWith('sunset.')) {
-      if (m.shares['Meta Blue'] < T.present) fails.push('no Meta Blue sky')
+    if (sunset && drag) {
+      // Under a drag (12:45 PM): two pack colors over a visible share, one of them its pack's own (Bold's warm light
+      // is, overexposed or pale too). Two of Atmospheric's greys count as two colors only when they are two tones: a
+      // flat grey field with a faint gradient is one.
+      const greys = present.filter((name) => k.neutrals.some((i) => k.colors[i].name === name))
+      if (greys.length > 1 && m.greySpan < T.drag.greySpan) {
+        const kept = greys.reduce((a, b) => (m.shares[b] > m.shares[a] ? b : a))
+        present.splice(0, present.length, ...present.filter((name) => name === kept || !greys.includes(name)))
+      }
+      const ownColor = present.some((name) => name === 'pale warm light' || OWN_COLORS[packId].includes(name.replace(' (overexposed)', '')))
+      if (present.length < 2) fail('one pack color', `${present.length} pack color${present.length === 1 ? '' : 's'} over ${pct(share)} (${present.join(', ') || 'none'})`)
+      else if (!ownColor) fail('no color of its own', `no color only ${k.pack.name} has (${present.join(', ')})`)
+    } else if (sunset) {
+      if (m.shares['Meta Blue'] < T.present) fail('no Meta Blue', 'no Meta Blue sky')
       if (present.length < 3) {
-        const [mix, share] = Object.entries(m.bridges).sort((x, y) => y[1] - x[1])[0] ?? []
-        const haze = share >= 0.2 ? `, ${pct(share)} is a ${mix} mix` : ''
-        fails.push(`${present.length} pack color${present.length === 1 ? '' : 's'} (${present.join(', ') || 'none'}${haze})`)
+        const [mix, mixShare] = Object.entries(m.bridges).sort((x, y) => y[1] - x[1])[0] ?? []
+        const haze = mixShare >= 0.2 ? `, ${pct(mixShare)} is a ${mix} mix` : ''
+        fail('under three pack colors', `${present.length} pack color${present.length === 1 ? '' : 's'} (${present.join(', ') || 'none'}${haze})`)
       }
       const warm = present.filter((name) => WARM[packId].includes(name) || name === 'pale warm light' || name.endsWith('(overexposed)'))
-      if (WARM[packId].length && warm.length === 0) fails.push('no warm color')
-      if (packId === 'bold' && WARM.bold.every((name) => m.own[name] >= T.present)) fails.push('two warm colors (Yellow and Orange-red)')
+      if (WARM[packId].length && warm.length === 0) fail('no warm color', 'no warm color')
+      if (packId === 'bold' && WARM.bold.every((name) => m.own[name] >= T.present)) fail('two warm colors', 'two warm colors (Yellow and Orange-red)')
       if (packId === 'elemental' && warm.length > 1) notes.push('Lime and Tan together (open question 7)')
     } else {
-      if (m.base.share >= 0.05 && m.base.outside >= T.baseOutside) fails.push(`base is ${m.base.names[0]?.name} (${pct(m.base.outside)} of the base)`)
-      if (m.lit.share >= 0.01 && m.lit.outside >= T.litOutside) fails.push(`light goes ${m.lit.names[0]?.name} (${pct(m.lit.outside)} of the lit area)`)
+      if (m.base.share >= 0.05 && m.base.outside >= T.baseOutside) fail('base outside the pack', `base is ${m.base.names[0]?.name} (${pct(m.base.outside)} of the base)`)
+      if (m.lit.share >= 0.01 && m.lit.outside >= T.litOutside) fail('light outside the pack', `light goes ${m.lit.names[0]?.name} (${pct(m.lit.outside)} of the lit area)`)
       m.mainLight = m.source
       const owner = Object.keys(T.tailPartners).find((key) => T.tailPartners[key].includes(m.source) && (m.lit.byColor[key] ?? 0) >= T.tailOwner)
       if (tailRule === 'drift' && owner) m.mainLight = owner
@@ -880,11 +931,11 @@ try {
         const drift = drifted.reduce((s, [, v]) => s + v, 0)
         if (drift >= T.drift) {
           const into = drifted.sort((x, y) => y[1] - x[1])[0][0]
-          fails.push(`${m.sceneColors.join(' and ')} light drifts into ${into} (${pct(drift)} of the lit area)`)
+          fail('light drifts', `${m.sceneColors.join(' and ')} light drifts into ${into} (${pct(drift)} of the lit area)`)
         }
       }
     }
-    return { fails, notes }
+    return { fails, reasons, notes }
   }
 
   // --- the reference library: each image judged by its look's rules in every pack, as if it were one of our frames ---
@@ -1016,6 +1067,9 @@ try {
     const line = f.drag ? `&from=${c.drag.from.join(',')}&to=${c.drag.to.join(',')}` : ''
     const query = `intensity=${c.intensity}&softness=${c.softness}&${moodParam}=${c.mood}${line}`
     await page.goto(`${devUrl}/?mood=${mood}&look=${short}&pack=${f.pack}&seed=${f.seed}&format=${f.format}&${query}`, { waitUntil: 'load', timeout: 90000 })
+    // The drag hint ("Drag to reposition the gradient") sits over the middle of the image until the first drag in a
+    // browser, so every fresh page would show it.
+    await page.addStyleTag({ content: '.tool-hint{display:none!important}' })
     const settled = () => page.waitForSelector('canvas[data-settled="true"]', { timeout: 20000 }).then(() => true, () => false)
     if (await settled()) {
       await page.waitForTimeout(1200)
@@ -1037,7 +1091,7 @@ try {
   if (looks.length) await fs.mkdir(path.join(outDir, 'renders'), { recursive: true })
   if (maps) await fs.mkdir(path.join(outDir, 'maps'), { recursive: true })
   const report = { source: sourceLabel, startedAt: startedAt.toISOString(), thresholds: T, drags: Object.fromEntries(drags.map((d) => [d, DRAGS[d]])), looks: {} }
-  const summary = [`# Palette check: ${sourceLabel}`, '', `Started ${startedAt.toISOString()}. Controls: intensity ${controls.intensity}, softness ${controls.softness}, mood ${controls.mood}. Rule: ${rule}${rule === 'new' ? `, lens edges up to ${T.lensEdge} of the short side` : ''}; warm tails: ${tailRule}; dim colors: ${dimRule ? 'navy rule (1:40 PM)' : 'strict'}; ${hazeLabel}; ${mainLabel}.${chromaFactors.length > 1 ? ` Also judged with chroma scaled by ${chromaFactors.slice(1).join(', ')}.` : ''} Test drags: ${drags.length ? drags.map(dragText).join('; ') : 'none'}. Thresholds in \`palette-check.mjs\` (T).`, '']
+  const summary = [`# Palette check: ${sourceLabel}`, '', `Started ${startedAt.toISOString()}. Controls: intensity ${controls.intensity}, softness ${controls.softness}, mood ${controls.mood}. Rule: ${rule}${rule === 'new' ? `, lens edges up to ${+T.lensEdge.toFixed(3)} of the short side` : ''}; warm tails: ${tailRule}; dim colors: ${dimRule ? 'navy rule (1:40 PM)' : 'strict'}; ${hazeLabel}; ${mainLabel}.${chromaFactors.length > 1 ? ` Also judged with chroma scaled by ${chromaFactors.slice(1).join(', ')}.` : ''} Test drags: ${drags.length ? drags.map(dragText).join('; ') : 'none'}. Thresholds in \`palette-check.mjs\` (T).`, '']
   for (const look of looks) {
     const started = Date.now()
     const frames = frameList(look)
@@ -1061,20 +1115,19 @@ try {
     for (const f of frames) {
       if (f.missing) continue
       f.m = await analyse(f.src, f.pack, f.sceneHexes ?? null, maps ? path.join(outDir, 'maps', `${f.id}.png`) : null, look.startsWith('contour.'))
-      Object.assign(f, judge(look, f.pack, f.m))
+      Object.assign(f, judge(look, f.pack, f.m, { drag: f.drag }))
     }
     const contour = look.startsWith('contour.')
-    // Per light (the default, then each test drag): the frames, per pack the main lights and alike seeds (default
-    // light only), and the packs that look alike at a seed.
+    // Per light (the default, then each test drag): the frames, per pack the alike seeds (and at the default light
+    // the main lights), and the packs that look alike at a seed.
     const groups = []
     for (const drag of [null, ...drags]) {
       const at = frames.filter((f) => f.drag === drag && f.m)
       const rows = {}
-      if (!drag) {
-        for (const pack of PACK_ORDER) {
-          const packFrames = at.filter((f) => f.pack === pack)
-          rows[pack] = { ...mainLights(classifiers[pack], packFrames, contour), alike: await alikePairs(packFrames.filter((f) => f.format === '16x9')) }
-        }
+      for (const pack of PACK_ORDER) {
+        const packFrames = at.filter((f) => f.pack === pack)
+        const pairs = await seedPairs(packFrames.filter((f) => f.format === '16x9'))
+        rows[pack] = { ...(drag ? {} : mainLights(classifiers[pack], packFrames, contour)), alike: pairs.filter((p) => p.alike), pairs }
       }
       groups.push({ drag, title: drag ? dragText(drag) : null, frames: frames.filter((f) => f.drag === drag), rows, cross: await crossPairs(at) })
     }
@@ -1086,6 +1139,8 @@ try {
       seconds,
       frames: frames.map(({ file, src, sceneHexes, thumb, ...f }) => ({ ...f, file: file ? path.relative(process.cwd(), file) : null })),
       rows,
+      reasons: reasonCounts(groups[0].frames),
+      drags: Object.fromEntries(groups.slice(1).map((g) => [g.drag, { rows: g.rows, reasons: reasonCounts(g.frames) }])),
       cross: Object.fromEntries(groups.map((g) => [g.drag ?? 'default', g.cross])),
     }
     summary.push(`## ${look}`, '', `${frames.length} frames (${frames.filter((f) => !f.drag).length} at the default light) in ${seconds} s.`, '')
@@ -1097,13 +1152,14 @@ try {
       summary.push(`- ${pack}: ${failing.length} of ${packFrames.filter((f) => !f.missing).length} frames fail.${contour ? ` ${mainLightLine(row)}` : ''} ${varietyLine(row.alike)}${sky}`)
       for (const f of failing) summary.push(`  - ${f.id}: ${f.fails.join('; ')}${f.notes.length ? ` (also ${f.notes.join('; ')})` : ''}`)
     }
-    summary.push(`- Packs: ${crossLine(groups[0].cross)}`, '')
+    summary.push(`- Packs: ${crossLine(groups[0].cross)}`, `- Frames failing, by reason: ${reasonLine(groups[0].frames)}.`, '')
     for (const g of groups.slice(1)) {
       const counts = PACK_ORDER.map((pack) => {
         const packFrames = g.frames.filter((f) => f.pack === pack && !f.missing)
         return `${pack} ${packFrames.filter((f) => f.fails?.length).length} of ${packFrames.length}`
       })
-      summary.push(`- Drag ${g.title}: frames failing ${counts.join(', ')}. ${crossLine(g.cross)}`)
+      const seedsAlike = PACK_ORDER.map((pack) => `${pack} ${g.rows[pack].alike.map((p) => `s${p.seeds.join('/s')}`).join(', ') || 'none'}`)
+      summary.push(`- Drag ${g.title}: frames failing ${counts.join(', ')}; by reason: ${reasonLine(g.frames)}. Seeds that look alike: ${seedsAlike.join('; ')}. ${crossLine(g.cross)}`)
       for (const f of g.frames.filter((x) => x.fails?.length)) summary.push(`  - ${f.id}: ${f.fails.join('; ')}${f.notes.length ? ` (also ${f.notes.join('; ')})` : ''}`)
     }
     if (drags.length) summary.push('')
@@ -1133,45 +1189,61 @@ try {
   }
 
   // --- seed variety and packs: which frames look like the same frame at thumbnail size ---
-  // A frame's thumbnails: its layout, Oklab L at 40x23 blurred by 1 px and stretched to 0-1, and its colors, Oklab at
-  // 80x45 (45x80 for 9:16), fine enough to keep a thin rim's color.
+  // A frame's thumbnails: its layout, Oklab L at 40x23 blurred by 1 px, and its colors, Oklab at 80x45 (45x80 for
+  // 9:16), fine enough to keep a thin rim's color.
   async function thumbOf(f) {
     if (f.thumb) return f.thumb
     const oklab = (data, i) => linearToOklab([0, 1, 2].map((c) => SRGB_TO_LINEAR[data[3 * i + c]]))
     const { data } = await sharp(f.src).removeAlpha().resize(40, 23, { fit: 'fill' }).blur(1).raw().toBuffer({ resolveWithObject: true })
-    const L = Array.from({ length: 40 * 23 }, (_, i) => oklab(data, i)[0])
-    const lo = Math.min(...L)
-    const span = Math.max(Math.max(...L) - lo, 1e-6)
     const [w, h] = f.format === '9x16' ? [45, 80] : [80, 45]
     const fine = await sharp(f.src).removeAlpha().resize(w, h, { fit: 'fill' }).raw().toBuffer()
-    f.thumb = { layout: L.map((v) => (v - lo) / span), lab: Array.from({ length: w * h }, (_, i) => oklab(fine, i)) }
+    const lab40 = Array.from({ length: 40 * 23 }, (_, i) => oklab(data, i))
+    f.thumb = { layout: lab40.map((x) => x[0]), lab40, lab: Array.from({ length: w * h }, (_, i) => oklab(fine, i)) }
     return f.thumb
   }
+  // Layout: where the light sits, from each frame's L with its darkest level taken off, but never more than
+  // `variety.baseL`: a Contour base drops out, and a sky keeps its own small contrast. Stretching each frame's L to
+  // 0-1, as before, blew an even sky's faint gradient up into a full-range layout, so two skies that look the same
+  // read as different.
   function layoutDistance(a, b) {
+    const la = Math.min(Math.min(...a), T.variety.baseL)
+    const lb = Math.min(Math.min(...b), T.variety.baseL)
     let num = 0
     let den = 0
     for (let p = 0; p < a.length; p++) {
-      num += Math.abs(a[p] - b[p])
-      den += a[p] + b[p]
+      num += Math.abs(a[p] - la - (b[p] - lb))
+      den += a[p] - la + (b[p] - lb)
     }
     return den ? num / den : 0
   }
-  function colorMix(m) {
-    const v = { ...m.shares, white: m.white, pale: m.pale, outside: m.outsideShare, edge: m.edge ?? 0, mixes: Object.values(m.bridges).reduce((s, x) => s + x, 0) }
-    const total = Object.values(v).reduce((s, x) => s + x, 0) || 1
-    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, x / total]))
+  // Colors: how much colored light a frame has in each hue family (HUE_FAMILIES), wherever it sits. A pixel counts
+  // from Oklab chroma `variety.chroma[0]` and fully from `variety.chroma[1]`, so pale greys count for little.
+  function colorFamilies(lab) {
+    const mass = { red: 0, yellow: 0, green: 0, blue: 0, purple: 0 }
+    const [lo, hi] = T.variety.chroma
+    let lit = 0
+    for (const [L, a, b] of lab) {
+      if (L < T.variety.litL) continue
+      lit++
+      const h = ((Math.atan2(b, a) * 180) / Math.PI + 360) % 360
+      mass[HUE_FAMILIES.find(([end]) => h < end)[1]] += Math.min(1, Math.max(0, (Math.hypot(a, b) - lo) / (hi - lo)))
+    }
+    return Object.fromEntries(Object.entries(mass).map(([name, v]) => [name, lit ? v / lit : 0]))
   }
-  async function alikePairs(list) {
+  // Every pair of the seeds given, with its layout and colors; `alike` marks the ones that fail.
+  async function seedPairs(list) {
     const items = []
-    for (const f of [...list].sort((a, b) => a.seed - b.seed)) items.push({ seed: f.seed, layout: (await thumbOf(f)).layout, mix: colorMix(f.m) })
+    for (const f of [...list].sort((a, b) => a.seed - b.seed)) {
+      const thumb = await thumbOf(f)
+      items.push({ seed: f.seed, layout: thumb.layout, colors: colorFamilies(thumb.lab40) })
+    }
     const pairs = []
     for (let i = 0; i < items.length; i++) {
       for (let j = i + 1; j < items.length; j++) {
         const [a, b] = [items[i], items[j]]
         const layout = layoutDistance(a.layout, b.layout)
-        const keys = new Set([...Object.keys(a.mix), ...Object.keys(b.mix)])
-        const mix = [...keys].reduce((s, k) => s + Math.abs((a.mix[k] ?? 0) - (b.mix[k] ?? 0)), 0) / 2
-        if (layout <= T.variety.layout && mix <= T.variety.mix) pairs.push({ seeds: [a.seed, b.seed], layout: +layout.toFixed(3), mix: +mix.toFixed(3) })
+        const colors = Object.keys(a.colors).reduce((s, k) => s + Math.abs(a.colors[k] - b.colors[k]), 0) / 2
+        pairs.push({ seeds: [a.seed, b.seed], layout: +layout.toFixed(3), colors: +colors.toFixed(3), alike: layout <= T.variety.layout && colors <= T.variety.colors })
       }
     }
     return pairs
@@ -1208,6 +1280,16 @@ try {
     }
     return pairs
   }
+  // How many frames fail for each reason (a frame with two reasons counts under both).
+  function reasonCounts(list) {
+    const counts = {}
+    for (const f of list) for (const reason of new Set(f.reasons ?? [])) counts[reason] = (counts[reason] ?? 0) + 1
+    return counts
+  }
+  function reasonLine(list) {
+    const counts = Object.entries(reasonCounts(list)).sort((x, y) => y[1] - x[1])
+    return counts.length ? counts.map(([reason, n]) => `${reason} ${n}`).join(', ') : 'none'
+  }
   function crossLine(pairs) {
     const alike = pairs.filter((p) => p.alike)
     if (!alike.length) return 'No two packs look alike at any seed.'
@@ -1230,7 +1312,7 @@ try {
   }
   function varietyLine(alike) {
     if (!alike.length) return `No two of seeds 1-${seeds} look alike.`
-    return `Seeds that look alike (layout, mix): ${alike.map((p) => `s${p.seeds[0]}/s${p.seeds[1]} (${p.layout}, ${p.mix})`).join(', ')}: FAIL.`
+    return `Seeds that look alike (layout, colors): ${alike.map((p) => `s${p.seeds[0]}/s${p.seeds[1]} (${p.layout}, ${p.colors})`).join(', ')}: FAIL.`
   }
 
   function textSvg(lines, w, h, size = 11, color = '#ddd') {
@@ -1250,14 +1332,19 @@ try {
     const TEXT = 30
     const LINE = 18
     const contour = look.startsWith('contour.')
-    // Under each row at the default light: its main lights (Contour) and alike seeds; under each group: alike packs.
-    const rowHeight = (g) => 18 + TH + 4 + BAR + TEXT + 4 + (g.drag ? 0 : (contour ? 2 : 1) * LINE)
+    // Under each row: its alike seeds, and at the default light its main lights (Contour); under each group: alike
+    // packs.
+    const rowHeight = (g) => 18 + TH + 4 + BAR + TEXT + 4 + (contour && !g.drag ? 2 : 1) * LINE
     const groupHeight = (g) => (g.title ? 24 : 0) + PACK_ORDER.length * rowHeight(g) + LINE + 14
     const width = LEFT + seeds * (TW + GAP) + portraitSeeds * (PW + GAP) + 16
     const height = 70 + groups.reduce((s, g) => s + groupHeight(g), 0) + 10
+    const dragged = Boolean(groups[0].drag)
+    const lookFails = look.startsWith('sunset.')
+      ? dragged ? `, under 2 pack colors over ${pct(T.drag.visible)}, no color only the pack has` : ', under 3 pack colors, no Meta Blue, no warm color, two warm colors (Bold)'
+      : `, no pack color, base or light outside the pack${dragged ? '' : ', a pack light color never used across seeds'}`
     const comp = [
-      { input: textSvg([{ text: `${look}: palette check${groups[0].drag ? ' at the test drags' : ''}`, color: '#fff' }], width, 22, 16), left: 12, top: 8 },
-      { input: textSvg([sourceLabel, `Rule: ${rule}${rule === 'new' ? ` (lens edges up to ${T.lensEdge} of the short side)` : ''}. Bar: each pack color's share in its hex, then clean mixes (grey), lens edges (teal grey), pale bridges (light grey), white, the dark base (black), and outside colors (red). A red frame fails, an orange one looks like another pack's at that seed. Fail: a wide outside area ${pct(T.largestPatch)}+ (or ${pct(T.wideShare)}+ in all), nearly black, no pack color${look.startsWith('sunset.') ? `, under 3 pack colors, no Meta Blue, no warm color, two warm colors (Bold)` : `, base or light outside the pack, a pack light color never used across seeds`}.`], width, 34, 11, '#aaa'), left: 12, top: 30 },
+      { input: textSvg([{ text: `${look}: palette check${dragged ? ' at the test drags' : ''}`, color: '#fff' }], width, 22, 16), left: 12, top: 8 },
+      { input: textSvg([sourceLabel, `Rule: ${rule}${rule === 'new' ? ` (lens edges up to ${+T.lensEdge.toFixed(3)} of the short side)` : ''}. Bar: each pack color's share in its hex, then clean mixes (grey), lens edges (teal grey), pale bridges (light grey), white, the dark base (black), and outside colors (red). A red frame fails, an orange one looks like another pack's at that seed. Fail: a wide outside area ${pct(T.largestPatch)}+ (or ${pct(T.wideShare)}+ in all), nearly black${lookFails}.`], width, 34, 11, '#aaa'), left: 12, top: 30 },
     ]
     let top = 70
     for (const g of groups) {
@@ -1292,7 +1379,7 @@ try {
         let below = top + 18 + TH + 4 + BAR + TEXT + 4
         const row = g.rows[pack]
         if (row) {
-          if (contour) {
+          if (contour && row.counts) {
             const counts = `Main light per seed (16:9): ${Object.entries(row.counts).map(([nm, c]) => `${nm} ${c}`).join(', ')}${row.missing.length ? `. Never lit with ${row.missing.join(', ')}: FAIL` : '. Every light color used.'}`
             comp.push({ input: textSvg([{ text: counts, color: row.missing.length ? '#ff7070' : '#8c8' }], width - LEFT, LINE, 11), left: LEFT, top: below })
             below += LINE
