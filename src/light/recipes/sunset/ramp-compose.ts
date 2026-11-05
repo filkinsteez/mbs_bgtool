@@ -460,6 +460,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // A dragged line takes the Horizon control's place: the glow sits at its start, the horizon runs
   // across it, and the sky reaches the zenith's color at its end. The seed keeps everything else.
   const line = controls.drag ? rampLine(controls.drag, aspect) : null
+  const dragVeil = line ? Math.min(1, veilScale) : veilScale
 
   const tall = Math.max(1, 1 / aspect)
   const frameWidth = Math.max(1, aspect)
@@ -905,9 +906,11 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // into the veil over the next sixth.
     // Elemental's warm side reaches farther, so its light's own color shows over more of the sky.
     // A light seed's sky is hazier, a deep seed's clearer, and a broad seed's warm haze pales it
-    // in the veil's place.
-    veil: [look.veil[0] * zenithGain * veilScale, look.veil[1] * zenithGain * veilScale, (packId === 'elemental' ? 0.6 : 0.3) * Math.max(0.2, topHeight)],
-    veilFar: [topHeight - 0.22 * tall, topHeight - 0.05 * tall],
+    // in the veil's place. Under a dragged line, which can leave a frame that is all sky, no seed
+    // is hazier than the pack's own sky, and the band of full Meta Blue reaches further down from
+    // the line's end, so the frame keeps a second pack color.
+    veil: [look.veil[0] * zenithGain * dragVeil, look.veil[1] * zenithGain * dragVeil, (packId === 'elemental' ? 0.6 : 0.3) * Math.max(0.2, topHeight)],
+    veilFar: line ? [topHeight - 0.4 * tall, topHeight - 0.1 * tall] : [topHeight - 0.22 * tall, topHeight - 0.05 * tall],
     veilTint: paleTint(look.veilColor, packId === 'bold' ? 0.35 : packId === 'elemental' ? 0.25 : 0.6),
     // Under the far band the sky's blue greys at its own hue (Elemental, whose pale side is its
     // light's color), or toward Steel (Atmospheric, overcast), instead of turning periwinkle.
