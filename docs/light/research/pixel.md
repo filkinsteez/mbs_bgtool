@@ -1,6 +1,6 @@
 # Pixel filter: what the examples show and what the filter does
 
-Started 2026-11-04; the slider became density on 2026-11-05. Engine stage: `src/light/engine/filters/pixel.ts`. First prototype: `prototypes/pixel/`. Scratch scripts for the density version, downloads, measurements and sheets: `artifacts/pixel/` (local, gitignored). Prototype output: `prototypes/pixel/out/` (gitignored).
+Started 2026-11-04. On 2026-11-05 the slider became density, and later that day its top went from 72 to 144 cells. Engine stage: `src/light/engine/filters/pixel.ts`. First prototype: `prototypes/pixel/`. Scratch scripts for the density version, downloads, measurements and sheets: `artifacts/pixel/` (local, gitignored). Prototype output: `prototypes/pixel/out/` (gitignored).
 
 ## Where the examples are
 
@@ -32,15 +32,17 @@ Files: `artifacts/pixel/figma/44-280-pixel-tile.png`, `44-267-filters-slide.png`
 It is a stage of the output filter chain, after the tone curve and before the sRGB encode and the dither. It is fully on at every slider value; the slider sets the density. It reads a small copy of the frame that the chain draws for it (`OutputFilter.source`).
 
 Density
-- The slider sets the cells on the short side: 18 at 0, 36 at 0.5 and 72 at 1, rounded to whole cells (`round(18 × 4^density)`). Each quarter of the slider multiplies the count by about √2, the same kind of scale as ASCII's density slider (13 to 52 rows).
-- The long side gets a whole number of cells too, so the cells fill the frame and are square to within that rounding (2.2 % at worst, 4:5 at 18 cells). At 0.5: 64 x 36 at 16:9, 36 x 64 at 9:16, 36 x 36 at 1:1, 36 x 45 at 4:5.
-- A cell is 60 px at 1080p at density 0, about the stand-in's 59 px; 30 px at 0.5; 15 px at 1.
+- The slider sets the cells on the short side: 18 at 0, 30 at 0.25, 51 at 0.5, 86 at 0.75 and 144 at 1, rounded to whole cells (`round(18 × 8^density)`). Each quarter of the slider multiplies the count by about 1.68, the same kind of scale as ASCII's density slider.
+- The top is 144 because the frame copy, at two texels a cell, reaches the chain's limit of 512 texels a side at 144 cells on a 16:9 frame (512 x 288). And 144 cells are 6.25 px in a 1600 x 900 preview, about the smallest cell that still shows its LED (it fades out from 6 px down to 3 px). In a 4K export they are 15 px (16:9) to 27 px (1:1).
+- A cell is 60 px at 1080p at density 0, about the stand-in's 59 px; 21 px at 0.5; 7.5 px at 1.
+- The long side gets a whole number of cells too, so the cells fill the frame and are square to within that rounding (2.2 % at worst, 4:5 at 18 cells).
 - The grid depends on the frame's aspect and the density only, so a preview shows the same cells as the export. Between whole cell counts nothing changes.
 - The chain leaves a filter out at exactly 0, so the tool sends density 0 as 0.001 (`withFilter`, `src/tool/filterControl.ts`), which gives 18 cells.
 
 Frame copy
-- One copy serves every density: two texels a cell of the densest grid each way (144 on the short side, 256 x 144 at 16:9), each the mean of 2 x 2 samples. The frame is drawn once for it at 288 px on the short side, samples 3.75 px apart at 1080p, close enough for a Contour line. Its size depends on the frame's aspect only, as the chain asks.
-- A cell covers 2 to 9 texels each way. Its mean is read from the texels it covers, each weighed by how much of it the cell covers: per axis up to 5 bilinear reads, each taking two neighbouring texels in the right proportion.
+- The copy follows the density: two texels a cell each way at every density, so a cell's mean is one read of its own 2 x 2 texels. The chain passes the slider's value to the stage's `source.size` and `samples` (`src/light/engine/output.ts`, `filters/types.ts`).
+- Each texel is the mean of 2 to 8 samples a side, enough that the frame is drawn at least 288 px on the short side (samples 3.75 px apart at 1080p, close enough for a Contour line): 288 up to 72 cells, 576 at 144.
+- Its size depends on the frame's aspect and the density only, so a preview and an export read the same texels.
 
 Cell color
 - Each cell shows the mean of the frame over the cell, in linear light, flat. It blends into the next cell over about a quarter of a cell (weight t⁴ / (t⁴ + (1 − t)⁴)), so cell edges are soft.
@@ -49,7 +51,8 @@ LED
 - A rounded-square LED (half-size 0.42 cell, edge 0.16 cell wide, superellipse corners of exponent 4) brightens the middle of each cell and darkens the gaps by the same amount of light: gain = 1 + contrast × (LED / mean LED − 1). A flat area keeps its color exactly, so a pack hex keeps its hex.
 - The contrast is 0.15 at every density. Above about 0.2 the gaps read as a mesh when the whole frame is seen at preview size.
 - Each channel's contrast is lowered where the LED's middle would push that channel past 1. A bright LED keeps its pattern in the channels with room: its middle turns paler and its color sits in the gaps, and every channel keeps its mean. White has no pattern.
-- Below 3 to 6 output pixels a cell, the LED fades out, so small previews show cells without moiré. Exports and settled previews don't get there (a cell at 1080p is at least 15 px).
+- The LED is averaged over a box around each pixel (3 x 3 points): the pixel's own area for cells of 16 px and more, widening to 2 px for cells under 10 px. Sampled at the pixel's center alone, a 6 px cell's gap lands on one pixel or two, and the grid beats every four cells. Averaging a repeating pattern keeps its mean, so each cell keeps its color.
+- Below 3 to 6 output pixels a cell, the LED fades out, so the smallest previews show plain cells without moiré. During a drag the preview may draw at half size, where cells at the top are about 3 px; the settled frame shows the LEDs.
 
 Light kept
 - A soft edge hands light from the brighter of two cells to the darker. Per axis, a cell's own color covers 1 − 2H of its area and each neighbour's H, where H = 0.042 for this blend (`blendShare`). The light a cell loses this way goes back into its own LED, so a light cell is never dimmed and a thin bright line keeps its brightness as a row of LEDs.
@@ -60,9 +63,8 @@ Seed
 - The filter adds no randomness. The dither after it is keyed to the seed and the output pixel, so the same seed gives the same bytes.
 
 Cost
-- Per output pixel: the means of six cells (the nearest, the four beside it and the diagonal one in the pixel's 2 x 2 block), each from 1 to 25 bilinear reads depending on the density, and a few dozen arithmetic operations.
-- At 3840 x 2160 (Halo Elemental seed 2, one run each on a shared machine) the frame takes about 58 ms without a filter. Pixel adds about 14 ms at density 0, 5 ms at 0.5 and 2 ms at 1.
-- Later option: a frame copy sized per density (two texels a cell at every density, with more samples a texel at coarse densities) would read each cell mean in one read and cost about the same at every density. The chain calls `source.size(frame)` without the slider's value, so this needs the value passed in (`src/light/engine/output.ts`, `filters/types.ts`). Not needed now: 14 ms at 4K at density 0 is fine.
+- Per output pixel: the means of six cells (the nearest, the four beside it and the diagonal one in the pixel's 2 x 2 block), one read each, the LED at 9 points, and a few dozen arithmetic operations.
+- At 3840 x 2160 (Halo Elemental seed 2, medians of three runs on a loaded machine), the output step takes 6.4 ms without a filter, 9.6 ms at density 0 and 9.3 ms at 1: Pixel adds about 3 ms at every density. The frame copy (up to a 1024 x 576 draw at 144 cells) adds nothing measurable to the composite step.
 
 ## What was tried and dropped
 
@@ -76,6 +78,10 @@ Candidates for the density version (scratch stage `artifacts/pixel/exp/pixel-exp
 - Contrast 0.25 (the M3 sample) and 0.2 without glow: the grid reads as a mesh over light skies.
 - More samples a texel (4 x 4 instead of 2 x 2): no change in the cell means.
 
+Raising the top to 144:
+- One frame copy for every density, two texels a cell of the densest grid (the 18 to 72 version): at a top of 144 a density-0 cell would cover 16 x 16 texels, about four times the reads (roughly 50 ms at 4K). Replaced by the copy that follows the density.
+- The LED sampled at each pixel's center: in a 1600 x 900 preview at 144 cells the gaps came out one pixel or two, so the grid beat every four cells (in a model, gap darkness 0.85 to 0.92 between cells; 0.87 to 0.93 averaged over the pixel's own area; 0.92 to 0.94 over a 2 px box).
+
 From the first version's exploration (`prototypes/pixel/out/`):
 - Light lines over the image, as in the stand-in: reads as a ruled grid laid on the photo, and every detail of the image stays, so nothing looks quantized.
 - Keeping each pixel's own color with a pattern on top: reads as a grid over the image, as the roadmap said.
@@ -84,39 +90,42 @@ From the first version's exploration (`prototypes/pixel/out/`):
 - Fine grids (54 to 96 cells) as the only size: a screen-door texture that reads as noise.
 - Lowering the contrast per pixel where a channel nears 1: tiles next to white light came out inside out, with bright frames around darker middles.
 
-## Measurements (density version, 2026-11-05)
+## Measurements (18 to 144 cells, 2026-11-05)
 
-Each cell's color (`artifacts/pixel/exp/density.mjs`, `others.mjs`): frames rendered through the tool's renderer and filter chain at 1920 x 1080, controls at 0.5. The per-cell means in linear light without and with Pixel are compared in Oklab; 0.02 is about one just-noticeable difference. Light cells are those above Oklab L 0.7.
+Each cell's color (`artifacts/pixel/exp/density.mjs`): frames rendered through the tool's renderer and filter chain at 1920 x 1080, controls at 0.5. The per-cell means in linear light without and with Pixel are compared in Oklab; 0.02 is about one just-noticeable difference. Light cells are those above Oklab L 0.7.
 
-| Frame | Density | Mean | 95th percentile | Worst cell | Light cells, change in L |
+| Frame | Density (cells) | Mean | 95th percentile | Worst cell | Light cells, change in L |
 | --- | --- | --- | --- | --- | --- |
-| Ramp Bold s1 | 0 | 0.0005 | 0.0015 | 0.0022 | +0.0001 |
-| Ramp Bold s1 | 0.5 | 0.0002 | 0.0006 | 0.0012 | +0.0001 |
-| Ramp Bold s1 | 1 | 0.0001 | 0.0003 | 0.0007 | 0.0000 |
-| Halo Elemental s2 | 0 | 0.0033 | 0.0126 | 0.0233 | no light cells |
-| Halo Elemental s2 | 0.5 | 0.0013 | 0.0061 | 0.0129 | +0.0015 (1 cell) |
-| Halo Elemental s2 | 1 | 0.0006 | 0.0023 | 0.0127 | +0.0023 (9 cells) |
-| Beam Atmospheric s1 | 0 | 0.0009 | 0.0038 | 0.0090 | +0.0007 |
-| Beam Atmospheric s1 | 0.5 | 0.0003 | 0.0013 | 0.0040 | +0.0003 |
-| Beam Atmospheric s1 | 1 | 0.0002 | 0.0006 | 0.0019 | +0.0001 |
+| Ramp Bold s1 | 0 (18) | 0.0005 | 0.0014 | 0.0021 | +0.0001 |
+| Ramp Bold s1 | 0.5 (51) | 0.0008 | 0.0014 | 0.0037 | +0.0001 |
+| Ramp Bold s1 | 1 (144) | 0.0018 | 0.0043 | 0.0049 | +0.0003 |
+| Halo Elemental s2 | 0 (18) | 0.0023 | 0.0108 | 0.0147 | no light cells |
+| Halo Elemental s2 | 0.5 (51) | 0.0008 | 0.0037 | 0.0095 | −0.0001 (2 cells) |
+| Halo Elemental s2 | 1 (144) | 0.0007 | 0.0022 | 0.0168 | +0.0016 (100 cells) |
+| Beam Atmospheric s1 | 0 (18) | 0.0009 | 0.0038 | 0.0090 | +0.0006 |
+| Beam Atmospheric s1 | 0.5 (51) | 0.0004 | 0.0011 | 0.0034 | +0.0002 |
+| Beam Atmospheric s1 | 1 (144) | 0.0009 | 0.0028 | 0.0049 | +0.0003 |
 
-- Densities 0.25 and 0.75 fall in between; at 0.75 two of Halo's light cells are 0.006 darker in L.
-- Bands, Blooms, Rim and Streaks, each pack at seed 1, densities 0, 0.5 and 1: light cells change by 0 to +0.004 in L in every frame. Bands' worst cell is 0.019, Blooms' 0.003. Streaks Bold and Atmospheric reach 0.026; Streaks Elemental 0.083 at density 0, 0.046 at 0.5 and 0.020 at 1. Rim's worst cells are 0.09 to 0.12 at every density; its 95th percentile is 0.034 to 0.039 at 0, 0.018 to 0.020 at 0.5 and 0.007 to 0.008 at 1.
-- The worst cells are near-black cells beside a hot line or shaft, lit by the soft edge. Near black a little light moves Oklab a lot, so the numbers there are large; on the sheets it reads as the LED's light spilling into the next cell, like the original line's own glow.
+- At 144 cells a 1080p cell is 7.5 px, and the pixels on a cell's soft edges are a large share of it, which these per-pixel cell means count. In the 4K export (15 px cells, `top.mjs`) Bands Bold and Streaks Atmospheric move by 0.0001 on average (worst 0.0007 and 0.0020), and Rim Bold by 0.0008; Rim's worst cells (0.07) are near-black cells beside its line. In the 1600 x 900 preview at the top: 0.0010 to 0.0016 on average, worst 0.006 outside Rim.
+- Bands, Blooms, Rim and Streaks, each pack at seed 1, checked at 18, 36 and 72 cells before the top was raised (`others.mjs`): light cells change by 0 to +0.004 in L. Bands' worst cell is 0.019, Blooms' 0.003; Streaks reaches 0.026 (Elemental 0.083 at 18 cells) and Rim 0.09 to 0.12, in near-black cells beside a hot line or shaft. On the sheets that reads as the LED's light spilling into the next cell, like the original line's own glow.
 
-Files: `artifacts/pixel/density/cells.json`, `check-other-looks.json`.
+Files: `artifacts/pixel/density/cells.json`, `top-cells.json`, `check-other-looks.json`.
 
-Sweep (`artifacts/pixel/density/sweep.json`; density 0 to 1 in 0.01 steps at 960 x 540; Ramp, Halo, Beam): 54 cell-count steps (18 to 72) for each frame, and nothing changes between counts. No step is more than 1.25 times the median of its neighbours. The change per count step drifts smoothly with the cell size; Halo's mean change in linear light goes from 0.0043 at the coarse end to 0.0029 at the fine end.
+Sweep (`artifacts/pixel/density/sweep.json`; density 0 to 1 in 0.01 steps at 960 x 540; Ramp, Halo, Beam): 83 cell-count steps from 18 to 144 for each frame, and nothing changes between counts. No step is more than 1.25 times the median of its neighbours. The change per step falls at the top, where a 960 x 540 render's cells are under 6 px and their LED fades out.
 
-Cost (`artifacts/pixel/density/cost.json`): see Cost above.
+Beat (`artifacts/pixel/exp/beat-render.mjs`; Bands Bold, along a row of cells near the top): each cell's darkest column against the cell's mean. The spread of that ratio is 0.023 in the 1600 x 900 preview at density 1 (6.25 px cells) and 0.034 at 0.75 (10.5 px), against 0.008 and 0.011 in the 4K export, where the spread is the sky's own change across the row. The extra is about 0.1 % of the local brightness, too little to see.
+
+Cost (`artifacts/pixel/exp/cost-top.mjs`, `artifacts/pixel/density/cost.json`): see Cost above.
 
 The first version's color, GPU and preview checks are in this note at commit 0462813.
 
 ## Sheets
 
-- `artifacts/pixel/density/sheet-crops.jpg`: Ramp, Halo and Beam at 1:1: the Figma tile scaled to 1080p, off, and density 0, 0.25, 0.5, 0.75 and 1.
+- `artifacts/pixel/density/top-sheet.jpg`: Bands Bold, Rim Bold and Streaks Atmospheric at density 0, 0.5, 0.75 and 1: the 4K export whole (shown 480 wide), and 1:1 crops of the 1600 x 900 preview and of the 4K export around the same point.
+- `artifacts/pixel/density/top-zoom-d1.png`: the 1600 x 900 preview at density 1, Bands and Rim, enlarged 4x.
+- `artifacts/pixel/density/sheet-crops.jpg`: Ramp, Halo and Beam at 1:1: the Figma tile scaled to 1080p, off, and density 0, 0.25, 0.5, 0.75 and 1 (18 to 144 cells).
 - `artifacts/pixel/density/sheet-full.jpg`: the same frames whole, shown 480 wide.
-- `artifacts/pixel/density/check-other-looks.jpg`: Bands, Blooms, Rim and Streaks in all three packs: whole frames off and at density 0, 0.5 and 1, and 1:1 crops of the busiest part at 0.5 and 1.
+- `artifacts/pixel/density/check-other-looks.jpg`: Bands, Blooms, Rim and Streaks in all three packs at 18, 36 and 72 cells (before the top was raised).
 - `artifacts/pixel/exp/out/`: the candidate rounds (r1 to r6), whole frames and 1:1 crops.
 - First version: `artifacts/pixel/sheets/`.
 
@@ -124,10 +133,12 @@ The first version's color, GPU and preview checks are in this note at commit 046
 
 - Pixel is back (SHARED.md). Thin Contour lines become rows of LEDs: accepted.
 - 2026-11-05: the slider sets the density, like ASCII's, and the filter is fully on at every value. Each cell keeps its average color and light areas are not dimmed. Near-black cells beside a hot line may take a little of its light (it reads as the LED's light spilling).
-- Later option: a frame copy per density (see Cost).
+- 2026-11-05, owner: density can go higher. The top is 144 cells, twice the old 72; the frame copy now follows the density.
 
 ## Commands
 
+- `node artifacts/pixel/exp/top.mjs [--skip cost]`: the top sheet, per-cell numbers at the top and the 4K cost (Bands, Rim, Streaks).
+- `node artifacts/pixel/exp/zoom-top.mjs [--density 1]`, `beat-render.mjs`, `cost-top.mjs`: the enlarged preview, the beat along a row of cells, and the 4K cost against no filter.
 - `node artifacts/pixel/exp/density.mjs [--skip sheets,sweep,cost]`: sheets, per-cell numbers, sweep and cost through the tool's renderer (Ramp, Halo, Beam).
 - `node artifacts/pixel/exp/others.mjs`: Bands, Blooms, Rim and Streaks sheet and per-cell numbers.
 - `node artifacts/pixel/exp/run.mjs --round r6 [--samples 2] [--frames halo-elemental-s2]`: candidates from `variants.mjs` through the scratch stage, with per-cell numbers.

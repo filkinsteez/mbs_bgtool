@@ -281,12 +281,14 @@ export function prepareOutputFilters(gpu: Gpu, output: OutputSettings, frame: Fi
   const uniforms: UniformMap = {}
   const textures: Record<string, Target> = {}
   for (const stage of stages) {
-    Object.assign(uniforms, stage.uniforms(output[stage.key], frame))
+    const strength = output[stage.key]
+    Object.assign(uniforms, stage.uniforms(strength, frame))
     if (!stage.source) continue
-    const size = stage.source.size(frame)
+    const size = stage.source.size(frame, strength)
     const width = Math.min(MAX_SOURCE_SIDE, Math.max(1, Math.round(size.width)))
     const height = Math.min(MAX_SOURCE_SIDE, Math.max(1, Math.round(size.height)))
-    const taps = Math.min(MAX_SOURCE_SAMPLES, Math.max(1, Math.round(stage.source.samples ?? SOURCE_SAMPLES)))
+    const wanted = typeof stage.source.samples === 'function' ? stage.source.samples(frame, strength) : stage.source.samples
+    const taps = Math.min(MAX_SOURCE_SAMPLES, Math.max(1, Math.round(wanted ?? SOURCE_SAMPLES)))
     const samples = gpu.acquire(width * taps, height * taps)
     drawFrame(samples)
     const source = gpu.acquire(width, height)

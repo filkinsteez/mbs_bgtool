@@ -23,13 +23,14 @@ export interface FilterSource {
   /** Sampler name the stage's GLSL declares (`uniform sampler2D <name>;`). */
   uniform: string
   /**
-   * Texels across and down, 1..512 each. Make it depend on the frame's aspect
-   * only (cells sized to the short side), so a preview and an export read the
+   * Texels across and down, 1..512 each, for the stage's strength (the chain
+   * passes it). Make it depend on the frame's aspect and the strength only
+   * (cells sized to the short side), so a preview and an export read the
    * same texels.
    */
-  size: (frame: FilterFrame) => { width: number; height: number }
-  /** Samples per texel along each axis, 1..8; 4 if not given. */
-  samples?: number
+  size: (frame: FilterFrame, strength?: number) => { width: number; height: number }
+  /** Samples per texel along each axis, 1..8, or a function of the strength like `size`; 4 if not given. */
+  samples?: number | ((frame: FilterFrame, strength?: number) => number)
 }
 
 /**

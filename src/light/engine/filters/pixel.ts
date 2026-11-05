@@ -6,9 +6,9 @@ import type { FilterFrame, OutputFilter } from './types'
  * The Pixel filter (prototypes/pixel, docs/light/research/pixel.md): the frame quantized to a grid of square cells,
  * seen as an LED wall up close. It is fully on at every slider value.
  *
- * - The slider sets density: cells on the short side, from 18 at 0 to 72 at 1 on a log scale, 36 at 0.5. Cells are
- *   whole across and down, so the grid depends on the frame's aspect and the density only, and a preview shows the
- *   same cells as the export. Between whole cell counts nothing changes.
+ * - The slider sets density: cells on the short side, from 18 at 0 to 144 at 1 on a log scale (51 at 0.5, 86 at
+ *   0.75). Cells are whole across and down, so the grid depends on the frame's aspect and the density only, and a
+ *   preview shows the same cells as the export. Between whole cell counts nothing changes.
  * - Each cell shows its mean color, flat, and blends into its neighbours over about a quarter of a cell.
  * - A rounded-square LED brightens the middle of each cell and darkens the gaps by the same amount of light, so every
  *   cell keeps its mean color. A channel near 1 has little room to brighten, so its share of the pattern shrinks with
@@ -18,18 +18,17 @@ import type { FilterFrame, OutputFilter } from './types'
  *   little it gets, as there is no light in it to take back.
  */
 
-/** Cells on the short side at density 0.5. 36 fills 16:9, 9:16, 1:1 and 4:5 frames with whole square cells. */
-export const PIXEL_CELLS = 36
 /** Cells on the short side at density 0 and 1; between them the count grows by the same ratio per step. */
 export const PIXEL_MIN_CELLS = 18
-export const PIXEL_MAX_CELLS = 72
+export const PIXEL_MAX_CELLS = 144
 /**
- * The frame source has two texels a cell of the densest grid each way, each the mean of 2 x 2 samples (3.75 px apart
- * at 1080p, close enough for a Contour line), at every density. Its size depends on the frame's aspect only, as the
- * chain asks; a cell's mean is read from the texels it covers.
+ * The frame source follows the density: two texels a cell each way, so a cell's mean is one read of its own 2 x 2
+ * texels at every density. At 144 cells a 16:9 source is 512 x 288, the chain's largest. Each texel is the mean of
+ * enough samples that the frame is drawn at least 288 px on the short side (3.75 px apart at 1080p, close enough for
+ * a Contour line), and at least 2 x 2.
  */
 export const PIXEL_SOURCE_TEXELS_PER_CELL = 2
-const SOURCE_SAMPLES = 2
+const SOURCE_SAMPLES_ON_SHORT_SIDE = 288
 /** How sharply a cell blends into the next: weight t^4 / (t^4 + (1 - t)^4), over about a quarter of a cell. */
 const BLEND_POWER = 4
 /** The LED: a rounded square of half-size 0.42 cell, its edge 0.16 cell wide, superellipse corners of exponent 4. */
@@ -76,7 +75,7 @@ export function blendShare(power: number): number {
 
 const BLEND_SHARE = blendShare(BLEND_POWER)
 
-/** Cells on the short side for a density 0..1 (a missing value gives 36). */
+/** Cells on the short side for a density 0..1 (a missing value gives the count at 0.5). */
 export function pixelCells(density: number): number {
   const d = Number.isFinite(density) ? Math.min(1, Math.max(0, density)) : 0.5
   return Math.round(PIXEL_MIN_CELLS * (PIXEL_MAX_CELLS / PIXEL_MIN_CELLS) ** d)
@@ -93,10 +92,16 @@ export function pixelGrid(frame: Pick<FilterFrame, 'width' | 'height'>, density 
   return gridOf(frame, pixelCells(density))
 }
 
-/** The frame source's texels, the same at every density. */
-export function pixelSourceSize(frame: Pick<FilterFrame, 'width' | 'height'>): { width: number; height: number } {
-  const { across, down } = gridOf(frame, PIXEL_MAX_CELLS)
+/** The frame source's texels at a density: two a cell each way. */
+export function pixelSourceSize(frame: Pick<FilterFrame, 'width' | 'height'>, density = 0.5): { width: number; height: number } {
+  const { across, down } = pixelGrid(frame, density)
   return { width: across * PIXEL_SOURCE_TEXELS_PER_CELL, height: down * PIXEL_SOURCE_TEXELS_PER_CELL }
+}
+
+/** Samples per source texel along each axis at a density, 2 to 8. */
+export function pixelSourceSamples(frame: Pick<FilterFrame, 'width' | 'height'>, density = 0.5): number {
+  const texelsOnShort = pixelCells(density) * PIXEL_SOURCE_TEXELS_PER_CELL
+  return Math.min(8, Math.max(2, Math.ceil(SOURCE_SAMPLES_ON_SHORT_SIDE / texelsOnShort)))
 }
 
 /** The slider's value is the density. */
@@ -113,7 +118,8 @@ uniform vec2 uPixelCells;
 uniform vec2 uPixelFrame;
 
 // Bilinear reads along one axis that weigh each texel of [lo, hi) (texel units) by how much of it the cell covers;
-// each read takes two neighbouring texels in that proportion. 5 reads cover up to 10 texels.
+// each read takes two neighbouring texels in that proportion. With two texels a cell that is one read; 5 reads cover
+// up to 10 texels, should the chain ever cap the source below two texels a cell.
 int pixelAxisReads(float lo, float hi, out float pos[5], out float wt[5]) {
   int first = int(floor(lo));
   int last = int(ceil(hi)) - 1;
@@ -195,7 +201,19 @@ vec3 filterPixel(vec3 display, ivec2 px, float weight) {
   vec3 contrast = mix(mix(pixelContrast(m[k]), pixelContrast(m[k + 1]), bx), mix(pixelContrast(m[k + 3]), pixelContrast(m[k + 4]), bx), by);
   float cellPx = min(uPixelFrame.x / uPixelCells.x, uPixelFrame.y / uPixelCells.y);
   contrast *= smoothstep(${glslFloat(LED_FADE_PX[0])}, ${glslFloat(LED_FADE_PX[1])}, cellPx);
-  float s = pixelLed(t) / ${glslFloat(PIXEL_LED_AREA)};
+  // The LED averaged over a box around the pixel (3 x 3 points): the pixel's own area for cells of 16 px and more,
+  // widening to 2 px for cells under 10 px. Sampled at the pixel's center alone, a 6 px cell's gap lands on one pixel
+  // or two and the grid beats every few cells. Averaging a repeating pattern keeps its mean, so cells keep theirs.
+  float boxPx = mix(2.0, 1.0, smoothstep(10.0, 16.0, cellPx));
+  vec2 stride = boxPx / 3.0 * uPixelCells / uPixelFrame;
+  float s = 0.0;
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      vec2 g = f + vec2(float(i), float(j)) * stride;
+      s += pixelLed(g - floor(g + 0.5));
+    }
+  }
+  s *= ${glslFloat(1 / (9 * PIXEL_LED_AREA))};
   vec3 led = cells * (1.0 + contrast * (s - 1.0));
 
   // The light the nearest cell holds over its area: per axis its own color weighs 1 - 2H and each neighbour H, the
@@ -212,5 +230,5 @@ export const PIXEL_FILTER: OutputFilter = {
   glsl: PIXEL_GLSL,
   apply: 'filterPixel',
   uniforms: pixelUniforms,
-  source: { uniform: 'uPixelSource', size: pixelSourceSize, samples: SOURCE_SAMPLES },
+  source: { uniform: 'uPixelSource', size: pixelSourceSize, samples: pixelSourceSamples },
 }
