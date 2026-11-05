@@ -84,6 +84,9 @@ const PARAMS: readonly ParamSpec[] = [
   num('skyTilt', 'Sky darkening tilt', -1, 1, 0.005, 0),
   num('skyTurn', 'Sky darkening turned about the frame middle, degrees', -180, 180, 0.01, 0),
   num('skyVeil', 'Pale light over the sky toward the light, in units of the sky luminance (0: none)', 0, 6, 0.001, 0),
+  num('skyLine', '1: the sky darkens from skyLineFrom to skyLineTo (a dragged line) instead of across the frame', 0, 1, 1, 0),
+  vec('skyLineFrom', 'Start of the line the sky darkens along', -2, 3, 0.001, [0.5, 1]),
+  vec('skyLineTo', 'End of the line the sky darkens along', -2, 3, 0.001, [0.5, 0]),
   num('skyVary', 'Sky light variation', 0, 0.1, 0.001, 0),
   num('lensRadius', 'Lens radius, short sides; the scene is seen through it (0: off)', 0, 0.3, 0.0005, 0),
   num('glowCore', 'Glow core: extra light in a narrower core at each source, over its peak', 0, 2, 0.01, 0),
@@ -127,7 +130,15 @@ function readLayout(ctx: RecipeContext): BloomsLayout {
       hold: ctx.num('zenithHold'),
       meet: ctx.num('zenithMeet'),
     },
-    sky: { top: ctx.num('skyTop'), mid: ctx.num('skyMid'), tilt: ctx.num('skyTilt'), vary: ctx.num('skyVary'), turn: ctx.num('skyTurn'), veil: ctx.num('skyVeil') },
+    sky: {
+      top: ctx.num('skyTop'),
+      mid: ctx.num('skyMid'),
+      tilt: ctx.num('skyTilt'),
+      vary: ctx.num('skyVary'),
+      turn: ctx.num('skyTurn'),
+      veil: ctx.num('skyVeil'),
+      line: ctx.num('skyLine') > 0.5 ? { from: vec2(ctx.vec('skyLineFrom')), to: vec2(ctx.vec('skyLineTo')) } : undefined,
+    },
     core: ctx.num('glowCore'),
     warp: ctx.num('warp'),
     warpScale: ctx.num('warpScale'),
@@ -139,6 +150,7 @@ function readLayout(ctx: RecipeContext): BloomsLayout {
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+const vec2 = (v: readonly number[]): [number, number] => [v[0], v[1]]
 
 /** The layout as recipe params, each clamped to its range. */
 function layoutParams(layout: BloomsLayout): Record<string, ParamValue> {
@@ -158,6 +170,9 @@ function layoutParams(layout: BloomsLayout): Record<string, ParamValue> {
     skyTilt: layout.sky.tilt,
     skyTurn: layout.sky.turn,
     skyVeil: layout.sky.veil,
+    skyLine: layout.sky.line ? 1 : 0,
+    skyLineFrom: layout.sky.line ? [...layout.sky.line.from] : [0.5, 1],
+    skyLineTo: layout.sky.line ? [...layout.sky.line.to] : [0.5, 0],
     skyVary: layout.sky.vary,
     glowCore: layout.core,
     warp: layout.warp,
@@ -343,6 +358,8 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     uSkyRamp: [layout.sky.top, layout.sky.mid, layout.sky.tilt, layout.sky.vary],
     uSkyTurn: [Math.cos((layout.sky.turn * Math.PI) / 180), Math.sin((layout.sky.turn * Math.PI) / 180)],
     uSkyVeil: [...scale(skyPale, luminance(scale(sky, skyGain))), layout.sky.veil],
+    uSkyLine: layout.sky.line ? [...layout.sky.line.from, ...layout.sky.line.to] : [0.5, 1, 0.5, 0],
+    uSkyLineOn: layout.sky.line ? 1 : 0,
     uHazeFloor: clamp(layout.hazeFloor, 0, 1),
     uBridgeSky: clamp(layout.bridgeSky, 0, 1),
     uZenithShape: [z.at[0], z.at[1], clamp(z.amount, 0, 2), z.falloff],
@@ -416,6 +433,7 @@ export const sunsetBlooms: RecipeDefinition = {
 #define TAIL_END ${TAIL_END.toFixed(2)}
 #define LOW_HAZE 1.5
 #define CORE_RADIUS 0.3
+#define BEHIND_REACH 1.0
 #define BLOOM_MINOR_REF ${BLOOM_MINOR_REF.toFixed(6)}
 #define BLOOM_ROW ${BLOOM_ROW.toFixed(6)}
 uniform float uLens;                  // 1: seen through the scatter lens (pack output); 0: drawn directly (1:1 presets)
@@ -426,6 +444,8 @@ uniform vec3 uDeep;
 uniform vec4 uSkyRamp;                // stops darker at the top, height of the exact hex, tilt, light variation
 uniform vec2 uSkyTurn;                // cos, sin of the angle the sky ramp is turned by about the frame middle
 uniform vec4 uSkyVeil;                // pale light in the sky's own hue at the sky's luminance, and how much of it toward the light
+uniform vec4 uSkyLine;                // a dragged line's start and end (frame fractions) the sky darkens along, with uSkyLineOn
+uniform float uSkyLineOn;
 uniform float uHazeFloor;             // 1: the glows' haze hides at most as much sky light as they add (0: no limit)
 uniform float uBridgeSky;             // 1: on the sky side a bridge is pale light of the sky's hue (0: the lights' tint throughout)
 uniform vec4 uZenithShape;           // center (frame fractions), amount, falloff exponent
@@ -559,10 +579,25 @@ vec3 bloomsScene(vec2 uv) {
   // The ramp is read in a frame turned by uSkyTurn (in short-side units, so the turn keeps its angle).
   vec2 turned = vec2(uSkyTurn.x * P.x - uSkyTurn.y * P.y, uSkyTurn.y * P.x + uSkyTurn.x * P.y) / frame + 0.5;
   float vSky = turned.y + uSkyRamp.z * (turned.x - 0.5) + warp.y / frame.y;
+  // The length (frame units) the ramp runs over, for the drift of its levels: the frame's height, or a line's.
+  float span = frame.y;
+  if (uSkyLineOn > 0.5) {
+    // Along a dragged line the sky is palest at its start, where the light is, and reaches the far sky at its
+    // end. Behind the start it deepens slowly with distance, reaching the far sky BEHIND_REACH short sides
+    // away, so a light outside the frame pointing away leaves the frame its pale, lit side.
+    vec2 F = (uSkyLine.xy - 0.5) * frame;
+    vec2 D = (uSkyLine.zw - 0.5) * frame - F;
+    float len = max(length(D), 1e-4);
+    vec2 dir = D / len;
+    float along = dot(P - F, dir);
+    float depth = along >= 0.0 ? along / len : -along * shortUnit / BEHIND_REACH;
+    span = max(len, BEHIND_REACH / shortUnit);
+    vSky = 1.0 - depth + (uSkyRamp.z * dot(P - F, vec2(-dir.y, dir.x)) + warp.y) / span;
+  }
   // The line drifts like a glow edge, on the field row after the deep area's, and its lighter and
   // darker levels drift apart, so the darker top has no ruled edge and no parallel steps.
-  float fromLine = (vSky - uSkyRamp.y) * frame.y * shortUnit;
-  vSky += boundaryWarp(P.x * shortUnit, fromLine + float(GLOW_COUNT + 1) * BLOOM_ROW) / (shortUnit * frame.y);
+  float fromLine = (vSky - uSkyRamp.y) * span * shortUnit;
+  vSky += boundaryWarp(P.x * shortUnit, fromLine + float(GLOW_COUNT + 1) * BLOOM_ROW) / (shortUnit * span);
   float above = clamp((uSkyRamp.y - vSky) / max(uSkyRamp.y, 0.05), 0.0, 1.0);
   float topLight = exp2(-uSkyRamp.x * pow(above, 1.4));
   // With uZenithHold the dark color is the pack's ground, not darker sky: it keeps its hex under the darker
