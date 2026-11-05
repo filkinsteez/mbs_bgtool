@@ -170,6 +170,8 @@ function lightLuminance(u: RampUniforms, f: Frame, across: number, s: number): n
 
 /** Contrast at which the boundary model starts to treat an edge as one over a darker ground. */
 const DARK_FROM = 0.3
+/** Height above the glow's line over which the sky's knot takes on the sky's own wander. */
+const SKY_KNOT_FADE = 0.15
 /** Where each side of a transition is sampled, in transition widths from its middle. */
 const SIDE_SAMPLES = [0.1, 0.2, 0.3, 0.4, 0.5]
 /**
@@ -274,7 +276,13 @@ export function rampBoundary(ctx: RecipeContext, u: RampUniforms): RampBoundary 
 
   const lowest = withContrast.find((m) => m.glow === 1)
   const knots: [number, number][] = []
-  if (edges > 0 && at[0] < horizon) knots.push([at[0], wanderSky])
+  // The sky's knot stays in the list and above the glow's: a knot leaving the list, or passing
+  // another, would change the wander at one step of a control. Toward the glow's line it takes the
+  // glow's wander, which is the wander there without it.
+  if (edges > 0) {
+    const skyShare = smoothstep(glowLine, glowLine - SKY_KNOT_FADE, at[0])
+    knots.push([Math.min(at[0], glowLine - 1e-3), wanderGlow + (wanderSky - wanderGlow) * skyShare])
+  }
   knots.push([glowLine, wanderGlow])
   knots.push([horizonEdge >= 0 ? horizon : Math.min(lowest?.at ?? sMax, sMax), wanderHorizon])
   if (horizonEdge >= 0 && horizonEdge + 1 < edges) knots.push([at[edges - 1], wanderGround])

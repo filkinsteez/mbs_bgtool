@@ -281,19 +281,23 @@ function packLook(packId: PackId, structure: RampStructure, darkAlt: boolean, va
   switch (packId) {
     case 'bold': {
       const [cyan, yellow, orangeRed] = rest
-      const dark = { landTop: [metaBlue, 0.6] as Tone, landBottom: [metaBlue, 0.12] as Tone, water: [metaBlue, 0.3] as Tone, veilColor: cyan }
-      // Orange-red over a Cyan low sky: the two add up to a pale neutral, which keeps its bridge
-      // at low light too. It lights every water and land frame: reflected in water or spilled
+      const dark = { landTop: [metaBlue, 0.6] as Tone, landBottom: [metaBlue, 0.12] as Tone, water: [metaBlue, 0.3] as Tone, veilColor: cyan, veil: [0.2, 0.05] as [number, number] }
+      // Yellow under a band of Cyan, so Meta Blue, Cyan and the warm light all show.
+      const yellowLook = { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.6, skyEdge: [0.97, 1.0, 0.3] as [number, number, number], light: yellow, coreColor: yellow, glow: 0.9, glowUp: 0.65, path: [0.5, 1, 0.45] as [number, number, number], hue: [-0.3, 0.35] as [number, number], bridge: 0.5, haze: 0.5, sideDeeper: 0.4, core: 2 }
+      // A compact sun over land is Yellow, high over a dark ridge that it doesn't light: spilled
       // over land, Yellow turns khaki.
+      if (structure === 'land' && sceneTurn(structure, variant, 1) === 0) return { ...yellowLook, glow: 1.6, glowUp: 0.35, glowRise: 1.4, horizonGain: 0.5, bridge: 0.9, bridgeLift: 0.4, landLit: 0, landHaze: 0.05 }
+      // Orange-red over a Cyan low sky: the two add up to a pale neutral, which keeps its bridge
+      // at low light too. It lights every other water and land frame: reflected in water, Yellow
+      // turns khaki.
       if (ground || (pickLight < 0.55 && (structure === 'open' || structure === 'corner'))) {
         // Where Orange-red meets the Cyan and blue sky the bridge is a pale peach-cream, not the
         // pink or mauve the two make when mixed; under the glow line and inside the glow's dense
         // haze the skylight fades out, so the glow's body is Orange-red itself. A compact, low glow
         // leaves a band of Cyan above it.
-        return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.8, horizonGain: 0.42, skyEdge: [0.95, 0.9, 0.15], veil: [0.16, 0.04], groundVeil: 0.05, light: orangeRed, coreColor: yellow, glow: 1.2, glowUp: 0.25, glowRise: structure === 'land' ? 0.62 : 0.25, path: [-0.15, 0.55, 0.45], hue: [-0.25, 0.2], bridge: 0.9, bridgeLift: 0.5, bridgeWarmth: 0.8, bridgeFloor: 0.1, haze: 0.3, downReach: 1.5, sideDeeper: 0.3, waterDegrees: [6, 9], landHaze: 0.03, extinction: 3 }
+        return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.8, horizonGain: 0.42, skyEdge: [0.95, 0.9, 0.15], groundVeil: 0.05, light: orangeRed, coreColor: yellow, glow: 1.2, glowUp: 0.25, glowRise: structure === 'land' ? 0.62 : 0.25, path: [-0.15, 0.55, 0.45], hue: [-0.25, 0.2], bridge: 0.9, bridgeLift: 0.5, bridgeWarmth: 0.8, bridgeFloor: 0.1, haze: 0.3, downReach: 1.5, sideDeeper: 0.3, waterDegrees: [6, 9], landHaze: 0.03, extinction: 3 }
       }
-      // Yellow under a band of Cyan, so Meta Blue, Cyan and the warm light all show.
-      return { ...sky, ...dark, lowSky: cyan, lowSkyGain: 1.6, skyEdge: [0.97, 1.0, 0.3], veil: [0.16, 0.04], light: yellow, coreColor: yellow, glow: 0.7, glowUp: 0.5, path: [0.5, 1, 0.45], hue: [-0.3, 0.35], bridge: 0.5, haze: 0.5, sideDeeper: 0.4, core: 2 }
+      return yellowLook
     }
     case 'elemental': {
       const [lime, forest, tan, plum] = rest
@@ -373,6 +377,22 @@ const darkAlternate = (seed: number) => seedRun(seed) % 2 !== 0
 const seedVariant = (seed: number) => seedRun(seed) % 3
 
 /**
+ * The variant turned by the scene, `step` places per scene, so the three scenes of one run take
+ * different turns, and so do a scene's repeats in seeds 1-9. Steps 1 and 2 give every seed of 1-9
+ * its own pair of turns.
+ */
+const sceneTurn = (structure: RampStructure, variant: number, step: number) => (variant + step * (structure === 'water' ? 1 : structure === 'land' ? 2 : 0)) % 3
+
+/**
+ * How much of the frame the warm light fills, by the seed's turn (compact, broad, between): the
+ * height of the glow's line over water and land, the glow's size, and how far its light reaches up
+ * the sky.
+ */
+const WARM = { share: [1, 2.2, 1.3], size: [0.8, 1.35, 1.05], reach: [0.65, 2, 1.15] }
+/** How dark the water, the land and the far sky are, by the seed's turn: light, dark, between. */
+const DEPTH = [0, 1, 0.5]
+
+/**
  * Share of the frame's height at the top that the sky's edges leave to the zenith's Meta Blue. It is
  * small, so the sky still changes slowly all the way to the top instead of ending in a flat field.
  */
@@ -397,9 +417,12 @@ function skyTopOf(reach: number, tall: number): number {
   return (1 - Math.sqrt(Math.max(0, 1 - 4 * a * reach))) / (2 * a)
 }
 
-/** Over water and land, the glow's line's height above the horizon as a share of the sky's height. */
-const glowShare = (look: PackLook, variant: number, pick: number, softness: number, day: number) =>
-  lerp(0.25, 0.45, pick) * [0.85, 1.35, 1.05][variant] * stops2(softness, 0.3) * Math.sqrt(day) * look.glowRise
+/**
+ * Over water and land, the glow's line's height above the horizon as a share of the sky's height.
+ * Over land it stays lower, so the low sky keeps a band of its own above the ridge's glow.
+ */
+const glowShare = (look: PackLook, structure: RampStructure, warmShare: number, pick: number, softness: number, day: number) =>
+  Math.min(structure === 'land' ? 0.36 : 0.5, lerp(0.25, 0.45, pick) * warmShare * stops2(softness, 0.3) * Math.sqrt(day) * look.glowRise)
 
 /**
  * A Sunset ramp scene for a pack, the tool controls, a seed and the frame's width over height.
@@ -413,15 +436,27 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const structure = rampStructure(seed)
   const random = seeded(seed)
   const variant = seedVariant(seed)
+  const warmTurn = sceneTurn(structure, variant, 1)
+  const warmShare = WARM.share[warmTurn]
+  const warmReach = WARM.reach[warmTurn]
+  // An open sky's broad warm haze over a deep sky reads grey-brown or salmon: it takes the depth
+  // between instead.
+  const openSky = structure !== 'water' && structure !== 'land'
+  const depthTurn = openSky && warmTurn === 1 && sceneTurn(structure, variant, 2) === 1 ? 2 : sceneTurn(structure, variant, 2)
+  const depth = DEPTH[depthTurn]
+  const veilScale = lerp(1.4, 0.5, depth) / (warmTurn === 1 ? Math.SQRT2 : 1)
   const look = packLook(packId, structure, darkAlternate(seed), variant, random)
   const intensity = clamp01(controls.intensity)
   const softness = clamp01(controls.softness)
   const mood = clamp01(controls.mood)
-  // Each variant puts the line at its own height, so a structure's repeats differ in layout. The
+  // Over water and land each seed's depth puts the line at its own height: a deep seed shows more of
+  // its dark ground, a light seed more sky. An open sky's variant sets the height of its band. The
   // shift fades out toward both ends of the Horizon control, which keep the shared heights.
   const shared = placeHorizon(mood, seed, aspect)
-  const lineShift = [-0.1, 0.05, 0][variant]
-  const placed = { ...shared, y: shared.y + lineShift * Math.min(1, mood / 0.25, (1 - mood) / 0.25) }
+  const lineShift = openSky ? [-0.1, 0.05, 0][variant] : [0.05, -0.1, -0.03][depthTurn]
+  // A light seed's land lies nearly level.
+  const tiltScale = structure === 'land' ? [0.45, 1, 1][depthTurn] : 1
+  const placed = { ...shared, y: shared.y + lineShift * Math.min(1, mood / 0.25, (1 - mood) / 0.25), tilt: Math.max(-LAND_MOST_TILT, Math.min(LAND_MOST_TILT, shared.tilt * tiltScale)) }
   // A dragged line takes the Horizon control's place: the glow sits at its start, the horizon runs
   // across it, and the sky reaches the zenith's color at its end. The seed keeps everything else.
   const line = controls.drag ? rampLine(controls.drag, aspect) : null
@@ -516,7 +551,8 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
       sunIn = within(([[0.12, 0.24], [0.26, 0.38], [0.4, 0.5]] as const)[variant], sunPick)
       tilt = lerp(-4, 4, tiltPick)
       dome = lerp(-0.015, 0.035, bendPick) * frameWidth
-      floor = within(([[0.12, 0.22], [0.48, 0.62], [0.28, 0.4]] as const)[variant], floorPick)
+      // A light seed's glow is an even band, a deep seed's a patch of light near the sun.
+      floor = within(([[0.48, 0.62], [0.12, 0.22], [0.28, 0.4]] as const)[depthTurn], floorPick)
       lateral = lerp(1.0, 1.5, widthPick)
       sunlight = 0.25
       break
@@ -525,7 +561,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
       sunIn = within(([[0.08, 0.17], [0.21, 0.3], [0.14, 0.24]] as const)[variant], sunPick)
       tilt = side * lerp(0, 3, tiltPick)
       dome = lerp(-0.01, 0.01, bendPick)
-      floor = within(([[0.25, 0.35], [0.52, 0.65], [0.38, 0.5]] as const)[variant], floorPick)
+      floor = within(([[0.52, 0.65], [0.25, 0.35], [0.38, 0.5]] as const)[depthTurn], floorPick)
       lateral = lerp(0.8, 1.3, widthPick)
       sunlight = 0.4
       break
@@ -597,7 +633,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // of the water's far bank or from the middle of the land's line (land's own anchor moves
     // unevenly as its ridge grows): it grows steadily as the line lowers, so halving the range
     // finds the one height.
-    const share = Math.min(0.7, glowShare(look, variant, risePick, softness, day))
+    const share = glowShare(look, structure, warmShare, risePick, softness, day)
     const aboveGlow = (y: number) => {
       const lineAt = (y - 0.5) * tall
       const anchorY = water ? groundAt(y).anchor[1] : lineAt
@@ -671,7 +707,8 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // Intensity is daylight: the zenith gains the most, the low sky less and the glow least;
   // the glow rises, widens and pales, and the sun's core whitens near the sun only.
   const zenithGain = stops2(intensity, 1.6)
-  const lowGain = look.lowSkyGain * stops2(intensity, look.lowSkyGain < 1 ? 0.8 : 0.35)
+  // A deep seed's low sky is dimmer, so its color stays saturated instead of paling.
+  const lowGain = look.lowSkyGain * stops2(intensity, look.lowSkyGain < 1 ? 0.8 : 0.35) * lerp(1, 0.8, depth)
   const glowGain = stops2(intensity, 0.15)
   const sunGain = stops2(intensity, 2.4)
   const groundGain = stops2(intensity, 0.8)
@@ -682,13 +719,16 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const glowHaze = stops2(softness, 0.8)
   // The glow is larger where more sky shows, so a tall frame doesn't get a thin stripe.
   const skyScale = 0.72 + 0.36 * Math.min(skyHeight, 1.6)
-  // Each variant has a glow of its own size and height: low and small, high and large, or between.
-  const glowSize = [0.9, 1.3, 1.05][variant] * lerp(0.9, 1.1, sizePick)
+  // Each seed's glow has the size of its warm fill: small, large, or between.
+  const glowSize = WARM.size[warmTurn] * lerp(0.9, 1.1, sizePick)
   const glowScale = glowHaze * day * skyScale * air * glowSize
   // How high the glow's line sits above the horizon: for open skies where the Horizon control puts
-  // the brightest band, over water and land 21 to 61% of the sky's height by variant and seed,
+  // the brightest band, over water and land up to half of the sky's height by warm fill and seed,
   // higher in haze; under a dragged line, at its start.
-  const glowRise = line ? dragRise : ground ? glowShare(look, variant, risePick, softness, day) * skyHeight : openRiseAt(anchorY)
+  // Over land the glow's line stays a little above the ridge's crest, which would hide it. Bold's
+  // stays lower, leaving its Cyan band room above the glow.
+  const aboveCrest = land && packId !== 'bold' ? anchorY - crest + 0.04 : 0
+  const glowRise = line ? dragRise : ground ? Math.max(glowShare(look, structure, warmShare, risePick, softness, day) * skyHeight, aboveCrest) : openRiseAt(anchorY)
   // How far the glow's lower side, the dusk band and the dimming toward the horizon reach. Over an
   // open sky a dragged line's horizon can lie far behind the glow; they keep the seed's own size
   // there, and the low sky fills the rest. The glow's lower side ends where the seed's own frame
@@ -707,11 +747,15 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const zenithRoom = zenithRoomOf(topHeight, tall)
   // Over open skies the sky's edges sit between the glow and the top, so they rise with the glow.
   const edgeFloor = ground ? 0 : glowRise
-  const skyEdgeAt = -(edgeFloor + look.skyEdge[0] * Math.max(0.1, topHeight - edgeFloor) * within(([[0.5, 0.68], [0.82, 0.98], [0.66, 0.84]] as const)[variant], edgePick))
+  // A light seed's low sky reaches high; a deep seed's Meta Blue reaches further down, less far over
+  // an open sky, whose glow would leave its low sky no room.
+  const edgeShare = ground ? ([[0.82, 0.98], [0.45, 0.62], [0.66, 0.84]] as const)[depthTurn] : ([[0.82, 0.98], [0.58, 0.7], [0.7, 0.84]] as const)[depthTurn]
+  const skyEdgeAt = -(edgeFloor + look.skyEdge[0] * Math.max(0.1, topHeight - edgeFloor) * within(edgeShare, edgePick))
   // A sky edge narrower than about a third of a short side reads as the edge of a cloud bank. A
   // look whose low sky must show as its own band between the zenith and the glow allows a
-  // narrower one: the lens still softens it.
-  const skyEdgeWidth = Math.max(look.skyEdge[2], look.skyEdge[1] * Math.abs(skyEdgeAt)) * Math.sqrt(haze)
+  // narrower one: the lens still softens it. Under a broad seed's warm haze it is narrower too, so
+  // the low sky's own color shows between the zenith and the glow.
+  const skyEdgeWidth = (Math.max(look.skyEdge[2], look.skyEdge[1] * Math.abs(skyEdgeAt)) * Math.sqrt(haze)) / Math.sqrt(Math.max(1, warmReach))
 
   // Every sky edge and the glow move with the shared boundary model (ramp-boundary.ts): the sky
   // edge most, the glow and the horizon less. A softer sky drifts a little more.
@@ -742,8 +786,10 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     const [x, y] = line.to
     zenithShade = [1.0 / Math.max(0.2, topHeight), rampAt(frame, axis, x, y), 0.02 * side, (x * Math.cos(turn) - y * Math.sin(turn)) / half]
   }
-  // Where the sky sinks toward the dark at its far edge, the zenith there is that share of the hex.
-  zenithShade[1] += (1 - look.farSink) / zenithShade[0]
+  // Where the sky sinks toward the dark at its far edge, the zenith there is that share of the hex;
+  // a deep seed's far sky sinks further, and so does Bold's wide sky of a corner or of arcs, which
+  // is deep blue far from the light (muted as Elemental's is, it would go grey).
+  zenithShade[1] += (1 - look.farSink * lerp(1, 0.4, depth * depth) * (packId === 'bold' && (structure === 'corner' || arcs) ? 0.5 : 1)) / zenithShade[0]
 
   // The stop edges, top down. A second, lighter Meta Blue step splits the sky's edge in two: a
   // wide one higher up and a narrower one lower down, each with its own shape.
@@ -783,7 +829,8 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     const low = edges[edges.length - 1]
     const highest = -(topHeight - zenithRoom - tail * low[1])
     const under = Math.max(glowRise, land ? anchorY - crest : 0)
-    low[0] = Math.max(highest, Math.min(low[0], -(under + 0.3 * skyScale)))
+    // Above a broad seed's warm haze, which reaches further up.
+    low[0] = Math.max(highest, Math.min(low[0], -(under + 0.3 * skyScale * Math.max(1, warmReach))))
   }
   const gains = midSky ? [zenithGain, midGain, lowGain] : [zenithGain, lowGain]
   const lowSkyEdge = edges[edges.length - 1][0]
@@ -857,12 +904,15 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // light. A band of full Meta Blue stays at the far edge: the top twentieth of the frame, fading
     // into the veil over the next sixth.
     // Elemental's warm side reaches farther, so its light's own color shows over more of the sky.
-    veil: [look.veil[0] * zenithGain, look.veil[1] * zenithGain, (packId === 'elemental' ? 0.6 : 0.3) * Math.max(0.2, topHeight)],
+    // A light seed's sky is hazier, a deep seed's clearer, and a broad seed's warm haze pales it
+    // in the veil's place.
+    veil: [look.veil[0] * zenithGain * veilScale, look.veil[1] * zenithGain * veilScale, (packId === 'elemental' ? 0.6 : 0.3) * Math.max(0.2, topHeight)],
     veilFar: [topHeight - 0.22 * tall, topHeight - 0.05 * tall],
     veilTint: paleTint(look.veilColor, packId === 'bold' ? 0.35 : packId === 'elemental' ? 0.25 : 0.6),
     // Under the far band the sky's blue greys at its own hue (Elemental, whose pale side is its
     // light's color), or toward Steel (Atmospheric, overcast), instead of turning periwinkle.
     veilMute: packId === 'atmospheric' ? 0.8 : packId === 'elemental' ? 0.5 : 0,
+    blueHue: 1,
     // Elemental's veil takes its light's own color near the light, so the pale side reads Tan or
     // Lime; the other packs take the bridge's warm white there.
     veilNear: packId === 'elemental' ? paleTint(look.light, 0.6) : [0, 0, 0],
@@ -873,10 +923,12 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     glowWidth: 0.45 * lateral * Math.sqrt(day) * glowHaze * narrow,
     shadowHeight: 0,
     glow1Weight: 1,
-    glow1Up: 0.1 * glowScale * look.glowUp,
+    // The glow's light reaches up the sky as far as the seed's warm fill: a broad seed's warm haze
+    // fills much of the sky, also where a dragged line leaves the glow itself outside the frame.
+    glow1Up: 0.1 * glowScale * look.glowUp * warmReach,
     glow1Down: Math.min(2, Math.max((0.03 + 0.03 * glowHaze) * skyScale, look.downReach * glowReach)),
-    glow2Weight: 0.2 * look.haze * lerp(0.6, 1.5, softness),
-    glow2Up: 0.17 * glowScale * look.glowUp,
+    glow2Weight: 0.2 * look.haze * lerp(0.6, 1.5, softness) * warmReach,
+    glow2Up: 0.17 * glowScale * look.glowUp * warmReach,
     glow2Down: 0.08 * glowHaze,
     extinction: look.extinction,
     // Skylight fades toward the horizon, so under the glow line the light is the glow's own.
@@ -920,9 +972,8 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     ridge: [outline.rise, outline.toward, outline.bowl, outline.waveLength],
     shore: [bankHeight, 0.5],
     // The path mirrors the glow's line, which sits above most of the far bank.
-    // Each variant has its own water: a near mirror with a medium path, deep dark water with a
-    // strong path, or between with a faint one.
-    sunPath: [water ? look.sunPath * [0.7, 1, 0.45][variant] : 0, 0.02, 0.6, glowRise + 1.2 * bankHeight],
+    // Light water is a near mirror with a faint path, deep water dark with a strong one.
+    sunPath: [water ? look.sunPath * lerp(0.45, 1.25, depth) : 0, 0.02, 0.6, glowRise + 1.2 * bankHeight],
     // A tall water area keeps its path further down. Around it the water mirrors the band part
     // way from the glow up to the low sky's edge.
     sunLight: [Math.max(0.3, 0.6 * (0.5 * tall - lineAt)), Math.min(0.3, Math.max(0.05, 0.7 * (-lowSkyEdge - glowRise)))],
@@ -932,15 +983,20 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     water: [Math.min(1.25, Math.max(0.5, (0.77 * lineY) / Math.max(0.05, 1 - lineY))), lerp(look.waterDegrees[0], look.waterDegrees[1], ridgePick) * [0.6, 1.6, 1][variant], 0.12, 1.5],
     waterMirror: water ? look.waterMirror : 1,
     // Under a high line the near water mirrors the sky high above the frame, which is darker.
-    mirrorDeep: water ? 0.6 * tall : 0,
+    // Deep water mirrors more of that darker sky.
+    mirrorDeep: water ? lerp(0.25, 1.4, depth) * tall : 0,
+    // Bold's water under its warm glow; the other packs' water keeps its own Slate or Meta Blue.
+    waterTint: water && packId === 'bold' ? 0.6 : 0,
     // A tall land area reaches nearer the viewer: the haze over its far ground reaches further
     // down, and its near ground is darker.
     groundHaze: [look.landHaze, land ? Math.max(0.1 * tall, 0.25 * landRoom) : 0.05 * tall],
     groundVeil: [land ? look.groundVeil * groundGain : 0, 0.35 * landRoom],
     landLit: [ground ? look.landLit : 0, lerp(0.3, 0.5, widthPick) * frameWidth, ground ? 0.6 : 0],
-    groundTopGain: look.landTop[1] * groundGain,
-    groundBottomGain: look.landBottom[1] * groundGain * (land ? Math.min(1, ((0.4 * tall) / landRoom) ** 1.5) : 1),
-    waterGain: look.water[1] * groundGain,
+    // A deep seed's ground is darker. A light seed's keeps the pack's own: brightened, Plum turns
+    // magenta.
+    groundTopGain: look.landTop[1] * groundGain * lerp(1, 0.55, depth),
+    groundBottomGain: look.landBottom[1] * groundGain * lerp(1, 0.5, depth) * (land ? Math.min(1, ((0.4 * tall) / landRoom) ** 1.5) : 1),
+    waterGain: look.water[1] * groundGain * lerp(1, 0.6, depth),
   }
   return { colors: slotColors(look, midSky), params, lens: {}, output: { exposure: 0 } }
 }

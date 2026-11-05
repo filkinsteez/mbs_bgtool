@@ -635,6 +635,9 @@ const BUMP_COLUMNS = 160 // columns of the bump measure
 // A direct calibration's guard dips this much deeper than the columns' need (1 - (1 - need) / 0.9),
 // for the smooth curve through the guard samples, which can overshoot between them.
 const DIRECT_GUARD_MARGIN = 0.9
+// A direct calibration's wide-transition rule mixes the transitions near a knot, each weighted by
+// exp(-distance / (width * this)).
+const DIRECT_WIDE_REACH = 0.25
 
 /**
  * Calibrates the boundary model for one frame and seed. `aspect` is width /
@@ -865,6 +868,18 @@ export function calibrateBoundary(params: BoundaryParams, aspect: number, seed: 
     // window shows that spread
     const wideFactor = (s0: number) => {
       if (!(r.wideWidth > 0) || nT === 0) return 1
+      if (direct) {
+        // a mix over the transitions by how near s0 is to each, in their widths, so a small change
+        // of the input never switches which one counts
+        let sum = 0
+        let weight = 0
+        for (const t of tr) {
+          const w = Math.exp(-Math.abs(s0 - t.at) / t.width / DIRECT_WIDE_REACH)
+          sum += w * Math.min(1, r.wideWidth / t.width)
+          weight += w
+        }
+        return weight > 0 ? sum / weight : 1
+      }
       let near = tr[0]
       for (const t of tr) if (Math.abs(s0 - t.at) / t.width < Math.abs(s0 - near.at) / near.width) near = t
       return Math.min(1, r.wideWidth / near.width)

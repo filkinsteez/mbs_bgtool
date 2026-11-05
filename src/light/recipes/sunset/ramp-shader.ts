@@ -59,6 +59,7 @@ uniform vec3 uVeil;          // white light over the sky: under the far band, mo
 uniform vec2 uVeilFar;       // heights above the horizon between which the veil fades out into the far band of full Meta Blue (0, 0: none)
 uniform vec3 uVeilTint;      // the veil's color away from the light: a pale tint of one of the pack's colors, at luminance 1
 uniform float uVeilMute;     // share of the sky's color the veil greys toward its own tint at the same light (0: none)
+uniform float uBlueHue;      // 1: sky blues turned toward violet go back to Meta Blue's hue (pack frames); 0: they keep it
 uniform vec3 uVeilNear;      // the veil's color near the light, at luminance 1 (0, 0, 0: the bridge's)
 uniform float uGlowOffset;
 uniform vec3 uGlowVary;      // how much the glow's upward reach changes along its length, cycles per short side,
@@ -93,6 +94,7 @@ uniform vec4 uWater;         // squeeze, degrees below the horizon half a short 
 uniform vec3 uWaterOwn;      // the water's own light, seen where the reflection weakens
 uniform float uWaterMirror;  // share of calm water's reflectance that a rough sea keeps
 uniform float uMirrorDeep;   // height above the frame's top over which the sky that water mirrors there dims by e (0: none)
+uniform float uWaterTint;    // share of the water's own light that takes the hue of the sky it mirrors (0: its own color)
 uniform vec3 uGroundTop;     // land right under its outline
 uniform vec3 uGroundBottom;  // land at the bottom edge
 uniform vec2 uGroundHaze;    // share of the sky's light in far land, and the depth over which it fades
@@ -376,7 +378,7 @@ vec3 rampSky(vec2 p) {
   vec3 sky = vec3(0.0);
   vec3 dusk = vec3(0.0);
   float duskCover = 0.0;
-  float zenithShade = clamp(1.0 + uZenithShade.x * (s - uZenithShade.y) + uZenithShade.z * (a / halfWidth - uZenithShade.w), 0.5, 2.0);
+  float zenithShade = clamp(1.0 + uZenithShade.x * (s - uZenithShade.y) + uZenithShade.z * (a / halfWidth - uZenithShade.w), 0.35, 2.0);
   for (int k = 0; k <= uEdges; k++) {
     float w = (k == 0 ? 1.0 : level[k - 1]) - (k < uEdges ? level[k] : 0.0);
     vec3 c = w * uStop[k] * (k == 0 ? zenithShade : 1.0);
@@ -423,7 +425,8 @@ vec3 rampSky(vec2 p) {
   }
   // The bridge leaves the dusk band alone: lifted where the glow meets it, the band would draw a
   // pale line between the two.
-  return keepBlueHue((light + dusk) * hazeLight);
+  vec3 seen = (light + dusk) * hazeLight;
+  return uBlueHue > 0.5 ? keepBlueHue(seen) : seen;
 }
 
 // The 1:1 presets' land layer in front of the sky.
@@ -574,8 +577,13 @@ vec3 rampScene(vec2 p) {
   // One call site, as for rampSky: land itself, or the far bank as the water mirrors it.
   vec3 mirror = kind == 2 ? seen : landLight(kind == 1 ? p : mirrored, top, seen, patches);
   if (kind == 1) return mirror;
+  // The water's own light is the sky's light seen through the water: under a warm sky it takes the
+  // hue of the sky it mirrors, at its own light, instead of adding blue, which reads mauve.
+  vec3 own = uWaterOwn * litSide(p.x);
+  float mirrorLight = luminance(mirror);
+  if (uWaterTint > 0.0 && mirrorLight > 1e-5) own = mix(own, luminance(own) * mirror / mirrorLight, uWaterTint);
   // A rough sea dims the reflection; it does not show more of the water's own light.
-  vec3 water = uWaterMirror * r * mirror + (1.0 - r) * uWaterOwn * litSide(p.x);
+  vec3 water = uWaterMirror * r * mirror + (1.0 - r) * own;
   if (uWater.w > 0.0 && depth < 0.05) {
     float along = 0.7 + 0.3 * edgeFbm(p.x * 1.1 + 1.3, uSeed + 953, 2);
     water += uWater.w * along * exp(-0.5 * (depth / 0.008) * (depth / 0.008)) * mirror;
