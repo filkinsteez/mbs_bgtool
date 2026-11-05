@@ -60,8 +60,12 @@ export const FAR_STEP = 2.5
 
 const PRIM_VEC4 = 4
 const NEAR_VEC4 = 6
-const FAR_VEC4 = 4
+const FAR_VEC4 = 5
 const EMIT_VEC4 = 5
+/** Linear luminance, with the shader's weights (LUMA). */
+const luminanceOf = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+/** Lights that light the air of the frame from outside the curves (most often from outside the frame). */
+export const AIR_GLOWS = 3
 const ARC_PIECE = Math.PI / 4
 /** Primitives per bounding box; layouts use a multiple of it. */
 const CHUNK = 4
@@ -143,7 +147,7 @@ function nearGlsl(layout: CurveLightLayout): string {
   const arcs = parts
     .map((k) => `        if (radial < cut${k}) acc${k} += em * clArc(r, psiM, halfSweep, max(vec3(1e-6), g.z - toInside * offs${k}), s2p${k}, p${k}, bp${k});`)
     .join('\n')
-  const total = parts.map((k) => `amp${k} * lit${k} * acc${k}`).join(' + ')
+  const total = parts.map((k) => `clPale(e, amp${k} * lit${k} * acc${k}, uClNear[nb + ${k * NEAR_VEC4 + 5}].z)`).join(' + ')
   return /* glsl */ `
 // Near parts of emitter e, written out per part so their sums stay in registers.
 vec3 clNear(int e, vec2 q, float light1, float light2, float sd) {
@@ -198,6 +202,7 @@ export function curveLightGlsl(layout: CurveLightLayout): string {
 #define CL_N ${layout.near}
 #define CL_F ${layout.far}
 #define CL_CHUNKS ${Math.ceil(layout.primitives / CHUNK)}
+#define CL_AIR ${AIR_GLOWS}
 #define CL_FLOOR 5e-5
 
 // Per primitive: (ax, ay, bx, by) or (cx, cy, radius, start); (kind, sweep, inside side, length);
@@ -206,17 +211,21 @@ uniform vec4 uClPrim[CL_E * CL_P * ${PRIM_VEC4}];
 // Bounding box (min x, min y, max x, max y) of each run of ${CHUNK} primitives.
 uniform vec4 uClChunk[CL_E * CL_CHUNKS];
 // Per near part: (weight, sigma, p, side); (tint, offset); (channel widths, light); (channel offsets, light gamma);
-// (grow light, grow gain, grow gamma, B_p); (mask inset, mask softness, 0, brightest emission channel).
+// (grow light, grow gain, grow gamma, B_p); (mask inset, mask softness, share in the pale color, brightest emission
+// channel).
 uniform vec4 uClNear[CL_E * CL_N * ${NEAR_VEC4}];
 // Per far part: (weight, sigma, side, light); (tint, light gamma); (channel widths, grow light);
-// (grow gain, grow gamma, mask inset, mask softness).
+// (grow gain, grow gamma, mask inset, mask softness); (share in the pale color, 0, 0, 0).
 uniform vec4 uClFar[CL_E * CL_F * ${FAR_VEC4}];
 // Per emitter: (anchor u, anchor v, primitive count, any side mask); (mask shift x, y, mask grow, reach);
 // (emission rgb for scattered light from its own aux channel, ray direction); (drift ratios rgb, drift knee);
-// (drift sharpness, 0, 0, 0).
+// (drift sharpness, pale color rgb at unit luminance).
 uniform vec4 uClEmit[CL_E * ${EMIT_VEC4}];
 // Two light fields: (kind, x, y, radius); (length, power, stretch, angle). Positions are relative to emitter 1's anchor.
 uniform vec4 uClLight[4];
+// Per air glow: (segment ends, frame 0..1); (color at its light's own level, level); (drift ratios, drift knee);
+// (falloff, drift sharpness, power, 0): the glow is clAirGlow to the power.
+uniform vec4 uClAir[CL_AIR * 4];
 uniform vec3 uClBase;
 // Blur widths of the four scatter rungs.
 uniform vec4 uClRungs;
@@ -422,6 +431,26 @@ vec3 clDrift(vec3 raw, vec3 own, vec4 d, float sharpness) {
   return raw * mix(d.rgb, vec3(1.0), s);
 }
 
+// A part's light moved by share m into the emitter's pale color at the same luminance (a light whose pale side takes
+// another pack color).
+vec3 clPale(int e, vec3 c, float m) {
+  if (m <= 0.0) return c;
+  return mix(c, uClEmit[e * ${EMIT_VEC4} + 4].yzw * luminance(c), m);
+}
+
+// The mean over a segment from a to b of c^2 / (r^2 + c^2): the light of every point of the segment, each seen
+// through haze that halves it at distance c.
+float clAirGlow(vec2 p, vec2 a, vec2 b, float c) {
+  vec2 q = p - a;
+  vec2 d = b - a;
+  float len = length(d);
+  float c2 = c * c;
+  if (len < 1e-4) return c2 / (dot(q, q) + c2);
+  float t = dot(q, d) / len;
+  float k = sqrt(max(dot(q, q) - t * t, 0.0) + c2);
+  return c2 / (len * k) * (atan((len - t) / k) + atan(t / k));
+}
+
 void clNearSetup(int cb, float sd, float light1, float light2,
                  out vec3 s2p, out vec3 offs, out vec3 amp, out float lit, out float cut, out int p, out float bp) {
   vec4 c0 = uClNear[cb];
@@ -522,7 +551,7 @@ vec3 clFar(int e, float light1, float light2, float sd, vec3 b0, vec3 b1, vec3 b
     vec3 s2 = perEmitter ? own * b2[e] : b2;
     vec3 s3 = perEmitter ? own * b3[e] : b3;
     vec3 light = w0 * rung.x * s0 + w1 * rung.y * s1 + w2 * rung.z * s2 + w3 * rung.w * s3 + w4 * own;
-    total += mask * lit * a.x * b.rgb * light;
+    total += clPale(e, mask * lit * a.x * b.rgb * light, uClFar[fb + 4].x);
   }
   return total;
 }
@@ -547,6 +576,14 @@ vec3 curveLight(vec2 p, vec3 b0, vec3 b1, vec3 b2, vec3 b3, bool perEmitter) {
     // drifts like the light there, whatever part it belongs to.
     vec3 lit = clNear(e, q, light1, light2, sd) + clFar(e, light1, light2, sd, b0, b1, b2, b3, perEmitter);
     color += clDrift(lit, uClEmit[e * ${EMIT_VEC4} + 2].rgb, uClEmit[e * ${EMIT_VEC4} + 3], uClEmit[e * ${EMIT_VEC4} + 4].x);
+  }
+  for (int g = 0; g < CL_AIR; g++) {
+    vec4 b = uClAir[g * 4 + 1];
+    if (b.w <= 0.0) continue;
+    vec4 a = uClAir[g * 4];
+    vec4 d = uClAir[g * 4 + 3];
+    float glow = pow(clAirGlow(p, (a.xy - 0.5) * uFrameAspect, (a.zw - 0.5) * uFrameAspect, d.x), d.z);
+    color += clDrift(b.rgb * (b.w * glow), b.rgb, uClAir[g * 4 + 2], d.y);
   }
   return color;
 }
@@ -600,6 +637,8 @@ export interface NearSettings {
   growGamma: number
   maskInset: number
   maskSoft: number
+  /** Share (0..1) of the part's light moved into its emitter's pale color, at the same luminance. */
+  pale?: number
 }
 
 export interface FarSettings {
@@ -615,6 +654,8 @@ export interface FarSettings {
   growGamma: number
   maskInset: number
   maskSoft: number
+  /** Share (0..1) of the part's light moved into its emitter's pale color, at the same luminance. */
+  pale?: number
 }
 
 /** Edges catch more light where they face it: emission times mix(1, max(0, outward normal . light direction)^power, strength). */
@@ -635,6 +676,25 @@ export interface EmitterSettings {
   maskShift: readonly number[]
   maskGrow: number
   facing?: FacingSettings
+  drift?: DriftSettings
+  /** Linear color that near parts with a `pale` share take on (another pack color for the light's pale side). */
+  pale?: readonly number[]
+}
+
+/**
+ * A light outside the curves, most often outside the frame, lighting the frame's air: the light of every point of
+ * a segment (both ends the same for a point), each falling to half at `falloff` short sides through the haze.
+ */
+export interface AirSettings {
+  /** Frame positions (0..1) of the segment's ends: x0, y0, x1, y1. */
+  line: readonly number[]
+  /** Linear color at its light's own level. */
+  color: readonly number[]
+  /** Times its own level the glow has where the haze has its full light (0 is off). */
+  level: number
+  falloff: number
+  /** The haze's glow to this power: above 1 it stays nearer its source. */
+  power?: number
   drift?: DriftSettings
 }
 
@@ -890,6 +950,7 @@ export function curveLightUniforms(
   rungStep: number,
   /** The frame's width / height, for the inside test's ray direction (it never changes the picture, only the work). */
   aspect?: number,
+  air: readonly AirSettings[] = [],
 ): Record<string, Float32Array | number[]> {
   const chunks = Math.ceil(layout.primitives / CHUNK)
   const prim = new Float32Array(layout.emitters * layout.primitives * PRIM_VEC4 * 4)
@@ -923,7 +984,9 @@ export function curveLightUniforms(
     emit.set([own[0], own[1], own[2], toward], e * EMIT_VEC4 * 4 + 8)
     const drift = settings.drift ?? { ratios: [1, 1, 1], knee: 0, sharpness: 2 }
     emit.set([drift.ratios[0], drift.ratios[1], drift.ratios[2], Math.max(0, drift.knee)], e * EMIT_VEC4 * 4 + 12)
-    emit.set([Math.max(0.1, drift.sharpness), 0, 0, 0], e * EMIT_VEC4 * 4 + 16)
+    const paleLight = settings.pale ? luminanceOf(settings.pale) : 0
+    const pale = settings.pale && paleLight > 1e-6 ? settings.pale.map((v) => v / paleLight) : [0, 0, 0]
+    emit.set([Math.max(0.1, drift.sharpness), pale[0], pale[1], pale[2]], e * EMIT_VEC4 * 4 + 16)
     settings.near.slice(0, layout.near).forEach((c, k) => {
       const o = (e * layout.near + k) * NEAR_VEC4 * 4
       const p = Math.min(MAX_KERNEL_POWER, Math.max(1, Math.round(c.p)))
@@ -932,7 +995,7 @@ export function curveLightUniforms(
       near.set([c.channelWidth[0], c.channelWidth[1], c.channelWidth[2], Math.round(c.light)], o + 8)
       near.set([c.channelOffset[0], c.channelOffset[1], c.channelOffset[2], c.lightGamma], o + 12)
       near.set([Math.round(c.grow), c.growGain, c.growGamma, kernelLineConstant(p)], o + 16)
-      near.set([c.maskInset, c.maskSoft, 0, brightest], o + 20)
+      near.set([c.maskInset, c.maskSoft, paleLight > 1e-6 ? Math.min(1, Math.max(0, c.pale ?? 0)) : 0, brightest], o + 20)
     })
     settings.far.slice(0, layout.far).forEach((c, k) => {
       const o = (e * layout.far + k) * FAR_VEC4 * 4
@@ -940,12 +1003,21 @@ export function curveLightUniforms(
       far.set([c.tint[0], c.tint[1], c.tint[2], c.lightGamma], o + 4)
       far.set([c.channelWidth[0], c.channelWidth[1], c.channelWidth[2], Math.round(c.grow)], o + 8)
       far.set([c.growGain, c.growGamma, c.maskInset, c.maskSoft], o + 12)
+      far.set([paleLight > 1e-6 ? Math.min(1, Math.max(0, c.pale ?? 0)) : 0, 0, 0, 0], o + 16)
     })
   }
   const light = new Float32Array(16)
   lights.slice(0, 2).forEach((l, i) => {
     light.set([Math.round(l.kind), l.at[0], l.at[1], l.radius], i * 8)
     light.set([l.length, l.power, l.stretch, (l.angle * Math.PI) / 180], i * 8 + 4)
+  })
+  const airGlows = new Float32Array(AIR_GLOWS * 16)
+  air.slice(0, AIR_GLOWS).forEach((g, i) => {
+    const drift = g.drift ?? { ratios: [1, 1, 1], knee: 0, sharpness: 2 }
+    airGlows.set([g.line[0], g.line[1], g.line[2], g.line[3]], i * 16)
+    airGlows.set([g.color[0], g.color[1], g.color[2], Math.max(0, g.level)], i * 16 + 4)
+    airGlows.set([drift.ratios[0], drift.ratios[1], drift.ratios[2], Math.max(0, drift.knee)], i * 16 + 8)
+    airGlows.set([Math.max(1e-3, g.falloff), Math.max(0.1, drift.sharpness), Math.max(0.5, g.power ?? 1), 0], i * 16 + 12)
   })
   return {
     uClPrim: prim,
@@ -954,6 +1026,7 @@ export function curveLightUniforms(
     uClFar: far,
     uClEmit: emit,
     uClLight: light,
+    uClAir: airGlows,
     uClBase: [base[0], base[1], base[2]],
     uClRungs: farRungs(rungBase, rungStep),
   }
@@ -992,10 +1065,71 @@ export function nearParams(prefix: string, label: string, defaults: Defaults = {
       { kind: 'vector', key: `${prefix}GrowBy`, label: `${label} growth gain, gamma`, min: -0.95, max: 12, step: 0.01, default: [0, 1] },
       { kind: 'number', key: `${prefix}MaskInset`, label: `${label} side edge inset`, min: -0.5, max: 0.5, step: 0.0001, default: 0 },
       { kind: 'number', key: `${prefix}MaskSoft`, label: `${label} side edge softness`, min: 0, max: 0.5, step: 0.0001, default: 0 },
+      { kind: 'number', key: `${prefix}Pale`, label: `${label} share in the pale color`, min: 0, max: 1, step: 0.001, default: 0 },
     ],
     prefix,
     defaults,
   )
+}
+
+/** Param specs for the air glows: `air<i>Line` (frame x0, y0, x1, y1), level, falloff, color slot and drift. */
+export function airParams(colors: number): ParamSpec[] {
+  return Array.from({ length: AIR_GLOWS }, (_, k) => k + 1).flatMap((i): ParamSpec[] => [
+    { kind: 'vector', key: `air${i}Line`, label: `Air glow ${i} source (frame x0, y0, x1, y1)`, min: -4, max: 5, step: 0.0001, default: [0.5, -0.5, 0.5, -0.5] },
+    { kind: 'number', key: `air${i}Level`, label: `Air glow ${i} level (0 off)`, min: 0, max: 1e6, step: 0.0001, default: 0 },
+    { kind: 'number', key: `air${i}Falloff`, label: `Air glow ${i} half distance`, min: 0.01, max: 2, step: 0.0005, default: 0.2 },
+    { kind: 'number', key: `air${i}Power`, label: `Air glow ${i} falloff power`, min: 0.5, max: 6, step: 0.01, default: 1 },
+    { kind: 'number', key: `air${i}Color`, label: `Air glow ${i} color slot`, min: 1, max: colors, step: 1, default: 2 },
+    ...driftParams(`air${i}Drift`, `Air glow ${i}`),
+  ])
+}
+
+export function readAir(ctx: RecipeContext, gain: number): AirSettings[] {
+  return Array.from({ length: AIR_GLOWS }, (_, k) => k + 1).map((i) => ({
+    line: ctx.vec(`air${i}Line`),
+    color: slotColor(ctx, ctx.num(`air${i}Color`)).map((v) => v * gain),
+    level: ctx.num(`air${i}Level`),
+    falloff: ctx.num(`air${i}Falloff`),
+    power: ctx.num(`air${i}Power`),
+    drift: readDrift(ctx, `air${i}Drift`),
+  }))
+}
+
+/** clAirGlow on the CPU: p, a and b in short-side units. */
+export function airGlowAt(p: readonly number[], a: readonly number[], b: readonly number[], c: number): number {
+  const q = [p[0] - a[0], p[1] - a[1]]
+  const d = [b[0] - a[0], b[1] - a[1]]
+  const len = Math.hypot(d[0], d[1])
+  const c2 = c * c
+  const qq = q[0] * q[0] + q[1] * q[1]
+  if (len < 1e-4) return c2 / (qq + c2)
+  const t = (q[0] * d[0] + q[1] * d[1]) / len
+  const k = Math.sqrt(Math.max(qq - t * t, 0) + c2)
+  return (c2 / (len * k)) * (Math.atan((len - t) / k) + Math.atan(t / k))
+}
+
+/**
+ * The level that gives an air glow from `line` (frame x0, y0, x1, y1) its light's own level at the brightest point
+ * of the frame, which is on the frame's edge for a source outside it.
+ */
+export function airLevelFor(line: readonly number[], falloff: number, aspect: number, power = 1): number {
+  const size = aspect >= 1 ? [aspect, 1] : [1, 1 / aspect]
+  const at = (u: number, v: number) => [(u - 0.5) * size[0], (v - 0.5) * size[1]]
+  const a = at(line[0], line[1])
+  const b = at(line[2], line[3])
+  let brightest = 0
+  const n = 64
+  for (let i = 0; i <= n; i++) {
+    const s = i / n
+    for (const [u, v] of [
+      [s, 0],
+      [s, 1],
+      [0, s],
+      [1, s],
+    ])
+      brightest = Math.max(brightest, airGlowAt(at(u, v), a, b, falloff))
+  }
+  return brightest > 0 ? 1 / brightest ** power : 0
 }
 
 /** Param specs for one far (scattered) part. */
@@ -1013,6 +1147,7 @@ export function farParams(prefix: string, label: string, defaults: Defaults = {}
       { kind: 'vector', key: `${prefix}GrowBy`, label: `${label} growth gain, gamma`, min: 0, max: 12, step: 0.01, default: [0, 1] },
       { kind: 'number', key: `${prefix}MaskInset`, label: `${label} side edge inset`, min: -1, max: 1, step: 0.0001, default: 0 },
       { kind: 'number', key: `${prefix}MaskSoft`, label: `${label} side edge softness`, min: 0, max: 1, step: 0.0001, default: 0 },
+      { kind: 'number', key: `${prefix}Pale`, label: `${label} share in the pale color`, min: 0, max: 1, step: 0.001, default: 0 },
     ],
     prefix,
     defaults,
@@ -1064,6 +1199,7 @@ export function readNear(ctx: RecipeContext, prefix: string, widthScale: number,
     growGamma: growBy[1],
     maskInset: ctx.num(`${prefix}MaskInset`),
     maskSoft: ctx.num(`${prefix}MaskSoft`) * widthScale,
+    pale: ctx.num(`${prefix}Pale`),
   }
 }
 
@@ -1082,6 +1218,7 @@ export function readFar(ctx: RecipeContext, prefix: string, widthScale: number, 
     growGamma: growBy[1],
     maskInset: ctx.num(`${prefix}MaskInset`),
     maskSoft: ctx.num(`${prefix}MaskSoft`) * widthScale,
+    pale: ctx.num(`${prefix}Pale`),
   }
 }
 

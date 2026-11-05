@@ -1,6 +1,7 @@
 import type { ColorPack } from '../../color/packs'
 import type { ComposeInput, Composition, ParamSpec, ParamValue, RecipeContext, RecipeDefinition } from '../../scene'
 import {
+  accentParams,
   blockPlan,
   dragLight,
   falloffRadius,
@@ -10,6 +11,8 @@ import {
   geo,
   haloParts,
   arcParts,
+  offFrameGlow,
+  packAccent,
   ringPartner,
   ringParts,
   suitsRings,
@@ -32,6 +35,7 @@ import {
   warmToe,
 } from './curveCompose'
 import {
+  airParams,
   buildShape,
   curveLightGlsl,
   curveLightUniforms,
@@ -40,6 +44,7 @@ import {
   farScatter,
   lightParams,
   nearParams,
+  readAir,
   readDrift,
   readFar,
   readLights,
@@ -79,6 +84,7 @@ function ringParams(i: number): ParamSpec[] {
     { kind: 'number', key: `ring${i}Color`, label: `Ring ${i} color slot`, min: 1, max: COLORS, step: 1, default: 2 },
     { kind: 'number', key: `ring${i}Color2`, label: `Ring ${i} second color slot, shifting around the ring (0 none)`, min: 0, max: COLORS, step: 1, default: 0 },
     { kind: 'number', key: `ring${i}ColorTurns`, label: `Ring ${i} color cycles around the ring`, min: 1, max: 8, step: 1, default: 3 },
+    { kind: 'number', key: `ring${i}Pale`, label: `Ring ${i} pale color slot, for parts with a pale share (0 none)`, min: 0, max: COLORS, step: 1, default: 0 },
     { kind: 'number', key: `ring${i}Gain`, label: `Ring ${i} gain`, min: 0, max: 20, step: 0.001, default: 1 },
     { kind: 'vector', key: `ring${i}MaskShift`, label: `Ring ${i} inside edge shift`, min: -2, max: 2, step: 0.0005, default: [0, 0] },
     { kind: 'number', key: `ring${i}MaskGrow`, label: `Ring ${i} inside edge grow`, min: -2, max: 2, step: 0.0001, default: 0 },
@@ -96,6 +102,7 @@ const params: ParamSpec[] = [
   { kind: 'number', key: 'farWidth', label: 'Narrowest scatter blur', min: 0.002, max: 0.2, step: 0.0005, default: 0.008 },
   { kind: 'number', key: 'farStep', label: 'Scatter blur step', min: 1.5, max: 5, step: 0.01, default: 2.5 },
   ...lightParams({ light1Kind: 1, light1At: [-0.75, -0.75], light1Radius: 0.45 }),
+  ...airParams(COLORS),
   { kind: 'number', key: 'base', label: 'Base color slot (0 black)', min: 0, max: COLORS, step: 1, default: 0 },
   { kind: 'number', key: 'baseGain', label: 'Base gain', min: 0, max: 2, step: 0.0005, default: 0 },
   { kind: 'number', key: 'gain', label: 'Overall gain', min: 0, max: 20, step: 0.001, default: 1 },
@@ -272,7 +279,7 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   // Ellipse seeds are a broad pale arc with the light's saturated color inside it (yellow-halo reference, on dark).
   // A Tan light keeps its bright bands.
   const paleArc = plan.kind === 'ellipse' && warmTail(light.hex) !== 'bright'
-  const second = rings ? crossingRing(layout, rand, aspect) : null
+  const crossing = rings ? crossingRing(layout, rand, aspect) : null
   const partner = rings ? ringPartner(pack, light) : null
   // The hot spot and the falloff follow the longest piece of the curve inside the frame.
   const runs = visibleRuns(buildShape(layout.shape), layout.anchor, aspect)
@@ -289,6 +296,7 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   const dragged = controls.drag ? dragLight(controls.drag, runs, aspect) : null
   const hot = dragged?.hot ?? pointAlong(path, along(controls.mood)) ?? layout.anchor
   const home = dragged?.hot ?? pointAlong(path, along(0.5)) ?? layout.anchor
+  const accent = accentParams(packAccent(pack, light, 'halo'), pointAlong(path, along(0.5)) ?? layout.anchor, hot, aspect, controls.drag)
   const at: Vec2 = [hot[0] - layout.anchor[0], hot[1] - layout.anchor[1]]
   const gain = geo(controls.intensity, 0.35, 1, 2.8)
   const soften = geo(controls.softness, 0.45, 1, 2.4)
@@ -313,6 +321,9 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   // A Tan light's flat top falls too fast here: the patch's end reads as a cut edge.
   const dragPower = 4
   const drift = warmDrift(light.hex)
+  const ring1Parts = rings ? ringParts('ring1') : paleArc ? arcParts('ring1', light.hex) : haloParts('ring1', light.hex)
+  // The widest haze: a crest's outer fade, a pale arc's or a ring's inside glow.
+  const hazeKey = rings || paleArc ? 'ring1f1Weight' : 'ring1f2Weight'
   const params: Record<string, ParamValue> = {
     ring1On: true,
     ring1Shape: SHAPE_KINDS.indexOf(layout.shape.kind) + 1,
@@ -324,21 +335,28 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     ring1Flip: layout.shape.flip,
     ring1Color: 2,
     ring1Gain: 1,
-    ...(rings ? ringParts('ring1') : paleArc ? arcParts('ring1', light.hex) : haloParts('ring1', light.hex)),
+    ...ring1Parts,
+    ...(accent.haze < 1 ? { [hazeKey]: round4(Number(ring1Parts[hazeKey] ?? 0) * accent.haze) } : {}),
     ...(rings && partner ? { ring1Color2: 4 } : {}),
     ...(drift ? { ring1Drift: drift.ratios, ring1DriftShape: [drift.knee, drift.sharpness] } : {}),
-    ring2On: Boolean(second),
-    ...(second
+    ring1Pale: accent.pale ? 5 : 0,
+    ...(accent.body > 0 && !rings ? { ring1n1Pale: accent.body, ...(paleArc ? { ring1n2Pale: accent.body } : {}) } : {}),
+    ...(accent.air > 0 ? { ring1f1Pale: accent.air, ring1f2Pale: accent.air, ring1f3Pale: accent.air } : {}),
+    ...accent.params,
+    ...offFrameGlow(controls.drag, light.hex, aspect, accent.air),
+    ring2On: Boolean(crossing),
+    ...(crossing
       ? {
           ring2Shape: SHAPE_KINDS.indexOf('ring') + 1,
-          ring2At: toFrame(second.anchor, aspect).map(round4),
-          ring2Radius: round4(second.shape.size),
+          ring2At: toFrame(crossing.anchor, aspect).map(round4),
+          ring2Radius: round4(crossing.shape.size),
           ring2Aspect: 1,
           ring2Sweep: 360,
-          ring2Rotate: round4(second.shape.rotate),
+          ring2Rotate: round4(crossing.shape.rotate),
           ring2Color: 2,
           ring2Gain: 0.85,
           ...ringParts('ring2'),
+          ...(accent.haze < 1 ? { ring2f1Weight: round4(Number(ringParts('ring2').ring2f1Weight) * accent.haze) } : {}),
           ...(partner ? { ring2Color2: 4 } : {}),
           ...(drift ? { ring2Drift: drift.ratios, ring2DriftShape: [drift.knee, drift.sharpness] } : {}),
         }
@@ -363,7 +381,7 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     soften: round4(soften),
   }
   return {
-    colors: ['#000000', light.hex, base.gain > 0 ? base.hex : '#000000', partner?.hex ?? '#000000', '#000000', '#000000', '#000000', '#000000'],
+    colors: ['#000000', light.hex, base.gain > 0 ? base.hex : '#000000', partner?.hex ?? '#000000', accent.pale ?? '#000000', accent.second ?? '#000000', '#000000', '#000000'],
     params,
     lens: {
       bloom: 0,
@@ -415,6 +433,7 @@ export function haloEmitters(ctx: RecipeContext): EmitterSettings[] {
       maskGrow: ctx.num(`ring${i}MaskGrow`),
       facing: { strength: ctx.num(`ring${i}Facing`), angle: ctx.num(`ring${i}FacingAngle`), power: ctx.num(`ring${i}FacingPower`) },
       drift: readDrift(ctx, `ring${i}Drift`),
+      ...(Math.round(ctx.num(`ring${i}Pale`)) > 0 ? { pale: slotColor(ctx, ctx.num(`ring${i}Pale`)) } : {}),
     }
   })
 }
@@ -441,7 +460,16 @@ vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 b0, vec3 b1, vec3 b2, vec3 b3) { 
 `,
   uniforms: (ctx) => {
     const base = slotColor(ctx, ctx.num('base')).map((v) => v * ctx.num('baseGain'))
-    return curveLightUniforms(HALO_LAYOUT, haloEmitters(ctx), readLights(ctx), base, ctx.num('farWidth') * ctx.num('soften'), ctx.num('farStep'), ctx.aspect)
+    return curveLightUniforms(
+      HALO_LAYOUT,
+      haloEmitters(ctx),
+      readLights(ctx),
+      base,
+      ctx.num('farWidth') * ctx.num('soften'),
+      ctx.num('farStep'),
+      ctx.aspect,
+      readAir(ctx, ctx.num('gain')),
+    )
   },
   scatter: farScatter(
     (ctx) => ctx.num('farWidth') * ctx.num('soften'),

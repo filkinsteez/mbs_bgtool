@@ -1,6 +1,7 @@
 import type { ColorPack } from '../../color/packs'
 import type { ComposeInput, Composition, ParamSpec, ParamValue, RecipeContext, RecipeDefinition } from '../../scene'
 import {
+  accentParams,
   blockPlan,
   dragLight,
   FLAT_POWER,
@@ -12,6 +13,8 @@ import {
   logoPartsShown,
   longestRun,
   normalNear,
+  offFrameGlow,
+  packAccent,
   pickBase,
   pickLight,
   pickWeighted,
@@ -28,6 +31,7 @@ import {
   warmToe,
 } from './curveCompose'
 import {
+  airParams,
   buildShape,
   curveLightGlsl,
   curveLightUniforms,
@@ -36,6 +40,7 @@ import {
   farScatter,
   lightParams,
   nearParams,
+  readAir,
   readDrift,
   readFar,
   readLights,
@@ -93,6 +98,8 @@ const params: ParamSpec[] = [
   { kind: 'number', key: 'facingAngle', label: 'Light comes from (degrees)', min: -360, max: 360, step: 0.1, default: 0 },
   { kind: 'number', key: 'facingPower', label: 'Facing falloff', min: 0.1, max: 8, step: 0.01, default: 1 },
   ...driftParams('drift', 'Dim light'),
+  { kind: 'number', key: 'pale', label: 'Pale color slot, for parts with a pale share (0 none)', min: 0, max: COLORS, step: 1, default: 0 },
+  ...airParams(COLORS),
   { kind: 'vector', key: 'maskShift', label: 'Inside edge shift', min: -2, max: 2, step: 0.0005, default: [0, 0] },
   { kind: 'number', key: 'maskGrow', label: 'Inside edge grow', min: -1, max: 1, step: 0.0001, default: 0 },
   { kind: 'number', key: 'base', label: 'Base color slot (0 black)', min: 0, max: COLORS, step: 1, default: 0 },
@@ -331,6 +338,7 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   const dragged = controls.drag ? dragLight(controls.drag, runs, aspect) : null
   const hot = dragged?.hot ?? (line ? lineExit(path, fromStart, lerp(0.08, -0.3, controls.mood)) : pointAlong(run, along(controls.mood))) ?? layout.anchor
   const home = dragged?.hot ?? pointAlong(run, along(0.5)) ?? layout.anchor
+  const accent = accentParams(packAccent(pack, light, 'rim'), pointAlong(run, along(0.5)) ?? layout.anchor, hot, aspect, controls.drag)
   const at: Vec2 = [hot[0] - layout.anchor[0], hot[1] - layout.anchor[1]]
   const gain = geo(controls.intensity, 0.35, 1, 2.8)
   // Softness from 0.3 to 1.7 (1 at the default): wider glows change more of the frame per step, so the top
@@ -401,7 +409,8 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
       soften,
       // The rim-edge reference's face is a dim navy (Oklab L about 0.22) that darkens away from the edge and the
       // corner. A Tan face stays dark: a wide dim Tan fill reads grey-brown.
-      face: layout.oneSided && !bright ? 0.035 : 0,
+      // Elemental's Forest face is 4.5 times as bright, so the air takes Forest where the edge lights little.
+      face: layout.oneSided && !bright ? round4(0.035 * (accent.face > 0 && accent.second ? 4.5 : accent.haze)) : 0,
       glow: line ? 0.006 : 0.005,
       fan: line ? 4 : 1.5,
       // A blue line's glow splits its colors to the two sides (the light-line reference: a different hue on each
@@ -432,6 +441,12 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
         }
       : {}),
     ...(drift ? { drift: drift.ratios, driftShape: [drift.knee, drift.sharpness] } : {}),
+    pale: accent.pale ? 5 : 0,
+    // The core line leans toward the pale color; the color band beside it only as a band's body does and less, so
+    // the edge keeps the light's own color.
+    ...(accent.pale ? { n1Pale: accent.line, n2Pale: accent.band, f1Pale: accent.air, f2Pale: accent.air, f3Pale: accent.face } : {}),
+    ...accent.params,
+    ...offFrameGlow(controls.drag, light.hex, aspect, accent.air),
     // A Tan edge's glow is two bands side by side just inside the edge, a flat stretch a little above Tan's level
     // that ends in a short rounded fall (the Halo's Tan bands at a rim's scale); a Tan line's are one either side.
     ...(bright
@@ -502,7 +517,16 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     gain: round4(gain),
     soften: round4(soften),
   }
-  const colors = ['#000000', light.hex, base.gain > 0 ? base.hex : '#000000', lineColor?.partner.hex ?? '#000000', '#000000', '#000000', '#000000', '#000000']
+  const colors = [
+    '#000000',
+    light.hex,
+    base.gain > 0 ? base.hex : '#000000',
+    lineColor?.partner.hex ?? '#000000',
+    accent.pale ?? '#000000',
+    accent.second ?? '#000000',
+    '#000000',
+    '#000000',
+  ]
   return {
     colors,
     params,
@@ -547,6 +571,7 @@ export function rimEmitters(ctx: RecipeContext): EmitterSettings[] {
       maskGrow: ctx.num('maskGrow'),
       facing: { strength: ctx.num('facing'), angle: ctx.num('facingAngle'), power: ctx.num('facingPower') },
       drift: readDrift(ctx, 'drift'),
+      ...(Math.round(ctx.num('pale')) > 0 ? { pale: slotColor(ctx, ctx.num('pale')) } : {}),
     },
   ]
 }
@@ -573,7 +598,16 @@ vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 b0, vec3 b1, vec3 b2, vec3 b3) { 
 `,
   uniforms: (ctx) => {
     const base = slotColor(ctx, ctx.num('base')).map((v) => v * ctx.num('baseGain'))
-    return curveLightUniforms(RIM_LAYOUT, rimEmitters(ctx), readLights(ctx), base, ctx.num('farWidth') * ctx.num('soften'), ctx.num('farStep'), ctx.aspect)
+    return curveLightUniforms(
+      RIM_LAYOUT,
+      rimEmitters(ctx),
+      readLights(ctx),
+      base,
+      ctx.num('farWidth') * ctx.num('soften'),
+      ctx.num('farStep'),
+      ctx.aspect,
+      readAir(ctx, ctx.num('gain')),
+    )
   },
   scatter: farScatter(
     (ctx) => ctx.num('farWidth') * ctx.num('soften'),

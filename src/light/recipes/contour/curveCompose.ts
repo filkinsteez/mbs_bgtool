@@ -2,6 +2,8 @@ import { linearToOklab } from '../../color/oklab'
 import type { ColorPack, PackColor } from '../../color/packs'
 import { hexToLinear } from '../../color/srgb'
 import { toneCurve } from '../../engine/output'
+import type { ControlValues } from '../../scene'
+import { airLevelFor } from './curveLight'
 import { primitiveLength, primitivePoint, transformShape, type Shape, type Vec2 } from './shapes'
 
 /** Helpers that turn a pack, the tool controls, a seed and a frame aspect into curve light params. */
@@ -221,6 +223,180 @@ export function pickBase(pack: ColorPack, rand: () => number, lightHex: string):
   )
 }
 
+/**
+ * How a Meta Blue light shows its pack, since every pack has Meta Blue (SHARED.md, 2026-11-05 11:22 AM). Bold's
+ * light stays saturated and its pale side leans Cyan: its core takes Cyan and its body leans halfway. Atmospheric's
+ * core goes to Steel grey; its body keeps Meta Blue's own pale blue, since part of a grey mixed into Meta Blue turns it
+ * periwinkle (Meta Blue has no red and the greys do). In Elemental, Halo adds a second, dimmer light in Lime from
+ * outside the frame, apart from the first so their colors don't mix into teal (a Tan one shows only its fall there,
+ * which reads brown). Rim's face (the air inside its edge) also takes Forest, brighter than other faces, since a
+ * rim's thin edge lights little of the frame; Lime's fall drifts to Forest, so the two meet without teal. Null for
+ * other lights, which only their own pack has. Shares in the pale
+ * color: `body` of a band's body, `line` of a rim's thin core line, which is near white wherever it shows, so a grey
+ * there stays grey, `band` of the rim's color band beside it, `air` of the dim haze around the light and `face` of a
+ * rim's face. The band, the haze and the face are at or below the light's own level, where the tone curve doesn't
+ * turn a mix violet, so Atmospheric's are an overcast grey-blue.
+ */
+export function packAccent(
+  pack: ColorPack,
+  light: PackColor,
+  look: 'halo' | 'rim',
+): { pale: PackColor | null; body: number; line: number; band: number; air: number; face: number; second: PackColor | null } | null {
+  if (light.hex.toUpperCase() !== '#0064E0') return null
+  const named = (name: string) => pack.colors.find((c) => c.name === name) ?? null
+  switch (pack.id) {
+    case 'bold':
+      return { pale: named('Cyan'), body: 0.5, line: 0.5, band: 0.15, air: 0, face: 0, second: null }
+    case 'atmospheric':
+      return { pale: named('Steel'), body: 0, line: 0.6, band: 0.4, air: 0.6, face: 0.6, second: null }
+    case 'elemental':
+      return look === 'rim'
+        ? { pale: named('Forest'), body: 0, line: 0, band: 0, air: 0, face: 1, second: named('Lime') }
+        : { pale: null, body: 0, line: 0, band: 0, air: 0, face: 0, second: named('Lime') }
+    default: {
+      const unknown: never = pack.id
+      throw new Error(`Unknown pack: ${String(unknown)}`)
+    }
+  }
+}
+
+/**
+ * How far outside the frame's edge Elemental's second light sits and the distance at which its haze halves (short
+ * sides). Its glow is the haze's to the power 3, so it stays a bright patch at the edge instead of tinting the frame.
+ */
+const SECOND_BEYOND = 0.12
+const SECOND_FALLOFF = 0.12
+const SECOND_POWER = 3
+/** The first light's widest haze, times this, so it fades out before it reaches the second light and turns teal. */
+const SECOND_HAZE = 0.35
+
+const smoothstep = (a: number, b: number, x: number) => {
+  const t = clamp01((x - a) / (b - a))
+  return t * t * (3 - 2 * t)
+}
+
+/**
+ * A light's pack accent (packAccent) as colors and params: the pale color for slot 5 (parts with a pale share take
+ * it when the emitter's pale slot is 5), and Elemental's second light for slot 6 as air glows 2 and 3, just outside
+ * the frame across from `home` (where the light sits at the default Light control, so a drag doesn't move it) and on
+ * `home`'s own side. Its glow reaches its own level on the frame's edge. Each place fades out while the light's hot
+ * spot is within about half a short side of it, and the second place shows only as the first fades, so the two
+ * lights never mix and a drag that brings the light to one side moves the second light smoothly to the other; a
+ * dragged line's start (where its light is, maybe outside the frame) counts as the hot spot too. `haze` scales the
+ * first light's widest haze for the same reason. `home` and `hot` are in short-side units from the frame center.
+ */
+export function accentParams(
+  accent: ReturnType<typeof packAccent>,
+  home: Vec2,
+  hot: Vec2,
+  aspect: number,
+  drag?: ControlValues['drag'],
+): {
+  pale: string | null
+  body: number
+  line: number
+  band: number
+  air: number
+  face: number
+  second: string | null
+  haze: number
+  params: Record<string, number | number[]>
+} {
+  const pale = accent?.pale?.hex ?? null
+  const shares = { body: 0, line: 0, band: 0, air: 0, face: 0, ...(pale && accent ? accent : {}) }
+  const { body, line, band, air, face } = shares
+  const second = accent?.second ?? null
+  if (!second) return { pale, body, line, band, air, face, second: null, haze: 1, params: {} }
+  const [fw, fh] = frameSize(aspect)
+  const drift = warmDrift(second.hex)
+  const lights: Vec2[] = [hot, ...(drag ? [[(drag.from[0] - 0.5) * fw, (drag.from[1] - 0.5) * fh] as Vec2] : [])]
+  const away = (at: readonly number[]) =>
+    Math.min(...lights.map((l) => smoothstep(0.3, 0.6, Math.hypot((at[0] - 0.5) * fw - l[0], (at[1] - 0.5) * fh - l[1]))))
+  const across = acrossFrom(home, aspect, SECOND_BEYOND)
+  const beside = acrossFrom([-home[0], -home[1]], aspect, SECOND_BEYOND)
+  const first = away(across)
+  const places: [readonly number[], number][] = [
+    [across, first],
+    [beside, away(beside) * (1 - first)],
+  ]
+  const params: Record<string, number | number[]> = {}
+  places.forEach(([at, share], k) => {
+    const i = k + 2
+    const source = [at[0], at[1], at[0], at[1]].map(round4)
+    Object.assign(params, {
+      [`air${i}Line`]: source,
+      [`air${i}Level`]: round4(airLevelFor(source, SECOND_FALLOFF, aspect, SECOND_POWER) * share),
+      [`air${i}Falloff`]: SECOND_FALLOFF,
+      [`air${i}Power`]: SECOND_POWER,
+      [`air${i}Color`]: 6,
+      ...(drift ? { [`air${i}Drift`]: drift.ratios, [`air${i}DriftShape`]: [drift.knee, drift.sharpness] } : {}),
+    })
+  })
+  return { pale, body, line, band, air, face, second: second.hex, haze: SECOND_HAZE, params }
+}
+
+/**
+ * How far outside the frame (short sides) a dragged line is when its air glow is all there, and the haze's falloff.
+ * The glow is the haze's to the power 4: a light well outside the frame lights all of it a little, and a dim tail's
+ * color (deep red, Forest, copper) over the whole frame reads as a tinted dark instead of light at the edge.
+ */
+const OFF_FRAME_FROM = 0.15
+const OFF_FRAME_FALLOFF = 0.22
+const OFF_FRAME_POWER = 4
+
+/** How far (short sides) a segment in frame coordinates (x0, y0, x1, y1) is outside the frame; 0 if it touches it. */
+function segmentOutside(line: readonly number[], aspect: number): number {
+  const [fw, fh] = frameSize(aspect)
+  let least = Infinity
+  const steps = 64
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps
+    const x = (line[0] + (line[2] - line[0]) * t - 0.5) * fw
+    const y = (line[1] + (line[3] - line[1]) * t - 0.5) * fh
+    least = Math.min(least, Math.hypot(Math.max(0, Math.abs(x) - fw / 2), Math.max(0, Math.abs(y) - fh / 2)))
+  }
+  return least
+}
+
+/**
+ * Air glow 1 for a dragged line that leaves the frame (SHARED.md, 2026-11-05 11:22 AM: no drag leaves a frame
+ * nearly black). A light outside the frame still lights the air near it, so the frame's nearest edge glows in its
+ * color, at its own level there, and fades into the frame; the light keeps the dragged direction. It comes in over
+ * the line's first OFF_FRAME_FROM short sides outside the frame and is off while any of the line is in it. A Tan
+ * light's falls faster, so its copper fall stays short instead of reading brown. With a share `pale` of its haze in
+ * the pack's pale color (packAccent's air), that share is air glow 2 in color slot 5.
+ */
+export function offFrameGlow(drag: ControlValues['drag'], hex: string, aspect: number, pale = 0): Record<string, number | number[]> {
+  if (!drag) return {}
+  const line = [drag.from[0], drag.from[1], drag.to[0], drag.to[1]]
+  const share = smoothstep(0, OFF_FRAME_FROM, segmentOutside(line, aspect))
+  if (share <= 0) return {}
+  const power = warmTail(hex) === 'bright' ? OFF_FRAME_POWER + 1 : OFF_FRAME_POWER
+  const level = airLevelFor(line, OFF_FRAME_FALLOFF, aspect, power) * share
+  const drift = warmDrift(hex)
+  const glow = (i: number, slot: number, part: number) => ({
+    [`air${i}Line`]: line.map(round4),
+    [`air${i}Level`]: round4(level * part),
+    [`air${i}Falloff`]: OFF_FRAME_FALLOFF,
+    [`air${i}Power`]: power,
+    [`air${i}Color`]: slot,
+  })
+  return {
+    ...glow(1, 2, 1 - pale),
+    ...(drift ? { air1Drift: drift.ratios, air1DriftShape: [drift.knee, drift.sharpness] } : {}),
+    ...(pale > 0 ? glow(2, 5, pale) : {}),
+  }
+}
+
+/** A point `beyond` short sides outside the frame's edge, across the frame center from `away` (short-side units from the center), in frame coordinates. */
+export function acrossFrom(away: Vec2, aspect: number, beyond: number): [number, number] {
+  const [fw, fh] = frameSize(aspect)
+  const length = Math.hypot(away[0], away[1])
+  const dir: Vec2 = length > 1e-6 ? [-away[0] / length, -away[1] / length] : [0, 1]
+  const edge = Math.min(fw / 2 / Math.max(Math.abs(dir[0]), 1e-9), fh / 2 / Math.max(Math.abs(dir[1]), 1e-9))
+  return toFrame([dir[0] * (edge + beyond), dir[1] * (edge + beyond)], aspect)
+}
+
 /** Points along the emitting contours that fall inside the frame (with a margin), in short-side units from the frame center. */
 export function visiblePath(shape: Shape, anchor: Vec2, aspect: number, margin = 0.02): Vec2[] {
   const [fw, fh] = frameSize(aspect)
@@ -389,6 +565,8 @@ export function productionParts(prefix: string, light: ProductionLight): Record<
     n3Side: 0,
     n3Light: 2,
     n3LightGamma: 2,
+    // With a pale color (packAccent), the hot core takes it; the recipe sets the core line's and color band's shares.
+    n3Pale: 1,
     f1Weight: 0.06,
     f1Width: round6(light.haze ?? 0.024),
     f1Side: light.side,
@@ -480,9 +658,10 @@ export function haloParts(prefix: string, hex: string): Record<string, number | 
   const white = nearWhiteLevel(hex) <= 1
   const body = white ? { Weight: 4, Width: 0.12, Shape: 8 } : { Weight: 1.6, Width: 0.17, Shape: 6 }
   const core = white ? 0 : round4(Math.min(9, Math.max(0, nearWhiteLevel(hex) - body.Weight)))
+  // With a pale color (packAccent), the core takes it; the recipe sets the body's share (n1Pale).
   const parts: Record<string, number | number[]> = {
     ...prefixed('n1', { ...band, ...body, LightGamma: 1 }),
-    ...prefixed('n2', { ...band, Weight: core, Width: 0.055, Shape: 8, LightGamma: 2.5 }),
+    ...prefixed('n2', { ...band, Weight: core, Width: 0.055, Shape: 8, LightGamma: 2.5, Pale: 1 }),
     n3Weight: 0,
     f1Weight: 0,
     ...prefixed('f2', { ...outside, Weight: white ? 0.8 : 0.7, Width: 0.22, MaskSoft: 0.04 }),
@@ -602,7 +781,7 @@ export function arcParts(prefix: string, hex: string): Record<string, number | n
   const parts: Record<string, number | number[]> = {
     ...prefixed('n1', { ...band, Weight: white ? 1.5 : 1, Offset: 0 }),
     ...prefixed('n2', { ...band, Weight: white ? 1.1 : 0.7, Offset: 0.04 }),
-    ...prefixed('n3', { ...band, Weight: core, Width: 0.04, Shape: 8, Offset: 0.02, LightGamma: 2.5 }),
+    ...prefixed('n3', { ...band, Weight: core, Width: 0.04, Shape: 8, Offset: 0.02, LightGamma: 2.5, Pale: 1 }),
     ...prefixed('f1', { Weight: 0.55, Width: 0.09, Side: 1, Light: 1, LightGamma: 1, MaskSoft: 0.015 }),
     ...prefixed('f2', { Weight: 0.12, Width: 0.03, Side: 2, Light: 1, LightGamma: 1, MaskSoft: 0.015 }),
     f3Weight: 0,
