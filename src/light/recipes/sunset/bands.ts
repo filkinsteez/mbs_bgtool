@@ -135,6 +135,8 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     uBandVeil: veil,
     uSkyVeilColor: ctx.vec('skyTint').map((v) => v * Math.max(0, ctx.vec('skyVeil')[0])),
     uSkyVeilSpan: ctx.vec('skyVeil').slice(1, 4),
+    uFarSky: ctx.vec('farSky'),
+    uFarSpan: ctx.vec('farSpan'),
     uBumpAt: bumps.at,
     uBumpWidth: bumps.width,
     uBumpTop: bumps.top,
@@ -215,6 +217,8 @@ uniform vec2 uBandCore[BAND_MAX];   // the band's height (frame heights) and whe
 uniform vec4 uBandVeil[BAND_MAX];   // pale light of the band's own hue at its lower edge (rgb, 0: none), the band's height
 uniform vec3 uSkyVeilColor;          // light of the pack's own tint where the sky meets the light's side (0: none)
 uniform vec3 uSkyVeilSpan;           // where that veil starts and is full (frame heights), the sky's own light change there
+uniform vec4 uFarSky;                // under a long line: the dark pack color the farthest sky sinks toward (linear), how far
+uniform vec2 uFarSpan;               // where the far sky has that color fully and where it is gone (frame heights)
 uniform vec4 uBumpAt[BAND_MAX];
 uniform vec4 uBumpWidth[BAND_MAX];
 uniform vec4 uBumpTop[BAND_MAX];
@@ -265,6 +269,23 @@ vec3 deepen(vec3 c, float level, vec3 w) {
 vec3 deepen(vec3 c, float level) { return deepen(c, level, vec3(1.0)); }
 
 vec3 toMix(vec3 c) { return uInk > 0.0 ? pow(max(c, vec3(0.0)), vec3(1.0 / (1.0 + uInk))) : c; }
+
+// Meta Blue's Oklab hue, in radians (259 degrees).
+const float BLUE_HUE = -1.7628;
+
+// Pale light over Meta Blue turns its hue toward violet, which reads lavender. A blue up to 30 degrees past Meta
+// Blue's hue on the violet side goes back to it, and the correction fades out by 60 degrees past it, so Plum
+// (80 degrees past) keeps its own hue.
+vec3 keepBlueHue(vec3 c) {
+  vec3 lab = linearToOklab(max(c, vec3(0.0)));
+  float chroma = length(lab.yz);
+  if (chroma < 1e-5) return c;
+  float over = mod(atan(lab.z, lab.y) - BLUE_HUE + PI, 2.0 * PI) - PI;
+  if (over <= 0.0) return c;
+  float h = BLUE_HUE + over * smoothstep(0.5236, 1.0472, over);
+  lab.yz = chroma * vec2(cos(h), sin(h));
+  return max(oklabToLinear(lab), vec3(0.0));
+}
 
 // Scene coverage across an edge with a 10-90 width w: the share of a disk past the edge, as light seen
 // through soft air; a disk of radius r is 1.38 r wide from 10 to 90%.
@@ -340,6 +361,7 @@ vec3 scene(float x, float v, vec2 p) {
     float t = smoothstep(uSkyVeilSpan.x, uSkyVeilSpan.y, v);
     c = c * (1.0 + uSkyVeilSpan.z * t) + toMix(uSkyVeilColor) * t * skyGain * giveWay;
   }
+  if (uFarSky.w > 0.0) c = mix(c, toMix(uFarSky.rgb) * skyGain * giveWay, uFarSky.w * (1.0 - smoothstep(uFarSpan.x, max(uFarSpan.y, uFarSpan.x + 1e-4), v)));
   // Share of the frame here that no covering band hides; the glow shows through it.
   float open = 1.0;
 
@@ -466,7 +488,7 @@ vec3 scene(float x, float v, vec2 p) {
 
   vec3 lit = uInk > 0.0 ? pow(max(c, vec3(0.0)), vec3(1.0 + uInk)) : c;
   float shade = max(0.0, 1.0 + uShade.x * dx + uShade.y * (v - 0.5));
-  return lit * shade * uIntensity;
+  return keepBlueHue(lit) * shade * uIntensity;
 }
 
 // Water below a level horizon: the sky mirrored about the line, squeezed toward it, smeared up and down by
