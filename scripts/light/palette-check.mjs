@@ -1,7 +1,9 @@
 // Palette check: does every frame read as its pack? For one look (or all seven) it renders or reads the three packs
 // at seeds 1-8 (16:9) and 1-4 (9:16), measures how much of each frame every pack color covers and which colors
 // outside the pack show up, and writes one sheet per look with a share bar under each tile and the failing frames
-// marked. See scripts/light/README.md, "Palette check", for usage and the rules behind the thresholds.
+// marked. See scripts/light/README.md, "Palette check", for usage and the rules behind the thresholds. With --refs it
+// reads the reference library's Sunset and Contour images instead and judges each by its own look's rules in every
+// pack, as if it were one of our frames (the references are measured only; nothing renders from them).
 import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -10,6 +12,7 @@ import sharp from 'sharp'
 import { list, parseArgs } from './lib/args.mjs'
 import { ROOT, startHarness } from './lib/harness.mjs'
 import { savePng } from './lib/images.mjs'
+import { loadReferences } from './lib/references.mjs'
 
 const LOOKS = ['sunset.ramp', 'sunset.bands', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
 const PACK_ORDER = ['bold', 'elemental', 'atmospheric']
@@ -36,6 +39,11 @@ const T = {
   // compare agent (artifacts/compare/rounds/12/haze/): at 0.035 a blue haze still reads blue-grey, at 0.03 grey.
   // Warm lights keep their tail rule: their greyed haze reads olive or brown.
   haze: 0.035,
+  // That haze's hue window (degrees from the color's own hue, - toward cyan), wider toward cyan than the dim window
+  // above, in packs without Cyan: the beam-pool example's haze sits 15 to 28 degrees from Meta Blue toward cyan
+  // (median 22, halfway to Cyan). Set by eye (artifacts/compare/refcheck/hue-swatches/): at 30 a haze still reads
+  // blue-grey next to the beam pool, at 35 teal. Toward violet the indigo limit stays.
+  hazeHue: { 'Meta Blue': [-30, 12] },
   // Sunset skies (SHARED.md, decided 2026-11-04 4:15 PM): full-strength Meta Blue, Oklab chroma `sky.C` or more in
   // Meta Blue's hue window, covers at most about `sky.share` of a Sunset frame. Frames over it are listed, not failed.
   sky: { C: 0.15, share: 0.25 },
@@ -91,10 +99,26 @@ const CLEAN_MIXES = {
 const WARM = { bold: ['Yellow', 'Orange-red'], elemental: ['Lime', 'Tan'], atmospheric: [] }
 const NEUTRALS = { atmospheric: ['Ice', 'Steel', 'Slate', 'Near-black'] }
 
+// The light each Contour reference shows (SHARED.md, "Reference images"), for its main-light check: any of these
+// that the pack offers. The beam pool's teal sits halfway between Meta Blue and Cyan (22 degrees from each), so in
+// Bold either is its light. The iridescent rings have three lights of no pack, so they have none.
+const REF_LIGHT = {
+  'contour-rim-edge': ['Meta Blue'],
+  'contour-yellow-halo': ['Yellow'],
+  'contour-radial-streaks': ['Meta Blue'],
+  'contour-beam-pool': ['Meta Blue', 'Cyan'],
+  'contour-light-line': ['Yellow'],
+}
+
 const args = parseArgs()
 const lookArg = list(args.look)
-if (!lookArg.length) {
-  console.error('Give --look <sunset.bands|bands|...|all> and optionally --dev or --from <dir>; see scripts/light/README.md')
+// --refs <id,...|sunset|contour|all>: reference IDs from public/references/awe/manifest.json, or a whole mood.
+const refArg = list(args.refs)
+// --chroma 0.8,0.6: also judge each frame or reference with its Oklab chroma scaled by these factors (a, b times the
+// factor), to find how grey its light may get before a rule reads it as another color.
+const chromaFactors = [1, ...list(args.chroma).map(Number).filter((f) => f !== 1)]
+if (!lookArg.length && !refArg.length) {
+  console.error('Give --look <sunset.bands|bands|...|all> and optionally --dev or --from <dir>, or --refs <id,...|all>; see scripts/light/README.md')
   process.exit(1)
 }
 const looks = lookArg.includes('all') ? LOOKS : lookArg.map((l) => (l.includes('.') ? l : LOOKS.find((id) => id.endsWith(`.${l}`)) ?? l))
@@ -112,7 +136,11 @@ const tailRule = args.tails === 'strict' ? 'strict' : 'drift'
 // --dim strict: dim colors keep the nominal limits (`greyer`, 20 degrees of hue) all the way down, as before 1:40 PM.
 const dimRule = args.dim !== 'strict'
 // --haze strict: a cool light's haze must keep the dim rule's share of the path's chroma, as before 4:15 PM.
-const hazeRule = args.haze !== 'strict'
+// --haze narrow: the haze keeps the dim rule's hue window, as before 2026-11-05.
+const hazeRule = args.haze === 'strict' ? 'strict' : args.haze === 'narrow' ? 'narrow' : 'wide'
+// --main own: Atmospheric's grey light wins over the colored light's lit area at or below its own nominal brightness
+// only, as before 2026-11-05.
+const mainRule = args.main === 'own' ? 'own' : 'all'
 // Control values for the render (--at intensity=1,softness=0,horizon=0.3; horizon or light is the mood control).
 const controls = { intensity: 0.5, softness: 0.5, mood: 0.5 }
 for (const pair of list(args.at)) {
@@ -127,15 +155,15 @@ if (typeof args['lens-edge'] === 'string') T.lensEdge = Number(args['lens-edge']
 const startedAt = new Date()
 const hhmm = startedAt.toTimeString().slice(0, 5)
 const sourceLabel =
-  typeof args.label === 'string' ? args.label : fromDir ? `files in ${path.relative(process.cwd(), fromDir)}` : dev ? `dev server ${devUrl} at ${hhmm}, uncommitted working tree` : `harness render of ${ROOT}`
+  typeof args.label === 'string' ? args.label : !lookArg.length ? 'reference library' : fromDir ? `files in ${path.relative(process.cwd(), fromDir)}` : dev ? `dev server ${devUrl} at ${hhmm}, uncommitted working tree` : `harness render of ${ROOT}`
 const outDir = path.resolve(typeof args.out === 'string' ? args.out : path.join(ROOT, 'artifacts', 'palette-check', sourceLabel.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)))
 
 const harness = await startHarness()
 let browser = null
 try {
   const { toneCurve } = await harness.ssr('/src/light/engine/output.ts')
-  const { linearToOklab } = await harness.ssr('/src/light/color/oklab.ts')
-  const { hexToLinear, srgbToLinear } = await harness.ssr('/src/light/color/srgb.ts')
+  const { linearToOklab, oklabToLinear } = await harness.ssr('/src/light/color/oklab.ts')
+  const { hexToLinear, linearToSrgb, srgbToLinear } = await harness.ssr('/src/light/color/srgb.ts')
   const { getPack } = await harness.ssr('/src/light/color/packs.ts')
   const rendering = !fromDir && !dev
   const { buildScene } = rendering ? await harness.ssr('/src/tool/controls.ts') : {}
@@ -197,16 +225,15 @@ try {
     }
     if (C < 0.025) return Cf < 0.06 ? paleCost + C / 0.025 : Infinity
     const dh = hueDiff(h, hf)
-    if (dh > T.hueTolerance) return Infinity
     if (C > 1.6 * Cf + 0.03) return Infinity
+    const turn = ((((h - hf) % 360) + 540) % 360) - 180
+    const greyer = path.dim ? T.dim.greyer + (T.greyer - T.dim.greyer) * Math.min(1, Math.max(0, (L - T.dim.floorL) / (path.L0 - T.dim.floorL))) : T.greyer
+    // A cool light's haze, greyer than the dim limit below nominal or paler above it, may turn further toward cyan.
+    const haze = path.dim?.haze && C >= T.haze && (pale || C < greyer * Cf)
+    const [from, to] = haze ? [path.dim.hazeHue[0], pale ? T.hueTolerance : path.dim.hazeHue[1]] : path.dim && !pale ? path.dim.hue : [-T.hueTolerance, T.hueTolerance]
+    if (turn < from || turn > to) return Infinity
     if (pale) return C > Cf + 0.03 ? Infinity : paleCost + dh / T.hueTolerance
-    let greyer = T.greyer
-    if (path.dim) {
-      const turn = ((((h - hf) % 360) + 540) % 360) - 180
-      if (turn < path.dim.hue[0] || turn > path.dim.hue[1]) return Infinity
-      greyer = T.dim.greyer + (T.greyer - T.dim.greyer) * Math.min(1, Math.max(0, (L - T.dim.floorL) / (path.L0 - T.dim.floorL)))
-      if (path.dim.haze && C < greyer * Cf && C >= T.haze) return 1 + dh / T.hueTolerance
-    }
+    if (haze) return 1 + dh / T.hueTolerance
     // Below nominal: a pale tint (light and greyer, like cream for Yellow) still counts; a dim one may only be a
     // little greyer than the path.
     if (C < greyer * Cf) return L >= T.pale.L ? 0.3 + dh / T.hueTolerance : Infinity
@@ -241,7 +268,10 @@ try {
       // Steel pale sky blue: perception-additive-light.md 3), so their path ends 1 stop up; light colors go to white.
       c.path = lightPath(c.lin, c.warm ? warmStops(c.lab) : 12, c.lab[0] < 0.5 ? T.darkOverStops : 8)
       if (!c.warm && c.path.C0 >= 0.06 && dimRule) {
-        c.path.dim = { hue: T.dim.hue[c.name] ?? [-T.hueTolerance, T.hueTolerance], narrow: c.name in T.dim.hue, haze: hazeRule && c.lab[0] >= T.lightL }
+        const hue = T.dim.hue[c.name] ?? [-T.hueTolerance, T.hueTolerance]
+        // In Bold the hues between Meta Blue and Cyan are their clean mix, so there the haze keeps the dim window.
+        const wide = hazeRule === 'wide' && !colors.some((x) => x.name === 'Cyan')
+        c.path.dim = { hue, hazeHue: wide ? (T.hazeHue[c.name] ?? hue) : hue, narrow: c.name in T.dim.hue, haze: hazeRule !== 'strict' && c.lab[0] >= T.lightL }
       }
     }
     const pairs = []
@@ -256,6 +286,10 @@ try {
     return { packId, pack, colors, pairs, neutrals }
   }
   const classifiers = Object.fromEntries(PACK_ORDER.map((id) => [id, classifier(id)]))
+  // The light colors a pack offers: its colors at least `T.lightL` light. Atmospheric's light is Ice; its other greys
+  // are shades of it, and a grey light is a dimmer Ice light.
+  const offeredLights = (k) => k.colors.filter((c, i) => c.lab[0] >= T.lightL && (!k.neutrals.includes(i) || i === k.neutrals[0])).map((c) => c.name)
+  const asLight = (k, name) => (k.neutrals.some((i) => k.colors[i].name === name) ? k.colors[k.neutrals[0]].name : name)
   // A dim color whose hue has turned past its own window, away from the other color (Meta Blue toward violet, next
   // to Cyan or a grey), is not a mix of the two either.
   function movedAway(c, other, L, h) {
@@ -326,6 +360,7 @@ try {
   const BUCKET_OUT = -4
   const BUCKET_PALE = -5
   const BUCKET_EDGE = -6 // new rule: on the linear-light mix of two pack colors in the frame (a lens edge)
+  const BUCKET_SKIP = -7 // a reference's masked part
   // Is this linear color a mix of pack colors i and j, a * ci + b * cj with a, b >= 0, through the tone curve?
   function onMix(k, pairs, lin, lab) {
     for (const [i, j] of pairs) {
@@ -378,12 +413,31 @@ try {
     }
     return opened
   }
-  async function analyse(file, packId, sceneHexes, mapFile, contour) {
+  // A reference's `ignore` rects (poster text, paper folds) are no part of the frame. `chroma` scales every pixel's
+  // Oklab a and b before it is judged.
+  async function analyse(file, packId, sceneHexes, mapFile, contour, { ignore = [], chroma = 1 } = {}) {
     const k = classifiers[packId]
     const { data, info } = await sharp(file).resize(320, 320, { fit: 'inside' }).removeAlpha().raw().toBuffer({ resolveWithObject: true })
     const W = info.width
     const H = info.height
     const n = W * H
+    const skip = new Uint8Array(n)
+    if (ignore.length) {
+      const meta = await sharp(file).metadata()
+      for (const { rect } of ignore) {
+        const [x0, y0] = [Math.floor((rect[0] * W) / meta.width), Math.floor((rect[1] * H) / meta.height)]
+        const [x1, y1] = [Math.min(W, Math.ceil(((rect[0] + rect[2]) * W) / meta.width)), Math.min(H, Math.ceil(((rect[1] + rect[3]) * H) / meta.height))]
+        for (let y = y0; y < y1; y++) skip.fill(1, y * W + x0, y * W + x1)
+      }
+    }
+    if (chroma !== 1) {
+      for (let p = 0; p < n; p++) {
+        const lab = linearToOklab([SRGB_TO_LINEAR[data[3 * p]], SRGB_TO_LINEAR[data[3 * p + 1]], SRGB_TO_LINEAR[data[3 * p + 2]]])
+        const lin = oklabToLinear([lab[0], lab[1] * chroma, lab[2] * chroma])
+        for (let c = 0; c < 3; c++) data[3 * p + c] = Math.round(255 * linearToSrgb(Math.min(1, Math.max(0, lin[c]))))
+      }
+    }
+    const counted = n - skip.reduce((s, v) => s + v, 0)
     const bucket = new Int16Array(n)
     const names = new Array(n).fill(null)
     const Ls = new Float32Array(n)
@@ -401,6 +455,10 @@ try {
     const skyHue = metaBlue.dim?.hue ?? [-T.hueTolerance, T.hueTolerance]
     const labs = new Float32Array(n * 3)
     for (let p = 0; p < n; p++) {
+      if (skip[p]) {
+        bucket[p] = BUCKET_SKIP
+        continue
+      }
       const lab = linearToOklab([SRGB_TO_LINEAR[data[3 * p]], SRGB_TO_LINEAR[data[3 * p + 1]], SRGB_TO_LINEAR[data[3 * p + 2]]])
       labs.set(lab, 3 * p)
       const [L, C, h] = lch(lab)
@@ -458,7 +516,7 @@ try {
       const baseCount = new Float64Array(k.colors.length)
       for (let p = 0; p < n; p++) if (bucket[p] >= 0 && bucket[p] < 100 && Ls[p] < 0.35) baseCount[bucket[p]]++
       const base = contour ? baseCount.indexOf(Math.max(...baseCount)) : -1
-      const inFrame = k.colors.map((c, i) => i).filter((i) => near[i] >= 0.01 * n && i !== base)
+      const inFrame = k.colors.map((c, i) => i).filter((i) => near[i] >= 0.01 * counted && i !== base)
       const pairs = []
       for (let a = 0; a < inFrame.length; a++) for (let b = a + 1; b < inFrame.length; b++) pairs.push([inFrame[a], inFrame[b]])
       for (let p = 0; p < n; p++) {
@@ -525,13 +583,13 @@ try {
     }
     if (mapFile) {
       // What each pixel counted as: its pack color, grey for a clean mix, white, black for the dark base,
-      // red for a wide outside area and orange for a thin one.
+      // red for a wide outside area and orange for a thin one; a reference's masked parts are purple.
       const px = Buffer.alloc(n * 3)
       const hexRgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))
       const colorRgb = k.colors.map((c) => hexRgb(c.hex))
       for (let p = 0; p < n; p++) {
         const b = bucket[p]
-        const rgb = b >= 100 ? [128, 128, 128] : b >= 0 ? colorRgb[b] : b === BUCKET_WHITE ? [255, 255, 255] : b === BUCKET_PALE ? [210, 210, 210] : b === BUCKET_DARK ? [0, 0, 0] : wide[p] ? [255, 0, 0] : b === BUCKET_EDGE ? [60, 120, 120] : [255, 150, 0]
+        const rgb = b >= 100 ? [128, 128, 128] : b >= 0 ? colorRgb[b] : b === BUCKET_WHITE ? [255, 255, 255] : b === BUCKET_PALE ? [210, 210, 210] : b === BUCKET_DARK ? [0, 0, 0] : b === BUCKET_SKIP ? [110, 40, 140] : wide[p] ? [255, 0, 0] : b === BUCKET_EDGE ? [60, 120, 120] : [255, 150, 0]
         px.set(rgb, 3 * p)
       }
       await sharp(px, { raw: { width: W, height: H, channels: 3 } }).png().toFile(mapFile)
@@ -548,8 +606,10 @@ try {
     // The frame's light color: the pack color covering the most lit area at or below its own nominal brightness.
     // An overexposed core is left out (Meta Blue's turns cyan-white). Atmospheric's greys are one hue, so a grey
     // light is named by the lightest grey it reaches on at least 1% of the frame (an Ice light's falloff passes
-    // through Steel's and Slate's lightness).
+    // through Steel's and Slate's lightness). The greys count at every lightness, white core included (white is
+    // Ice there), so they win only over more than all of the colored light's lit area, its pale part too.
     const litOwn = new Float64Array(k.colors.length)
+    const litAll = new Float64Array(k.colors.length)
     let neutralLit = 0
     const neutralTop = new Float64Array(k.colors.length)
     for (let p = 0; p < n; p++) {
@@ -558,14 +618,24 @@ try {
       if (k.neutrals.includes(b)) {
         neutralLit++
         neutralTop[b]++
-      } else if (Ls[p] <= k.colors[b].path.L0) litOwn[b]++
+        continue
+      }
+      litAll[b]++
+      if (Ls[p] <= k.colors[b].path.L0) litOwn[b]++
     }
     let source = null
     litOwn.forEach((v, i) => {
       if (v > 0 && (source === null || v > litOwn[source])) source = i
     })
-    if (k.neutrals.length && neutralLit > (source === null ? 0 : litOwn[source])) {
-      source = k.neutrals.find((i) => neutralTop[i] >= 0.01 * n) ?? k.neutrals.find((i) => neutralTop[i] > 0) ?? source
+    // A light that is paler than its nominal everywhere (an overexposed crest) is still that light.
+    if (source === null) {
+      litAll.forEach((v, i) => {
+        if (v > 0 && (source === null || v > litAll[source])) source = i
+      })
+    }
+    const colored = source === null ? 0 : mainRule === 'own' ? litOwn[source] : litAll[source]
+    if (k.neutrals.length && neutralLit > colored) {
+      source = k.neutrals.find((i) => neutralTop[i] >= 0.01 * counted) ?? k.neutrals.find((i) => neutralTop[i] > 0) ?? source
     }
     let base = 0
     let baseOut = 0
@@ -576,9 +646,11 @@ try {
     const litChromatic = new Float64Array(k.colors.length)
     const baseNames = {}
     const litNames = {}
+    // The light's own chroma, for --refs: its lit area short of the white core (L 0.35 to 0.85).
+    const litChromas = []
     for (let p = 0; p < n; p++) {
       const L = Ls[p]
-      if (bucket[p] === BUCKET_DARK) continue
+      if (bucket[p] === BUCKET_DARK || bucket[p] === BUCKET_SKIP) continue
       if (L < 0.35) {
         base++
         if (isOut(p)) {
@@ -587,6 +659,7 @@ try {
         }
       } else {
         lit++
+        if (L <= 0.85) litChromas.push(Math.hypot(labs[3 * p + 1], labs[3 * p + 2]))
         if (isOut(p)) {
           litOut++
           litNames[names[p]] = (litNames[names[p]] ?? 0) + 1
@@ -596,8 +669,8 @@ try {
         }
       }
     }
-    const frac = (v) => v / n
-    const top = (obj, total = n) =>
+    const frac = (v) => v / counted
+    const top = (obj, total = counted) =>
       Object.entries(obj)
         .sort((x, y) => y[1] - x[1])
         .map(([name, v]) => ({ name, share: v / total }))
@@ -626,6 +699,7 @@ try {
         names: top(litNames, Math.max(1, lit)),
         byColor: Object.fromEntries(k.colors.map((c, i) => [c.name, lit ? litByColor[i] / lit : 0])),
         chromatic: Object.fromEntries(k.colors.map((c, i) => [c.name, lit ? litChromatic[i] / lit : 0])),
+        chroma: litChromas.length ? litChromas.sort((x, y) => x - y)[Math.floor(litChromas.length / 2)] : null,
       },
       source: source === null ? null : k.colors[source].name,
       sceneColors: sceneHexes ? [...new Set(sceneHexes.map((h) => h.toUpperCase()))].filter((h) => h !== '#000000').map((h) => k.colors.find((c) => c.hex.toUpperCase() === h)?.name ?? h) : null,
@@ -635,6 +709,8 @@ try {
 
   // --- the rules ---
   const pct = (v) => `${Math.round(v * 100)}%`
+  const mainLabel = `Atmospheric's grey light against ${mainRule === 'own' ? "the colored light's own-brightness part (--main own)" : "the colored light's whole lit area"}`
+  const hazeLabel = `haze: ${!dimRule || hazeRule === 'strict' ? 'strict' : `down to chroma ${T.haze} (4:15 PM), ${hazeRule === 'wide' ? `Meta Blue's up to ${-T.hazeHue['Meta Blue'][0]} degrees toward cyan in Elemental and Atmospheric` : 'in the dim hue window (--haze narrow)'}`}`
   function judge(look, packId, m) {
     const k = classifiers[packId]
     const fails = []
@@ -693,6 +769,98 @@ try {
     return { fails, notes }
   }
 
+  // --- the reference library: each image judged by its look's rules in every pack, as if it were one of our frames ---
+  async function checkReferences() {
+    const { references } = await loadReferences(harness)
+    const unknown = refArg.filter((id) => id !== 'all' && !references.some((r) => r.id === id || r.mood === id))
+    if (unknown.length) throw new Error(`Unknown reference or mood: ${unknown.join(', ')}`)
+    const picked = references.filter((r) => LOOKS.includes(r.recipe) && (refArg.includes('all') || refArg.includes(r.id) || refArg.includes(r.mood)))
+    await fs.mkdir(path.join(outDir, 'maps'), { recursive: true })
+    const results = []
+    for (const ref of picked) {
+      const contour = ref.recipe.startsWith('contour.')
+      const light = REF_LIGHT[ref.id]?.join(' or ') ?? null
+      const runs = []
+      for (const chroma of chromaFactors) {
+        for (const pack of PACK_ORDER) {
+          const k = classifiers[pack]
+          const map = path.join(outDir, 'maps', `${ref.id}-${pack}${chroma === 1 ? '' : `-c${chroma}`}.png`)
+          const m = await analyse(ref.file, pack, null, map, contour, { ignore: ref.ignore, chroma })
+          const { fails, notes } = judge(ref.recipe, pack, m)
+          const main = m.mainLight ? asLight(k, m.mainLight) : null
+          // A look whose frames all read like this image would never be lit with its light across seeds 1-8.
+          const own = offeredLights(k).filter((name) => REF_LIGHT[ref.id]?.includes(name))
+          if (contour && own.length && !own.includes(main)) fails.push(`main light ${main ?? 'none'}, not ${own.join(' or ')}: never ${own.join(' or ')}`)
+          runs.push({ pack, chroma, map, fails, notes, main, m })
+        }
+      }
+      // The nearest pack leaves the least of the image outside the pack; packs within 1% of it tie.
+      const plain = runs.filter((r) => r.chroma === 1)
+      const least = Math.min(...plain.map((r) => r.m.outsideShare))
+      const nearest = plain.filter((r) => r.m.outsideShare <= least + 0.01).map((r) => r.pack)
+      results.push({ ref, light, nearest, runs })
+    }
+    const lines = [
+      '# Palette check: reference library',
+      '',
+      `Started ${startedAt.toISOString()}. Each reference is judged by its look's rules in every pack, as if it were one of our frames; masked parts (poster text, paper folds) are left out. A Contour reference must also show its own light (\`REF_LIGHT\`) as the main light. Lit chroma: the median Oklab chroma of the lit area short of the white core (L 0.35 to 0.85).${chromaFactors.length > 1 ? ` Chroma factors: ${chromaFactors.join(', ')} (Oklab a and b scaled before judging).` : ''} Dim colors: ${dimRule ? 'navy rule (1:40 PM)' : 'strict'}; ${hazeLabel}; ${mainLabel}.`,
+      '',
+    ]
+    for (const { ref, light, nearest, runs } of results) {
+      const contour = ref.recipe.startsWith('contour.')
+      lines.push(`## ${ref.id} (${ref.recipe}${light ? `, light ${light}` : ''}; nearest pack ${nearest.join(', ')})`, '', '| Pack | Chroma | Lit chroma | Full Meta Blue | Verdict | Main light | Pack colors | Outside |', '| --- | --- | --- | --- | --- | --- | --- | --- |')
+      for (const r of runs) {
+        const colors = Object.entries(r.m.shares).filter(([, v]) => v >= 0.01).sort((x, y) => y[1] - x[1]).map(([name, v]) => `${name} ${pct(v)}`).join(', ')
+        const outside = r.m.outside.filter((x) => x.share >= 0.005).slice(0, 3).map((x) => `${x.name} ${pct(x.share)}`).join(', ')
+        const verdict = r.fails.length ? `FAIL: ${r.fails.join('; ')}` : r.notes.length ? `ok (${r.notes.join('; ')})` : 'ok'
+        lines.push(`| ${r.pack}${nearest.includes(r.pack) ? ' (nearest)' : ''} | ${r.chroma} | ${r.m.lit.chroma?.toFixed(3) ?? '-'} | ${pct(r.m.skyFull)} | ${verdict} | ${contour ? (r.main ?? '-') : '-'} | ${colors || '-'} | ${outside ? `${outside}; wide ${pct(r.m.wideShare)}` : '-'} |`)
+      }
+      lines.push('')
+    }
+    await fs.writeFile(path.join(outDir, 'refs.md'), `${lines.join('\n')}\n`)
+    const json = results.map(({ ref, runs, ...rest }) => ({ id: ref.id, recipe: ref.recipe, ...rest, runs: runs.map((r) => ({ ...r, map: path.relative(process.cwd(), r.map) })) }))
+    await fs.writeFile(path.join(outDir, 'refs.json'), JSON.stringify({ source: 'reference library', startedAt: startedAt.toISOString(), thresholds: T, references: json }, null, 1))
+    await drawRefSheet(results)
+    console.log(`references: ${path.relative(process.cwd(), path.join(outDir, 'refs.md'))}`)
+  }
+
+  // Rows: references. Columns: the image, then what each pixel counted as in each pack (and at each chroma factor,
+  // in the nearest pack), with the verdict under each.
+  async function drawRefSheet(results) {
+    const TW = 180
+    const TH = 150
+    const GAP = 8
+    const CAP = 30
+    const ROWH = 18 + TH + 4 + CAP + 8
+    const cols = 1 + PACK_ORDER.length + chromaFactors.length - 1
+    const width = 12 + cols * (TW + GAP)
+    const height = 48 + results.length * ROWH
+    const legend = [
+      'Palette check on the reference library: the image, then what each pixel counted as. Pack colors in their hex, grey a clean mix,',
+      'teal grey a lens edge, light grey a pale bridge, white, black the dark base, red a wide outside area, orange a thin one, purple masked.',
+    ]
+    const comp = [{ input: textSvg(legend, width, 34, 11, '#ddd'), left: 12, top: 8 }]
+    for (const [row, { ref, light, nearest, runs }] of results.entries()) {
+      const top = 48 + row * ROWH
+      const contour = ref.recipe.startsWith('contour.')
+      const cells = [{ file: ref.file, title: `${ref.id}${light ? ` (${light})` : ''}`, lines: [ref.recipe] }]
+      for (const r of runs) {
+        if (r.chroma !== 1 && r.pack !== nearest[0]) continue
+        const title = `${r.pack}${r.chroma === 1 ? '' : `, chroma x${r.chroma}`}${nearest.includes(r.pack) ? ' (nearest)' : ''}`
+        const reading = contour ? `main ${r.main ?? '-'}, lit chroma ${r.m.lit.chroma?.toFixed(3) ?? '-'}` : `full Meta Blue ${pct(r.m.skyFull)}, outside ${pct(r.m.outsideShare)}`
+        cells.push({ file: r.map, title, lines: [reading, r.fails[0] ?? 'ok'], failed: r.fails.length > 0 })
+      }
+      for (const [c, cell] of cells.entries()) {
+        const left = 12 + c * (TW + GAP)
+        comp.push({ input: textSvg([{ text: cell.title.slice(0, 34), color: '#fff' }], TW, 16, 11), left, top })
+        if (cell.failed) comp.push({ input: { create: { width: TW + 6, height: TH + 6, channels: 3, background: '#ff2020' } }, left: left - 3, top: top + 15 })
+        comp.push({ input: await sharp(cell.file).resize(TW, TH, { fit: 'contain', background: '#161616' }).toBuffer(), left, top: top + 18 })
+        comp.push({ input: textSvg(cell.lines.map((t, i) => ({ text: t.slice(0, 42), color: cell.failed && i > 0 ? '#ff7070' : '#bbb' })), TW, CAP, 10), left, top: top + 18 + TH + 4 })
+      }
+    }
+    await sharp({ create: { width, height, channels: 3, background: '#161616' } }).composite(comp).png().toFile(path.join(outDir, 'refs.png'))
+  }
+
   // --- getting the frames ---
   const frameList = (look) => {
     const short = look.split('.')[1]
@@ -731,10 +899,11 @@ try {
     }
   }
 
-  await fs.mkdir(path.join(outDir, 'renders'), { recursive: true })
+  if (refArg.length) await checkReferences()
+  if (looks.length) await fs.mkdir(path.join(outDir, 'renders'), { recursive: true })
   if (maps) await fs.mkdir(path.join(outDir, 'maps'), { recursive: true })
   const report = { source: sourceLabel, startedAt: startedAt.toISOString(), thresholds: T, looks: {} }
-  const summary = [`# Palette check: ${sourceLabel}`, '', `Started ${startedAt.toISOString()}. Controls: intensity ${controls.intensity}, softness ${controls.softness}, mood ${controls.mood}. Rule: ${rule}${rule === 'new' ? `, lens edges up to ${T.lensEdge} of the short side` : ''}; warm tails: ${tailRule}; dim colors: ${dimRule ? 'navy rule (1:40 PM)' : 'strict'}; haze: ${dimRule && hazeRule ? `down to chroma ${T.haze} (4:15 PM)` : 'strict'}. Thresholds in \`palette-check.mjs\` (T).`, '']
+  const summary = [`# Palette check: ${sourceLabel}`, '', `Started ${startedAt.toISOString()}. Controls: intensity ${controls.intensity}, softness ${controls.softness}, mood ${controls.mood}. Rule: ${rule}${rule === 'new' ? `, lens edges up to ${T.lensEdge} of the short side` : ''}; warm tails: ${tailRule}; dim colors: ${dimRule ? 'navy rule (1:40 PM)' : 'strict'}; ${hazeLabel}; ${mainLabel}.${chromaFactors.length > 1 ? ` Also judged with chroma scaled by ${chromaFactors.slice(1).join(', ')}.` : ''} Thresholds in \`palette-check.mjs\` (T).`, '']
   for (const look of looks) {
     const frames = frameList(look)
     for (const f of frames) {
@@ -757,18 +926,11 @@ try {
       f.m = await analyse(f.file, f.pack, f.sceneHexes ?? null, maps ? path.join(outDir, 'maps', `${f.id}.png`) : null, look.startsWith('contour.'))
       Object.assign(f, judge(look, f.pack, f.m))
     }
-    // Contour: across seeds 1-8 at 16:9, does every light color the pack offers light at least one frame?
+    const contour = look.startsWith('contour.')
     const rows = {}
     for (const pack of PACK_ORDER) {
-      const k = classifiers[pack]
-      // Atmospheric's light is Ice; its other greys are shades, and a grey light is a dimmer Ice light.
-      const lightest = k.neutrals[0]
-      const offered = k.colors.filter((c, i) => c.lab[0] >= T.lightL && (!k.neutrals.includes(i) || i === lightest)).map((c) => c.name)
-      const asLight = (name) => (k.neutrals.some((i) => k.colors[i].name === name) ? k.colors[lightest].name : name)
-      const mains = frames.filter((f) => f.pack === pack && f.format === '16x9' && f.m).map((f) => f.m.mainLight && asLight(f.m.mainLight)).filter(Boolean)
-      const counts = Object.fromEntries(offered.map((name) => [name, mains.filter((x) => x === name).length]))
-      const missing = look.startsWith('contour.') ? offered.filter((name) => !counts[name]) : []
-      rows[pack] = { offered, counts, missing, alike: await alikePairs(frames.filter((f) => f.pack === pack && f.format === '16x9' && f.m)) }
+      const packFrames = frames.filter((f) => f.pack === pack && f.m)
+      rows[pack] = { ...mainLights(classifiers[pack], packFrames, contour), alike: await alikePairs(packFrames.filter((f) => f.format === '16x9')) }
     }
     await drawSheet(look, frames, rows)
     report.looks[look] = { frames: frames.map(({ file, sceneHexes, ...f }) => ({ ...f, file: path.relative(process.cwd(), file) })), rows }
@@ -776,17 +938,35 @@ try {
     for (const pack of PACK_ORDER) {
       const failing = frames.filter((f) => f.pack === pack && f.fails?.length)
       const row = rows[pack]
-      const across = look.startsWith('contour.') ? ` Main light across seeds 1-${seeds}: ${Object.entries(row.counts).map(([nm, c]) => `${nm} ${c}`).join(', ')}${row.missing.length ? `; never ${row.missing.join(', ')}: FAIL` : ''}.` : ''
       const sky = look.startsWith('sunset.') ? ` ${skyLine(frames.filter((f) => f.pack === pack && f.m))}` : ''
-      summary.push(`- ${pack}: ${failing.length} of ${frames.filter((f) => f.pack === pack && !f.missing).length} frames fail.${across} ${varietyLine(row.alike)}${sky}`)
+      summary.push(`- ${pack}: ${failing.length} of ${frames.filter((f) => f.pack === pack && !f.missing).length} frames fail.${contour ? ` ${mainLightLine(row)}` : ''} ${varietyLine(row.alike)}${sky}`)
       for (const f of failing) summary.push(`  - ${f.id}: ${f.fails.join('; ')}${f.notes.length ? ` (also ${f.notes.join('; ')})` : ''}`)
     }
     summary.push('')
+    // The same frames judged again with their Oklab chroma scaled (--chroma), to find how grey a look's light may go.
+    for (const chroma of chromaFactors.slice(1)) {
+      summary.push(`### ${look} at chroma x${chroma}`, '')
+      for (const pack of PACK_ORDER) {
+        const scaled = []
+        for (const f of frames.filter((x) => x.pack === pack && x.m)) {
+          const m = await analyse(f.file, f.pack, f.sceneHexes ?? null, null, contour, { chroma })
+          scaled.push({ ...f, m, ...judge(look, f.pack, m) })
+        }
+        const failing = scaled.filter((f) => f.fails.length)
+        const litChroma = scaled.map((f) => f.m.lit.chroma).filter((c) => c !== null).sort((x, y) => x - y)
+        const median = litChroma.length ? ` Median lit chroma ${litChroma[Math.floor(litChroma.length / 2)].toFixed(3)}.` : ''
+        summary.push(`- ${pack}: ${failing.length} of ${scaled.length} frames fail.${contour ? ` ${mainLightLine(mainLights(classifiers[pack], scaled, contour))}` : ''}${median}`)
+        for (const f of failing) summary.push(`  - ${f.id}: ${f.fails.join('; ')}`)
+      }
+      summary.push('')
+    }
     console.log(`${look}: ${path.relative(process.cwd(), path.join(outDir, `${look}.png`))}`)
   }
-  await fs.writeFile(path.join(outDir, 'palette.json'), JSON.stringify(report, null, 1))
-  await fs.writeFile(path.join(outDir, 'summary.md'), `${summary.join('\n')}\n`)
-  console.log(`summary: ${path.relative(process.cwd(), path.join(outDir, 'summary.md'))}`)
+  if (looks.length) {
+    await fs.writeFile(path.join(outDir, 'palette.json'), JSON.stringify(report, null, 1))
+    await fs.writeFile(path.join(outDir, 'summary.md'), `${summary.join('\n')}\n`)
+    console.log(`summary: ${path.relative(process.cwd(), path.join(outDir, 'summary.md'))}`)
+  }
 
   // --- seed variety: which seeds of one pack look like the same frame at thumbnail size ---
   async function layoutMap(file) {
@@ -822,6 +1002,16 @@ try {
     }
     return pairs
   }
+  // Contour: across seeds 1-8 at 16:9, does every light color the pack offers light at least one frame?
+  function mainLights(k, packFrames, contour) {
+    const offered = offeredLights(k)
+    const mains = packFrames.filter((f) => f.format === '16x9').map((f) => f.m.mainLight && asLight(k, f.m.mainLight)).filter(Boolean)
+    const counts = Object.fromEntries(offered.map((name) => [name, mains.filter((x) => x === name).length]))
+    return { offered, counts, missing: contour ? offered.filter((name) => !counts[name]) : [] }
+  }
+  function mainLightLine(row) {
+    return `Main light across seeds 1-${seeds}: ${Object.entries(row.counts).map(([nm, c]) => `${nm} ${c}`).join(', ')}${row.missing.length ? `; never ${row.missing.join(', ')}: FAIL` : ''}.`
+  }
   function skyLine(packFrames) {
     const over = packFrames.filter((f) => f.m.skyFull > T.sky.share)
     if (!over.length) return `Full-strength Meta Blue under ${pct(T.sky.share)} in every frame.`
@@ -830,6 +1020,11 @@ try {
   function varietyLine(alike) {
     if (!alike.length) return `No two of seeds 1-${seeds} look alike.`
     return `Seeds that look alike (layout, mix): ${alike.map((p) => `s${p.seeds[0]}/s${p.seeds[1]} (${p.layout}, ${p.mix})`).join(', ')}: FAIL.`
+  }
+
+  function textSvg(lines, w, h, size = 11, color = '#ddd') {
+    const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">${lines.map((l, i) => `<text x="1" y="${(i + 1) * (size + 3)}" font-family="Helvetica" font-size="${size}" fill="${l.color ?? color}">${esc(l.text ?? l)}</text>`).join('')}</svg>`)
   }
 
   // --- the sheet: packs as rows, seeds as columns, a share bar and the verdict under each tile ---
@@ -842,9 +1037,6 @@ try {
     const BAR = 10
     const TEXT = 30
     const ROWH = 18 + TH + 4 + BAR + TEXT + 40
-    const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    const textSvg = (lines, w, h, size = 11, color = '#ddd') =>
-      Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">${lines.map((l, i) => `<text x="1" y="${(i + 1) * (size + 3)}" font-family="Helvetica" font-size="${size}" fill="${l.color ?? color}">${esc(l.text ?? l)}</text>`).join('')}</svg>`)
     const width = LEFT + seeds * (TW + GAP) + portraitSeeds * (PW + GAP) + 16
     const height = 70 + PACK_ORDER.length * ROWH + 40
     const comp = [
