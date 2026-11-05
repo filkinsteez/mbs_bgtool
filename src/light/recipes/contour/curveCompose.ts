@@ -409,7 +409,8 @@ const prefixed = (prefix: string, values: Record<string, number | number[]>) =>
 /**
  * A halo's point-spread function under a key prefix, laid out like a 22 degree
  * halo: dark inside, a fairly sharp rise at the curve, a crest band 0.035
- * outside it (near part 1, the pack color, wider where the light dims)
+ * outside it (near part 1, the pack color, wider where the light dims, with a
+ * near-white core, near part 2)
  * and a long fade outward (far part 2, outside only, half at about 0.15 to 0.19
  * from the crest and close to the base by 0.5). The inside keeps the base level
  * past the crest's inner side. All parts follow light field 1.
@@ -434,17 +435,18 @@ export function haloParts(prefix: string, hex: string): Record<string, number | 
     return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
   }
   // A broad pale arc (the yellow-halo example's, on dark): a band about a sixth of the short side wide just outside
-  // the curve, bright enough to overexpose to a pale tint of the light, with the light's saturated color in a wide
-  // glow beyond it. The band spills past the curve, so its inner edge fades over about a tenth of the short side
-  // like the example's, instead of a hard limb. It widens where the light dims, so its ends fade out broad instead of
-  // narrowing to a point.
-  const band = { Weight: 4, Width: 0.12, Shape: 8, Side: 0, Offset: -0.05, Light: 1, LightGamma: 1, Grow: 1, GrowBy: [-0.375, 0.5] }
+  // the curve, with the light's saturated color in a wide glow beyond it. The band spills past the curve, so its
+  // inner edge fades over about a tenth of the short side like the example's, instead of a hard limb. It widens where
+  // the light dims, so its ends fade out broad instead of narrowing to a point. The tone curve turns a yellow light
+  // between about 1.5 and 5 times its own level into one flat lemon, so the band's body stays near the light's level
+  // and only a narrow core (near part 2) goes near white where the light is strong.
+  const band = { Side: 0, Offset: -0.05, Light: 1, Grow: 1, GrowBy: [-0.375, 0.5] }
   const parts: Record<string, number | number[]> = {
-    ...prefixed('n1', band),
-    n2Weight: 0,
+    ...prefixed('n1', { ...band, Weight: 1.6, Width: 0.17, Shape: 6, LightGamma: 1 }),
+    ...prefixed('n2', { ...band, Weight: 9, Width: 0.055, Shape: 8, LightGamma: 2.5 }),
     n3Weight: 0,
     f1Weight: 0,
-    ...prefixed('f2', { ...outside, Weight: 0.8, Width: 0.22, MaskSoft: 0.04 }),
+    ...prefixed('f2', { ...outside, Weight: 0.7, Width: 0.22, MaskSoft: 0.04 }),
     f3Weight: 0,
   }
   return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
@@ -544,18 +546,19 @@ export function ringParts(prefix: string): Record<string, number | number[]> {
 }
 
 /**
- * A broad pale arc under a key prefix (the yellow-halo reference, on dark): a wide band on the curve bright enough
- * that it goes pale, the light's own saturated color falling off inside it, and a short edge outside, so the full
- * color shows only in a band between the pale arc and the dark. All parts follow light field 1.
+ * A broad pale arc under a key prefix (the yellow-halo reference, on dark): a wide band on the curve that goes pale
+ * toward a near-white core, the light's own saturated color falling off inside it, and a short edge outside, so the
+ * full color shows only in a band between the pale arc and the dark. All parts follow light field 1.
  */
 export function arcParts(prefix: string): Record<string, number | number[]> {
   // The band widens where the light dims, so its two edges spread apart along the curve instead of running parallel,
-  // and its ends fade out broad instead of narrowing to a point.
-  const band = { Shape: 8, Side: 0, Light: 1, LightGamma: 1, Grow: 1, GrowBy: [-0.4, 0.5], Width: 0.1 }
+  // and its ends fade out broad instead of narrowing to a point. As in haloParts, the two bands stay near the light's
+  // own level and only a narrow core between them (near part 3) goes near white where the light is strong.
+  const band = { Shape: 6, Side: 0, Light: 1, LightGamma: 1, Grow: 1, GrowBy: [-0.4, 0.5], Width: 0.11 }
   const parts: Record<string, number | number[]> = {
-    ...prefixed('n1', { ...band, Weight: 1.5, Offset: 0 }),
-    ...prefixed('n2', { ...band, Weight: 1.1, Offset: 0.04 }),
-    n3Weight: 0,
+    ...prefixed('n1', { ...band, Weight: 1, Offset: 0 }),
+    ...prefixed('n2', { ...band, Weight: 0.7, Offset: 0.04 }),
+    ...prefixed('n3', { ...band, Weight: 8, Width: 0.04, Shape: 8, Offset: 0.02, LightGamma: 2.5 }),
     ...prefixed('f1', { Weight: 0.55, Width: 0.09, Side: 1, Light: 1, LightGamma: 1, MaskSoft: 0.015 }),
     ...prefixed('f2', { Weight: 0.12, Width: 0.03, Side: 2, Light: 1, LightGamma: 1, MaskSoft: 0.015 }),
     f3Weight: 0,
