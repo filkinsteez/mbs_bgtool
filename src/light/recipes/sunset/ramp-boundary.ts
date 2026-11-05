@@ -170,6 +170,13 @@ function lightLuminance(u: RampUniforms, f: Frame, across: number, s: number): n
 
 /** Contrast at which the boundary model starts to treat an edge as one over a darker ground. */
 const DARK_FROM = 0.3
+/** Where each side of a transition is sampled, in transition widths from its middle. */
+const SIDE_SAMPLES = [0.1, 0.2, 0.3, 0.4, 0.5]
+/**
+ * A mark this many of its and a darker step's mean widths below that step is fully inside the
+ * ground under it; at the same place it is half inside.
+ */
+const GROUND_REACH = 0.25
 /**
  * Transitions wider than this (short-side units) get proportionally less wander. The ramp's sky
  * edge is 0.3 to 0.8 wide and should still wander 1.2 to 1.8 % of the short side.
@@ -237,23 +244,32 @@ export function rampBoundary(ctx: RecipeContext, u: RampUniforms): RampBoundary 
   // sat on the sky's edge in some seeds, where the two traded places in the list.
   const kept = [...marks].sort((p, q) => p.at - q.at).slice(0, BOUNDARY_MAX_TRANSITIONS)
 
-  // Contrast from the light on either side, averaged over the frame's width. Only the first of
-  // consecutive darker steps is an edge over a darker ground; the ones below it are inside that
-  // ground, and two such edges close together make the fold guard calm the whole frame. How far an
-  // edge is inside that ground grows smoothly with the contrast above it, so no control step
-  // switches it.
+  // Contrast from the light on either side, averaged over the frame's width and over each side from
+  // the edge's middle to its end. Only the first of consecutive darker steps is an edge over a darker
+  // ground; the ones below it are inside that ground, and two such edges close together make the
+  // fold guard calm the whole frame. How far an edge is inside that ground grows smoothly with the
+  // contrast above it and with how far below that edge it is, so no control step switches it, and
+  // two marks passing each other (a stop edge and the glow's lower side) trade it smoothly.
   const offset = f.anchor[0] * f.cos - f.anchor[1] * f.sin
   const columns = [-0.7, -0.35, 0, 0.35, 0.7].map((c) => c * f.halfW - offset)
   const lumAt = (s: number) => {
     const inFrame = Math.min(sMax, Math.max(sMin, s))
     return columns.reduce((sum, across) => sum + lightLuminance(u, f, across, inFrame), 0) / columns.length
   }
-  let ground = 0
-  const withContrast: RampMark[] = kept.map((m) => {
-    const contrast = boundaryContrast(lumAt(m.at - 0.5 * m.width), lumAt(m.at + 0.5 * m.width))
-    const own = contrast + (Math.min(contrast, 0) - contrast) * ground
-    ground = Math.max(ground, smoothstep(DARK_FROM - 0.1, DARK_FROM + 0.1, contrast))
-    return { ...m, contrast: own }
+  // A single sample at a wide edge's end can sit on a steep part of the light below it, where a
+  // small change of a control moves the contrast a lot.
+  const sideOf = (m: Omit<RampMark, 'contrast'>, sign: number) => SIDE_SAMPLES.reduce((sum, t) => sum + lumAt(m.at + sign * t * m.width), 0) / SIDE_SAMPLES.length
+  const contrasts = kept.map((m) => boundaryContrast(sideOf(m, -1), sideOf(m, 1)))
+  const grounds = contrasts.map((c) => smoothstep(DARK_FROM - 0.1, DARK_FROM + 0.1, c))
+  const withContrast: RampMark[] = kept.map((m, j) => {
+    let inside = 0
+    kept.forEach((above, i) => {
+      if (i === j) return
+      const reach = (GROUND_REACH * (above.width + m.width)) / 2
+      inside = Math.max(inside, grounds[i] * smoothstep(-reach, reach, m.at - above.at))
+    })
+    const contrast = contrasts[j]
+    return { ...m, contrast: contrast + (Math.min(contrast, 0) - contrast) * inside }
   })
 
   const lowest = withContrast.find((m) => m.glow === 1)
@@ -276,6 +292,9 @@ export function rampBoundary(ctx: RecipeContext, u: RampUniforms): RampBoundary 
     transitions: withContrast.map(({ at: a, width: w, contrast }) => ({ at: a, width: w, contrast })),
     wander: knots,
     range: [sMin, sMax],
+    // Ramp recalibrates on every frame of a drag: one pass, with no steps that a small change
+    // of a control could add or drop.
+    direct: true,
   }
   const calibration = calibrated(params, ctx.aspect, ctx.seed)
   const indexOf = (pick: (m: RampMark) => boolean) => withContrast.findIndex(pick)

@@ -253,6 +253,13 @@ export interface BoundaryParams {
   wideWidth?: number
   /** Range of s0 over the frame; defaults to the frame height centered on 0. */
   range?: readonly [number, number]
+  /**
+   * Set each transition's amplitude and the fold guard in one pass, straight from the bumps and
+   * slopes at the requested wander, on half-size grids, instead of lowering them in steps until
+   * the rules hold. A small change of the input then never adds or drops a whole step, and the
+   * calibration takes a fraction of the time, for looks that recalibrate on every frame of a drag.
+   */
+  direct?: boolean
 }
 
 export const BOUNDARY_DEFAULTS = {
@@ -622,9 +629,12 @@ export interface BoundaryCalibration {
   }
 }
 
-const NA = 128 // columns of the calibration grids
-const NS = 256 // rows of the slope grid
-const NB = 160 // columns of the bump measure
+const GRID_COLUMNS = 128 // columns of the calibration grids
+const GRID_ROWS = 256 // rows of the slope grid
+const BUMP_COLUMNS = 160 // columns of the bump measure
+// A direct calibration's guard dips this much deeper than the columns' need (1 - (1 - need) / 0.9),
+// for the smooth curve through the guard samples, which can overshoot between them.
+const DIRECT_GUARD_MARGIN = 0.9
 
 /**
  * Calibrates the boundary model for one frame and seed. `aspect` is width /
@@ -771,6 +781,11 @@ export function calibrateBoundary(params: BoundaryParams, aspect: number, seed: 
 
   // Steps 1 to 4 and the report's numbers, on columns and grids that live only here.
   function rules() {
+    // A direct calibration works on half-size grids.
+    const direct = params.direct === true
+    const NA = direct ? GRID_COLUMNS / 2 : GRID_COLUMNS
+    const NS = direct ? GRID_ROWS / 2 : GRID_ROWS
+    const NB = direct ? BUMP_COLUMNS / 2 : BUMP_COLUMNS
     const columns = Array.from({ length: NA }, (_, i) => -halfW + (2 * halfW * (i + 0.5)) / NA)
     const bumpColumns = Array.from({ length: NB }, (_, i) => -halfW + (2 * halfW * (i + 0.5)) / NB)
     // The calibration window is at least calWidth wide, centered on the frame, so a
@@ -1037,8 +1052,10 @@ export function calibrateBoundary(params: BoundaryParams, aspect: number, seed: 
         for (let i = 0; i < NA; i++) if (Math.abs(columns[i] - sampleAt(k)) <= reach) m = Math.min(m, needCol[i])
         return m
       })
-      // the smooth curve through the samples can overshoot between them; lower the
-      // samples around any column it exceeds until it holds everywhere
+      // the smooth curve through the samples can overshoot between them; a direct calibration
+      // keeps a fixed margin under the need, otherwise the samples around any column it
+      // exceeds are lowered until it holds everywhere
+      if (direct) return s.map((v) => Math.max(0, 1 - (1 - v) / DIRECT_GUARD_MARGIN))
       for (let iter = 0; iter < 40; iter++) {
         let ok = true
         for (let i = 0; i < NA; i++) {
@@ -1059,7 +1076,19 @@ export function calibrateBoundary(params: BoundaryParams, aspect: number, seed: 
     // amplitude until its 50% line's bumps are long enough in the frame, then
     // recompute the guard for the new amplitudes
     const knotScale = new Array<number>(knots.length).fill(1)
-    for (let round = 0; round < 4; round++) {
+    if (direct) {
+      // one measure of each line's bumps at the requested wander sets its amplitude, then the
+      // guard is set once for those amplitudes
+      if (nT > 0) {
+        for (let j = 0; j < nT; j++) scale[j] = need(transitionBumps(j), steepFor(j))
+      } else {
+        for (let k = 0; k < knots.length; k++) if (knots[k][0] >= sMin && knots[k][0] <= sMax) knotScale[k] = need(knotBumps(k), BOUNDARY_BUMPS.steep)
+        knots.forEach((kn, k) => (kn[1] *= knotScale[k]))
+      }
+      state++
+      setGuard(foldGuard())
+    }
+    for (let round = 0; round < (direct ? 0 : 4); round++) {
       let lowered = false
       for (let pass = 0; pass < 6; pass++) {
         let changed = false
