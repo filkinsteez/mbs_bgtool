@@ -492,8 +492,6 @@ const CORNER_SHARE: readonly [number, number] = [0.08, 0.15]
 /** Under a dragged line a grey or blue dark ground covers a seeded share in this range, from a sliver to a large ground. */
 const DRAG_DARK_SHARE: readonly [number, number] = [0.06, 0.38]
 const OTHER_HUE_CORNER_SHARE: readonly [number, number] = [0.07, 0.11]
-/** Under a dragged line one of another hue (Plum, Forest) covers a seeded share in this range, met by darkened blue. */
-const DRAG_OTHER_HUE_SHARE: readonly [number, number] = [0.07, 0.13]
 
 /**
  * About how much of the frame a dark corner covers at 90 % or more of its color: its lobes as the
@@ -630,8 +628,9 @@ function planFor(arrangement: Arrangement): Plan {
       // The light from an upper corner, the sky darkening toward the opposite lower corner.
       return { offset: [0.35, 0.6], lift: [-0.9, -0.72], mid: 0, pair: 0.3, balance: [0, 0.6], innerBelow: true, toward: AWAY_UP, across: 0, darkScale: 1 }
     case 'pair':
-      // Two lights from the two lower corners, one a little stronger.
-      return { offset: [0.4, 0.58], lift: [0.06, 0.18], mid: 0, pair: 1, balance: [0.6, 0.85], innerBelow: false, toward: -AWAY_UP, across: 0, darkScale: 1 }
+      // Two lights from the two lower corners, one a little stronger, the sky darkening straight above the stronger
+      // one, so it ends dark in another corner than the diagonal's.
+      return { offset: [0.4, 0.58], lift: [0.06, 0.18], mid: 0, pair: 1, balance: [0.6, 0.85], innerBelow: false, toward: -AWAY_UP, across: 1, darkScale: 1 }
     default: {
       const unknown: never = arrangement
       throw new Error(`Unknown arrangement: ${String(unknown)}`)
@@ -726,7 +725,11 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // The way the light runs: from the lead toward its arrangement's point (Plan.toward). The sky darkens along it.
   const frameP: [number, number] = [Math.sqrt(aspect), 1 / Math.sqrt(aspect)]
   const leadP: [number, number] = [(at[0] - 0.5) * frameP[0], (at[1] - 0.5) * frameP[1]]
-  const awayAngle = Math.atan2(plan.toward - leadP[1], (plan.across - 1) * leadP[0])
+  // Over a dark ground (Plum, Forest, Slate) the pair keeps the corner across from the light, which seeds share
+  // less there; only a sky that just deepens (Bold) darkens above the pair's stronger light.
+  const groundPack = luminance(colors[SLOT.deep1]) > 1e-4
+  const across = arrangement === 'pair' && groundPack ? 0 : plan.across
+  const awayAngle = Math.atan2(plan.toward - leadP[1], (across - 1) * leadP[0])
   const tilt = lerp(-8, 8, r())
   // How much of the frame the lead takes against the inner bloom: a smaller lead gets a larger cyan or grey
   // bloom and the other way round, so seeds differ in how much of each pack color shows.
@@ -955,7 +958,8 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
         radius: lerp(0.48, 0.64, r()) * lerp(0.92, 1.12, soft),
         aniso: lerp(1.5, 2.1, r()),
         angle: darkAngle,
-        amount: lerp(0.18, 0.32, r()),
+        // Seeds differ in how deep the far sky gets, from a slightly darker blue to deep navy.
+        amount: lerp(0.12, 0.45, r()),
         falloff: 2.2,
         hold: 0,
         meet: 0,
@@ -982,8 +986,8 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // Under a dragged line the dark area's share of the frame is the seed's own draw, so seeds differ in it there
   // too; one of another hue stays within a corner's share.
   const dragShare = random(seed * 4421 + 7)()
-  const dragTarget = skyFamily ? lerp(DRAG_DARK_SHARE[0], DRAG_DARK_SHARE[1], dragShare) : lerp(DRAG_OTHER_HUE_SHARE[0], DRAG_OTHER_HUE_SHARE[1], dragShare)
-  const sizeDragDark = (z: ZenithSpec) => (darkGround ? sizeCorner(z, aspect, [dragTarget, dragTarget], zenithLobes) : z.radius * lerp(0.85, 1.3, dragShare))
+  const dragTarget = skyFamily ? lerp(DRAG_DARK_SHARE[0], DRAG_DARK_SHARE[1], dragShare) : lerp(OTHER_HUE_CORNER_SHARE[0], OTHER_HUE_CORNER_SHARE[1], dragShare)
+  const sizeDragDark = (z: ZenithSpec) => (darkGround ? sizeCorner(z, aspect, [dragTarget, dragTarget], zenithLobes) : z.radius * lerp(0.7, 1.6, dragShare))
   const rd = random(seed * 2903 + 5)
   const leadAniso = lerp(DRAG_ANISO[0], DRAG_ANISO[1], rd())
   // Where the other blooms sit under a dragged line: each seed's own places, spread over the frame.
