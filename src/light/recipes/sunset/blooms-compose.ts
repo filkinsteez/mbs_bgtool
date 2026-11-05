@@ -183,6 +183,7 @@ function followDrag(
   spots: readonly (readonly [number, number])[],
   darkTurn: number,
   warm: (slot: number) => boolean,
+  cyan: (slot: number) => boolean,
 ): BloomsLayout {
   const frame = [Math.sqrt(aspect), 1 / Math.sqrt(aspect)]
   const toP = (p: readonly number[]): [number, number] => [(p[0] - 0.5) * frame[0], (p[1] - 0.5) * frame[1]]
@@ -211,11 +212,50 @@ function followDrag(
   // deep end, where its dim light reads olive: toward the frame's point nearest the light beside a warm lead,
   // toward the middle beside a cool one (on it, cyan and yellow light make mint).
   const target = warm(layout.glows[0].color) ? insideFrame01(drag.from) : [0.5, 0.5]
-  const glows = layout.glows.map((glow, i) => {
+  const placed = layout.glows.map((glow, i) => {
     if (i === 0) return { ...glow, at: [drag.from[0], drag.from[1]] as [number, number], angle: (lineAngle * 180) / Math.PI, aniso: leadAniso, radius: reach / Math.sqrt(leadAniso) }
     const [x, y] = spots[(i - 1) % spots.length]
     const pull = warm(glow.color) ? DRAG_WARM_TOWARD_LIGHT : 0
     return { ...glow, at: [lerp(x, target[0], pull), lerp(y, target[1], pull)] as [number, number], angle: glow.angle + degrees }
+  })
+  // A bloom moves out of a warm lead's bright body, so the body keeps the light's own color: on it a second bloom
+  // or a cyan one adds up to cream or white. A bloom at e (the body's size is 1) moves straight away from the
+  // light's middle to 2e - e^2: one at the body's edge stays, and none moves faster than twice the line, so as the
+  // light passes over a bloom it is pushed aside and comes back, and never jumps across.
+  const pushOut = (at: [number, number], c: readonly number[], d: readonly number[], e: number): [number, number] =>
+    e >= 1 ? at : insideFrame01(fromP([c[0] + d[0] * (2 - e), c[1] + d[1] * (2 - e)]))
+  const clearOfLead = (at: [number, number], light: GlowSpec): [number, number] => {
+    const a = (light.angle * Math.PI) / 180
+    const clear = Math.min(DRAG_BODY_CLEAR * light.radius * Math.sqrt(light.aniso), DRAG_BODY_CLEAR_MAX)
+    const c = toP(light.at)
+    const q = toP(at)
+    const d = [q[0] - c[0], q[1] - c[1]]
+    return pushOut(at, c, d, Math.hypot((d[0] * Math.cos(a) + d[1] * Math.sin(a)) / clear, ((-d[0] * Math.sin(a) + d[1] * Math.cos(a)) * light.aniso) / clear))
+  }
+  // A cyan bloom and a warm one keep their bodies apart the same way (together they make mint, then white), the
+  // body here being DRAG_APART of their summed sizes around the warm one's middle; where they still overlap, the
+  // cyan one is dimmer.
+  const nearness = (at: readonly number[], size: number, other: GlowSpec) => {
+    const [c, q] = [toP(other.at), toP(at)]
+    return Math.hypot(q[0] - c[0], q[1] - c[1]) / (DRAG_APART * (size + other.radius))
+  }
+  const apart = (at: [number, number], size: number, other: GlowSpec): [number, number] => {
+    const c = toP(other.at)
+    const q = toP(at)
+    return pushOut(at, c, [q[0] - c[0], q[1] - c[1]], nearness(at, size, other))
+  }
+  const cyanGlow = (g: GlowSpec) => g.color !== SLOT.sky && cyan(g.color)
+  const keptOut = placed.map((glow, i) => {
+    const lead = placed[0]
+    return i > 0 && (warm(lead.color) || (cyanGlow(lead) && warm(glow.color))) ? { ...glow, at: clearOfLead(glow.at, lead) } : glow
+  })
+  const glows = keptOut.map((glow, i) => {
+    if (i === 0 || !cyanGlow(glow)) return glow
+    let at = glow.at
+    const warmOnes = keptOut.filter((other, j) => j > 0 && other !== glow && warm(other.color))
+    for (const other of warmOnes) at = apart(at, glow.radius, other)
+    const near = Math.min(1, ...warmOnes.map((other) => nearness(at, glow.radius, other)))
+    return { ...glow, at, gain: glow.gain * lerp(DRAG_OVERLAP_GAIN, 1, smoothstep(0.5, 1, near)) }
   })
   // The dark area slides along the frame's edge from where the line meets it, by the seed's share of the way.
   const slide = DRAG_DARK_SLIDE * darkTurn * Math.min(frame[0], frame[1])
@@ -246,8 +286,18 @@ function followDrag(
 
 /** How far inside the frame's edges a bloom's middle stays under a dragged line, in frame fractions. */
 const DRAG_INSIDE = 0.1
-/** A dragged light's reach against its distance outside the frame, so its light comes in over the near edge. */
-const DRAG_OUTSIDE_REACH = 2.4
+/**
+ * A dragged light's reach against its distance outside the frame, so its body comes in over the near edge and
+ * the edge glows in the light's own color, not only its pale outer light.
+ */
+const DRAG_OUTSIDE_REACH = 4
+/** How far from a warm dragged lead the other blooms keep, in its reach, and at most in units of sqrt(width * height). */
+const DRAG_BODY_CLEAR = 0.6
+const DRAG_BODY_CLEAR_MAX = 0.45
+/** How far apart a cyan bloom's and a warm bloom's middles stay under a dragged line, in their summed radii. */
+const DRAG_APART = 0.6
+/** A cyan bloom's strength where it still lies on a warm one under a dragged line. */
+const DRAG_OVERLAP_GAIN = 0.45
 /** A dragged lead's width / length, from a seed's own draw (narrow beam to round wash). */
 const DRAG_ANISO: readonly [number, number] = [1.2, 2.2]
 /** How far a dragged line draws a warm bloom toward the frame's point nearest the light. */
@@ -439,9 +489,11 @@ export const ZENITH_LOBE_INDEX = GLOW_COUNT
  * blob. One of another hue (Plum, Forest) stays smaller: its blend with the blue is not a clean one.
  */
 const CORNER_SHARE: readonly [number, number] = [0.08, 0.15]
-/** Under a dragged line a grey or blue dark ground covers a seeded share in this range. */
-const DRAG_DARK_SHARE: readonly [number, number] = [0.07, 0.24]
+/** Under a dragged line a grey or blue dark ground covers a seeded share in this range, from a sliver to a large ground. */
+const DRAG_DARK_SHARE: readonly [number, number] = [0.06, 0.38]
 const OTHER_HUE_CORNER_SHARE: readonly [number, number] = [0.07, 0.11]
+/** Under a dragged line one of another hue (Plum, Forest) covers a seeded share in this range, met by darkened blue. */
+const DRAG_OTHER_HUE_SHARE: readonly [number, number] = [0.07, 0.13]
 
 /**
  * About how much of the frame a dark corner covers at 90 % or more of its color: its lobes as the
@@ -522,8 +574,15 @@ function pickLead(colors: readonly Rgb[], u: number, arrangement: Arrangement): 
     return coolLeads ? { lead: cool, other: warm } : { lead: warm, other: cool }
   }
   const lighter = luminance(colors[a]) >= luminance(colors[b]) ? a : b
-  return { lead: lighter, other: lighter === a ? b : a }
+  const darker = lighter === a ? b : a
+  // A grey light (Steel) leads some seeds as an overcast glow, with the paler light (Ice) as the bright bloom
+  // beside it, so seeds differ in how much of each the frame shows.
+  if (isGrey(colors[darker]) && u < GREY_LEAD_SHARE) return { lead: darker, other: lighter }
+  return { lead: lighter, other: darker }
 }
+
+/** Share of seeds a grey light (Steel) leads, where the other light is a paler one (Ice). */
+const GREY_LEAD_SHARE = 0.5
 
 /**
  * How a seed arranges the light. Every arrangement is one large field of pack light on a sky, from a lead
@@ -681,7 +740,8 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // The lead stays narrower than the frame, so there is sky beside it for the other blooms.
   radius *= Math.min(1, LEAD_MAX_LONG_RADIUS / (radius * Math.sqrt(aniso)))
   const angle = -side * tilt
-  const leadGain = lightGain(colors[lead]) * lerp(isWarm(colors[lead]) ? 1 : 0.94, 1.06, r())
+  // A grey lead (Steel) is haze at its own hex; brightened, it reads as the paler light (Ice).
+  const leadGain = (isGrey(colors[lead]) ? 1 : lightGain(colors[lead])) * lerp(isWarm(colors[lead]) ? 1 : 0.94, 1.06, r())
 
   const glows: GlowSpec[] = [
     // A warm light hides the sky where it comes from (warmHaze). White or cool light over blue only pales it,
@@ -728,9 +788,11 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // light and partly see-through, so the blue still holds the mid sky around it.
   // A cyan bloom is a bloom, not the sky: rounder and about the lead's size, with blue around it, and
   // smaller in a tall frame, which it would otherwise cross. Under a warm lead it sits on the far side,
-  // apart from it: cyan and yellow light on top of each other make mint.
+  // apart from it: cyan and yellow light on top of each other make mint. Beside a grey lead (Steel) the paler
+  // light (Ice) takes this place at full strength, as the bright light in the haze.
   const greyOther = isGrey(colors[other])
-  const innerColor = !isCyan(colors[lead]) && (isCyan(colors[other]) || greyOther) ? other : SLOT.sky
+  const greyLead = isGrey(colors[lead])
+  const innerColor = !isCyan(colors[lead]) && (isCyan(colors[other]) || greyOther || greyLead) ? other : SLOT.sky
   const innerGrey = innerColor === other && greyOther
   const innerCyan = innerColor !== SLOT.sky && isCyan(colors[innerColor])
   const innerSide = innerColor === other && isCyan(colors[other]) && isWarm(colors[lead]) ? -side : side
@@ -750,7 +812,12 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
           : lerp(1.15, 1.4, uSize)),
     aniso: innerCyan || innerGrey ? lerp(1.7, 2.5, uAniso) : lerp(2.8, 3.8, uAniso),
     angle: -side * lerp(-4, 12, r()),
-    gain: innerColor === SLOT.sky ? lerp(0.25, 0.4, uGain) : innerGrey ? lerp(1.0, 1.2, uGain) : lightGain(colors[innerColor]) * lerp(0.65, 0.85, uGain),
+    gain:
+      innerColor === SLOT.sky
+        ? lerp(0.25, 0.4, uGain)
+        : innerGrey
+          ? lerp(1.0, 1.2, uGain)
+          : lightGain(colors[innerColor]) * (greyLead ? lerp(1.0, 1.06, uGain) : lerp(0.65, 0.85, uGain)),
     beta: beta * (innerCyan ? lerp(0.75, 0.9, uBeta) : lerp(0.5, 0.6, uBeta)),
     // Enough haze that a light bloom's middle is its own color, not a blend with the blue behind it; the
     // grey patch is thinner, so blue shows through its edges.
@@ -855,7 +922,11 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // or blue dark color (Slate, Near-black) blends with the blue cleanly at any lightness, so it can
   // reach well into the frame; one of another hue (Plum, Forest) stays in a corner that is already
   // dark, so the two meet where both are dark and no lighter purple or teal band runs between them.
-  const deep = r() < 0.5 ? SLOT.deep1 : SLOT.deep2
+  // Where both dark colors blend with the blue (Slate and Near-black), neighbouring seeds take turns at them, so a
+  // run of seeds shows both; Plum and Forest stay a seeded draw.
+  const firstDark = r() < 0.5
+  const bothBlend = [SLOT.deep1, SLOT.deep2].every((d) => luminance(colors[d]) > 1e-4 && blendsWithSky(colors[d], colors[SLOT.sky]))
+  const deep = (bothBlend ? Math.round(seed) % 2 === 0 : firstDark) ? SLOT.deep1 : SLOT.deep2
   const darkGround = luminance(colors[deep]) > 1e-4
   const skyFamily = darkGround && blendsWithSky(colors[deep], colors[SLOT.sky])
   // The dark area sits at the frame edge the sky darkens toward, lying along it, as the frame's anchor; its
@@ -911,7 +982,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // Under a dragged line the dark area's share of the frame is the seed's own draw, so seeds differ in it there
   // too; one of another hue stays within a corner's share.
   const dragShare = random(seed * 4421 + 7)()
-  const dragTarget = skyFamily ? lerp(DRAG_DARK_SHARE[0], DRAG_DARK_SHARE[1], dragShare) : lerp(OTHER_HUE_CORNER_SHARE[0], OTHER_HUE_CORNER_SHARE[1], dragShare)
+  const dragTarget = skyFamily ? lerp(DRAG_DARK_SHARE[0], DRAG_DARK_SHARE[1], dragShare) : lerp(DRAG_OTHER_HUE_SHARE[0], DRAG_OTHER_HUE_SHARE[1], dragShare)
   const sizeDragDark = (z: ZenithSpec) => (darkGround ? sizeCorner(z, aspect, [dragTarget, dragTarget], zenithLobes) : z.radius * lerp(0.85, 1.3, dragShare))
   const rd = random(seed * 2903 + 5)
   const leadAniso = lerp(DRAG_ANISO[0], DRAG_ANISO[1], rd())
@@ -920,5 +991,8 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // Where along the far side the deep sky gathers under a dragged line: the seed turns it off the line's way.
   const darkTurn = (lerp(-DRAG_DARK_TURN, DRAG_DARK_TURN, rd()) * Math.PI) / 180
   const warmSlot = (slot: number) => isWarm(colors[slot])
-  return controls.drag ? followDrag(layout, controls.drag, aspect, sizeDragDark, awayAngle, leadAniso, cyanLead ? CYAN_DRAG_REACH : 1, spots, darkTurn, warmSlot) : layout
+  const cyanSlot = (slot: number) => isCyan(colors[slot])
+  return controls.drag
+    ? followDrag(layout, controls.drag, aspect, sizeDragDark, awayAngle, leadAniso, cyanLead ? CYAN_DRAG_REACH : 1, spots, darkTurn, warmSlot, cyanSlot)
+    : layout
 }
