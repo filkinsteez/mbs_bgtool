@@ -83,9 +83,15 @@ const base = parseBase(args.at)
 const values = range(Math.round(Number(args.from ?? 0) * 100), Math.round(Number(args.to ?? 1) * 100)).map((i) => i / 100)
 /** Line sweeps: the base lines they start from, and each control's values (the drag reaches 0.25 past each edge). */
 const baseLines = args.line === undefined ? (quick ? BASE_LINES.slice(0, 1) : BASE_LINES) : [].concat(args.line).map(parseLine)
+/** --reach R runs the start sweeps from -R to 1 + R, past the image's edges. */
+const reach = args.reach === undefined ? null : Number(args.reach)
+/** --off d1,d2 with --grid: sheets of lines that start off each edge and corner at those distances (frame units). */
+const offDistances = list(args.off).map(Number)
+/** --off-to mirror: those lines cross the frame to the point opposite their start; center (default): to the middle. */
+const offToMirror = args['off-to'] === 'mirror'
 const LINE_VALUES = {
-  startx: stepsBetween(quick ? 0 : -0.25, quick ? 1 : 1.25),
-  starty: stepsBetween(quick ? 0 : -0.25, quick ? 1 : 1.25),
+  startx: reach !== null ? stepsBetween(-reach, 1 + reach) : stepsBetween(quick ? 0 : -0.25, quick ? 1 : 1.25),
+  starty: reach !== null ? stepsBetween(-reach, 1 + reach) : stepsBetween(quick ? 0 : -0.25, quick ? 1 : 1.25),
   angle: stepsBetween(0, 1),
   length: stepsBetween(quick ? 0.1 : 0.05, quick ? 1 : 1.25),
   afterdrag: stepsBetween(0, 1),
@@ -843,6 +849,58 @@ try {
     console.log(`${look} ${format}: ${shown(directions)}, ${shown(lengths)}`)
   }
 
+  /**
+   * One sheet per look, format and distance: per seed (rows) and pack (columns) a 3 x 3 block with the seed's own frame
+   * in the middle and, around it, the line starting `distance` off each edge and corner of the image, where it sits,
+   * and running to the image's middle. Captions give the start and the frame's mean Oklab L, so a frame gone dark shows.
+   */
+  const writeOffSheet = async (look, format, distance) => {
+    const { aspect, render } = frameOf(format)
+    const d = distance
+    const places = [[-d, -d], [0.5, -d], [1 + d, -d], [-d, 0.5], null, [1 + d, 0.5], [-d, 1 + d], [0.5, 1 + d], [1 + d, 1 + d]]
+    const gap = 4
+    const captionHeight = 18
+    const cellWidth = render.width + gap
+    const cellHeight = render.height + captionHeight + gap
+    const blockWidth = 3 * cellWidth + 3 * gap
+    const blockHeight = 3 * cellHeight + 3 * gap
+    const titleHeight = 30
+    const composites = [
+      {
+        input: textSvg(`${label}: ${look} ${format}. Per pack and seed: the seed's own frame in the middle; around it the line from ${d} off each edge and corner of the image ${offToMirror ? 'across it to the point opposite' : 'to its middle'} (drawn where it is on the image). L: mean Oklab L.`, packs.length * blockWidth - 8, 13, '#e8e8e8'),
+        left: 4,
+        top: 6,
+      },
+    ]
+    for (const [row, seed] of seeds.entries()) {
+      for (const [column, pack] of packs.entries()) {
+        for (const [i, place] of places.entries()) {
+          const end = place ? (offToMirror ? [1 - place[0], 1 - place[1]] : [0.5, 0.5]) : null
+          const controls = controlsForLine(look, pack, seed, format, place ? { from: place, to: end } : null)
+          const scene = buildScene(look, getPack(pack), seed, controls, aspect)
+          const image = await harness.render({ scene, width: render.width, height: render.height, supersample: 2 })
+          const thumb = labThumb(image)
+          let sum = 0
+          for (let k = 0; k < thumb.lab.length; k += 3) sum += thumb.lab[k]
+          const meanL = (sum / (thumb.lab.length / 3)).toFixed(2)
+          const shownImage = controls.drag ? withLine(image, controls.drag) : image
+          const left = column * blockWidth + (i % 3) * cellWidth
+          const top = titleHeight + row * blockHeight + Math.floor(i / 3) * cellHeight
+          const caption = place ? `${place.map((v) => Math.round(v * 100) / 100).join(', ')}  L ${meanL}` : `${pack} s${seed} own  L ${meanL}`
+          composites.push({ input: textSvg(caption, render.width - 4, 12), left: left + 2, top })
+          composites.push({ input: shownImage.data, raw: { width: shownImage.width, height: shownImage.height, channels: 4 }, left, top: top + captionHeight })
+        }
+      }
+    }
+    const file = path.join(outDir, `${look.split('.')[1]}-off${d}${offToMirror ? '-across' : ''}-${format}.jpg`)
+    await mkdir(outDir, { recursive: true })
+    await sharp({ create: { width: packs.length * blockWidth, height: titleHeight + seeds.length * blockHeight, channels: 3, background: BACKGROUND } })
+      .composite(composites)
+      .jpeg({ quality: JPEG_QUALITY })
+      .toFile(file)
+    console.log(`${look} ${format} off ${d}: ${shown(file)}`)
+  }
+
   if (grid) {
     for (const look of looks) {
       if (info.recipeErrors[look]) {
@@ -850,7 +908,10 @@ try {
         failed = true
         continue
       }
-      for (const format of formats) await writeSheets(look, format)
+      for (const format of formats) {
+        if (offDistances.length) for (const distance of offDistances) await writeOffSheet(look, format, distance)
+        else await writeSheets(look, format)
+      }
     }
   }
 

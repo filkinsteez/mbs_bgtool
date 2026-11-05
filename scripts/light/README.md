@@ -222,6 +222,8 @@ Line sweeps (`--control line`, or any of `startx,starty,angle,length`) check the
 node scripts/light/control-sweep.mjs --grid [--look ramp,...] [--pack bold] [--seeds 1-3] [--format 16x9] [--out dir]
 ```
 
+`--reach R` runs the `startx` and `starty` sweeps from -R to 1 + R, so the line's start moves past the image's edges (a drag may start anywhere in the stage around the image; `POINT_REACH` in `src/tool/controls.ts` is how far past the edges the tool keeps it). `--grid --off 0.25,0.5` writes, instead of the two sheets below, one sheet per look and distance, `<look>-off<d>-<format>.jpg`: per pack and seed a 3 x 3 block with the seed's own frame in the middle and, around it, the line starting that far off each edge and corner of the image, where it sits, running to the image's middle (`--off-to mirror`: across the image to the point opposite its start, `-across` in the file name). Captions give each frame's mean Oklab L, so a frame gone dark stands out.
+
 Two sheets per look for the dragged line, to look at (default out `artifacts/control-sweep/grid`): `<look>-directions-<format>.jpg`, per pack and seed a 3 x 3 block with the seed's own frame in the middle and the line from 0.5,0.55 with length 0.5 short sides in 8 directions, each frame where its direction points; and `<look>-lengths-<format>.jpg`, per pack and seed the seed's own frame and the line from 0.5,0.88 pointing up with length 0.25, 0.5 and 0.9. Captions give the mood control the tool sets from the line's start.
 
 ```sh
