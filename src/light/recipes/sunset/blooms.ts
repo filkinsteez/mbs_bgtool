@@ -263,16 +263,17 @@ function bridgeLight(sky: Rgb, light: Rgb, tint: Rgb, haze: number, intensity: n
  * Intensity is daylight. The sky gains more than the glows (twilight skies
  * dim fastest overhead), so more light brightens the whole frame and the top
  * included, while the glows only whiten close to where they come from. At
- * 0.5 both gains are 1, so a flat sky is its exact hex. Toward 0 the glows
- * keep most of their brightness but shrink and their warm light deepens, as
- * the light of a lower sun does; toward 1 they shrink a little, so the
+ * 0.5 both gains are 1, so a flat sky is its exact hex. Toward 0 the sky
+ * dims while the glows keep their brightness but shrink, and their warm light
+ * turns a deeper hue at the same luminance, as the light of a lower sun does
+ * (dimmed, Yellow reads dark gold); toward 1 they shrink a little, so the
  * whitened part stays near the source.
  */
 function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity: number, seed: number): UniformMap {
   const skyGain = 2 ** ((intensity - 0.5) * 1.6)
   // Above the default the glow's body gains little: the extra light goes to its core (layout.core), so a
   // glow brightens toward its source and goes white there instead of whitening flat across its middle.
-  const lightGain = 2 ** ((intensity - 0.5) * (intensity < 0.5 ? 0.5 : 0.3))
+  const lightGain = intensity < 0.5 ? 1 : 2 ** ((intensity - 0.5) * 0.3)
   const reach = 1 - 0.14 * Math.max(0, 1 - 2 * intensity) - 0.08 * Math.max(0, 2 * intensity - 1)
   const depth = 1 + 0.8 * Math.max(0, 0.5 - intensity)
   const paleLight = 1 - 0.45 * Math.max(0, 2 * intensity - 1)
@@ -315,7 +316,8 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
       continue
     }
     const base = slot(glow.color)
-    const light = scale(isWarm(base) ? deepen(base, depth) : base, glow.gain)
+    const deepened = deepen(base, depth)
+    const light = scale(isWarm(base) ? scale(deepened, luminance(base) / Math.max(luminance(deepened), 1e-6)) : base, glow.gain)
     // A glow's haze may hide at most as much sky light as the glow itself adds, so haze does not darken
     // the frame; only below the glow's center, where the light crosses more air, it hides a little more.
     // Both at this Intensity's gains: with more daylight the sky gains more than the glows, and a core
@@ -333,8 +335,15 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     const y = luminance(light) * gain * paleLight
     const tailShare = otherHue(sky, light)
     glowTail.push(...light.map((c, ch) => c * gain * (1 - tailShare) + skyPale[ch] * y * tailShare))
-    glowLow.push(...scale(deepMember(light), gain))
-    glowWarm.push(isWarm(base) ? 1 : 0)
+    // A muted warm light (Tan) has no deeper member that is still a light: deepened, it reads brown, so it
+    // keeps its own color low down and over a deep area.
+    const lab = linearToOklab(base)
+    const muted = isWarm(base) && Math.hypot(lab[1], lab[2]) < MUTED_CHROMA
+    // A warm light's deeper member keeps its luminance, so its low side is a brighter amber, not a dark one.
+    const deeper = deepMember(light)
+    const lowLight = isWarm(base) ? scale(deeper, luminance(light) / Math.max(luminance(deeper), 1e-6)) : deeper
+    glowLow.push(...scale(muted ? light : lowLight, gain))
+    glowWarm.push(isWarm(base) && !muted ? 1 : 0)
     // Only a light has a source to brighten toward; a patch of sky or a pack grey stays soft throughout.
     const short = bridgeGate(sky, light) * Math.max(0, CORE_ABOVE_BRIDGE - linearToOklab(base)[0])
     const core = isSourceLight(glow.color, base) ? Math.min(MAX_CORE, layout.core * (1 + CORE_LIFT * short)) : 0
@@ -389,6 +398,9 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
 
 /** Pack colors darker than this Oklab L are grounds the sky deepens toward, not lights. */
 const DARK_L = 0.45
+
+/** Oklab chroma under which a warm light is muted (Tan), with no deeper member that still reads as a light. */
+const MUTED_CHROMA = 0.1
 
 /**
  * The colors by role: Meta Blue for the sky, the pack's dark colors (in pack
@@ -628,8 +640,9 @@ vec3 bloomsScene(vec2 uv) {
       k[i] = bloom(P, warp, (uGlowShape[i].xy - 0.5) * frame, uGlowAxis[i], stretch, uGlowShape[i].z, uGlowEdge[i].xyz, uGlowBend[i], i, shortUnit, lobe, falloff, uGlowCore[i], kc[i]);
       vec2 c = (uGlowShape[i].xy - 0.5) * frame;
       low[i] = smoothstep(-0.25, 1.0, (P.y - c.y) * uGlowAxis[i].w * stretch.y);
-      // Low down the light passes through more air, which hides more of the sky behind it.
-      ext += uGlowShape[i].w * k[i] * k[i] * (1.0 + LOW_HAZE * low[i]);
+      // Low down the light passes through more air, which hides more of the sky behind it. Not where the sky
+      // below it is the deep sky (a light above the frame): hiding the deep blue leaves a dim warm light, dark gold.
+      ext += uGlowShape[i].w * k[i] * k[i] * (1.0 + LOW_HAZE * low[i] * (1.0 - above));
     }
   }
   float T = exp(-ext);
@@ -648,17 +661,32 @@ vec3 bloomsScene(vec2 uv) {
     // white light over blue never reads lavender. Low down a warm glow's own color is its deeper
     // member, so it keeps its chroma toward the horizon. Over a deep area the faint light is the
     // deeper member too, added as light: pink-white turns coral and makes violet over indigo.
-    float ill = mix(1.0, topLight, uGlowDeepFade[i]) * ground;
-    vec3 body = mix(uGlowColor[i], uGlowLow[i], low[i] * uGlowWarm[i]);
+    // A glow is a light: its core and inner body keep their brightness wherever it sits, so its brightest
+    // part is at least as light as its own hex and only goes toward white. Over a deep sky its own color
+    // keeps to its middle and its edge is its pale faint light, still lit, so it fades through pale light,
+    // never dark gold, olive or brown. Farther out its light dims with the sky as before, so the deep sky
+    // stays deep and the blue and a dark ground meet where both are dark. The deeper member on the low side
+    // belongs to a low sun over the pale horizon sky; over deep sky the light keeps its own color to its edge.
+    float deepLit = mix(1.0, topLight, uGlowDeepFade[i]);
+    float bodyLit = mix(deepLit, 1.0, smoothstep(0.35, 0.7, k[i]));
+    float edgeLit = mix(deepLit, 1.0, smoothstep(0.15, 0.3, k[i]) * (1.0 - smoothstep(0.5, 0.8, k[i])));
+    // Against a sky much dimmer than the light, its own color keeps to where it is bright.
+    float skyRel = dot(sky, vec3(0.2126, 0.7152, 0.0722)) / max(dot(uGlowColor[i], vec3(0.2126, 0.7152, 0.0722)), 1e-4);
+    float bodyShare = smoothstep(mix(0.5, 0.15, smoothstep(0.45, 1.0, skyRel) * deepLit), 0.8, k[i]);
+    vec3 body = mix(uGlowColor[i], uGlowLow[i], low[i] * uGlowWarm[i] * toLight);
     vec3 faint = mix(uGlowTail[i], uGlowLow[i], deepArea);
     // The core is the light's own pale tint, so an overexposed source whitens the way fire does (Orange-red
     // through yellow-white), not through pink.
-    vec3 light = (mix(faint, body, smoothstep(0.15, 0.8, k[i])) * (k[i] - kc[i]) + uGlowCoreTint[i] * kc[i]) * ill;
+    vec3 light = (mix(faint * edgeLit, body * bodyLit, bodyShare) * (k[i] - kc[i]) + uGlowCoreTint[i] * kc[i]) * ground;
     float f = uGlowEdge[i].w;
     behind += (1.0 - f) * light;
     front += f * light;
     lit += f * k[i];
-    bridge += uGlowBridge[i] * (k[i] * ill * (1.0 - deepArea));
+    // The pale light where a glow meets the sky is its own light, so it does not dim with the deeper sky: dimmed,
+    // warm light and blue meet in a grey. Near a held dark ground it still dims with the sky, so it lays no grey
+    // veil over the ground's soft edge.
+    float bridgeLit = mix(1.0, deepLit, uZenithHold * smoothstep(0.0, 0.3, z));
+    bridge += uGlowBridge[i] * (k[i] * bridgeLit * ground * (1.0 - deepArea));
   }
   // The glows' haze is lit by their light, so it hides at most as much of the sky's light as they add: no
   // ring darker than the open sky around a glow, below it or where the sky is pale.

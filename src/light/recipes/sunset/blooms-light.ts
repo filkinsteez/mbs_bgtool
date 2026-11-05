@@ -73,6 +73,24 @@ export function deepMember(c: Rgb): Rgb {
   return deepen(c, Math.min(DEEP_MAX_POWER, Math.max(DEEP_MIN_POWER, toFloor)))
 }
 
+/** Oklab chroma above the least a bridge can reach that it settles for when it cannot reach its limit. */
+const NEUTRAL_MARGIN = 0.005
+/** Oklab chroma over the limit across which a bridge's chroma limit comes in. */
+const NEUTRAL_EDGE = 0.02
+
+/** Where f is least on [lo, hi], by golden-section search (f has one minimum there). */
+function goldenSearch(f: (x: number) => number, lo: number, hi: number): number {
+  let a = lo
+  let b = hi
+  for (let i = 0; i < 40; i++) {
+    const x = a + (b - a) * 0.382
+    const y = a + (b - a) * 0.618
+    if (f(x) < f(y)) b = y
+    else a = x
+  }
+  return 0.5 * (a + b)
+}
+
 /** Glow weight where the glow and the sky behind its haze weigh the same: k = exp(-haze k^2). */
 function balancePoint(haze: number): number {
   let lo = 0
@@ -145,28 +163,26 @@ export function bridgeAmount(sky: Rgb, glow: Rgb, tint: Rgb, haze: number, maxL 
     }
     forLight = 0.5 * (lo + hi)
   }
-  // Smallest amount that brings the chroma down to maxC, or the one with the least chroma if none does.
+  // The amount past the chroma's peak where it comes down to maxC, or to NEUTRAL_MARGIN above the least chroma it
+  // can reach where that is more than maxC. Adding pale light first raises the chroma, and near its least the chroma
+  // barely changes over a wide range of amounts, so the limit comes in gradually as the peak rises NEUTRAL_EDGE
+  // above the aim. Switched on at once, when the blend without pale light passed maxC, it made the amount jump
+  // between neighbouring control steps.
   let forNeutral = 0
-  if (Number.isFinite(maxC) && lch(0)[1] > maxC) {
-    let lo = 0
-    let hi = 2
-    for (let i = 0; i < 40; i++) {
-      const a = lo + (hi - lo) * 0.382
-      const b = lo + (hi - lo) * 0.618
-      if (lch(a)[1] < lch(b)[1]) hi = b
-      else lo = a
-    }
-    const least = 0.5 * (lo + hi)
-    forNeutral = least
-    if (lch(least)[1] <= maxC) {
-      let below = 0
+  if (Number.isFinite(maxC)) {
+    const least = goldenSearch((amount) => lch(amount)[1], 0, 2)
+    const goal = Math.max(maxC, lch(least)[1] + NEUTRAL_MARGIN)
+    const peak = goldenSearch((amount) => -lch(amount)[1], 0, least)
+    const over = smoothstep(0, NEUTRAL_EDGE, lch(peak)[1] - goal)
+    if (over > 0) {
+      let below = peak
       let above = least
       for (let i = 0; i < 32; i++) {
         const amount = 0.5 * (below + above)
-        if (lch(amount)[1] > maxC) below = amount
+        if (lch(amount)[1] > goal) below = amount
         else above = amount
       }
-      forNeutral = 0.5 * (below + above)
+      forNeutral = over * 0.5 * (below + above)
     }
   }
   return gate * Math.max(forLight, forNeutral)

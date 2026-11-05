@@ -314,8 +314,10 @@ const MAX_BODY = 0.95
 export function lightGain(c: Rgb): number {
   const y = luminance(c)
   if (y <= 1e-6) return 0
+  // A warm light's body is at least its own hex: below it Yellow reads dark gold.
+  const gain = clamp((isGreen(c) ? 0.8 : 0.62) / y, isWarm(c) ? 1 : MIN_LIGHT_GAIN, MAX_LIGHT_GAIN)
   // A saturated light's body also stays below clipping (Orange-red), so it keeps its hue; its core whitens it.
-  return Math.min(clamp((isGreen(c) ? 0.8 : 0.62) / y, MIN_LIGHT_GAIN, MAX_LIGHT_GAIN), MAX_BODY / Math.max(c[0], c[1], c[2]))
+  return Math.min(gain, MAX_BODY / Math.max(c[0], c[1], c[2]))
 }
 
 /**
@@ -679,7 +681,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // The lead stays narrower than the frame, so there is sky beside it for the other blooms.
   radius *= Math.min(1, LEAD_MAX_LONG_RADIUS / (radius * Math.sqrt(aniso)))
   const angle = -side * tilt
-  const leadGain = lightGain(colors[lead]) * lerp(0.94, 1.06, r())
+  const leadGain = lightGain(colors[lead]) * lerp(isWarm(colors[lead]) ? 1 : 0.94, 1.06, r())
 
   const glows: GlowSpec[] = [
     // A warm light hides the sky where it comes from (warmHaze). White or cool light over blue only pales it,
@@ -703,10 +705,11 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
       at: nearEqual
         ? [0.5 - side * lerp(plan.offset[0], plan.offset[1], r()), at[1] + lerp(-0.08, 0.04, r())]
         : [clamp(at[0] - side * lerp(0.4, 0.62, r()), 0.06, 0.94), Math.max(MIN_LEAD_Y, Math.min(at[1], 0.8) - lerp(0.06, 0.22, r()))],
-      radius: radius * (nearEqual ? lerp(0.6, 0.9, balance) : lerp(0.25, 0.45, balance)),
+      // A light: at its middle at least its own hex, like the lead, so it is the weaker one by its size alone.
+      radius: radius * (nearEqual ? lerp(0.6, 0.9, balance) : lerp(0.25, 0.45, balance)) * Math.sqrt(lerp(0.45, 0.9, balance)),
       aniso: lerp(1.6, 2.6, r()),
       angle: -angle * lerp(0.3, 1.0, r()),
-      gain: leadGain * lerp(0.45, 0.9, balance),
+      gain: leadGain,
       beta,
       haze: isWarm(colors[lead]) ? warmHaze(colors[lead], r()) * 0.8 : lerp(0.9, 1.4, r()),
       vary: lerp(0.45, 0.85, r()),
@@ -743,7 +746,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
       (innerGrey
         ? lerp(0.6, 0.8, uSize) * lerp(1.3, 0.8, leadShare)
         : innerCyan
-          ? lerp(1.0, 1.25, uSize) * lerp(1.45, 0.7, leadShare) * (aspect < 1 ? 0.75 : 1)
+          ? lerp(1.0, 1.25, uSize) * lerp(1.45, 0.7, leadShare) * (aspect < 1 ? 0.62 : 1)
           : lerp(1.15, 1.4, uSize)),
     aniso: innerCyan || innerGrey ? lerp(1.7, 2.5, uAniso) : lerp(2.8, 3.8, uAniso),
     angle: -side * lerp(-4, 12, r()),
@@ -805,8 +808,9 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
         radius: farRadius * (green ? 0.85 : 1),
         aniso: warmUnderCool ? lerp(2.2, 3.0, r()) : green ? lerp(1.8, 2.4, r()) : farAniso,
         angle: farAngle,
-        // The warm bloom under a cool lead is small but at nearly full strength: dimmed, Yellow reads mustard.
-        gain: lightGain(colors[other]) * (warmUnderCool || green ? lerp(0.85, 1.0, r()) : lerp(0.4, 0.55, r())),
+        // A light never sits below its own hex at its middle, however small: dimmed, Yellow reads dark gold, Tan
+        // brown and Lime olive.
+        gain: lightGain(colors[other]) * lerp(1.0, 1.06, r()),
         beta: beta * lerp(0.85, 0.95, r()),
         // Little haze: a dim light that hides the blue behind it turns grey. The warm bloom under a cool lead
         // and a green far light are lights of their own, so they show their color at their middle.
