@@ -35,6 +35,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
   const drift: number[] = []
   const pale: number[] = []
   const core: number[] = []
+  const veil: number[] = []
   const bumps: Record<'at' | 'width' | 'top' | 'bottom' | 'cover' | 'light', number[]> = { at: [], width: [], top: [], bottom: [], cover: [], light: [] }
   for (let i = 0; i < BAND_MAX; i++) {
     const key = (name: Parameters<typeof bandKey>[1]) => bandKey(i, name)
@@ -42,6 +43,8 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     const coreColor = ownLight > 0.5 ? bandColor(i).map((v) => v / Math.max(luminance(bandColor(i)), 1e-4)) : paleLight(bandColor(i) as Rgb)
     pale.push(...(paleAmount > 0 ? coreColor.map((v) => v * paleAmount) : [0, 0, 0]))
     core.push(coreHeight, corePlace)
+    const [veilAmount, veilHeight] = ctx.vec(key('Veil'))
+    veil.push(...(veilAmount > 0 ? paleLight(bandColor(i) as Rgb).map((v) => v * veilAmount) : [0, 0, 0]), veilHeight)
     const [top, bottom] = ctx.vec(key('Edges'))
     const [fadeTop, fadeBottom] = ctx.vec(key('Fade'))
     const [waveTop, waveBottom, wavelength] = ctx.vec(key('Wave'))
@@ -129,6 +132,9 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     uBandDrift: drift,
     uBandPale: pale,
     uBandCore: core,
+    uBandVeil: veil,
+    uSkyVeilColor: paleLight(ctx.colors[0] as Rgb).map((v) => v * Math.max(0, ctx.vec('skyVeil')[0])),
+    uSkyVeilSpan: ctx.vec('skyVeil').slice(1, 4),
     uBumpAt: bumps.at,
     uBumpWidth: bumps.width,
     uBumpTop: bumps.top,
@@ -204,6 +210,9 @@ uniform vec4 uBandSun[BAND_MAX];    // light toward the sun, cover toward the su
 uniform vec3 uBandDrift[BAND_MAX];  // how fast red, green and blue deepen as the band's light dims
 uniform vec3 uBandPale[BAND_MAX];   // pale light of the band's own hue at its core, near the light's column (0: none)
 uniform vec2 uBandCore[BAND_MAX];   // the band's height (frame heights) and where its core is (0 its top, 1 its height below)
+uniform vec4 uBandVeil[BAND_MAX];   // pale light of the band's own hue at its lower edge (rgb, 0: none), the band's height
+uniform vec3 uSkyVeilColor;          // pale light of the sky's own hue where the sky meets the light's side (0: none)
+uniform vec3 uSkyVeilSpan;           // where that veil starts and is full (frame heights), the sky's light gain there
 uniform vec4 uBumpAt[BAND_MAX];
 uniform vec4 uBumpWidth[BAND_MAX];
 uniform vec4 uBumpTop[BAND_MAX];
@@ -318,6 +327,12 @@ vec3 scene(float x, float v, vec2 p) {
   }
   float giveWay = exp(-uExtinction * glowDepth);
   vec3 c = base * skyGain * giveWay;
+  if (uSkyVeilColor != vec3(0.0) || uSkyVeilSpan.z != 0.0) {
+    // The sky pales toward the light: its full color only at the far edge, then more light and a pale tint of its
+    // own hue all the way down to where the bands begin.
+    float t = smoothstep(uSkyVeilSpan.x, uSkyVeilSpan.y, v);
+    c = c * (1.0 + uSkyVeilSpan.z * t) + toMix(uSkyVeilColor) * t * skyGain * giveWay;
+  }
   // Share of the frame here that no covering band hides; the glow shows through it.
   float open = 1.0;
 
@@ -379,10 +394,16 @@ vec3 scene(float x, float v, vec2 p) {
     float a = mode == 2 || mode == 3 ? shape * cover : min(1.0, shape * cover * look.x);
     vec3 emit = toMix(deepen(uBandColor[i], light * uIntensity, uBandDrift[i]) * light);
     if (uBandPale[i] != vec3(0.0)) {
-      // Bright light goes pale: at its core, near the light's column, the band's light pales toward white in its
-      // own hue, and its full color shows only around that.
+      // Bright light goes pale: at its core, close to the light's column, the band's light pales toward white in
+      // its own hue, and its full color shows around that.
       float d = (v - top) / max(uBandCore[i].x, 1e-3) - uBandCore[i].y;
-      emit += toMix(uBandPale[i]) * light * sunFall * exp(-d * d / 0.12);
+      emit += toMix(uBandPale[i]) * light * sunFall * sunFall * exp(-d * d / 0.12);
+    }
+    if (uBandVeil[i].xyz != vec3(0.0)) {
+      // Haze near the light below: a band above the light pales toward its lower edge in its own hue, most near
+      // the light's column, so away from it the band keeps its own color.
+      float depth = saturate((v - top) / max(uBandVeil[i].w, 1e-3));
+      emit += toMix(uBandVeil[i].xyz) * light * sunFall * depth * depth;
     }
     if (mode == 3) {
       // Light bands are the sky's own light too, so they give way to a glow in the same way.

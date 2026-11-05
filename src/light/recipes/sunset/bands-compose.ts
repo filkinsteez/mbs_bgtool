@@ -2,7 +2,7 @@ import { linearToOklch } from '../../color/oklab'
 import { PACKS, type ColorPack } from '../../color/packs'
 import { hexToLinear } from '../../color/srgb'
 import type { ControlValues, LensSettings, OutputSettings, ParamValue } from '../../scene'
-import { closeHues, dimDrift, isLightColor, isWarm, needsBridge } from './bands-light'
+import { closeHues, dimDrift, isLightColor, isWarm, needsBridge, paleLight } from './bands-light'
 import { BAND_MAX, bandKey, BUMP_MAX, LIGHT_MAX, LIGHT_SHADE, lightKey, MODE_ADD, MODE_COVER, MODE_LIGHT, PATCH_MAX, patchKey } from './bands-params'
 import { edgeAt, edgeSeed, type Bump, type EdgeShape } from './bands-shape'
 import { placeHorizon } from './horizon'
@@ -30,6 +30,10 @@ export interface BandsComposition {
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
+const smoothstep = (a: number, b: number, x: number) => {
+  const t = clamp((x - a) / (b - a), 0, 1)
+  return t * t * (3 - 2 * t)
+}
 
 interface Random {
   next(): number
@@ -104,6 +108,8 @@ interface Band {
   pale?: number
   /** The core is more of the band's own light instead, which the tone curve pales. */
   paleOwn?: boolean
+  /** Pale light of the band's own hue at its lower edge, rising across it: the haze near a light below. */
+  veil?: number
 }
 
 interface LightTerm {
@@ -203,6 +209,8 @@ interface Scene {
   lightAt: number
   /** Where the middle of the light's band is without a drag, at this Softness and Horizon. */
   seedSpan: number
+  /** The sky's pale veil toward the light: amount, where it starts and is full (frame heights), light gain. */
+  skyVeil: [number, number, number, number]
 }
 
 /** A color of the stack: its hex and the share of nominal light it gets (a deep band is the same color under less light). */
@@ -338,6 +346,28 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
       }
     }
   }
+  // The light's pale core and the haze near the light, at the middle Intensity; the seed order's look sees them too.
+  // The light's band (not near-white Ice, pale already) has a core that pales toward white in its own hue, bringing
+  // a color's light to about the same pale level whatever its own lightness. Orange-red paled in its own hue reads
+  // salmon, so its core is more of its own light instead, which the tone curve takes through orange toward amber.
+  // The sky keeps its full color only near its far edge and pales in its own hue toward the light, also behind a
+  // dark band in front of the light (they meet at an outline, a thin bridge). A light band between the sky and the
+  // light pales toward its lower edge, unless a dark band lies below it. A short sky and thin accents keep their
+  // full color, so every color still shows its own hex; a dark sky (a night top) stays as it is.
+  // How far a seed's sky and middles pale is its own (`paling`), so seeds differ in it.
+  const hazeOf = (list: readonly Entry[], bands: readonly Band[], lightBand: number, paling: { sky: number; middles: number }) => {
+    const height = (k: number) => (bands[k + 1]?.edge.base ?? 1) - bands[k].edge.base
+    const room = (h: number) => smoothstep(0.15, 0.35, h)
+    const lightColor = bands[lightBand].color
+    const paleOwn = hue(lightColor) < 50
+    const pale = lightness(lightColor) > 0.95 ? 0 : paleOwn ? 1.2 * luminanceOf(lightColor) : clamp(1.25 - luminanceOf(lightColor), 0.3, 0.9)
+    const skyHeight = bands[0].edge.base
+    const sky: [number, number, number, number] = dark(list[0]) ? [0, 0, 1, 0] : [paling.sky * room(skyHeight), 0, skyHeight, 0.3 * room(skyHeight)]
+    const veils = bands.map((b, k) =>
+      k < lightBand && b.mode === MODE_LIGHT && !dark(list[k + 1]) && bands[k + 1]?.mode !== MODE_COVER ? paling.middles * room(height(k)) : 0,
+    )
+    return { pale, paleOwn, sky, veils }
+  }
   // A boundary between a band and the one above: an outline where a dark color meets another (a warm color
   // through the lens into a dark one goes olive, khaki or brown, so that edge stays sharp and only the lens
   // softens it), or light fading into light, with pale light across it where two colors far apart meet.
@@ -436,12 +466,14 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
       const darker = i + 1 < list.length && shown(e) < Math.min(shown(upper), shown(list[i + 1])) - 0.1
       const fade = fadeOf(list, wide, i, (lo, hi) => rnd.between(lo, hi), c.structure)
       const rampEdge = c.structure === 'ramp' && wide.includes(i - 1) && wide.includes(i)
+      // No fade is wider than the bands it joins can hold: a thin band across a long fade never shows its own color.
+      const room = 0.6 * Math.min(spans[i - 1], spans[i])
       bands.push({
         color: e.hex,
         edge: { base: tops[i], tilt, bumps: lobes, wave, wavelength: 1.5, row: 2 * bands.length },
         mode: outline ? MODE_COVER : MODE_LIGHT,
         // A line is sharp in the scene, a third of a lens radius; the lens spreads it.
-        fade: rampEdge ? ramp : ((e.line ? 0.35 : fade) * R0) / frameH,
+        fade: rampEdge ? ramp : e.line ? (0.35 * R0) / frameH : Math.min((fade * R0) / frameH, room),
         fadeVary: e.line ? 0.3 : rampEdge ? 0.2 : warmOnDark ? 0.5 : outline ? 0.9 : 0.35,
         ramp: rampEdge,
         light: 1,
@@ -473,7 +505,11 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
       b.edge = { ...b.edge, bumps: [...b.edge.bumps, [side, width / frameW, shift / frameH] as Bump].slice(0, BUMP_MAX) }
     })
     keepThick(bands, R0, frameW, frameH, null)
-    return { list, bands, under, tops }
+    // How far the sky and the bands between it and the light pale toward the light (drawn last, so no other draw
+    // moves): a sky that darkens toward the top stays deeper, the others pale further, so the two kinds differ.
+    const deep = c.zenith > 0
+    const paling = { sky: deep ? rnd.between(0.4, 0.5) : rnd.between(0.65, 0.8), middles: deep ? rnd.between(0.2, 0.3) : rnd.between(0.4, 0.5) }
+    return { list, bands, under, tops, paling }
   }
   const key = `${pack.id}|${aspect.toFixed(4)}|${run}`
   let order = runOrders.get(key)
@@ -513,31 +549,49 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     const kernelSum = kernel.reduce((s, v) => s + v, 0)
     const half = (kernel.length - 1) / 2
     const look = (c: Choice, index: number) => {
-      const { list, bands } = layoutOf(c, layoutDraws(index), false)
+      const { list, bands, under, paling } = layoutOf(c, layoutDraws(index), false)
       const tops = bands.map((b) => b.edge.base + b.edge.bumps.reduce((s, [at, width, shift]) => s + shift * across(at, width), 0))
-      const emit = bands.map((b, i) => hexToLinear(b.color).map((v) => v * baseLight(list, i + 1) * (b.line ? 1 : iceCap(b.color, 1))))
+      const lights = bands.map((b, i) => baseLight(list, i + 1) * (b.line ? 1 : iceCap(b.color, 1)))
+      const emit = bands.map((b, i) => hexToLinear(b.color).map((v) => v * lights[i]))
       const sky = hexToLinear(list[0].hex)
+      // The light's pale core (averaged across the frame, where it gathers at the light's column) and the haze.
+      const lightColor = c.light ?? list.slice(1).reduce((a, b) => (lightness(b.hex) > lightness(a.hex) ? b : a)).hex
+      const lightBand = Math.max(0, bands.findIndex((b, i) => b.color === lightColor && under[i] === 1))
+      const haze = hazeOf(list, bands, lightBand, paling)
+      const coreColor = hexToLinear(bands[lightBand].color).map((v) => (haze.paleOwn ? v / luminanceOf(bands[lightBand].color) : v))
+      const core = (haze.paleOwn ? coreColor : paleLight(hexToLinear(bands[lightBand].color))).map((v) => v * haze.pale * 0.3 * lights[lightBand])
+      const coreHeight = (tops[lightBand + 1] ?? 1) - tops[lightBand]
+      const corePlace = lightBand === bands.length - 1 ? 1 : 0.5
+      // The middles' veil gathers at the light's column like the core: about half of it on average across the frame.
+      const veils = bands.map((b, i) => paleLight(hexToLinear(b.color)).map((v) => v * haze.veils[i] * 0.5 * lights[i]))
+      const skyVeil = paleLight(sky).map((v) => v * haze.sky[0])
       const fine = new Float64Array(3 * FINE)
       for (let k = 0; k < FINE; k++) {
         const v = (k + 0.5) / FINE
         const gain = 2 ** (-c.zenith * Math.max(0, 0.5 - v))
-        const color = sky.map((x) => x * gain)
+        const t = smoothstep(haze.sky[1], haze.sky[2], v)
+        const color = sky.map((x, j) => x * gain * (1 + haze.sky[3] * t) + skyVeil[j] * t * gain)
         bands.forEach((band, i) => {
           const a = Math.min(1, band.line ? lineCover(v - 0.5 * (tops[i] + (tops[i + 1] ?? 1)), band.fade) : sceneStep(v - tops[i], Math.max(band.fade, 1e-3)))
           const [keep, add] = band.mode === MODE_COVER ? [1 - a, a] : [(1 - a) ** 0.65, a ** 0.65]
-          for (let j = 0; j < 3; j++) color[j] = color[j] * keep + emit[i][j] * add
+          const height = (tops[i + 1] ?? 1) - tops[i]
+          const depth = clamp((v - tops[i]) / Math.max(height, 1e-3), 0, 1)
+          const d = (v - tops[i]) / Math.max(coreHeight, 1e-3) - corePlace
+          const glow = i === lightBand ? Math.exp((-d * d) / 0.12) : 0
+          for (let j = 0; j < 3; j++) color[j] = color[j] * keep + (emit[i][j] + core[j] * glow + veils[i][j] * depth * depth) * add
         })
         fine.set(color, 3 * k)
       }
-      const rows = Array.from({ length: ROWS }, (_, r) => {
+      const lch = Array.from({ length: ROWS }, (_, r) => {
         const k = Math.floor(((r + 0.5) / ROWS) * FINE)
         const soft = [0, 1, 2].map((j) => {
           let s = 0
           for (let d = 0; d < kernel.length; d++) s += kernel[d] * fine[3 * clamp(k + d - half, 0, FINE - 1) + j]
           return s / kernelSum
         })
-        return linearToOklch(soft)[0]
+        return linearToOklch(soft)
       })
+      const rows = lch.map(([L]) => L)
       const lo = Math.min(...rows)
       const hi = Math.max(...rows)
       const familyAt = (y: number) => {
@@ -547,9 +601,11 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
         })
         return family(list[j - (list[j].line ? 1 : 0)].hex)
       }
+      // As the palette check counts colors: near-white light is white, and a light, grey tint is a pale bridge.
       const mix = new Map<string, number>()
       for (let r = 0; r < ROWS; r++) {
-        const name = familyAt((r + 0.5) / ROWS)
+        const [L, C] = lch[r]
+        const name = L >= 0.97 ? 'white' : L >= 0.78 && C <= 0.05 ? 'pale' : familyAt((r + 0.5) / ROWS)
         mix.set(name, (mix.get(name) ?? 0) + 1 / ROWS)
       }
       return { rows: rows.map((v) => (hi > lo ? (v - lo) / (hi - lo) : 0)), mix }
@@ -587,7 +643,7 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   }
   const index = order[((n0 % choices.length) + choices.length) % choices.length]
   const choice = choices[index]
-  const { list, bands, under, tops } = layoutOf(choice, layoutDraws(index), place.y < 1 && place.below !== 'open')
+  const { list, bands, under, tops, paling } = layoutOf(choice, layoutDraws(index), place.y < 1 && place.below !== 'open')
   const n = list.length
   const leastAt = (r: number) => leastOf(list, r)
   // Every other seed's sky darkens toward the top.
@@ -647,6 +703,7 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   // through the lens, they read khaki and mauve), and each band's color deepens as it dims: warm ones toward amber
   // or deep red, a lime toward deep green (`drift`). Next to a dark band, where the lens dims a warm color
   // further, its light changes half as much.
+  const haze = hazeOf(list, bands, lightBand, paling)
   const dim = Math.min(1, level) ** 1.6
   const darkAt = (j: number) => j >= 0 && j < bands.length && lightness(bands[j].color) * Math.cbrt(under[j]) < 0.45
   const warmAt = (j: number) => j >= 0 && j < bands.length && warmHex(bands[j].color)
@@ -664,13 +721,10 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     b.light = baseLight(list, i + 1) * lift * keep * (b.line ? 1 : iceCap(b.color, level)) * (1 + 0.6 * column)
     b.sun = Math.max(column, 1 - 1 / lift)
     if (warmLight && (darkAt(i - 1) || darkAt(i + 1))) b.vary = 0.5
-    // Bright light goes pale: the light's band has a core near the light's column that pales toward white in its
-    // own hue, more with Intensity, bringing a color's light to about the same pale level whatever its own
-    // lightness (near-white Ice is pale already). Orange-red paled in its own hue reads salmon, so its core is
-    // more of its own light, about twice as much, which the tone curve takes through orange toward amber.
-    if (isLight && lightness(b.color) <= 0.95) {
-      b.paleOwn = hue(b.color) < 50
-      b.pale = (b.paleOwn ? 1.2 * luminanceOf(b.color) : clamp(1.25 - luminanceOf(b.color), 0.3, 0.9)) * Math.min(1, level) ** 1.2
+    // The light's pale core grows with Intensity up to the middle (`hazeOf`).
+    if (i === lightBand && haze.pale > 0) {
+      b.paleOwn = haze.paleOwn
+      b.pale = haze.pale * Math.min(1, level) ** 1.2
     }
   })
 
@@ -700,6 +754,11 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   const lightVary = rnd.between(0.1, 0.17) * (choice.structure === 'ramp' ? 0.35 : 1)
   // The light's column: where Intensity above the middle gathers its extra light.
   const sun: [number, number] = [rnd.between(0.2, 0.8), rnd.between(0.22, 0.35)]
+  // Haze near the light (`hazeOf`).
+  const skyVeil = haze.sky
+  bands.forEach((b, k) => {
+    if (haze.veils[k] > 0) b.veil = haze.veils[k]
+  })
   return {
     sky: list[0].hex,
     bands,
@@ -712,6 +771,7 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     dim,
     lightAt: spanOf(now),
     seedSpan,
+    skyVeil,
   }
 }
 
@@ -788,6 +848,7 @@ function writeScene(scene: Scene, R: number, stack: number[]): BandsComposition 
     // The core sits in the middle of the band, or for the last band at the frame's edge: the light's end.
     const next = scene.bands[i + 1]?.edge.base
     params[key('Pale')] = [b.pale ?? 0, Math.max(0.05, (next ?? 1) - b.edge.base), next === undefined ? 1 : 0.5, b.paleOwn ? 1 : 0]
+    params[key('Veil')] = [b.veil ?? 0, Math.max(0.05, (next ?? 1) - b.edge.base)]
   })
   while (colors.length < 1 + BAND_MAX) colors.push(scene.sky)
   scene.patches.slice(0, PATCH_MAX).forEach((patch, j) => {
@@ -818,6 +879,7 @@ function writeScene(scene: Scene, R: number, stack: number[]): BandsComposition 
   params.extinction = 0
   params.spill = [0.12, 1.2]
   params.sky = [scene.skyLift, scene.skyFall, 0.5]
+  params.skyVeil = scene.skyVeil
   params.water = [2, 1.25, 0.3, 0.4]
   params.waterLook = [0.5, 0, 0.008, 0.05]
   return { colors, params, lens: { bloom: 0, halation: 0 }, output: { grain: 0, exposure: 0 } }
