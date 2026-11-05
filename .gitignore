@@ -46,4 +46,3 @@ next-env.d.ts
 # generated audit output, prototype renders and downloaded sources
 /artifacts/
 prototypes/*/out/
-.cursor/rules/xmds-ui.mdc

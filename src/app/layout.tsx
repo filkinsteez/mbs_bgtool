@@ -1,6 +1,5 @@
 import type { Metadata } from 'next'
 import localFont from 'next/font/local'
-import '@/styles/xmds.css'
 import '@/styles/globals.css'
 
 // Optimistic is the whole type system: one variable family carrying

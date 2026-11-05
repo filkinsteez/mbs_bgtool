@@ -4,25 +4,25 @@
      render dark instead of the browser's light defaults. */
   color-scheme: dark;
 
-  /* XMDS semantic aliases for app-level chrome. */
-  --chrome-0: var(--xmds-surface-0);
-  --chrome-1: var(--xmds-surface-1);
-  --chrome-2: var(--xmds-surface-2);
-  --chrome-hover: var(--xmds-surface-3);
-  --line: var(--xmds-line-default);
-  --line-strong: var(--xmds-line-strong);
-  --text: var(--xmds-text-primary);
-  --text-dim: var(--xmds-text-secondary);
-  --text-faint: var(--xmds-text-disabled);
-  --control-sm: 32px;
-  --control-md: 36px;
-  --control-lg: 44px;
-  --radius-sm: var(--xmds-radius-100);
-  --radius-md: var(--xmds-radius-200);
-  --radius-lg: var(--xmds-radius-300);
-  --duration-fast: var(--xmds-duration-fast);
-  --duration-ui: var(--xmds-duration-ui);
-  --ease-ui: var(--xmds-ease-ui);
+  /* Instrument chrome — near-monochrome, no gradients, no glass. */
+  --chrome-0: #0d0e10;
+  --chrome-1: #15161a;
+  --chrome-2: #1c1e23;
+  --chrome-hover: #24272d;
+  --line: #353942;
+  --line-strong: #626772;
+  --text: #f2f0eb;
+  --text-dim: #a1a3aa;
+  --text-faint: #858891;
+  --control-sm: 28px;
+  --control-md: 32px;
+  --control-lg: 36px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --duration-fast: 120ms;
+  --duration-ui: 200ms;
+  --ease-ui: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 * {
@@ -40,9 +40,9 @@ body {
 body {
   background: var(--chrome-0);
   color: var(--text);
-  font-family: var(--xmds-font-family);
-  font-size: var(--xmds-font-size-body-small);
-  line-height: var(--xmds-line-body-small);
+  font-family: var(--font-optimistic), system-ui, sans-serif;
+  font-size: 12px;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
 

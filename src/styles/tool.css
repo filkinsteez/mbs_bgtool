@@ -48,13 +48,12 @@
   max-width: calc(100% - 32px);
   margin: 0;
   padding: 8px 14px;
-  border-radius: var(--xmds-radius-400);
-  background: var(--chrome-2);
-  border: 1px solid var(--line);
-  color: var(--text);
-  font-size: var(--xmds-font-size-label);
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 13px;
   font-weight: 500;
-  line-height: var(--xmds-line-label);
+  line-height: 1.4;
   text-align: center;
   pointer-events: none;
   transform: translate(-50%, -50%);
@@ -75,36 +74,61 @@
 
 .tool-panel {
   flex: none;
-  width: 320px;
+  width: 300px;
   height: 100%;
   background: var(--chrome-1);
   border-left: 1px solid var(--chrome-2);
-  overflow-y: auto;
-  padding: var(--xmds-space-400);
-}
-
-.xmds-column {
-  scrollbar-gutter: stable;
 }
 
 .tool-seed-actions {
   display: flex;
-  gap: var(--xmds-space-200);
+  gap: 6px;
 }
 
-.tool-seed-actions .xmds-btn {
-  flex: 1;
+.tool-seed-actions .dialkit-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+  background: var(--dial-surface);
+  color: var(--dial-text-secondary);
 }
 
 @media (max-height: 600px) {
-  .tool-panel {
-    padding: var(--xmds-space-300);
+  .tool-panel .dialkit-root {
+    --dial-row-height: 32px;
+  }
+
+  .tool-panel.dial-column .dialkit-panel-inline {
+    padding-top: 8px;
+  }
+
+  .tool-panel .dialkit-folder-inner {
+    gap: 4px;
+    padding-bottom: 8px;
+  }
+
+  .tool-panel .dialkit-button {
+    padding-top: 8px;
+    padding-bottom: 8px;
   }
 }
 
 @media (max-height: 440px) {
-  .tool-panel {
-    padding: var(--xmds-space-200);
+  .tool-panel .dialkit-root {
+    --dial-row-height: 28px;
+  }
+
+  .tool-panel.dial-column .dialkit-panel-inline {
+    padding-top: 6px;
+  }
+
+  .tool-panel .dialkit-folder-inner {
+    gap: 3px;
+    padding-bottom: 6px;
+  }
+
+  .tool-panel .dialkit-button {
+    padding-top: 5px;
+    padding-bottom: 5px;
   }
 }
 
@@ -126,7 +150,11 @@
     border-top: 1px solid var(--chrome-2);
   }
 
-  .xmds-control-stack {
+  .tool-panel.dial-column {
+    overflow-y: auto;
+  }
+
+  .tool-panel .dialkit-folder-inner {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: center;

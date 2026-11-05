@@ -1,7 +1,8 @@
 'use client'
 
+import '@/styles/dialkit.css'
+import '@/styles/dial-panel.css'
 import '@/styles/tool.css'
-import '@/styles/ui.css'
 import { DialStore, useDialKitController } from 'dialkit'
 import { useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { flushSync } from 'react-dom'
@@ -20,11 +21,11 @@ import {
 import { buildDialConfig, PANEL_ID, PANEL_NAME, readToolState, SEED_DIAL_KEY } from './dialConfig'
 import { exportPng } from './exportImage'
 import { FILTER_DIAL_KEY, readChoice, withFilter } from './filterControl'
+import { panelAccessFor, usePanelAccess } from './panelAccess'
 import { Preview } from './Preview'
 import { EMPTY_SEED_HISTORY, recordSeedChange, stepBack, stepForward, type SeedStep } from './seedHistory'
 import { clampUnit, fixLook, isMoodId, parseQuery, randomSeed, readSeed, toQuery, type SearchParams } from './state'
 import { ToolPanel } from './ToolPanel'
-import { Button } from '@/ui/Button'
 
 const EXPORT_LABEL = 'Export PNG'
 const EXPORTING_LABEL = 'Exporting…'
@@ -32,6 +33,8 @@ const EXPORT_FAILED_LABEL = 'Export failed'
 const BACK_LABEL = 'Back'
 /** Back and Shuffle go right under the Seed slider. */
 const SEED_ROW_AFTER = [SEED_DIAL_KEY]
+/** The Seed slider's track; panelAccess marks it with its path. */
+const SEED_SLIDER = `[data-dial-path="${SEED_DIAL_KEY}"]`
 const URL_DELAY_MS = 200
 
 type ExportStatus = 'idle' | 'busy' | 'failed'
@@ -49,6 +52,7 @@ const frameAspect = (format: ExportAspect) => EXPORT_SIZES[format].width / EXPOR
 const isTextField = (target: EventTarget | null) =>
   target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select') !== null)
 
+/** Back with nothing to go back to is marked off by the panel (aria-disabled, dimmed) but stays focusable; it isn't busy. */
 const OFF_BUTTON: CSSProperties = { cursor: 'default' }
 
 export function Tool({ searchParams }: { searchParams: SearchParams }) {
@@ -62,6 +66,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const [drag, setDrag] = useState(start.drag)
   const [dragging, setDragging] = useState(false)
   const exportingRef = useRef(false)
+  const panelRef = useRef<HTMLElement>(null)
   // The line, the mood control and the seed as this component last set or saw them. The panel store calls back
   // before React renders, so these tell a slider move by the user from this component's own updates.
   const dragRef = useRef(start.drag)
@@ -84,7 +89,13 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     return withFilter(buildScene(look, getPack(pack), seed, controls, frameAspect(format)), { filter, strength })
   }, [look, pack, seed, intensity, softness, moodControl, drag, format, filter, strength])
 
+  // A disabled button would drop keyboard focus when Back runs out, so Back is only marked off.
   const backOff = seedHistory.back.length === 0
+  const access = useMemo(
+    () => panelAccessFor(PANEL_ID, PANEL_NAME, config, { busy: [...(exportStatus === 'busy' ? [EXPORTING_LABEL] : []), ...(backOff ? [BACK_LABEL] : [])] }),
+    [config, exportStatus, backOff],
+  )
+  usePanelAccess(panelRef, access)
 
   useEffect(() => {
     const current = getValues().look
@@ -204,15 +215,27 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
 
   useEffect(() => DialStore.subscribe(PANEL_ID, () => onSeedChange()), [])
 
-  const onSliderStart = useEffectEvent((path: string) => {
-    if (path === SEED_DIAL_KEY) seedPressRef.current = seedRef.current
-  })
-  const onSliderEnd = useEffectEvent((path: string) => {
-    if (path !== SEED_DIAL_KEY) return
-    const from = seedPressRef.current
-    seedPressRef.current = null
-    if (from !== null && from !== seedRef.current) setSeedHistory((history) => recordSeedChange(history, from))
-  })
+  useEffect(() => {
+    const panel = panelRef.current
+    if (!panel) return
+    const press = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest(SEED_SLIDER)) seedPressRef.current = seedRef.current
+    }
+    // On the window, so it runs after the slider's own pointerup, which sets the seed a click lands on.
+    const release = () => {
+      const from = seedPressRef.current
+      seedPressRef.current = null
+      if (from !== null && from !== seedRef.current) setSeedHistory((history) => recordSeedChange(history, from))
+    }
+    panel.addEventListener('pointerdown', press)
+    window.addEventListener('pointerup', release)
+    window.addEventListener('pointercancel', release)
+    return () => {
+      panel.removeEventListener('pointerdown', press)
+      window.removeEventListener('pointerup', release)
+      window.removeEventListener('pointercancel', release)
+    }
+  }, [])
 
   function shuffle() {
     setValue(SEED_DIAL_KEY, randomSeed(seedRef.current))
@@ -263,20 +286,18 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
 
   const seedActions = (
     <div className="tool-seed-actions">
-      <Button
+      <button
         type="button"
-        variant="secondary"
+        className="dialkit-button"
         style={backOff ? OFF_BUTTON : undefined}
         aria-keyshortcuts="Meta+Z Control+Z"
-        aria-disabled={backOff}
-        disabled={backOff}
         onClick={() => travel(stepBack(seedHistory, seed))}
       >
         {BACK_LABEL}
-      </Button>
-      <Button type="button" variant="secondary" onClick={shuffle}>
+      </button>
+      <button type="button" className="dialkit-button" onClick={shuffle}>
         Shuffle
-      </Button>
+      </button>
     </div>
   )
 
@@ -290,8 +311,8 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
         onDragging={handleDragging}
         onReset={resetLight}
       />
-      <aside className="tool-panel xmds-column">
-        <ToolPanel panelId={PANEL_ID} afterPaths={SEED_ROW_AFTER} after={seedActions} onAction={handleAction} onSliderStart={onSliderStart} onSliderEnd={onSliderEnd} />
+      <aside ref={panelRef} className="tool-panel dial-column">
+        <ToolPanel panelId={PANEL_ID} afterPaths={SEED_ROW_AFTER} after={seedActions} />
       </aside>
     </main>
   )
