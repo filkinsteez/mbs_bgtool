@@ -1,8 +1,8 @@
 export const SEED_HISTORY_LIMIT = 50
 
 /**
- * Seeds the user left, so Back and forward can return to them: every change of the seed (Shuffle, a typed seed,
- * an arrow-key step) counts. Only the seed: nothing else is recorded.
+ * Seeds the user left, so Back and forward can return to them: every change of the seed counts (Shuffle, an
+ * arrow-key step, and a drag on the Seed slider as one change). Only the seed: nothing else is recorded.
  */
 export interface SeedHistory {
   /** The seed before each change, oldest first. */

@@ -31,7 +31,7 @@ export interface ToolState {
 
 export const MOOD_IDS: readonly MoodId[] = ['sunset', 'contour']
 export const SEED_MIN = 1
-export const SEED_MAX = 9999
+export const SEED_MAX = 100
 
 export const DEFAULT_STATE: ToolState = {
   mood: 'sunset',
@@ -65,10 +65,23 @@ export function clampUnit(value: unknown, fallback: number): number {
   return Math.round(Math.min(1, Math.max(0, n)) * 100) / 100
 }
 
-export function clampSeed(value: unknown, fallback: number): number {
+/**
+ * The seed a panel or URL value gives, SEED_MIN to SEED_MAX. Seeds used to go up to 9999; one above SEED_MAX wraps
+ * around (101 is 1, 7976 is 76), so old links still differ from each other. Below SEED_MIN is SEED_MIN; anything
+ * that isn't a number is the fallback.
+ */
+export function readSeed(value: unknown, fallback: number): number {
   const n = typeof value === 'number' ? value : typeof value === 'string' ? Number.parseFloat(value) : Number.NaN
   if (!Number.isFinite(n)) return fallback
-  return Math.min(SEED_MAX, Math.max(SEED_MIN, Math.round(n)))
+  const seed = Math.round(n)
+  if (seed > SEED_MAX) return ((seed - SEED_MIN) % (SEED_MAX - SEED_MIN + 1)) + SEED_MIN
+  return Math.max(SEED_MIN, seed)
+}
+
+/** Shuffle's pick: any seed but `current`, each as likely. `random` gives a number from 0 up to but not including 1. */
+export function randomSeed(current: number, random: () => number = Math.random): number {
+  const pick = SEED_MIN + Math.floor(random() * (SEED_MAX - SEED_MIN))
+  return pick >= current ? pick + 1 : pick
 }
 
 /** A point from the URL, "x,y" in frame units; anything else is no point. */
@@ -116,7 +129,7 @@ export function parseQuery(query: QueryInput): ToolState {
     intensity: clampUnit(readParam(query, 'intensity'), DEFAULT_STATE.intensity),
     softness: clampUnit(readParam(query, 'softness'), DEFAULT_STATE.softness),
     moodControl: clampUnit(readParam(query, MOOD_CONTROL[mood]), DEFAULT_STATE.moodControl),
-    seed: clampSeed(readParam(query, 'seed'), DEFAULT_STATE.seed),
+    seed: readSeed(readParam(query, 'seed'), DEFAULT_STATE.seed),
     format: isExportAspect(format) ? format : DEFAULT_STATE.format,
     ...(drag ? { drag } : {}),
     ...parseFilterQuery(query),
