@@ -43,7 +43,7 @@ export const ASCII_RAMP = [0, 1, 2, 3, 5, 4, 6, 7, 8, 9] as const
 /** Ink share of a 0.6 x 1.3 em cell per ramp level, measured from the shapes at 512 px per em. */
 export const ASCII_INK = [0, 0.017, 0.033, 0.0343, 0.079, 0.0855, 0.086, 0.2023, 0.2436, 0.3149] as const
 
-/** Width of the uniform glyph pick in ramp levels, and the lowest and highest level a cell aims for. */
+/** Width of the uniform glyph pick in ramp levels, the lowest level for light glyphs, and the highest level. */
 const WINDOW = 5
 const LOWEST_LEVEL = 2
 const TOP_LEVEL = 7
@@ -54,8 +54,17 @@ const LIGHT_START = 0.004
 const LIGHT_FULL = 0.03
 /** Brightest channel where light glyphs hand over to dark ink. */
 const PIVOT = 0.3
-/** How fast dark ink thins out as a bright cell's room above its brightest channel shrinks. */
-const DARK_SCALE = 0.18
+/**
+ * Share of a bright cell's room (1 minus its brightest channel) that dark ink may take on average. The background
+ * gives that light back, so the ink stays at full contrast and the glyphs thin out, down to dots and then none,
+ * as the light nears white.
+ */
+const DARK_ROOM_SHARE = 0.6
+/**
+ * Ink a bright cell may take without the background giving it back: about 2 % of its light. With it, skies so pale
+ * that a channel is at full brightness still get the tile's sparse dots and dashes at full contrast.
+ */
+const DARK_SPARE_INK = 0.02
 /** Dark ink: Oklab lightness as a share of the pixel's, and its largest chroma. */
 const INK_LIGHTNESS = 0.32
 const INK_CHROMA = 0.035
@@ -148,16 +157,30 @@ float asciiExpectedInk(float level) {
   return sum / w;
 }
 
+// The level whose pick has this mean ink (the mean ink grows with the level), at most the top level.
+float asciiLevelForInk(float ink) {
+  float lo = 0.0;
+  float hi = ${f(TOP_LEVEL)};
+  if (asciiExpectedInk(hi) <= ink) return hi;
+  for (int i = 0; i < 10; i++) {
+    float mid = 0.5 * (lo + hi);
+    if (asciiExpectedInk(mid) < ink) lo = mid;
+    else hi = mid;
+  }
+  return 0.5 * (lo + hi);
+}
+
 // For a cell's light m and the frame's darkest light: x the level aimed for, y 1 for dark ink, z how much of the
-// glyph contrast applies. Light glyphs carry a dark cell's light, so they need ink in proportion to it and stop where the
-// densest mix can no longer hold it (the pivot); dark ink takes light from a bright cell, so it thins out as the
-// brightest channel runs out of room above it. Both sides fade toward the pivot, so the handover is a clean band,
-// and wherever there is text it is at least the tile's sparsest mix: faint text fades by contrast, not into lone dots.
+// glyph contrast applies. Light glyphs carry a dark cell's light, so they need ink in proportion to it and stop where
+// the densest mix can no longer hold it (the pivot); there the text is at least the tile's sparsest mix, so it fades
+// by contrast, not into lone dots. Dark ink takes light from a bright cell that the background gives back, so it is
+// as dense as the room above the brightest channel allows and stays at full contrast; near white it thins to dots and
+// then none, as in the tile's sparse rows. Both sides fade toward the pivot, so the handover is a clean band.
 vec3 asciiPlan(vec3 m, float base) {
   float P = maxComponent(m);
   if (P >= ${f(PIVOT)}) {
     float handover = smoothstep(${f(PIVOT)}, ${f(1.5 * PIVOT)}, P);
-    float level = max(${f(LOWEST_LEVEL)}, ${f(TOP_LEVEL)} * (1.0 - exp(-(1.0 - P) / ${f(DARK_SCALE)})) * handover);
+    float level = asciiLevelForInk(${f(DARK_ROOM_SHARE)} * (1.0 - P) + ${f(DARK_SPARE_INK)}) * handover;
     return vec3(level, 1.0, handover);
   }
   // Light glyphs start a little above the frame's darkest light, so a dark base stays clean whatever its color.
@@ -218,12 +241,11 @@ vec3 filterAscii(vec3 display, ivec2 px, float weight) {
   float s = plan.z;
   if (c <= 1e-4 || s <= 0.0) return display;
   if (plan.y > 0.5) {
-    // Dark ink; the background brightens by the light the ink takes, as far as every channel has room.
+    // Dark ink at full contrast; the background brightens by the light the ink takes, as far as each channel has room.
+    // The level keeps what does not fit within the spare ink.
     vec3 deep = asciiDarkInk(display);
     vec3 lift = c * (display - deep) / (1.0 - c);
-    vec3 room = (1.0 - display) / max(lift, 1e-6);
-    float t = min(s, min(lift.r > 1e-6 ? room.r : 1e9, min(lift.g > 1e-6 ? room.g : 1e9, lift.b > 1e-6 ? room.b : 1e9)));
-    return mix(display + t * lift, mix(display, deep, t), ink);
+    return mix(min(display + s * lift, vec3(1.0)), mix(display, deep, s), ink);
   }
   // Light glyphs: the glyph carries the cell's light and the background dims, within the brightest channel's room.
   float Pm = max(maxComponent(m), 1e-5);
