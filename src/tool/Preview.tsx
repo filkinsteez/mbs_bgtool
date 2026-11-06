@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react'
 import { EXPORT_SIZES, type ExportAspect, type Scene } from '@/light'
 import { clampPoint, type LightDrag, type LightPoint } from './controls'
 import { PreviewLoop } from './previewLoop'
@@ -87,34 +87,8 @@ const CANT_DRAW_STYLE: CSSProperties = {
   pointerEvents: 'none',
 }
 
-/** Shown on the image until the first drag in this browser. */
+/** Shown on the image on every page load until the first drag (owner, 2026-11-06). */
 const DRAG_HINT = 'Drag to reposition the gradient'
-const DRAG_HINT_KEY = 'mbs-bgtool:drag-hint-seen'
-
-let dragHintSeen: boolean | undefined
-
-/** Read once per page load, so the hint stays mounted and fades out after the first drag. */
-function readDragHintSeen(): boolean {
-  if (dragHintSeen === undefined) {
-    try {
-      dragHintSeen = localStorage.getItem(DRAG_HINT_KEY) === '1'
-    } catch {
-      dragHintSeen = false
-    }
-  }
-  return dragHintSeen
-}
-
-function rememberDragHintSeen() {
-  try {
-    localStorage.setItem(DRAG_HINT_KEY, '1')
-  } catch {
-    // With site data blocked, the hint comes back on the next visit.
-  }
-}
-
-const subscribeNever = () => () => {}
-const seenOnServer = () => true
 
 const sizeKey = (size: Box) => `${size.width}x${size.height}`
 
@@ -152,9 +126,8 @@ export function Preview({ scene, aspect, paused, onDrag, onDragging, onReset }: 
   const [dragging, setDragging] = useState(false)
   const [shownBox, setShownBox] = useState<Box | null>(null)
   const [cantDraw, setCantDraw] = useState(false)
-  const dragHintSeenAtLoad = useSyncExternalStore(subscribeNever, readDragHintSeen, seenOnServer)
   const [dragHintDone, setDragHintDone] = useState(false)
-  const showDragHint = !dragHintSeenAtLoad && !dragHintDone && !cantDraw && shownBox !== null
+  const showDragHint = !dragHintDone && !cantDraw && shownBox !== null
   const target = stage ? fitBox(stage, aspect) : null
   const boxWidth = target?.width ?? 0
   const boxHeight = target?.height ?? 0
@@ -294,10 +267,7 @@ export function Preview({ scene, aspect, paused, onDrag, onDragging, onReset }: 
       press.dragging = true
       drawLine(line)
       setDragging(true)
-      if (!dragHintDone) {
-        setDragHintDone(true)
-        rememberDragHintSeen()
-      }
+      setDragHintDone(true)
       handlersRef.current.onDragging(true)
     }
     queueLine(line)
@@ -365,11 +335,9 @@ export function Preview({ scene, aspect, paused, onDrag, onDragging, onReset }: 
             </g>
           ))}
         </svg>
-        {!dragHintSeenAtLoad && (
-          <p aria-hidden="true" className="tool-hint" data-shown={showDragHint || undefined}>
-            {DRAG_HINT}
-          </p>
-        )}
+        <p aria-hidden="true" className="tool-hint" data-shown={showDragHint || undefined}>
+          {DRAG_HINT}
+        </p>
         {cantDraw && (
           <p role="status" style={CANT_DRAW_STYLE}>
             {CANT_DRAW}
