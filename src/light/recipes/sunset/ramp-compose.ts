@@ -27,6 +27,9 @@ function paleTint(hex: string, depth: number): number[] {
   const luma = 0.2126 * tint[0] + 0.7152 * tint[1] + 0.0722 * tint[2]
   return tint.map((v) => v / luma)
 }
+/** Height (share of the frame from the top) above which land's line climbs at LAND_SLOW_RATE of the shared rate. */
+const LAND_SLOW = 0.42
+const LAND_SLOW_RATE = 0.55
 /** Largest tilt of the horizon, in degrees, that a dragged line gives water and land. */
 const WATER_MOST_TILT = 10
 const LAND_MOST_TILT = 18
@@ -468,7 +471,11 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const lineShift = openSky ? [-0.1, 0.05, 0][variant] : packId === 'atmospheric' ? [0.12, -0.2, -0.05][depthTurn] : [0.05, -0.1, -0.03][depthTurn]
   // A light seed's land lies nearly level.
   const tiltScale = structure === 'land' ? [0.45, 1, 1][depthTurn] : 1
-  const placed = { ...shared, y: shared.y + lineShift * Math.min(1, mood / 0.25, (1 - mood) / 0.25), tilt: Math.max(-LAND_MOST_TILT, Math.min(LAND_MOST_TILT, shared.tilt * tiltScale)) }
+  const shiftedY = shared.y + lineShift * Math.min(1, mood / 0.25, (1 - mood) / 0.25)
+  // Land's line climbs more slowly above LAND_SLOW, so the top of the Horizon control still shows a
+  // band of sky over the land instead of a field of dark ground.
+  const lineY0 = structure === 'land' && shiftedY < LAND_SLOW ? LAND_SLOW - (LAND_SLOW - shiftedY) * LAND_SLOW_RATE : shiftedY
+  const placed = { ...shared, y: lineY0, tilt: Math.max(-LAND_MOST_TILT, Math.min(LAND_MOST_TILT, shared.tilt * tiltScale)) }
   // A dragged line takes the Horizon control's place: the glow sits at its start, the horizon runs
   // across it, and the sky reaches the zenith's color at its end. The seed keeps everything else.
   const line = controls.drag ? rampLine(controls.drag, aspect) : null
@@ -753,7 +760,11 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // higher in haze; under a dragged line, at its start.
   // Over land the glow's line stays a little above the ridge's crest, which would hide it. Bold's
   // stays lower, leaving its Cyan band room above the glow.
-  const aboveCrest = land && packId !== 'bold' ? anchorY - crest + 0.04 : 0
+  // Over land under a high line the glow's band is at least about the lens wide, or the lens
+  // blurs it away and the frame is a field of dark ground.
+  const highLand = clamp01((0.5 * tall - lineAt - 0.55 * tall) / (0.15 * tall))
+  const lensBand = anchorY - crest + 1.5 * lerp(0.045, 0.12, softness)
+  const aboveCrest = land ? (packId !== 'bold' ? Math.max(anchorY - crest + 0.04, lerp(0, lensBand, highLand)) : lensBand * highLand) : 0
   const glowRise = line ? dragRise : ground ? Math.max(glowShare(look, structure, warmShare, risePick, softness, day) * skyHeight, aboveCrest) : openRiseAt(anchorY)
   // How far the glow's lower side, the dusk band and the dimming toward the horizon reach. Over an
   // open sky a dragged line's horizon can lie far behind the glow; they keep the seed's own size
@@ -1026,11 +1037,13 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // down, and its near ground is darker.
     groundHaze: [look.landHaze, land ? Math.max(0.1 * tall, 0.25 * landRoom) : 0.05 * tall],
     groundVeil: [land ? look.groundVeil * groundGain : 0, 0.35 * landRoom],
-    landLit: [ground ? look.landLit : 0, lerp(0.3, 0.5, widthPick) * frameWidth, ground ? 0.6 : 0],
+    // A tall land area carries more of the light, so a high line doesn't leave a dark field.
+    landLit: [ground ? look.landLit * (land ? 1 + 1.5 * clamp01((landRoom - 0.4 * tall) / (0.4 * tall)) : 1) : 0, lerp(0.3, 0.5, widthPick) * frameWidth, ground ? 0.6 : 0],
     // A deep seed's ground is darker. A light seed's keeps the pack's own: brightened, Plum turns
     // magenta.
     groundTopGain: look.landTop[1] * groundGain * lerp(1, 0.55, depth),
-    groundBottomGain: look.landBottom[1] * groundGain * lerp(1, 0.5, depth) * (land ? Math.min(1, ((0.4 * tall) / landRoom) ** 1.5) : 1),
+    // The near ground stays a deep tone of its color, never black.
+    groundBottomGain: Math.max(0.35 * look.landTop[1] * groundGain * lerp(1, 0.55, depth), look.landBottom[1] * groundGain * lerp(1, 0.5, depth) * (land ? Math.min(1, ((0.4 * tall) / landRoom) ** 1.5) : 1)),
     waterGain: look.water[1] * groundGain * lerp(1, 0.6, depth),
   }
   return { colors: slotColors(look, midSky), params, lens: {}, output: { exposure: 0 } }
