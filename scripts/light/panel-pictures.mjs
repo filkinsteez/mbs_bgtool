@@ -1,6 +1,6 @@
 // Renders the small pictures on the tool panel's Mood and Look buttons into public/panel/ (Filter and Format show
-// icons and shapes drawn in the page). They show each look in each pack at fixed settings; they are not live. Run
-// again after a look changes a lot:
+// icons and shapes drawn in the page). They show each look in one pack at fixed settings, and the panel shows the same
+// pictures whichever pack is picked; they are not live. Run again after a look changes a lot:
 //   node scripts/light/panel-pictures.mjs [--out public/panel] [--seed n] [--sheet file.jpg]
 // --seed renders every look at that seed (to compare seeds); --sheet also writes a contact sheet of the results.
 import { mkdir } from 'node:fs/promises'
@@ -11,7 +11,9 @@ import { raw } from './lib/images.mjs'
 
 /** Look pictures: 16:9, drawn at 2x and saved at this size. */
 const LOOK_SIZE = { width: 384, height: 216 }
-/** The seed each look's picture uses, the same in every pack. */
+/** The pack every picture is drawn in (owner, 2026-11-06). */
+const PACK_ID = 'atmospheric'
+/** The seed each look's picture uses. */
 const SEEDS = {
   'sunset.ramp': 1,
   'sunset.bands': 1,
@@ -38,15 +40,14 @@ try {
   const { RECIPE_IDS, DEFAULT_CONTROLS } = await harness.ssr('/src/light/scene.ts')
   const { buildScene } = await harness.ssr('/src/tool/controls.ts')
   const { withFilter } = await harness.ssr('/src/tool/filterControl.ts')
-  for (const pack of PACKS) {
-    for (const look of RECIPE_IDS) {
-      const seed = seedOverride ? Number(seedOverride) : SEEDS[look]
-      const scene = withFilter(buildScene(look, pack, seed, DEFAULT_CONTROLS, 16 / 9), { filter: 'none', strength: 0 })
-      const image = await harness.render({ scene, ...LOOK_SIZE, supersample: 2 })
-      const file = path.join(outDir, `${fileName(look)}-${pack.id}.webp`)
-      await raw(image).webp({ quality: 82 }).toFile(file)
-      written.push({ file, label: `${look} ${pack.id} s${seed}` })
-    }
+  const pack = PACKS.find((p) => p.id === PACK_ID)
+  for (const look of RECIPE_IDS) {
+    const seed = seedOverride ? Number(seedOverride) : SEEDS[look]
+    const scene = withFilter(buildScene(look, pack, seed, DEFAULT_CONTROLS, 16 / 9), { filter: 'none', strength: 0 })
+    const image = await harness.render({ scene, ...LOOK_SIZE, supersample: 2 })
+    const file = path.join(outDir, `${fileName(look)}.webp`)
+    await raw(image).webp({ quality: 82 }).toFile(file)
+    written.push({ file, label: `${look} ${pack.id} s${seed}` })
   }
 } finally {
   await harness.close()

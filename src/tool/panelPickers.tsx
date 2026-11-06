@@ -5,7 +5,7 @@ import { FILTER_DIAL_KEY, FILTER_OPTIONS, type FilterChoice } from './filterCont
 import { lookPicture, moodPicture } from './panelPictures'
 import { TilePicker } from './TilePicker'
 
-/** A fixed picture of the option in the chosen pack. */
+/** A fixed picture of the option. */
 function Picture({ src }: { src: string }) {
   return <span className="tool-tile-picture" style={{ backgroundImage: `url(${src})` }} />
 }
@@ -20,7 +20,7 @@ function Mark({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-export function MoodPicker({ value, pack, onChange }: { value: MoodId; pack: PackId; onChange: (mood: MoodId) => void }) {
+export function MoodPicker({ value, onChange }: { value: MoodId; onChange: (mood: MoodId) => void }) {
   return (
     <TilePicker
       label="Mood"
@@ -29,12 +29,12 @@ export function MoodPicker({ value, pack, onChange }: { value: MoodId; pack: Pac
       options={MOOD_OPTIONS}
       value={value}
       onChange={onChange}
-      tile={(option) => <Picture src={moodPicture(option.value, pack)} />}
+      tile={(option) => <Picture src={moodPicture(option.value)} />}
     />
   )
 }
 
-export function LookPicker({ mood, value, pack, onChange }: { mood: MoodId; value: RecipeId; pack: PackId; onChange: (look: RecipeId) => void }) {
+export function LookPicker({ mood, value, onChange }: { mood: MoodId; value: RecipeId; onChange: (look: RecipeId) => void }) {
   return (
     <TilePicker
       label="Look"
@@ -43,7 +43,7 @@ export function LookPicker({ mood, value, pack, onChange }: { mood: MoodId; valu
       options={lookOptions(mood)}
       value={value}
       onChange={onChange}
-      tile={(option) => <Picture src={lookPicture(option.value, pack)} />}
+      tile={(option) => <Picture src={lookPicture(option.value)} />}
     />
   )
 }

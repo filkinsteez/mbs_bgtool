@@ -277,8 +277,8 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
         <ToolPanel
           panelId={PANEL_ID}
           slots={[
-            { paths: MOOD_PATHS, node: <MoodPicker value={mood} pack={pack} onChange={(next) => setValue('mood', next)} />, replace: true },
-            { paths: LOOK_PATHS, node: <LookPicker mood={mood} value={look} pack={pack} onChange={(next) => setValue('look', next)} />, replace: true },
+            { paths: MOOD_PATHS, node: <MoodPicker value={mood} onChange={(next) => setValue('mood', next)} />, replace: true },
+            { paths: LOOK_PATHS, node: <LookPicker mood={mood} value={look} onChange={(next) => setValue('look', next)} />, replace: true },
             { paths: PACK_PATHS, node: <PackPicker value={pack} onChange={(next) => setValue(PACK_DIAL_KEY, next)} />, replace: true, card: 'colors' },
             { paths: SEED_PATHS, node: shuffleButton, replace: true, card: 'colors' },
             { paths: FILTER_PATHS, node: <FilterPicker value={filter} onChange={(next) => setValue(FILTER_DIAL_KEY, next)} />, replace: true, card: 'filter' },

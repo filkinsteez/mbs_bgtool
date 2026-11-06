@@ -45,7 +45,8 @@ Later on 2026-11-02 the owner asked for crops of the Meta logo outline as Contou
  `density`. Mood and Look are picked from small pictures, Filter from
  icons and Format from shapes, each with its name, not dropdowns; the
  pictures are fixed renders from `scripts/light/panel-pictures.mjs`, not
- live. Each mood's first look is the one on its Mood picture and the one
+ live, in the Atmospheric pack whichever pack is picked (owner,
+ 2026-11-06). Each mood's first look is the one on its Mood picture and the one
  picking the mood switches to (Sunset: Bands, Contour: Halo). No free color pickers:
  Colors shows each pack as a strip of its exact hexes, and you pick a
  pack. Filter sits near Format at the bottom of the panel.
