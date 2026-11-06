@@ -92,6 +92,65 @@
   color: var(--dial-text-secondary);
 }
 
+.tool-packs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px 12px;
+  border-radius: var(--dial-radius);
+  background: var(--dial-surface);
+}
+
+.tool-packs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tool-packs-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.tool-pack {
+  position: relative;
+  display: flex;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  transition: outline-color 0.15s;
+}
+
+.tool-pack > span {
+  flex: 1;
+}
+
+/* A thin edge, so dark swatches (Forest, Plum, Near-black) stay visible on the dark panel. */
+.tool-pack::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  pointer-events: none;
+}
+
+.tool-pack:hover {
+  outline-color: var(--dial-border-hover);
+}
+
+.tool-pack[aria-checked='true'],
+.tool-pack:focus-visible {
+  outline-color: var(--dial-text-primary);
+}
+
 @media (max-height: 600px) {
   .tool-panel .dialkit-root {
     --dial-row-height: 32px;
@@ -109,6 +168,15 @@
   .tool-panel .dialkit-button {
     padding-top: 8px;
     padding-bottom: 8px;
+  }
+
+  .tool-packs {
+    gap: 8px;
+    padding: 8px 12px 10px;
+  }
+
+  .tool-pack {
+    height: 22px;
   }
 }
 
@@ -129,6 +197,15 @@
   .tool-panel .dialkit-button {
     padding-top: 5px;
     padding-bottom: 5px;
+  }
+
+  .tool-packs {
+    gap: 6px;
+    padding: 6px 12px 8px;
+  }
+
+  .tool-pack {
+    height: 18px;
   }
 }
 
@@ -158,5 +235,9 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: center;
+  }
+
+  .tool-packs {
+    grid-column: 1 / -1;
   }
 }

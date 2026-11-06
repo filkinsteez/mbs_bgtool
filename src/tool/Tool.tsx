@@ -18,9 +18,10 @@ import {
   moveDragWithMood,
   type LightDrag,
 } from './controls'
-import { buildDialConfig, PANEL_ID, PANEL_NAME, readToolState, SEED_DIAL_KEY } from './dialConfig'
+import { buildDialConfig, PACK_DIAL_KEY, PANEL_ID, PANEL_NAME, readToolState, SEED_DIAL_KEY } from './dialConfig'
 import { exportPng } from './exportImage'
 import { FILTER_DIAL_KEY, readChoice, withFilter } from './filterControl'
+import { PackPicker } from './PackPicker'
 import { panelAccessFor, usePanelAccess } from './panelAccess'
 import { Preview } from './Preview'
 import { EMPTY_SEED_HISTORY, recordSeedChange, stepBack, stepForward, type SeedStep } from './seedHistory'
@@ -33,6 +34,8 @@ const EXPORT_FAILED_LABEL = 'Export failed'
 const BACK_LABEL = 'Back'
 /** Back and Shuffle go right under the Seed slider. */
 const SEED_ROW_AFTER = [SEED_DIAL_KEY]
+/** The pack swatches take the place of DialKit's Colors select. */
+const PACK_PATHS = [PACK_DIAL_KEY]
 /** The Seed slider's track; panelAccess marks it with its path. */
 const SEED_SLIDER = `[data-dial-path="${SEED_DIAL_KEY}"]`
 const URL_DELAY_MS = 200
@@ -312,7 +315,13 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
         onReset={resetLight}
       />
       <aside ref={panelRef} className="tool-panel dial-column">
-        <ToolPanel panelId={PANEL_ID} afterPaths={SEED_ROW_AFTER} after={seedActions} />
+        <ToolPanel
+          panelId={PANEL_ID}
+          slots={[
+            { paths: PACK_PATHS, node: <PackPicker value={pack} onChange={(next) => setValue(PACK_DIAL_KEY, next)} />, replace: true },
+            { paths: SEED_ROW_AFTER, node: seedActions },
+          ]}
+        />
       </aside>
     </main>
   )

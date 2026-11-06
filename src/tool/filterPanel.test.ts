@@ -7,18 +7,18 @@ import { DEFAULT_STATE, parseQuery, toQuery } from './state'
 import { getPack } from '@/light'
 
 describe('filter control in the panel', () => {
-  it('adds Density for every filter, keeps the pick, and removes the slider for None', () => {
+  it('sits right above Format, adds Density for every filter, keeps the pick, and removes the slider for None', () => {
     const id = 'filter-check'
     const config = () => buildDialConfig('sunset', DEFAULT_STATE, 'Export PNG', readChoice(DialStore.getValue(id, FILTER_DIAL_KEY)))
     DialStore.registerPanel(id, 'Check', buildDialConfig('sunset', DEFAULT_STATE, 'Export PNG', 'none'))
     const paths = () => DialStore.getPanel(id)!.controls.map((control) => control.path)
     const labels = () => DialStore.getPanel(id)!.controls.map((control) => control.label)
-    expect(paths()).toEqual(['mood', 'look', 'colors', 'filter', 'intensity', 'softness', 'horizon', 'seed', 'format', 'export'])
+    expect(paths()).toEqual(['mood', 'look', 'colors', 'intensity', 'softness', 'horizon', 'seed', 'filter', 'format', 'export'])
     expect(readToolState(DialStore.getValues(id), 'sunset')).toMatchObject({ filter: 'none', strength: 0.5 })
 
     DialStore.updateValue(id, FILTER_DIAL_KEY, 'grain')
     DialStore.updatePanel(id, 'Check', config())
-    expect(paths()).toEqual(['mood', 'look', 'colors', 'filter', 'density', 'intensity', 'softness', 'horizon', 'seed', 'format', 'export'])
+    expect(paths()).toEqual(['mood', 'look', 'colors', 'intensity', 'softness', 'horizon', 'seed', 'filter', 'density', 'format', 'export'])
     expect(labels()).toContain('Density')
     expect(DialStore.getValue(id, 'filter')).toBe('grain')
     expect(DialStore.getValue(id, 'density')).toBe(0.5)
@@ -32,7 +32,7 @@ describe('filter control in the panel', () => {
 
     DialStore.updateValue(id, FILTER_DIAL_KEY, 'ascii')
     DialStore.updatePanel(id, 'Check', config())
-    expect(paths()).toEqual(['mood', 'look', 'colors', 'filter', 'density', 'intensity', 'softness', 'horizon', 'seed', 'format', 'export'])
+    expect(paths()).toEqual(['mood', 'look', 'colors', 'intensity', 'softness', 'horizon', 'seed', 'filter', 'density', 'format', 'export'])
     expect(labels()).toContain('Density')
     DialStore.updateValue(id, 'density', 0.3)
     expect(readToolState(DialStore.getValues(id), 'sunset')).toMatchObject({ filter: 'ascii', strength: 0.3 })

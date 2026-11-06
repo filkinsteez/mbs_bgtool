@@ -8,6 +8,8 @@ export const PANEL_ID = 'tool'
 export const PANEL_NAME = 'Background'
 /** Panel key; DialKit shows it as "Seed". */
 export const SEED_DIAL_KEY = 'seed'
+/** Panel key of the pack; the tool draws it as swatches (`PackPicker`) instead of DialKit's select. */
+export const PACK_DIAL_KEY = 'colors'
 
 const MOOD_OPTIONS = [
   { value: 'sunset', label: 'Sunset' },
@@ -34,12 +36,12 @@ export function buildDialConfig(mood: MoodId, initial: ToolState, exportLabel: s
       options: looks.map((recipe) => ({ value: recipe.id, label: recipe.label })),
       default: sameMood ? initial.look : looks[0].id,
     },
-    colors: { type: 'select', options: PACK_OPTIONS, default: initial.pack },
-    ...filterDials(initial, filter),
+    [PACK_DIAL_KEY]: { type: 'select', options: PACK_OPTIONS, default: initial.pack },
     intensity: [initial.intensity, 0, 1, 0.01],
     softness: [initial.softness, 0, 1, 0.01],
     [MOOD_DIAL_KEY[mood]]: [sameMood ? initial.moodControl : DEFAULT_CONTROLS.mood, 0, 1, 0.01],
     [SEED_DIAL_KEY]: [initial.seed, SEED_MIN, SEED_MAX, 1],
+    ...filterDials(initial, filter),
     format: { type: 'select', options: [...EXPORT_ASPECTS], default: initial.format },
     export: { type: 'action', label: exportLabel },
   }
@@ -47,7 +49,7 @@ export function buildDialConfig(mood: MoodId, initial: ToolState, exportLabel: s
 
 /** Tool state from the panel's live values; anything missing or out of place falls back to a valid value. */
 export function readToolState(values: Readonly<Record<string, unknown>>, mood: MoodId): ToolState {
-  const pack = values.colors
+  const pack = values[PACK_DIAL_KEY]
   const format = values.format
   return {
     mood,
