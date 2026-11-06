@@ -401,8 +401,12 @@ const DEPTH = [0, 1, 0.5]
 const DRAG_EDGE_SHARE = [1, 0.8, 0.9]
 /** How far (short sides) the start goes below the horizon before the sun's own light dims by e. */
 const SINK_FADE = 0.6
-/** How far (short sides) the start goes below the horizon before the twilight glow's size shrinks by e. */
+/**
+ * How far (short sides) the start goes below the horizon before the twilight glow's size shrinks
+ * by e. Bold's glow, the main difference between its seeds under a line, shrinks half as fast.
+ */
 const SET_SHRINK = 0.5
+const BOLD_SET_SHRINK = 1
 /** Under a dragged line, how much further a broad seed's warm haze reaches per short side of the line's length. */
 const DRAG_WARM_REACH = 0.2
 
@@ -722,7 +726,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // brown).
   const setDepth = line ? Math.min(0.9, Math.max(0, 0.03 - lineRise)) : 0
   const setGlow = Math.exp(-setDepth / SINK_FADE)
-  const setShrink = Math.exp(-setDepth / SET_SHRINK)
+  const setShrink = Math.exp(-setDepth / (packId === 'bold' ? BOLD_SET_SHRINK : SET_SHRINK))
   const dragReach = line ? dragRise + line.length : 0
   const dragTop = skyTopOf(dragReach, tall)
   const skyHeight = Math.max(0.2, line ? dragTop : horizonY * tall)
