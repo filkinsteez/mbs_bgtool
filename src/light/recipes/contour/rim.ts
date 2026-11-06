@@ -15,6 +15,7 @@ import {
   normalNear,
   offFrameGlow,
   packAccent,
+  packBase,
   pickBase,
   pickLight,
   pickWeighted,
@@ -313,7 +314,7 @@ const dist = (a: Vec2, b: Vec2) => Math.hypot(a[0] - b[0], a[1] - b[1])
 function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition {
   const rand = seededRandom(seed, 7)
   const light = pickLight(pack, rand, seed, 61)
-  const base = pickBase(pack, rand, light.hex)
+  const seedBase = pickBase(pack, rand, light.hex)
   // A block of 8 seeds shows three corners, three logo crops, a line and an arc, each lighting a different part of the frame.
   const plan = blockPlan<RimKind>(pack, seed, 61, ['corner', 'corner', 'corner', 'logo', 'logo', 'logo', 'line', 'arc'])
   const kind = plan.kind
@@ -339,6 +340,7 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   const hot = dragged?.hot ?? (line ? lineExit(path, fromStart, lerp(0.08, -0.3, controls.mood)) : pointAlong(run, along(controls.mood))) ?? layout.anchor
   const home = dragged?.hot ?? pointAlong(run, along(0.5)) ?? layout.anchor
   const accent = accentParams(packAccent(pack, light, 'rim'), pointAlong(run, along(0.5)) ?? layout.anchor, hot, aspect, controls.drag)
+  const base = packBase(seedBase, accent.base)
   const at: Vec2 = [hot[0] - layout.anchor[0], hot[1] - layout.anchor[1]]
   const gain = geo(controls.intensity, 0.35, 1, 2.8)
   // Softness from 0.3 to 1.7 (1 at the default): wider glows change more of the frame per step, so the top
@@ -409,8 +411,8 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
       soften,
       // The rim-edge reference's face is a dim navy (Oklab L about 0.22) that darkens away from the edge and the
       // corner. A Tan face stays dark: a wide dim Tan fill reads grey-brown.
-      // Elemental's Forest face is 4.5 times as bright, so the air takes Forest where the edge lights little.
-      face: layout.oneSided && !bright ? round4(0.035 * (accent.face > 0 && accent.second ? 4.5 : accent.haze)) : 0,
+      // A Meta Blue light's face is brighter (packAccent), so the air inside the edge shows the pack.
+      face: layout.oneSided && !bright ? round4(0.035 * (accent.pale ? accent.faceGain : accent.haze)) : 0,
       glow: line ? 0.006 : 0.005,
       fan: line ? 4 : 1.5,
       // A blue line's glow splits its colors to the two sides (the light-line reference: a different hue on each
@@ -446,7 +448,7 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     // the edge keeps the light's own color.
     ...(accent.pale ? { n1Pale: accent.line, n2Pale: accent.band, f1Pale: accent.air, f2Pale: accent.air, f3Pale: accent.face } : {}),
     ...accent.params,
-    ...offFrameGlow(controls.drag, light.hex, aspect, accent.air),
+    ...offFrameGlow(controls.drag, light.hex, aspect, accent.edge),
     // A Tan edge's glow is two bands side by side just inside the edge, a flat stretch a little above Tan's level
     // that ends in a short rounded fall (the Halo's Tan bands at a rim's scale); a Tan line's are one either side.
     ...(bright

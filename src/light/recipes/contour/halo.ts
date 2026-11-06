@@ -13,6 +13,7 @@ import {
   arcParts,
   offFrameGlow,
   packAccent,
+  packBase,
   ringPartner,
   ringParts,
   suitsRings,
@@ -63,6 +64,8 @@ const RINGS = 3
 const NEAR = 3
 const FAR = 3
 export const HALO_LAYOUT: CurveLightLayout = { emitters: RINGS, primitives: 64, near: NEAR, far: FAR }
+/** The most of a ring's inside glow that takes a Meta Blue light's pale color (packAccent's `air`). */
+const RING_HAZE_PALE = 0.6
 
 function ringParams(i: number): ParamSpec[] {
   const first = i === 1
@@ -270,7 +273,7 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   // A block of 8 seeds shows four logo crops, two ellipses and two rings, each lighting a different part of the frame.
   const plan = blockPlan(pack, seed, 67, ['logoEdge', 'logoEdge', 'logoEdge', 'logoEdge', 'ellipse', 'ellipse', 'ring', 'ring'] as const)
   const light = pickLight(pack, rand, seed, 67)
-  const base = pickBase(pack, rand, light.hex)
+  const seedBase = pickBase(pack, rand, light.hex)
   const layout = haloLayout(plan.kind, rand, aspect, plan.place)
   // Ring seeds are two thin glass rims that cross, their color shifting around each ring, their insides faintly
   // lit and their light adding where they overlap (iridescent-rings reference); the others are a crest with a long
@@ -297,6 +300,7 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   const hot = dragged?.hot ?? pointAlong(path, along(controls.mood)) ?? layout.anchor
   const home = dragged?.hot ?? pointAlong(path, along(0.5)) ?? layout.anchor
   const accent = accentParams(packAccent(pack, light, 'halo'), pointAlong(path, along(0.5)) ?? layout.anchor, hot, aspect, controls.drag)
+  const base = packBase(seedBase, accent.base)
   const at: Vec2 = [hot[0] - layout.anchor[0], hot[1] - layout.anchor[1]]
   const gain = geo(controls.intensity, 0.35, 1, 2.8)
   const soften = geo(controls.softness, 0.45, 1, 2.4)
@@ -322,8 +326,10 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   const dragPower = 4
   const drift = warmDrift(light.hex)
   const ring1Parts = rings ? ringParts('ring1') : paleArc ? arcParts('ring1', light.hex) : haloParts('ring1', light.hex)
-  // The widest haze: a crest's outer fade, a pale arc's or a ring's inside glow.
+  // The widest haze: a crest's outer fade, a pale arc's or a ring's inside glow. A ring's only dims: brighter, it
+  // fills the ring like a sail.
   const hazeKey = rings || paleArc ? 'ring1f1Weight' : 'ring1f2Weight'
+  const hazeGain = rings ? Math.min(1, accent.haze) : accent.haze
   const params: Record<string, ParamValue> = {
     ring1On: true,
     ring1Shape: SHAPE_KINDS.indexOf(layout.shape.kind) + 1,
@@ -336,15 +342,18 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     ring1Color: 2,
     ring1Gain: 1,
     ...ring1Parts,
-    ...(accent.haze < 1 ? { [hazeKey]: round4(Number(ring1Parts[hazeKey] ?? 0) * accent.haze) } : {}),
+    ...(hazeGain !== 1 ? { [hazeKey]: round4(Number(ring1Parts[hazeKey] ?? 0) * hazeGain) } : {}),
     ...(rings && partner ? { ring1Color2: 4 } : {}),
     ...(drift ? { ring1Drift: drift.ratios, ring1DriftShape: [drift.knee, drift.sharpness] } : {}),
     ring1Pale: accent.pale ? 5 : 0,
     // A colored band's body is far part 3 (and far part 1 outside a crest); the rest of the far light is haze.
     ...Object.fromEntries((rings ? [] : paleArc ? ['f3'] : ['f1', 'f3']).map((k) => [`ring1${k}Pale`, accent.body])),
-    ...Object.fromEntries((rings || paleArc ? ['f1', 'f2'] : ['f2']).map((k) => [`ring1${k}Pale`, accent.air])),
+    // A ring's insides keep some of the light's color: fully grey, Meta Blue rings look like Ice ones.
+    ...Object.fromEntries(
+      (rings || paleArc ? ['f1', 'f2'] : ['f2']).map((k) => [`ring1${k}Pale`, rings ? Math.min(accent.air, RING_HAZE_PALE) : accent.air]),
+    ),
     ...accent.params,
-    ...offFrameGlow(controls.drag, light.hex, aspect, accent.air),
+    ...offFrameGlow(controls.drag, light.hex, aspect, accent.edge),
     ring2On: Boolean(crossing),
     ...(crossing
       ? {

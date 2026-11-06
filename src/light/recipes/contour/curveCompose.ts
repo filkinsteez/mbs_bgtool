@@ -193,6 +193,7 @@ export function warmDrift(hex: string): { ratios: number[]; knee: number; sharpn
 
 /** Oklab lightness of a base: dark enough that text set on it reads, light enough to tell from black. */
 const BASE_LIGHTNESS = 0.1
+const baseAtLow = (hex: string) => ({ hex, gain: round4((BASE_LIGHTNESS / lightness(hex)) ** 3) })
 
 /**
  * Bases a warm light's dim tail must not fade into, because the mix between
@@ -209,13 +210,12 @@ const BASES_TAIL_MUDDIES: Record<WarmTail, readonly string[]> = {
 /** Black or one of the pack's darker colors (or Meta Blue) at low light, as slot color and gain, that the light's dim tail fades into cleanly. */
 export function pickBase(pack: ColorPack, rand: () => number, lightHex: string): { hex: string; gain: number } {
   const dark = pack.colors.filter((c) => lightness(c.hex) < 0.45)
-  const atLow = (hex: string) => ({ hex, gain: round4((BASE_LIGHTNESS / lightness(hex)) ** 3) })
   const tail = warmTail(lightHex)
   const muddy = tail ? BASES_TAIL_MUDDIES[tail] : []
   const options: (readonly [{ hex: string; gain: number }, number])[] = [
     [{ hex: '#000000', gain: 0 }, 3],
-    [atLow(pack.colors[0].hex), 1],
-    ...dark.map((c) => [atLow(c.hex), 1] as const),
+    [baseAtLow(pack.colors[0].hex), 1],
+    ...dark.map((c) => [baseAtLow(c.hex), 1] as const),
   ]
   return pickWeighted(
     rand,
@@ -224,14 +224,28 @@ export function pickBase(pack: ColorPack, rand: () => number, lightHex: string):
 }
 
 /**
+ * The base for a Meta Blue light (packAccent): where the seed picked Meta Blue at low light, the pack's own dark
+ * color if it has one, since a navy base looks the same in every pack.
+ */
+export function packBase(base: { hex: string; gain: number }, accentBase: string | null): { hex: string; gain: number } {
+  return accentBase && base.gain > 0 && base.hex.toUpperCase() === '#0064E0' ? baseAtLow(accentBase) : base
+}
+
+/**
  * How a Meta Blue light shows its pack, since every pack has Meta Blue (SHARED.md, 2026-11-05 11:22 AM). Bold's
  * light stays saturated and its pale side leans Cyan: its core takes Cyan and its body leans halfway. Atmospheric's
  * core goes to Steel grey; its body keeps Meta Blue's own pale blue, since part of a grey mixed into Meta Blue turns it
  * periwinkle (Meta Blue has no red and the greys do). In Elemental, Halo adds a second, dimmer light in Lime from
  * outside the frame, apart from the first so their colors don't mix into teal (a Tan one shows only its fall there,
- * which reads brown). Rim's face (the air inside its edge) also takes Forest, brighter than other faces, since a
- * rim's thin edge lights little of the frame; Lime's fall drifts to Forest, so the two meet without teal. Null for
- * other lights, which only their own pack has. Shares in the pale
+ * which reads brown). Rim's face (the air inside its edge) also takes Forest; Lime's fall drifts to Forest, so the
+ * two meet without teal. So that packs differ across the whole frame, not only in the light's tint, the dim haze
+ * and a rim's face take the pack too (Bold's lean Cyan, Atmospheric's go fully to Steel, a cool grey, since part of
+ * it turns periwinkle), and are brighter: `haze` times for the widest haze (Elemental's is dimmer, so it fades out
+ * before it reaches the second light and turns teal) and `faceGain` times for a rim's face, since its thin edge
+ * lights little of the frame; Atmospheric's base is Slate where the seed picks a Meta Blue one (packBase). The glow
+ * at the frame's edge from a light dragged outside it (offFrameGlow) takes `edge` of the pale color, less than the
+ * haze: with more, a Meta Blue seed's edge looks like a Cyan or Ice seed's. Null for other lights, which only their
+ * own pack has. Shares in the pale
  * color: `body` of a band's body, `line` of a rim's thin core line, which is near white wherever it shows, so a grey
  * there stays grey, `band` of the rim's color band beside it, `air` of the dim haze around the light and `face` of a
  * rim's face. The band, the haze and the face are at or below the light's own level, where the tone curve doesn't
@@ -241,18 +255,31 @@ export function packAccent(
   pack: ColorPack,
   light: PackColor,
   look: 'halo' | 'rim',
-): { pale: PackColor | null; body: number; line: number; band: number; air: number; face: number; second: PackColor | null } | null {
+): {
+  pale: PackColor | null
+  body: number
+  line: number
+  band: number
+  air: number
+  face: number
+  haze: number
+  faceGain: number
+  edge: number
+  base: PackColor | null
+  second: PackColor | null
+} | null {
   if (light.hex.toUpperCase() !== '#0064E0') return null
   const named = (name: string) => pack.colors.find((c) => c.name === name) ?? null
+  const accent = { body: 0, line: 0, band: 0, air: 0, face: 0, haze: 1, faceGain: 1, edge: 0, base: null, second: null }
   switch (pack.id) {
     case 'bold':
-      return { pale: named('Cyan'), body: 0.5, line: 0.5, band: 0.15, air: 0, face: 0, second: null }
+      return { ...accent, pale: named('Cyan'), body: 0.5, line: 0.5, band: 0.15, air: 0.8, face: 0.6, haze: 1.5, faceGain: 3 }
     case 'atmospheric':
-      return { pale: named('Steel'), body: 0, line: 0.6, band: 0.4, air: 0.6, face: 0.6, second: null }
+      return { ...accent, pale: named('Steel'), line: 0.6, band: 0.4, air: 1, face: 1, haze: 2, faceGain: 3, edge: 0.6, base: named('Slate') }
     case 'elemental':
       return look === 'rim'
-        ? { pale: named('Forest'), body: 0, line: 0, band: 0, air: 0, face: 1, second: named('Lime') }
-        : { pale: null, body: 0, line: 0, band: 0, air: 0, face: 0, second: named('Lime') }
+        ? { ...accent, pale: named('Forest'), face: 1, haze: SECOND_HAZE, faceGain: 4.5, second: named('Lime') }
+        : { ...accent, pale: null, haze: SECOND_HAZE, second: named('Lime') }
     default: {
       const unknown: never = pack.id
       throw new Error(`Unknown pack: ${String(unknown)}`)
@@ -267,7 +294,7 @@ export function packAccent(
 const SECOND_BEYOND = 0.12
 const SECOND_FALLOFF = 0.12
 const SECOND_POWER = 3
-/** The first light's widest haze, times this, so it fades out before it reaches the second light and turns teal. */
+/** Elemental's widest haze around a Meta Blue light, times this (packAccent). */
 const SECOND_HAZE = 0.35
 
 const smoothstep = (a: number, b: number, x: number) => {
@@ -282,8 +309,8 @@ const smoothstep = (a: number, b: number, x: number) => {
  * `home`'s own side. Its glow reaches its own level on the frame's edge. Each place fades out while the light's hot
  * spot is within about half a short side of it, and the second place shows only as the first fades, so the two
  * lights never mix and a drag that brings the light to one side moves the second light smoothly to the other; a
- * dragged line's start (where its light is, maybe outside the frame) counts as the hot spot too. `haze` scales the
- * first light's widest haze for the same reason. `home` and `hot` are in short-side units from the frame center.
+ * dragged line's start (where its light is, maybe outside the frame) counts as the hot spot too. `home` and `hot`
+ * are in short-side units from the frame center.
  */
 export function accentParams(
   accent: ReturnType<typeof packAccent>,
@@ -298,15 +325,21 @@ export function accentParams(
   band: number
   air: number
   face: number
+  faceGain: number
+  edge: number
+  base: string | null
   second: string | null
   haze: number
   params: Record<string, number | number[]>
 } {
   const pale = accent?.pale?.hex ?? null
-  const shares = { body: 0, line: 0, band: 0, air: 0, face: 0, ...(pale && accent ? accent : {}) }
-  const { body, line, band, air, face } = shares
+  const shares = { body: 0, line: 0, band: 0, air: 0, face: 0, edge: 0, ...(pale && accent ? accent : {}) }
+  const { body, line, band, air, face, edge } = shares
+  const faceGain = accent?.faceGain ?? 1
+  const haze = accent?.haze ?? 1
+  const base = accent?.base?.hex ?? null
   const second = accent?.second ?? null
-  if (!second) return { pale, body, line, band, air, face, second: null, haze: 1, params: {} }
+  if (!second) return { pale, body, line, band, air, face, faceGain, edge, base, second: null, haze, params: {} }
   const [fw, fh] = frameSize(aspect)
   const drift = warmDrift(second.hex)
   const lights: Vec2[] = [hot, ...(drag ? [[(drag.from[0] - 0.5) * fw, (drag.from[1] - 0.5) * fh] as Vec2] : [])]
@@ -332,7 +365,7 @@ export function accentParams(
       ...(drift ? { [`air${i}Drift`]: drift.ratios, [`air${i}DriftShape`]: [drift.knee, drift.sharpness] } : {}),
     })
   })
-  return { pale, body, line, band, air, face, second: second.hex, haze: SECOND_HAZE, params }
+  return { pale, body, line, band, air, face, faceGain, edge, base, second: second.hex, haze, params }
 }
 
 /**
