@@ -391,6 +391,13 @@ const sceneTurn = (structure: RampStructure, variant: number, step: number) => (
 const WARM = { share: [1, 2.2, 1.3], size: [0.8, 1.35, 1.05], reach: [0.65, 2, 1.15] }
 /** How dark the water, the land and the far sky are, by the seed's turn: light, dark, between. */
 const DEPTH = [0, 1, 0.5]
+/**
+ * Under a dragged line, how far along the line Bold's and Atmospheric's sky edges sit, by the
+ * seed's depth turn (1: as the line asks). Elemental's seeds differ by their light and ground.
+ */
+const DRAG_EDGE_SHARE = [1, 0.8, 0.9]
+/** Under a dragged line, how much further a broad seed's warm haze reaches per short side of the line's length. */
+const DRAG_WARM_REACH = 0.2
 
 /**
  * Share of the frame's height at the top that the sky's edges leave to the zenith's Meta Blue. It is
@@ -453,14 +460,20 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // its dark ground, a light seed more sky. An open sky's variant sets the height of its band. The
   // shift fades out toward both ends of the Horizon control, which keep the shared heights.
   const shared = placeHorizon(mood, seed, aspect)
-  const lineShift = openSky ? [-0.1, 0.05, 0][variant] : [0.05, -0.1, -0.03][depthTurn]
+  // Atmospheric's grey seeds differ most by where the line sits, so theirs spread further.
+  const lineShift = openSky ? [-0.1, 0.05, 0][variant] : packId === 'atmospheric' ? [0.12, -0.2, -0.05][depthTurn] : [0.05, -0.1, -0.03][depthTurn]
   // A light seed's land lies nearly level.
   const tiltScale = structure === 'land' ? [0.45, 1, 1][depthTurn] : 1
   const placed = { ...shared, y: shared.y + lineShift * Math.min(1, mood / 0.25, (1 - mood) / 0.25), tilt: Math.max(-LAND_MOST_TILT, Math.min(LAND_MOST_TILT, shared.tilt * tiltScale)) }
   // A dragged line takes the Horizon control's place: the glow sits at its start, the horizon runs
   // across it, and the sky reaches the zenith's color at its end. The seed keeps everything else.
   const line = controls.drag ? rampLine(controls.drag, aspect) : null
-  const dragVeil = line ? Math.max(0.75, Math.min(1, veilScale)) : veilScale
+  // Atmospheric's grey veil keeps its blue under full strength, so its seeds keep their own haze.
+  const dragVeil = line && packId !== 'atmospheric' ? Math.max(0.75, Math.min(1, veilScale)) : veilScale
+  // A broad seed's warm haze reaches further along a longer line, so it shows in the frame even
+  // where the line leaves the glow itself outside it. Atmospheric's light is pale Ice, whose haze
+  // reaching further would wash the frame to one color.
+  const dragWarm = line && packId !== 'atmospheric' ? 1 + DRAG_WARM_REACH * line.length * [0, 1, 0.4][warmTurn] : 1
 
   const tall = Math.max(1, 1 / aspect)
   const frameWidth = Math.max(1, aspect)
@@ -708,8 +721,9 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // Intensity is daylight: the zenith gains the most, the low sky less and the glow least;
   // the glow rises, widens and pales, and the sun's core whitens near the sun only.
   const zenithGain = stops2(intensity, 1.6)
-  // A deep seed's low sky is dimmer, so its color stays saturated instead of paling.
-  const lowGain = look.lowSkyGain * stops2(intensity, look.lowSkyGain < 1 ? 0.8 : 0.35) * lerp(1, 0.8, depth)
+  // A deep seed's low sky is dimmer, so its color stays saturated instead of paling, and seeds
+  // differ in how bright their sky is; most of all Atmospheric's, whose greys differ in little else.
+  const lowGain = look.lowSkyGain * stops2(intensity, look.lowSkyGain < 1 ? 0.8 : 0.35) * (packId === 'atmospheric' ? lerp(1.15, 0.55, depth) : lerp(1, 0.7, depth))
   const glowGain = stops2(intensity, 0.15)
   const sunGain = stops2(intensity, 2.4)
   const groundGain = stops2(intensity, 0.8)
@@ -789,8 +803,10 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   }
   // Where the sky sinks toward the dark at its far edge, the zenith there is that share of the hex;
   // a deep seed's far sky sinks further, and so does Bold's wide sky of a corner or of arcs, which
-  // is deep blue far from the light (muted as Elemental's is, it would go grey).
-  zenithShade[1] += (1 - look.farSink * lerp(1, 0.4, depth * depth) * (packId === 'bold' && (structure === 'corner' || arcs) ? 0.5 : 1)) / zenithShade[0]
+  // is deep blue far from the light (muted as Elemental's is, it would go grey). A deep
+  // Atmospheric seed's far sky sinks to a dark, Slate-like overcast.
+  const sink = (packId === 'bold' && (structure === 'corner' || arcs) ? 0.5 : 1) * (packId === 'atmospheric' ? lerp(1, 0.55, depth) : 1)
+  zenithShade[1] += (1 - look.farSink * lerp(1, 0.4, depth * depth) * sink) / zenithShade[0]
 
   // The stop edges, top down. A second, lighter Meta Blue step splits the sky's edge in two: a
   // wide one higher up and a narrower one lower down, each with its own shape.
@@ -810,11 +826,14 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const tail = 0.5 * (1 + 0.5 * Math.max(0, Math.log2((midSky ? lerp(lowGain, midGain, midAmount) : lowGain) / zenithGain)))
   if (line) {
     // Under a dragged line the edges stretch or shrink about the glow, widths included, so the
-    // highest edge's upper tail ends at the line's end.
+    // highest edge's upper tail ends at the line's end. A deep seed's edges then sit nearer the
+    // light, so its sky is deep blue over more of the line and sinks to navy at the line's end;
+    // a light seed's sky is its low sky's color nearly to the end.
     const stretch = Math.max(0.1, (topHeight - zenithRoom - glowRise) / Math.max(0.05, Math.abs(topAt) + tail * topWidth - glowRise))
+    const nearer = packId === 'elemental' ? 1 : DRAG_EDGE_SHARE[depthTurn]
     for (const edge of edges) {
-      edge[0] = -glowRise + (edge[0] + glowRise) * stretch
-      edge[1] = Math.min(6, edge[1] * stretch)
+      edge[0] = -glowRise + (edge[0] + glowRise) * stretch * nearer
+      edge[1] = Math.min(6, edge[1] * stretch * nearer)
     }
   } else {
     const room = (topHeight - zenithRoom) / (Math.abs(topAt) + tail * topWidth)
@@ -914,7 +933,8 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     veilTint: paleTint(look.veilColor, packId === 'bold' ? 0.35 : packId === 'elemental' ? 0.25 : 0.6),
     // Under the far band the sky's blue greys at its own hue (Elemental, whose pale side is its
     // light's color), or toward Steel (Atmospheric, overcast), instead of turning periwinkle.
-    veilMute: packId === 'atmospheric' ? 0.8 : packId === 'elemental' ? 0.5 : 0,
+    // Atmospheric's light seeds are overcast grey, its deep seeds keep more of their clear blue.
+    veilMute: packId === 'atmospheric' ? 0.8 * lerp(1.15, 0.5, depth) : packId === 'elemental' ? 0.5 : 0,
     blueHue: 1,
     // Elemental's veil takes its light's own color near the light, so the pale side reads Tan or
     // Lime; the other packs take the bridge's warm white there.
@@ -928,10 +948,10 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     glow1Weight: 1,
     // The glow's light reaches up the sky as far as the seed's warm fill: a broad seed's warm haze
     // fills much of the sky, also where a dragged line leaves the glow itself outside the frame.
-    glow1Up: 0.1 * glowScale * look.glowUp * warmReach,
+    glow1Up: 0.1 * glowScale * look.glowUp * warmReach * dragWarm,
     glow1Down: Math.min(2, Math.max((0.03 + 0.03 * glowHaze) * skyScale, look.downReach * glowReach)),
     glow2Weight: 0.2 * look.haze * lerp(0.6, 1.5, softness) * warmReach,
-    glow2Up: 0.17 * glowScale * look.glowUp * warmReach,
+    glow2Up: 0.17 * glowScale * look.glowUp * warmReach * dragWarm,
     glow2Down: 0.08 * glowHaze,
     extinction: look.extinction,
     // Skylight fades toward the horizon, so under the glow line the light is the glow's own.
@@ -967,7 +987,8 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // One lens over the whole scene: Softness is its radius.
     lensRadius: lerp(0.045, 0.12, softness),
     // Patches of light in the sky, a third to half of the frame across.
-    skyPatch: [0.08, lerp(0.33, 0.5, patchPick) * frameWidth, 1.6],
+    // Atmospheric's overcast takes seeds' own brighter and darker masses, some faint, some clear.
+    skyPatch: [packId === 'atmospheric' ? lerp(0.04, 0.24, patchPick) : 0.08, lerp(0.33, 0.5, patchPick) * frameWidth, 1.6],
     ground: groundKind,
     groundAt: lineY,
     groundTilt: (Math.atan(outline.slope) * 180) / Math.PI,
