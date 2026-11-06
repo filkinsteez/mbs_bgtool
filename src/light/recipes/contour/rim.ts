@@ -14,6 +14,7 @@ import {
   longestRun,
   normalNear,
   offFrameGlow,
+  offFrameSpread,
   packAccent,
   packBase,
   pickBase,
@@ -379,6 +380,7 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   // reached the dark at its end, edges facing the line's way catch it, and the hot spot grows with the line. A very
   // short line has no clear direction, so its light is round and its facing fades out.
   const dragReach = dragged ? Math.hypot(dragged.lineLength, 0.12) : 0
+  const spread = dragged ? offFrameSpread(controls.drag, dragged.hot, aspect) : 0
   const dragT = dragged ? Math.min(1, dragged.lineLength / 0.15) : 0
   const dragWay = dragT * dragT * (3 - 2 * dragT)
   const drift = warmDrift(light.hex)
@@ -500,7 +502,9 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     // A Tan line keeps the flat top: near full from its bright end, then a short fall.
     light1Kind: dragged ? 6 : line && !bright ? 4 : 5,
     light1At: at.map(round4),
-    light1Radius: round4(dragged ? dragReach / Math.log(factor) ** (1 / dragPower) : line ? (bright ? lineReach : 0.04) : reach),
+    light1Radius: round4(
+      dragged ? Math.hypot(dragReach / Math.log(factor) ** (1 / dragPower), spread) : line ? (bright ? lineReach : 0.04) : reach,
+    ),
     light1Power: round4(dragged ? dragPower : line && bright ? FLAT_POWER : power),
     ...(dragged
       ? { light1Length: round4(lerp(1, 0.35, dragWay)), light1Stretch: round4(lerp(1, 0.75, dragWay)), light1Angle: round4(dragged.lineAngle) }
@@ -510,9 +514,12 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     light2Kind: 1,
     light2At: at.map(round4),
     // A broad hot spot: the overexposed core covers a stretch of the edge, not a point (rim-edge reference); a
-    // line's is short, at its bright end.
+    // line's is short, at its bright end. A light outside the frame spreads it too, by half as much as its reach.
     light2Radius: round4(
-      (line ? lerp(0.08, 0.14, hotDraw) : lerp(0.18, 0.36, hotDraw)) * (dragged ? Math.min(1.4, Math.max(0.45, dragReach / 0.5)) : 1),
+      Math.hypot(
+        (line ? lerp(0.08, 0.14, hotDraw) : lerp(0.18, 0.36, hotDraw)) * (dragged ? Math.min(1.4, Math.max(0.45, dragReach / 0.5)) : 1),
+        0.5 * spread,
+      ),
     ),
     base: base.gain > 0 ? 3 : 0,
     baseGain: base.gain,

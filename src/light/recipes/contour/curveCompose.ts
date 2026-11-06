@@ -309,8 +309,10 @@ const smoothstep = (a: number, b: number, x: number) => {
  * `home`'s own side. Its glow reaches its own level on the frame's edge. Each place fades out while the light's hot
  * spot is within about half a short side of it, and the second place shows only as the first fades, so the two
  * lights never mix and a drag that brings the light to one side moves the second light smoothly to the other; a
- * dragged line's start (where its light is, maybe outside the frame) counts as the hot spot too. `home` and `hot`
- * are in short-side units from the frame center.
+ * dragged line's start (where its light is, maybe outside the frame) counts as the hot spot too, and so does the
+ * frame's point nearest it, where a far light's glow comes in (offFrameGlow), from a little farther. Split between
+ * two places, each patch is dimmer and Lime's dim fall turns it Forest green, so the second light keeps well away
+ * from that point instead. `home` and `hot` are in short-side units from the frame center.
  */
 export function accentParams(
   accent: ReturnType<typeof packAccent>,
@@ -342,9 +344,13 @@ export function accentParams(
   if (!second) return { pale, body, line, band, air, face, faceGain, edge, base, second: null, haze, params: {} }
   const [fw, fh] = frameSize(aspect)
   const drift = warmDrift(second.hex)
-  const lights: Vec2[] = [hot, ...(drag ? [[(drag.from[0] - 0.5) * fw, (drag.from[1] - 0.5) * fh] as Vec2] : [])]
+  const start: Vec2 | null = drag ? [(drag.from[0] - 0.5) * fw, (drag.from[1] - 0.5) * fh] : null
+  const atEdge = (p: Vec2): Vec2 => [Math.min(fw / 2, Math.max(-fw / 2, p[0])), Math.min(fh / 2, Math.max(-fh / 2, p[1]))]
+  // Where a far light's glow comes in, it reaches about OFF_FRAME_FALLOFF farther.
+  const margin = drag ? OFF_FRAME_FALLOFF * smoothstep(0, OFF_FRAME_FROM, segmentOutside([...drag.from, ...drag.from], aspect)) : 0
+  const lights: [Vec2, number][] = [[hot, 0], ...(start ? ([[start, 0], [atEdge(start), margin]] as [Vec2, number][]) : [])]
   const away = (at: readonly number[]) =>
-    Math.min(...lights.map((l) => smoothstep(0.3, 0.6, Math.hypot((at[0] - 0.5) * fw - l[0], (at[1] - 0.5) * fh - l[1]))))
+    Math.min(...lights.map(([l, m]) => smoothstep(0.3, 0.6, Math.hypot((at[0] - 0.5) * fw - l[0], (at[1] - 0.5) * fh - l[1]) - m)))
   const across = acrossFrom(home, aspect, SECOND_BEYOND)
   const beside = acrossFrom([-home[0], -home[1]], aspect, SECOND_BEYOND)
   const first = away(across)
@@ -376,6 +382,24 @@ export function accentParams(
 const OFF_FRAME_FROM = 0.15
 const OFF_FRAME_FALLOFF = 0.22
 const OFF_FRAME_POWER = 4
+/** Past OFF_FRAME_FROM, the edge's glow is half as bright this much farther out (short sides), a fifth at twice that. */
+const OFF_FRAME_FADE = 0.15
+
+/**
+ * How a dragged light whose start is outside the frame spreads along the outline: a far light lights a longer
+ * stretch of an edge. Its reach grows by this times its distance from the hot spot (short sides), coming in over the
+ * start's first OFF_FRAME_FROM short sides outside the frame; inside the frame the drag places the light as before.
+ */
+const OFF_FRAME_SPREAD = 1
+
+/** The extra reach (short sides) of a dragged light whose start is outside the frame, `hot` its hot spot (short-side units from the center). */
+export function offFrameSpread(drag: ControlValues['drag'], hot: Vec2, aspect: number): number {
+  if (!drag) return 0
+  const [fw, fh] = frameSize(aspect)
+  const share = smoothstep(0, OFF_FRAME_FROM, segmentOutside([drag.from[0], drag.from[1], drag.from[0], drag.from[1]], aspect))
+  const from: Vec2 = [(drag.from[0] - 0.5) * fw, (drag.from[1] - 0.5) * fh]
+  return share * OFF_FRAME_SPREAD * Math.hypot(from[0] - hot[0], from[1] - hot[1])
+}
 
 /** How far (short sides) a segment in frame coordinates (x0, y0, x1, y1) is outside the frame; 0 if it touches it. */
 function segmentOutside(line: readonly number[], aspect: number): number {
@@ -395,14 +419,18 @@ function segmentOutside(line: readonly number[], aspect: number): number {
  * Air glow 1 for a dragged line that leaves the frame (SHARED.md, 2026-11-05 11:22 AM: no drag leaves a frame
  * nearly black). A light outside the frame still lights the air near it, so the frame's nearest edge glows in its
  * color, at its own level there, and fades into the frame; the light keeps the dragged direction. It comes in over
- * the line's first OFF_FRAME_FROM short sides outside the frame and is off while any of the line is in it. A Tan
- * light's falls faster, so its copper fall stays short instead of reading brown. With a share `pale` of its haze in
- * the pack's pale color (packAccent's air), that share is air glow 2 in color slot 5.
+ * the line's first OFF_FRAME_FROM short sides outside the frame and is off while any of the line is in it; farther
+ * out it dims again (OFF_FRAME_FADE), since a far light lights the air at the edge less, and the outline it lights
+ * carries the frame (offFrameSpread). A Tan light's falls faster, so its copper fall stays short instead of reading
+ * brown. With a share `pale` of its haze in the pack's pale color (packAccent's `edge`), that share is air glow 2 in
+ * color slot 5.
  */
 export function offFrameGlow(drag: ControlValues['drag'], hex: string, aspect: number, pale = 0): Record<string, number | number[]> {
   if (!drag) return {}
   const line = [drag.from[0], drag.from[1], drag.to[0], drag.to[1]]
-  const share = smoothstep(0, OFF_FRAME_FROM, segmentOutside(line, aspect))
+  const outside = segmentOutside(line, aspect)
+  // Cubed: on black even a glow of a few percent shows, and the eye sees about the cube root of the light.
+  const share = smoothstep(0, OFF_FRAME_FROM, outside) ** 3 / (1 + (Math.max(0, outside - OFF_FRAME_FROM) / OFF_FRAME_FADE) ** 2)
   if (share <= 0) return {}
   const power = warmTail(hex) === 'bright' ? OFF_FRAME_POWER + 1 : OFF_FRAME_POWER
   const level = airLevelFor(line, OFF_FRAME_FALLOFF, aspect, power) * share
