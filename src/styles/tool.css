@@ -129,6 +129,14 @@
   flex: 1;
 }
 
+/* Filter and Format: square buttons, at most 64px across. */
+.tool-tiles[data-kind='shape'] .tool-tile {
+  width: min(100%, 64px);
+  height: auto;
+  aspect-ratio: 1;
+  justify-self: center;
+}
+
 /* A thin edge, so dark swatches (Forest, Plum, Near-black) and Contour's black stay visible on the dark panel. */
 .tool-tile::after {
   content: '';
@@ -216,6 +224,10 @@
     --tile-height: 24px;
   }
 
+  .tool-tiles[data-kind='shape'] .tool-tile {
+    width: min(100%, 48px);
+  }
+
   .tool-tile-mark {
     gap: 4px;
   }
@@ -249,6 +261,14 @@
 
   .tool-tiles[data-kind='swatch'] {
     --tile-height: 20px;
+  }
+
+  /* Too short for squares: the buttons fill the row again, with the icon beside the name. */
+  .tool-tiles[data-kind='shape'] .tool-tile {
+    width: auto;
+    height: var(--tile-height);
+    aspect-ratio: auto;
+    justify-self: stretch;
   }
 
   .tool-tile-mark {
