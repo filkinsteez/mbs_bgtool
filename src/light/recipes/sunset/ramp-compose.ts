@@ -396,6 +396,10 @@ const DEPTH = [0, 1, 0.5]
  * seed's depth turn (1: as the line asks). Elemental's seeds differ by their light and ground.
  */
 const DRAG_EDGE_SHARE = [1, 0.8, 0.9]
+/** How far (short sides) the start goes below the horizon before the sun's own light dims by e. */
+const SINK_FADE = 0.6
+/** How far (short sides) the start goes below the horizon before the twilight glow's size shrinks by e. */
+const SET_SHRINK = 0.5
 /** Under a dragged line, how much further a broad seed's warm haze reaches per short side of the line's length. */
 const DRAG_WARM_REACH = 0.2
 
@@ -705,6 +709,13 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // end: that height above the horizon is the sky's reach, and the top of the sky lies the zenith's
   // own room above it.
   const dragRise = Math.max(0.03, lineRise)
+  // A line whose start lies below the horizon sets the sun below it: the twilight glow stays on the
+  // horizon but shrinks the further below the start lies, and the sun's own light fades, so
+  // lowering the line still changes the frame. The glow keeps its light (dimmed, a warm glow reads
+  // brown).
+  const setDepth = line ? Math.min(0.9, Math.max(0, 0.03 - lineRise)) : 0
+  const setGlow = Math.exp(-setDepth / SINK_FADE)
+  const setShrink = Math.exp(-setDepth / SET_SHRINK)
   const dragReach = line ? dragRise + line.length : 0
   const dragTop = skyTopOf(dragReach, tall)
   const skyHeight = Math.max(0.2, line ? dragTop : horizonY * tall)
@@ -906,7 +917,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // Wide edges change their softness less (the 0.15 width), or their color climbs higher in columns.
     boundarySoft: [0.15, 0.5, 0.25, 0.15],
     sunAt: [sunX, sunY],
-    sunlight: sunlight * glowGain,
+    sunlight: sunlight * glowGain * setGlow,
     sunlightWidth: 0.55 * lateral * lerp(0.75, 1.3, widthPick) * Math.sqrt(day) * narrow,
     sunlightHeight: 0.6,
     sunlightWarmth: 0,
@@ -943,15 +954,15 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     glowArch: 0.6,
     // More daylight gathers the glow toward the sun, so white shows only near the light.
     glowLateral: 1 - floor * narrow * stops2(intensity, -0.8),
-    glowWidth: 0.45 * lateral * Math.sqrt(day) * glowHaze * narrow,
+    glowWidth: 0.45 * lateral * Math.sqrt(day) * glowHaze * narrow * setShrink,
     shadowHeight: 0,
     glow1Weight: 1,
     // The glow's light reaches up the sky as far as the seed's warm fill: a broad seed's warm haze
     // fills much of the sky, also where a dragged line leaves the glow itself outside the frame.
-    glow1Up: 0.1 * glowScale * look.glowUp * warmReach * dragWarm,
+    glow1Up: 0.1 * glowScale * look.glowUp * warmReach * dragWarm * setShrink,
     glow1Down: Math.min(2, Math.max((0.03 + 0.03 * glowHaze) * skyScale, look.downReach * glowReach)),
     glow2Weight: 0.2 * look.haze * lerp(0.6, 1.5, softness) * warmReach,
-    glow2Up: 0.17 * glowScale * look.glowUp * warmReach * dragWarm,
+    glow2Up: 0.17 * glowScale * look.glowUp * warmReach * dragWarm * setShrink,
     glow2Down: 0.08 * glowHaze,
     extinction: look.extinction,
     // Skylight fades toward the horizon, so under the glow line the light is the glow's own.
@@ -967,7 +978,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     reddenUp: paler > 0 ? clamp01(paler + (intensity - 0.5) * 0.15) * 0.9 : 0,
     reddenSide: look.sideDeeper,
     glowPath: path + lerp(look.hue[0], look.hue[1], huePick) - (intensity - 0.5) * 0.25,
-    sunGlow: 0.25 * sunGain * look.sunGlow * (arcs ? look.core : water ? 0.5 : 1),
+    sunGlow: 0.25 * sunGain * look.sunGlow * (arcs ? look.core : water ? 0.5 : 1) * setGlow,
     sunGlow1Radius: (water ? 0.12 : 0.05) * glowScale,
     sunGlow1Weight: 1,
     sunGlow2Radius: (water ? 0.35 : 0.18) * glowScale,
