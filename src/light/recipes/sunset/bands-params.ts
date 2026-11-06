@@ -156,6 +156,9 @@ export const BANDS_PARAMS: readonly ParamSpec[] = [
   // The sky pales toward the light below it: pale light of the sky's own hue rising from 0 at `from` to `amount` at
   // `to` (frame heights), and the sky's own light rising by `gain` over the same span.
   { kind: 'vector', key: 'skyVeil', label: 'Sky veil amount, from, to, light gain', min: -1, max: 2, step: 0.0005, default: [0, 0, 1, 0] },
+  // Above a dark band the veil gives way again, from `from` to `to` (frame heights), so the lens mixes the sky's own
+  // color with the dark band's. The default lies below every scene: nowhere.
+  { kind: 'vector', key: 'skyVeilEnd', label: 'Sky veil gives way again from, to', min: -1, max: 10, step: 0.0005, default: [9, 10] },
   // The light that veil adds, in linear light: a tint of the pack's own colors (Cyan, Lime, Steel).
   { kind: 'vector', key: 'skyTint', label: 'Sky veil light, linear red, green, blue', min: 0, max: 4, step: 0.0005, default: [1, 1, 1] },
   // Under a long line the farthest sky sinks toward a dark pack color: its linear light and how far, full above
@@ -165,9 +168,9 @@ export const BANDS_PARAMS: readonly ParamSpec[] = [
   // The stack along the dragged line: a frame point p (short sides from the frame's center, y down) shows the scene
   // at (a b; c d) p + (e, f). The identity without a drag.
   { kind: 'vector', key: 'stack', label: 'Stack along the drag: a, b, c, d, e, f', min: -20, max: 20, step: 0.0001, default: [1, 0, 0, 1, 0, 0] },
-  // A drag that draws the stack out k times: how far every edge wobbles on the frame (frame heights), k, and the
-  // light's scene point (short sides). Edge wobble, softness change and light change are then frame-sized again.
-  { kind: 'vector', key: 'stackFrame', label: 'Drawn-out stack: edge wobble, k, light x, light y', min: -20, max: 20, step: 0.0001, default: [0, 1, 0, 0] },
+  // A drag that draws the stack out k times along the line: k, and the light's scene point (short sides). Each
+  // edge's wander and the light change inside bands stay frame-sized.
+  { kind: 'vector', key: 'stackFrame', label: 'Drawn-out stack: k, light x, light y', min: -20, max: 20, step: 0.0001, default: [1, 0, 0] },
   ...Array.from({ length: BAND_MAX }, (_, i) => bandSpecs(i)).flat(),
   ...Array.from({ length: PATCH_MAX }, (_, i) => patchSpecs(i)).flat(),
   ...Array.from({ length: LIGHT_MAX }, (_, i) => lightSpecs(i)).flat(),

@@ -3,14 +3,6 @@ import { gradientNoise, NOISE_RMS } from './boundary'
 /** Seed of the edge noise for a scene seed; the shader and compose use the same one. */
 export const edgeSeed = (seed: number) => seed * 7 + 101
 
-/**
- * A drag that draws the stack out k times also draws out every bend of its edges, so they look straight. Each edge
- * then wobbles by this much on the frame (RMS, frame heights) times 1 - 1/k, along a lattice of this many short sides
- * on the frame, so the edges bend about as much as without a drag.
- */
-export const STACK_WOBBLE = 0.03
-export const STACK_WOBBLE_LATTICE = 0.8
-
 /** Gaussian bump along an edge: x and width in frame widths, shift in frame heights. */
 export type Bump = readonly [x: number, width: number, shift: number]
 

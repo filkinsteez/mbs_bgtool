@@ -5,7 +5,7 @@ import { composeBands } from './bands-compose'
 import type { Rgb } from '../../color/srgb'
 import { bridgeLight, closeHues, dimDrift, paleLight } from './bands-light'
 import { BAND_MAX, BANDS_COLOR_SLOTS, BANDS_PARAMS, bandKey, BUMP_MAX, LIGHT_MAX, LIGHT_PALE, lightKey, PATCH_MAX, patchKey } from './bands-params'
-import { BANDS_SHAPE_GLSL, edgeSeed, STACK_WOBBLE_LATTICE } from './bands-shape'
+import { BANDS_SHAPE_GLSL, edgeSeed } from './bands-shape'
 
 /** Gaussian sigma over the lens radius: the same 10-90 edge width as a disc of that radius. */
 export const LENS_SIGMA = 0.53
@@ -135,6 +135,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     uBandVeil: veil,
     uSkyVeilColor: ctx.vec('skyTint').map((v) => v * Math.max(0, ctx.vec('skyVeil')[0])),
     uSkyVeilSpan: ctx.vec('skyVeil').slice(1, 4),
+    uSkyVeilEnd: ctx.vec('skyVeilEnd'),
     uFarSky: ctx.vec('farSky'),
     uFarSpan: ctx.vec('farSpan'),
     uBumpAt: bumps.at,
@@ -196,8 +197,6 @@ ${BANDS_SHAPE_GLSL}
 #define BAND_MAX ${BAND_MAX}
 #define PATCH_MAX ${PATCH_MAX}
 #define LIGHT_MAX ${LIGHT_MAX}
-#define STACK_WOBBLE_LATTICE ${STACK_WOBBLE_LATTICE.toFixed(3)}
-
 uniform int uBandCount;
 uniform int uPatchCount;
 uniform int uLightCount;
@@ -218,6 +217,7 @@ uniform vec2 uBandCore[BAND_MAX];   // the band's height (frame heights) and whe
 uniform vec4 uBandVeil[BAND_MAX];   // pale light of the band's own hue at its lower edge (rgb, 0: none), the band's height
 uniform vec3 uSkyVeilColor;          // light of the pack's own tint where the sky meets the light's side (0: none)
 uniform vec3 uSkyVeilSpan;           // where that veil starts and is full (frame heights), the sky's own light change there
+uniform vec2 uSkyVeilEnd;            // above a dark band, where the veil gives way again to the sky's own color (frame heights)
 uniform vec4 uFarSky;                // under a long line: the dark pack color the farthest sky sinks toward (linear), how far
 uniform vec2 uFarSpan;               // where the far sky has that color fully and where it is gone (frame heights)
 uniform vec4 uBumpAt[BAND_MAX];
@@ -252,7 +252,7 @@ uniform float uBaseLum;
 uniform float uLensDisc;             // 1: the disc lens result, 0: the gaussian one
 uniform vec4 uStackMap;              // the stack along a drag: a frame point p shows the scene at (a b; c d) p + shift
 uniform vec2 uStackShift;
-uniform vec4 uStackFrame;            // a drag that draws the stack out k times: edge wobble on the frame (frame heights), k, the light's scene point
+uniform vec3 uStackFrame;            // a drag that draws the stack out k times along the line: k, the light's scene point
 
 // Set by combine() for grainWeight(), which the engine calls right after it for the same point.
 float gGrainWeight = 1.0;
@@ -317,10 +317,9 @@ vec3 scene(float x, float v, vec2 p) {
   float frameH = uFrameAspect.y;
   float sharpest = 1.5 * uPixel / frameH;
   float sunFall = 1.0 / (1.0 + pow(abs(x - uSun.x) / max(uSun.y, 1e-3), 1.6));
-  // The same point at the frame's scale, from the light: a drawn-out stack keeps frame-sized wobble and light change.
-  // Softness changes stay on the stack's scale: its edges are k times softer on the frame, and a wide edge whose
-  // softness changes quickly bends into a V.
-  vec2 f = uStackFrame.zw + (p - uStackFrame.zw) * uStackFrame.y;
+  // The same point at the frame's scale, from the light: a stack drawn out along a line keeps frame-sized light
+  // change, and each edge keeps its own wander on the frame (divided by the same k below).
+  vec2 f = uStackFrame.yz + (p - uStackFrame.yz) * vec2(1.0, uStackFrame.x);
 
   // A dim sky keeps its own hue (Meta Blue sinks to deep navy); a warm one deepens like warm light.
   vec3 base = toMix(deepen(uBase, uIntensity, uBaseDrift));
@@ -360,7 +359,7 @@ vec3 scene(float x, float v, vec2 p) {
   if (uSkyVeilColor != vec3(0.0) || uSkyVeilSpan.z != 0.0) {
     // The sky pales toward the light: its full color only at the far edge, then it gives way to a tint of the pack's
     // own colors all the way down to where the bands begin.
-    float t = smoothstep(uSkyVeilSpan.x, uSkyVeilSpan.y, v);
+    float t = smoothstep(uSkyVeilSpan.x, uSkyVeilSpan.y, v) * (1.0 - smoothstep(uSkyVeilEnd.x, uSkyVeilEnd.y, v));
     c = c * (1.0 + uSkyVeilSpan.z * t) + toMix(uSkyVeilColor) * t * skyGain * giveWay;
   }
   if (uFarSky.w > 0.0) c = mix(c, toMix(uFarSky.rgb) * skyGain * giveWay, uFarSky.w * (1.0 - smoothstep(uFarSpan.x, max(uFarSpan.y, uFarSpan.x + 1e-4), v)));
@@ -393,7 +392,8 @@ vec3 scene(float x, float v, vec2 p) {
     }
     if (wave.x != 0.0) shift += wave.x * edgeWave(p.x, wave.z, float(2 * i), uEdgeSeed);
     if (wave.y != 0.0) shiftBottom += wave.y * edgeWave(p.x, wave.z, float(2 * i + 1), uEdgeSeed);
-    if (uStackFrame.x > 0.0) shift += uStackFrame.x / uStackFrame.y * edgeWave(f.x, STACK_WOBBLE_LATTICE, float(2 * i) + 0.5, uEdgeSeed + 43);
+    shift /= uStackFrame.x;
+    shiftBottom /= uStackFrame.x;
     float top = edge.x + shift;
     // A bottom at 2 or more is none: the band runs on past the frame, and past the scene's own frame when a drag
     // draws the stack tighter.
@@ -461,7 +461,7 @@ vec3 scene(float x, float v, vec2 p) {
     if (shape > 0.5) {
       shown = i;
       shownTop = top;
-      shownBottom = i + 1 < uBandCount ? uBandEdge[i + 1].x + uBandTilt[i + 1].x * dx : 2.0;
+      shownBottom = i + 1 < uBandCount ? uBandEdge[i + 1].x + uBandTilt[i + 1].x * dx / uStackFrame.x : 2.0;
     }
   }
 
