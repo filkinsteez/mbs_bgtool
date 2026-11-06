@@ -66,6 +66,8 @@ uniform vec3 uVeilNear;      // the veil's color near the light, at luminance 1 
 uniform float uGlowOffset;
 uniform vec3 uGlowVary;      // how much the glow's upward reach changes along its length, cycles per short side,
                              // and how much higher it reaches toward the sun (the twilight arch)
+uniform vec2 uGlowArchShape; // the share of its reach the glow keeps far from the sun, and the share of
+                             // its width over which it rises toward the sun (1, 1: the glow's own falloff)
 uniform vec3 uGlowSpread;    // how much the glow falls off sideways, over what width, and the height below
                              // which the light far from the sun fades out (the Earth's shadow; 0: none)
 uniform float uExtinction;
@@ -342,7 +344,10 @@ vec3 rampSky(vec2 p) {
   if (uGlowSpread.z > 0.0) far *= 1.0 - exp(-height / uGlowSpread.z);
   float spread = (far + (1.0 - far) * side) * lightReach;
   float reach = uGlowVary.x != 0.0 ? exp(uGlowVary.x * edgeFbm(across * uGlowVary.y + 31.7, uSeed + 601, 2)) : 1.0;
-  reach *= 1.0 + uGlowVary.z * side;
+  // Far from the sun the glow keeps uGlowArchShape.x of its reach, and it rises toward the sun over
+  // uGlowArchShape.y of the glow's width.
+  float archSide = uGlowArchShape.y != 1.0 ? roundFalloff(across - sunAcross, uGlowArchShape.y * uGlowSpread.y * widen, uLateral.x) : side;
+  reach *= uGlowArchShape.x + uGlowVary.z * archSide;
   // How far the glow reaches up changes slowly along it. Its downward reach stays even: over that
   // long tail any change shows as soft columns.
   if (uBndOn != 0 && uGlowTopBnd >= 0) reach *= boundarySoftAt(a, uBndTrans[uGlowTopBnd].x, uBndTrans[uGlowTopBnd].y);

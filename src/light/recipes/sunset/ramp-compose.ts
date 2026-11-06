@@ -407,6 +407,13 @@ const NAVY_TURN = 0.5
 const NAVY_END = [0.24, 0.12, 0.17]
 /** The darkest the zenith may go under a dragged line, as a share of Meta Blue; without one it stays at its old floor. */
 const NAVY_FLOOR = 0.08
+/**
+ * Bold's and Elemental's glow reach: how much higher it reaches at the sun, and by warm turn
+ * (compact, broad, between) the share of its height it keeps far from the sun and the share of the
+ * glow's width over which it rises: a broad seed's hazy air spreads its glow wide.
+ */
+const GLOW_ARCH = 2.2
+const GLOW_ARCH_SHAPE = [[0.2, 0.35], [0.45, 0.7], [0.28, 0.5]]
 /** The navy band of a Bold open sky behind a glow above the frame, as a share of the low sky's gain. */
 const BEHIND_NAVY = 0.2
 /** How far (short sides) the start goes below the horizon before the sun's own light dims by e. */
@@ -610,6 +617,10 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     }
   }
   floor = Math.max(floor, look.minFloor)
+  // At the seed's own view Bold's and Elemental's glow is tallest at the sun and narrows along the
+  // horizon away from it; Atmospheric's Ice keeps its even band. A dragged line keeps the glow as
+  // it was.
+  const gather = !controls.drag && packId !== 'atmospheric' ? 1 : 0
   // An open sky with a dusk band raises its glow, leaving the band room under it; a corner's glow
   // sits lower, so it rises more.
   if (look.dusk) bandAt -= structure === 'corner' ? 0.22 : 0.12
@@ -1029,7 +1040,12 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // Lime; the other packs take the bridge's warm white there.
     veilNear: packId === 'elemental' ? paleTint(look.light, 0.6) : [0, 0, 0],
     glowVary: 0,
-    glowArch: 0.6,
+    // A sun's glow is tallest near the sun and narrows away from it along the horizon, keeping its
+    // light, so its edges are never parallel: far from the sun it reaches up only a share of its
+    // height, and it rises toward the sun over part of its width. Atmospheric's Ice keeps its
+    // wide, flat band.
+    glowArch: lerp(0.6, GLOW_ARCH, gather),
+    glowArchShape: GLOW_ARCH_SHAPE[warmTurn].map((v) => lerp(1, v, gather)),
     // More daylight gathers the glow toward the sun, so white shows only near the light.
     glowLateral: 1 - floor * narrow * stops2(intensity, -0.8),
     glowWidth: 0.45 * lateral * Math.sqrt(day) * glowHaze * narrow * setShrink,
