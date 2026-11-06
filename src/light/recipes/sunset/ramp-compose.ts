@@ -421,6 +421,25 @@ const GLOW_ARCH_SHAPE = [[0.2, 0.35], [0.45, 0.7], [0.28, 0.5]]
  */
 const ICE_MASSES = [0, 0.2, 0]
 const ICE_GAIN = [1, 1.25, 1]
+/**
+ * Water at the seed's own view: how much it squashes the sky it mirrors, the least degrees below the
+ * horizon half a short side under the line, how much further the sun's path reaches, and the share of
+ * the band above the glow that the water around the path mirrors. Elemental's and Atmospheric's
+ * water past the far bank's image and a strip as deep as the lens is wide mirrors the sky higher up,
+ * by a share of that band, and keeps a share of its reflection there, by depth turn (light, dark,
+ * between); Bold's keeps mirroring its Cyan.
+ */
+const OWN_WATER = {
+  squeeze: 1.8,
+  degrees: 5,
+  pathReach: 2.2,
+  band: 0.4,
+  lift: { elemental: [0.05, 0.2, 0.15], atmospheric: [0.15, 0.5, 0.3] },
+  keep: [0.85, 0.65, 0.75],
+}
+/** How fast a far bank's height changes across the frame, per half the frame's width, and its height at its thick end. */
+const BANK_SLOPE = 1.2
+const BANK_PEAK = 1.4
 /** The navy band of a Bold open sky behind a glow above the frame, as a share of the low sky's gain. */
 const BEHIND_NAVY = 0.2
 /** How far (short sides) the start goes below the horizon before the sun's own light dims by e. */
@@ -545,6 +564,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const duskPick = random()
   const bankPick = random()
   const sizePick = random()
+  const shorePick = random()
 
   // Open skies keep their horizon just below the frame; over the control's whole range the Horizon
   // control raises their brightest band from the bottom edge to mid-frame. Water and land put the
@@ -990,6 +1010,12 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // Over land the sun sits just above the crest at its x; over water just under the line.
   const underLine = line ? (line.from[1] + sunBelow * Math.cos(turn)) / tall + 0.5 : horizonY + (arcs ? 0 : 0.03 / tall)
   const sunY = land ? lineOf((sunX - 0.5) * frameWidth) / tall + 0.5 - lerp(0.03, 0.1, crestPick) : underLine
+  // The glow's height that the sun's path mirrors, and the band above it.
+  const pathGlow = glowRise + 1.2 * bankHeight
+  const skyBand = Math.min(0.3, Math.max(0.05, 0.7 * (-lowSkyEdge - glowRise)))
+  const ownWater = water && !controls.drag
+  const lift = ownWater && packId !== 'bold' ? OWN_WATER.lift[packId][depthTurn] : 0
+  const lensRadius = lerp(0.045, 0.12, softness)
 
   const params: Record<string, ParamValue> = {
     anchor: [anchorX / frameWidth + 0.5, horizonY],
@@ -1101,7 +1127,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     duskStop: dusk ? gains.length - 1 : -1,
     land: 0,
     // One lens over the whole scene: Softness is its radius.
-    lensRadius: lerp(0.045, 0.12, softness),
+    lensRadius,
     // Patches of light in the sky, a third to half of the frame across.
     // Atmospheric's overcast takes seeds' own brighter and darker masses, some faint, some clear.
     skyPatch: [packId === 'atmospheric' ? Math.max(lerp(0.04, 0.24, patchPick), ownGreys ? ICE_MASSES[warmTurn] : 0) : 0.08, lerp(0.33, 0.5, patchPick) * frameWidth, 1.6],
@@ -1111,24 +1137,34 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     groundWave: outline.wave,
     ridge: [outline.rise, outline.toward, outline.bowl, outline.waveLength],
     shore: [bankHeight, 0.5],
+    // A far bank is a headland: thick on the side away from the sun and thinning to nothing toward it.
+    shoreShape: [-side * BANK_SLOPE, lerp(0, 0.6, shorePick), BANK_PEAK],
     // The path mirrors the glow's line, which sits above most of the far bank.
     // Light water is a near mirror with a faint path, deep water dark with a strong one.
-    sunPath: [water ? look.sunPath * lerp(0.45, 1.25, depth) : 0, 0.02, 0.6, glowRise + 1.2 * bankHeight],
+    sunPath: [water ? look.sunPath * lerp(0.45, 1.25, depth) : 0, 0.02, 0.6, pathGlow],
     // A tall water area keeps its path further down. Around it the water mirrors the band part
-    // way from the glow up to the low sky's edge.
-    sunLight: [Math.max(0.3, 0.6 * (0.5 * tall - lineAt)), Math.min(0.3, Math.max(0.05, 0.7 * (-lowSkyEdge - glowRise)))],
+    // way from the glow up to the low sky's edge. At the seed's own view the path reaches the
+    // viewer, and the water around it mirrors the light just above the glow.
+    sunLight: [Math.max(0.3, 0.6 * (0.5 * tall - lineAt)) * (ownWater ? OWN_WATER.pathReach : 1), skyBand * (ownWater ? OWN_WATER.band : 1)],
+    // Past the far bank's image and a strip wider than the lens, so the bank never blurs into the
+    // blue, the water mirrors the sky above the glow: the glow's mirror image is a thinner, weaker
+    // strip, and the warm reflection gathers in the sun's path.
+    waterLift: lift > 0 ? [pathGlow + skyBand * lift + 0.05, 0.05 + 1.5 * lensRadius, OWN_WATER.keep[depthTurn]] : [0, 0.05, 1],
     // The strip under the line is thin and bright, so it still shows after the lens. Under a high
     // line the ripples draw the short sky's reflection out over more of the water, so the water
     // carries the sky's colors and not only the zenith's.
     // Under a glow above the frame the reflection climbs past the glow within the water's top half:
     // the warm part is a band near the horizon, and the high sky takes the near water.
-    water: [lerp(Math.min(1.25, Math.max(0.5, (0.77 * lineY) / Math.max(0.05, 1 - lineY))), Math.min(3, (3 * glowRise) / Math.max(0.2, (1 - lineY) * tall)), waterBehind), lerp(look.waterDegrees[0], look.waterDegrees[1], ridgePick) * [0.6, 1.6, 1][variant], 0.12, 1.5],
+    // Water that mirrors the sky higher up also squashes it and grows darker toward the viewer, so
+    // it reads as water under the sky and not as the sky's mirror image.
+    water: [lift > 0 ? OWN_WATER.squeeze : lerp(Math.min(1.25, Math.max(0.5, (0.77 * lineY) / Math.max(0.05, 1 - lineY))), Math.min(3, (3 * glowRise) / Math.max(0.2, (1 - lineY) * tall)), waterBehind), Math.max(lift > 0 ? OWN_WATER.degrees : 0, lerp(look.waterDegrees[0], look.waterDegrees[1], ridgePick) * [0.6, 1.6, 1][variant]), 0.12, 1.5],
     waterMirror: water ? look.waterMirror : 1,
     // Under a high line the near water mirrors the sky high above the frame, which is darker.
     // Deep water mirrors more of that darker sky.
     mirrorDeep: water ? lerp(0.25, 1.4, depth) * tall : 0,
-    // Bold's water under its warm glow; the other packs' water keeps its own Slate or Meta Blue.
-    waterTint: water && packId === 'bold' ? 0.6 : 0,
+    // Bold's water under its warm glow, and Elemental's where it mirrors the sky higher up; the other
+    // packs' water keeps its own Slate or Meta Blue.
+    waterTint: water && (packId === 'bold' || (lift > 0 && packId === 'elemental')) ? 0.6 : 0,
     // A tall land area reaches nearer the viewer: the haze over its far ground reaches further
     // down, and its near ground is darker.
     groundHaze: [look.landHaze, land ? Math.max(0.1 * tall, 0.25 * landRoom) : 0.05 * tall],
