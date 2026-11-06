@@ -726,6 +726,9 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   }
   const horizonY = anchorY / tall + 0.5
   const axis: RampAxis = { anchorX, anchorY, turn, drop }
+  // The frame's highest point above the horizon, along the sky's axis.
+  let frameHigh = -Infinity
+  for (const [x, y] of [[-half, -tall / 2], [half, -tall / 2], [-half, tall / 2], [half, tall / 2]]) frameHigh = Math.max(frameHigh, -rampAt(frame, axis, x, y))
   // Under a dragged line the glow sits at its start, and the sky reaches the zenith's color at its
   // end: that height above the horizon is the sky's reach, and the top of the sky lies the zenith's
   // own room above it.
@@ -911,8 +914,6 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // Under a line that puts the glow above the whole frame, Bold's open sky deepens away from the
   // light: a band of navy rises at the frame's far side, as far as the frame lies behind the glow,
   // and otherwise stays under the horizon.
-  let frameHigh = -Infinity
-  for (const [x, y] of [[-half, -tall / 2], [half, -tall / 2], [-half, tall / 2], [half, tall / 2]]) frameHigh = Math.max(frameHigh, -rampAt(frame, axis, x, y))
   const behind = line && !ground ? clamp01((glowRise - frameHigh) / (0.1 * tall)) : 0
   const dusk: Tone | null = look.dusk ?? (packId === 'bold' && line && !ground ? [look.zenith, BEHIND_NAVY] : null)
   if (dusk) {

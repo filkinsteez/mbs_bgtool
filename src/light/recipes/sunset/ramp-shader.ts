@@ -560,12 +560,15 @@ vec3 rampScene(vec2 p) {
           float across = p.x - (uSunAt.x - 0.5) * uFrameAspect.x;
           float spread = uSunPath.y + uSunPath.z * depth;
           float fade = exp(-depth / uSunLight.x);
+          // Across the path the light falls off flat-topped, so as it fades toward the viewer the
+          // whole width fades together and the path keeps widening; with a bell-shaped falloff its
+          // middle would close to a point, like a drip.
           // The path keeps its width as it comes closer and fades by having fewer, dimmer glints.
-          float near = min(1.0, 1.3 * uSunPath.x * (0.55 + 0.45 * fade) * exp(-0.5 * across * across / (4.0 * spread * spread + 0.01)));
+          float near = min(1.0, 1.3 * uSunPath.x * fade * exp(-0.5 * pow(abs(across) / sqrt(4.0 * spread * spread + 0.01), 4.0)));
           // Around the glints the water mirrors the band just above the glow, not the zenith.
           float band = uSunPath.w + uSunLight.y;
           up = min(up, band + max(up - band, 0.0) * (1.0 - near) * (1.0 - near));
-          float density = min(1.0, 1.6 * uSunPath.x * fade * exp(-0.5 * across * across / (spread * spread)));
+          float density = min(1.0, 1.6 * uSunPath.x * fade * exp(-0.5 * pow(abs(across) / spread, 4.0)));
           float g = 0.5 + 0.5 * hazeNoise(vec2(1.6 * across / spread, 10.0 * log(depth + 0.02)), uSeed + 991);
           float glint = smoothstep(1.0 - density, 1.25 - density, g) * near;
           up = mix(up, min(up, uSunPath.w), glint);
