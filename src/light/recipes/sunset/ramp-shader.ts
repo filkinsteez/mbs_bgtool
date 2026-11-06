@@ -30,6 +30,7 @@ uniform float uEdgeSoft[RAMP_EDGES];
 uniform int uEdges;
 uniform int uHorizonEdge;    // -1: the anchor line is the horizon
 uniform vec4 uZenithShade;   // the first stop's light: change per short side down the ramp, where it is 1, change across the frame, where it is 0
+uniform float uZenithFloor;  // the first stop's least light, as a share of its color
 
 uniform int uBndOn;               // 1: the shared boundary model moves the edges and the glow; 0: the warp and drift below
 uniform int uEdgeBnd[RAMP_EDGES]; // each edge's transition in the boundary model, -1 none
@@ -378,7 +379,7 @@ vec3 rampSky(vec2 p) {
   vec3 sky = vec3(0.0);
   vec3 dusk = vec3(0.0);
   float duskCover = 0.0;
-  float zenithShade = clamp(1.0 + uZenithShade.x * (s - uZenithShade.y) + uZenithShade.z * (a / halfWidth - uZenithShade.w), 0.35, 2.0);
+  float zenithShade = clamp(1.0 + uZenithShade.x * (s - uZenithShade.y) + uZenithShade.z * (a / halfWidth - uZenithShade.w), uZenithFloor, 2.0);
   for (int k = 0; k <= uEdges; k++) {
     float w = (k == 0 ? 1.0 : level[k - 1]) - (k < uEdges ? level[k] : 0.0);
     vec3 c = w * uStop[k] * (k == 0 ? zenithShade : 1.0);

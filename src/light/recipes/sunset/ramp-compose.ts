@@ -395,10 +395,16 @@ const WARM = { share: [1, 2.2, 1.3], size: [0.8, 1.35, 1.05], reach: [0.65, 2, 1
 /** How dark the water, the land and the far sky are, by the seed's turn: light, dark, between. */
 const DEPTH = [0, 1, 0.5]
 /**
- * Under a dragged line, how far along the line Bold's and Atmospheric's sky edges sit, by the
- * seed's depth turn (1: as the line asks). Elemental's seeds differ by their light and ground.
+ * Under a dragged line, the share of the sky's reach at its far end that sinks into deep navy in
+ * Bold and Atmospheric, by the seed's depth turn (light, dark, between); the seed picks within it.
+ * Elemental's seeds differ by their light and ground.
  */
-const DRAG_EDGE_SHARE = [1, 0.8, 0.9]
+const NAVY_SHARE = [[0.04, 0.14], [0.38, 0.56], [0.2, 0.34]] as const
+/** The zenith's light where the sky turns toward navy, and at the line's end by depth turn, as shares of Meta Blue. */
+const NAVY_TURN = 0.5
+const NAVY_END = [0.24, 0.12, 0.17]
+/** The darkest the zenith may go under a dragged line, as a share of Meta Blue; without one it stays at its old floor. */
+const NAVY_FLOOR = 0.08
 /** How far (short sides) the start goes below the horizon before the sun's own light dims by e. */
 const SINK_FADE = 0.6
 /**
@@ -822,6 +828,8 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     }
   }
   let zenithShade = [1.0 / Math.max(0.2, topHeight), topSum / 17, 0.02 * side, aSum / (9 * 17)]
+  // How high the line's end lies above the horizon along the sky's own axis.
+  const toHeight = line ? -rampAt(frame, axis, line.to[0], line.to[1]) : 0
   // Under a dragged line the zenith is the pack's Meta Blue at the line's end instead.
   if (line) {
     const [x, y] = line.to
@@ -850,17 +858,29 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const topEdge = midSky ? edges[1].map((v, i) => lerp(v, edges[0][i], midAmount)) : edges[0]
   const [topAt, topWidth] = topEdge
   const tail = 0.5 * (1 + 0.5 * Math.max(0, Math.log2((midSky ? lerp(lowGain, midGain, midAmount) : lowGain) / zenithGain)))
+  // Under a dragged line Bold's and Atmospheric's far sky sinks into deep navy, as a real sky
+  // darkens away from the sun, over the seed's own share of the line's far end. A short line's
+  // far end stays near the light and doesn't sink; pulled down onto the glow, the low sky would
+  // turn mint under the warm light and the navy olive under the warm haze.
+  const navyReach = line && packId !== 'elemental' ? smoothstep(0.9, 1.6, line.length) : 0
+  const navyShare = within(NAVY_SHARE[depthTurn], seeded(Math.round(seed) * 53 + 19)()) * navyReach
+  let navyVeil: [number, number] | null = null
+  let navyEnd = 0
   if (line) {
     // Under a dragged line the edges stretch or shrink about the glow, widths included, so the
-    // highest edge's upper tail ends at the line's end. A deep seed's edges then sit nearer the
-    // light, so its sky is deep blue over more of the line and sinks to navy at the line's end;
-    // a light seed's sky is its low sky's color nearly to the end.
-    const stretch = Math.max(0.1, (topHeight - zenithRoom - glowRise) / Math.max(0.05, Math.abs(topAt) + tail * topWidth - glowRise))
-    const nearer = packId === 'elemental' ? 1 : DRAG_EDGE_SHARE[depthTurn]
+    // highest edge's upper tail ends at the line's end. Water and land can't turn their sky to
+    // follow a steep line, so there the edges stretch over how far the line climbs the sky's own
+    // axis. The seed's navy share then pulls the edges toward the light: a deep seed's sky turns
+    // toward navy early, a light seed's stays its low sky's color nearly to the end.
+    const climb = ground ? navyReach * clamp01((toHeight - lineRise) / Math.max(0.05, line.length)) : 0
+    const edgeTop = lerp(topHeight, Math.min(topHeight, toHeight + zenithRoom), climb)
+    const stretch = Math.max(0.1, (edgeTop - zenithRoom - glowRise) / Math.max(0.05, Math.abs(topAt) + tail * topWidth - glowRise))
+    const nearer = 1 - navyShare
     for (const edge of edges) {
       edge[0] = -glowRise + (edge[0] + glowRise) * stretch * nearer
       edge[1] = Math.min(6, edge[1] * stretch * nearer)
     }
+    navyEnd = edgeTop - zenithRoom
   } else {
     const room = (topHeight - zenithRoom) / (Math.abs(topAt) + tail * topWidth)
     if (room < 1) edges.forEach((edge) => (edge[0] *= Math.max(0.3, room)))
@@ -900,6 +920,21 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // negative share and draw its color out of the sky: blue drawn out of grey reads olive, out of
   // Cyan mint.
   for (let k = edges.length - 1; k > 0; k--) edges[k - 1][0] = Math.min(edges[k - 1][0], edges[k][0] - 0.5 * (edges[k - 1][1] + edges[k][1]))
+  // Under a long line the navy takes the lighter Meta Blue step's place: the step's upper edge
+  // comes down to its lower one, where the sky then turns toward navy, or the step would be a
+  // wide band of full-strength Meta Blue under the navy.
+  if (navyReach > 0 && midSky) edges[0] = [lerp(edges[0][0], edges[1][0], navyReach), lerp(edges[0][1], edges[1][1], navyReach)]
+  // Under the line the zenith is NAVY_TURN of Meta Blue where the sky turns and sinks to the
+  // seed's navy where the highest edge's tail ends: Meta Blue's own dim hue, below full strength.
+  // The veil fades out across the turn, so the navy stays clear.
+  // All of it comes in with the line's length, as the navy share does.
+  if (navyReach > 0 && line) {
+    const turnAt = Math.max(edges[0][0], 0.05 - navyEnd)
+    const slope = (NAVY_TURN - NAVY_END[depthTurn]) / (turnAt + navyEnd)
+    zenithShade[0] = lerp(zenithShade[0], slope, navyReach)
+    zenithShade[1] = lerp(zenithShade[1], turnAt + (1 - NAVY_TURN) / slope, navyReach)
+    navyVeil = [lerp(topHeight - 0.3 * tall, -turnAt - 0.5 * edges[0][1], navyReach), lerp(topHeight - 0.08 * tall, -turnAt + 0.5 * edges[0][1], navyReach)]
+  }
   const stopParams: Record<string, number> = {}
   edges.forEach(([at, width], j) => {
     stopParams[`at${j + 1}`] = at
@@ -926,6 +961,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     glowShape,
     horizonEdge: 0,
     zenithShade,
+    zenithFloor: lerp(0.35, NAVY_FLOOR, navyReach),
     warp: 0,
     softVary: 0,
     softFollow: 0,
@@ -960,7 +996,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // is hazier than the pack's own sky, and the band of full Meta Blue reaches further down from
     // the line's end, so the frame keeps a second pack color.
     veil: [look.veil[0] * zenithGain * dragVeil, look.veil[1] * zenithGain * dragVeil, (packId === 'elemental' ? 0.6 : 0.3) * Math.max(0.2, topHeight)],
-    veilFar: line ? [topHeight - 0.3 * tall, topHeight - 0.08 * tall] : [topHeight - 0.22 * tall, topHeight - 0.05 * tall],
+    veilFar: navyVeil ?? (line ? [topHeight - 0.3 * tall, topHeight - 0.08 * tall] : [topHeight - 0.22 * tall, topHeight - 0.05 * tall]),
     veilTint: paleTint(look.veilColor, packId === 'bold' ? 0.35 : packId === 'elemental' ? 0.25 : 0.6),
     // Under the far band the sky's blue greys at its own hue (Elemental, whose pale side is its
     // light's color), or toward Steel (Atmospheric, overcast), instead of turning periwinkle.
