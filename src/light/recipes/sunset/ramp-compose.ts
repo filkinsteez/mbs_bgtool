@@ -414,6 +414,13 @@ const NAVY_FLOOR = 0.08
  */
 const GLOW_ARCH = 2.2
 const GLOW_ARCH_SHAPE = [[0.2, 0.35], [0.45, 0.7], [0.28, 0.5]]
+/**
+ * Atmospheric at the seed's own view, by warm turn (compact, broad, between): the least amount of
+ * the sky's grey masses, and the gain of the Ice light. A broad seed's hazy air always shows its
+ * masses, and its light is brighter so their darker parts don't hide it.
+ */
+const ICE_MASSES = [0, 0.2, 0]
+const ICE_GAIN = [1, 1.25, 1]
 /** The navy band of a Bold open sky behind a glow above the frame, as a share of the low sky's gain. */
 const BEHIND_NAVY = 0.2
 /** How far (short sides) the start goes below the horizon before the sun's own light dims by e. */
@@ -489,7 +496,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // shift fades out toward both ends of the Horizon control, which keep the shared heights.
   const shared = placeHorizon(mood, seed, aspect)
   // Atmospheric's grey seeds differ most by where the line sits, so theirs spread further.
-  const lineShift = openSky ? [-0.1, 0.05, 0][variant] : packId === 'atmospheric' ? [0.12, -0.2, -0.05][depthTurn] : [0.05, -0.1, -0.03][depthTurn]
+  const lineShift = openSky ? [-0.1, 0.05, 0][variant] : packId === 'atmospheric' ? [0.18, -0.26, -0.1][depthTurn] : [0.05, -0.1, -0.03][depthTurn]
   // A light seed's land lies nearly level.
   const tiltScale = structure === 'land' ? [0.45, 1, 1][depthTurn] : 1
   const shiftedY = shared.y + lineShift * Math.min(1, mood / 0.25, (1 - mood) / 0.25)
@@ -621,6 +628,10 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // horizon away from it; Atmospheric's Ice keeps its even band. A dragged line keeps the glow as
   // it was.
   const gather = !controls.drag && packId !== 'atmospheric' ? 1 : 0
+  // At the seed's own view Atmospheric's ground keeps its variant's greys: darkened by the seed's
+  // depth as well, a deep seed's light ground and a between seed's dark ground meet at one grey.
+  const ownGreys = !controls.drag && packId === 'atmospheric'
+  const groundDepth = ownGreys ? 0 : depth
   // An open sky with a dusk band raises its glow, leaving the band room under it; a corner's glow
   // sits lower, so it rises more.
   if (look.dusk) bandAt -= structure === 'corner' ? 0.22 : 0.12
@@ -1013,7 +1024,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // holds only the sky's own light. A short sky still gives it a third of its height: at 0 the
     // light would have no limit at all.
     lightTop: Math.max((line ? dragReach : topHeight - 0.2 * tall) - 2.5 * skyWander, 0.35 * topHeight) * lerp(0.85, 1.15, intensity),
-    glow: look.glow * glowGain * (arcs ? 1.2 : 1),
+    glow: look.glow * glowGain * (arcs ? 1.2 : 1) * (ownGreys ? ICE_GAIN[warmTurn] : 1),
     glowOffset: -glowRise,
     glowEnd,
     // Scattered daylight over the sky, denser toward the horizon, mutes and pales it toward the
@@ -1093,7 +1104,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     lensRadius: lerp(0.045, 0.12, softness),
     // Patches of light in the sky, a third to half of the frame across.
     // Atmospheric's overcast takes seeds' own brighter and darker masses, some faint, some clear.
-    skyPatch: [packId === 'atmospheric' ? lerp(0.04, 0.24, patchPick) : 0.08, lerp(0.33, 0.5, patchPick) * frameWidth, 1.6],
+    skyPatch: [packId === 'atmospheric' ? Math.max(lerp(0.04, 0.24, patchPick), ownGreys ? ICE_MASSES[warmTurn] : 0) : 0.08, lerp(0.33, 0.5, patchPick) * frameWidth, 1.6],
     ground: groundKind,
     groundAt: lineY,
     groundTilt: (Math.atan(outline.slope) * 180) / Math.PI,
@@ -1126,10 +1137,10 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     landLit: [ground ? look.landLit * (land ? 1 + 1.5 * clamp01((landRoom - 0.4 * tall) / (0.4 * tall)) : 1) : 0, lerp(0.3, 0.5, widthPick) * frameWidth, ground ? 0.6 : 0],
     // A deep seed's ground is darker. A light seed's keeps the pack's own: brightened, Plum turns
     // magenta.
-    groundTopGain: look.landTop[1] * groundGain * lerp(1, 0.55, depth),
+    groundTopGain: look.landTop[1] * groundGain * lerp(1, 0.55, groundDepth),
     // The near ground stays a deep tone of its color, never black.
-    groundBottomGain: Math.max(0.35 * look.landTop[1] * groundGain * lerp(1, 0.55, depth), look.landBottom[1] * groundGain * lerp(1, 0.5, depth) * (land ? Math.min(1, ((0.4 * tall) / landRoom) ** 1.5) : 1)),
-    waterGain: look.water[1] * groundGain * lerp(1, 0.6, depth),
+    groundBottomGain: Math.max(0.35 * look.landTop[1] * groundGain * lerp(1, 0.55, groundDepth), look.landBottom[1] * groundGain * lerp(1, 0.5, groundDepth) * (land ? Math.min(1, ((0.4 * tall) / landRoom) ** 1.5) : 1)),
+    waterGain: look.water[1] * groundGain * lerp(1, 0.6, groundDepth),
   }
   return { colors: slotColors({ ...look, dusk }, midSky), params, lens: {}, output: { exposure: 0 } }
 }
