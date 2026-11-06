@@ -97,6 +97,11 @@ const UNIQUE_SOURCES = (tag) => {
   }
 }
 
+// Runs in the page before its scripts: hides the drag hint ("Drag to reposition the gradient"), which shows on every
+// page load until the first drag.
+const HIDE_HINT = () =>
+  document.addEventListener('DOMContentLoaded', () => document.head.append(Object.assign(document.createElement('style'), { textContent: '.tool-hint{display:none!important}' })))
+
 // Runs in the page before its scripts when --no-parallel is given: the page sees a browser without the extension.
 const HIDE_PARALLEL = () => {
   const getExtension = WebGL2RenderingContext.prototype.getExtension
@@ -202,6 +207,7 @@ const browser = await chromium.launch({ channel: 'chrome' })
 const result = { label, url, start, parallel: args['no-parallel'] !== true, pages: [] }
 try {
   const context = await browser.newContext()
+  await context.addInitScript(HIDE_HINT)
   for (const [pageIndex, rounds] of [
     [0, ['cold', 'same page']],
     [1, ['browser cache']],

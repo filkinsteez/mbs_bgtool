@@ -750,10 +750,16 @@ try {
       .toFile(file)
   }
 
-  /** The tool's settled canvas for a few frames of the first sweep next to the harness render of the same scene. */
+  /**
+   * The tool's settled canvas for a few frames of the first sweep next to the harness render of the same scene. The
+   * drag hint, which shows over the canvas on every page load until the first drag, is hidden.
+   */
   const toolCheck = async (url, sweep) => {
     const browser = harness.page.context().browser()
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
+    await page.addInitScript(() =>
+      document.addEventListener('DOMContentLoaded', () => document.head.append(Object.assign(document.createElement('style'), { textContent: '.tool-hint{display:none!important}' }))),
+    )
     try {
       for (const value of [sweep.values[0], sweep.values[sweep.values.length >> 1], sweep.values.at(-1)]) {
         const controlValues = controlsFor(sweep, value)
