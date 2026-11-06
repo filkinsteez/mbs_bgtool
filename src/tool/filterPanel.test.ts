@@ -9,8 +9,8 @@ import { getPack } from '@/light'
 describe('filter control in the panel', () => {
   it('sits right above Format, adds Density for every filter, keeps the pick, and removes the slider for None', () => {
     const id = 'filter-check'
-    const config = () => buildDialConfig('sunset', DEFAULT_STATE, 'Export PNG', readChoice(DialStore.getValue(id, FILTER_DIAL_KEY)))
-    DialStore.registerPanel(id, 'Check', buildDialConfig('sunset', DEFAULT_STATE, 'Export PNG', 'none'))
+    const config = () => buildDialConfig('sunset', DEFAULT_STATE, 'Export', readChoice(DialStore.getValue(id, FILTER_DIAL_KEY)))
+    DialStore.registerPanel(id, 'Check', buildDialConfig('sunset', DEFAULT_STATE, 'Export', 'none'))
     const paths = () => DialStore.getPanel(id)!.controls.map((control) => control.path)
     const labels = () => DialStore.getPanel(id)!.controls.map((control) => control.label)
     expect(paths()).toEqual(['mood', 'look', 'colors', 'intensity', 'softness', 'horizon', 'seed', 'filter', 'format', 'export'])
@@ -45,7 +45,7 @@ describe('filter control in the panel', () => {
     expect(toQuery(off)).not.toContain('filter')
 
     const linked = parseQuery(new URLSearchParams('mood=contour&look=rim&filter=grain&strength=0.3'))
-    expect(buildDialConfig('contour', linked, 'Export PNG', readChoice(linked.filter)).density).toEqual([0.3, 0, 1, 0.01])
+    expect(buildDialConfig('contour', linked, 'Export', readChoice(linked.filter)).density).toEqual([0.3, 0, 1, 0.01])
     DialStore.unregisterPanel(id)
   })
 })

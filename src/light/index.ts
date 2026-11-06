@@ -7,7 +7,7 @@ export { LightEngineError } from './engine/gl'
 export {
   EXPORT_ASPECTS,
   EXPORT_SIZES,
-  encodePng,
+  encodeJpeg,
   exportFileName,
   exportPreset,
   exportSize,

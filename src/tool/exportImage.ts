@@ -45,7 +45,7 @@ function download(blob: Blob, fileName: string): void {
  * Renders the scene at the format's 4K preset size at 2x and downloads it; retries at 1x if 2x fails. Given the
  * controls, the file name carries their values.
  */
-export async function exportPng(scene: Scene, pack: PackId, aspect: ExportAspect, controls?: NamedControls): Promise<ExportOutcome> {
+export async function exportImage(scene: Scene, pack: PackId, aspect: ExportAspect, controls?: NamedControls): Promise<ExportOutcome> {
   const preset = { id: 'tool', pack, scene }
   const nameParts = controls ? controlNameParts(getRecipe(scene.recipe).mood, controls) : []
   const start = performance.now()

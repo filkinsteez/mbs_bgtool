@@ -141,7 +141,7 @@ The deck does not say how volumes map to moods or controls. Our reading, to conf
 ### Output
 
 - "Rendered at 2x, filter applied last at output size, exported to the preset sizes with the seed in the file name." (`44:226`)
-- The stakeholder notes PDF (pages 12 and 13) asks for 16:9, 9:16, 1:1 and 4:5, and "Resolutions up to 4K". Working preset sizes, 3840 px on the long edge: 16:9 = 3840×2160, 9:16 = 2160×3840, 1:1 = 3840×3840, 4:5 = 3072×3840. PNG.
+- The stakeholder notes PDF (pages 12 and 13) asks for 16:9, 9:16, 1:1 and 4:5, and "Resolutions up to 4K". Working preset sizes, 3840 px on the long edge: 16:9 = 3840×2160, 9:16 = 2160×3840, 1:1 = 3840×3840, 4:5 = 3072×3840. JPEG at quality 0.95 (the owner asked for JPG instead of PNG on 2026-11-06).
 
 ### Filters (`44:267`)
 

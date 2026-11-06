@@ -19,7 +19,7 @@ import {
   type LightDrag,
 } from './controls'
 import { buildDialConfig, PACK_DIAL_KEY, PANEL_ID, PANEL_NAME, readToolState, SEED_DIAL_KEY } from './dialConfig'
-import { exportPng } from './exportImage'
+import { exportImage } from './exportImage'
 import { FILTER_DIAL_KEY, readChoice, withFilter } from './filterControl'
 import { panelAccessFor, usePanelAccess } from './panelAccess'
 import { FilterPicker, FormatPicker, LookPicker, MoodPicker, PackPicker } from './panelPickers'
@@ -28,7 +28,7 @@ import { EMPTY_SEED_HISTORY, recordSeedChange, stepBack, stepForward, type SeedS
 import { clampUnit, fixLook, isMoodId, parseQuery, randomSeed, readSeed, toQuery, type SearchParams } from './state'
 import { ToolPanel } from './ToolPanel'
 
-const EXPORT_LABEL = 'Export PNG'
+const EXPORT_LABEL = 'Export'
 const EXPORTING_LABEL = 'Exporting…'
 const EXPORT_FAILED_LABEL = 'Export failed'
 /** The tiles take the place of DialKit's selects, and Shuffle the place of the Seed slider. */
@@ -245,7 +245,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     setExportStatus('busy')
     try {
       await nextPaint()
-      const outcome = await exportPng(scene, pack, format, { intensity, softness, mood: moodControl, drag })
+      const outcome = await exportImage(scene, pack, format, { intensity, softness, mood: moodControl, drag })
       console.info('Exported', outcome)
       setExportStatus('idle')
     } catch (error) {

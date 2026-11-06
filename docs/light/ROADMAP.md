@@ -92,7 +92,7 @@ Deliverables:
 - Lens: bloom pyramid with a tint per level, and halation.
 - Tone curve: exact at nominal, with a smooth path to white above it.
 - Output: grain and dither at output size.
-- Export: render at 2x, downsample, filter, PNG at the four preset sizes (16:9 = 3840×2160, 9:16 = 2160×3840, 1:1 = 3840×3840, 4:5 = 3072×3840), seed in the file name.
+- Export: render at 2x, downsample, filter, JPEG at the four preset sizes (16:9 = 3840×2160, 9:16 = 2160×3840, 1:1 = 3840×3840, 4:5 = 3072×3840), seed in the file name.
 - Audit harness: renders presets in headless Chrome and writes compare sheets and metrics.
 - Parameter fitter: adjusts a reference preset's numbers to lower the blurred ΔE against its target and writes the preset JSON. It reads the target; the renderer never does.
 - Dev lab page at `/lab`: pick a reference, see target and render side by side, move the preset's parameters, save.
@@ -169,10 +169,10 @@ Deliverables:
 
 - The main page with the deck's flow: Role (picks the pack) → Mood → Recipe → Filter and strength → Intensity and Softness, plus the mood control → Export.
 - The seed is always visible and editable, with a control for a new seed.
-- The four preset sizes, 2x rendering, PNG export with the seed in the file name.
+- The four preset sizes, 2x rendering, JPEG export with the seed in the file name.
 - No color pickers and no status labels or explanatory text.
 
-The owner sees: the tool at `localhost:3000` and the exported PNGs.
+The owner sees: the tool at `localhost:3000` and the exported JPEGs.
 
 Done when: someone who is not a designer makes and exports a usable background without help; the export matches the preview; all four sizes export; the same settings and seed give the same file.
 

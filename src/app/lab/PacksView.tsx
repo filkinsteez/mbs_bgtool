@@ -56,19 +56,19 @@ export function PacksView({ panelRoot }: { panelRoot: RefObject<HTMLElement | nu
   const [exporting, setExporting] = useState(false)
   const renderHost = useRef<HTMLDivElement>(null)
 
-  const exportLabel = exporting ? EXPORTING_LABEL : flash.label('export', 'Export PNG')
+  const exportLabel = exporting ? EXPORTING_LABEL : flash.label('export', 'Export')
   const packConfig = useMemo<DialConfig>(
     () => ({
       pack: { type: 'select', options: PACK_OPTIONS, default: PACKS[0].id },
       aspect: { type: 'select', options: [...EXPORT_ASPECTS], default: EXPORT_ASPECTS[0] },
-      exportPng: { type: 'action', label: exportLabel },
+      export: { type: 'action', label: exportLabel },
     }),
     [exportLabel],
   )
   const packDial = useDialKitController('Pack', packConfig, {
     id: PACK_PANEL,
     onAction: (action) => {
-      if (action === 'exportPng') void exportPng()
+      if (action === 'export') void exportImage()
     },
   })
   const packValue = packDial.values.pack
@@ -90,7 +90,7 @@ export function PacksView({ panelRoot }: { panelRoot: RefObject<HTMLElement | nu
   const size = previewSize(aspect)
   const view = useLightCanvas({ host: renderHost, scene, width: size.width, height: size.height, supersample: 1, canvasClass: styles.canvas })
 
-  async function exportPng() {
+  async function exportImage() {
     if (exporting) return
     setExporting(true)
     try {

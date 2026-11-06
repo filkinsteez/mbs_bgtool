@@ -238,8 +238,8 @@ const api = {
     return falloffProfile(target, image, buildMask(request.width, request.height, request.ignore, request.cornerRadius), request.distances)
   },
 
-  /** Runs the real export path (own offscreen renderer, PNG encode) and uploads the PNG bytes. */
-  async exportPng(preset: Preset, request: ExportModule.ExportRequest, uploadKey: string): Promise<{ fileName: string; width: number; height: number; ms: number }> {
+  /** Runs the real export path (own offscreen renderer, JPEG encode) and uploads the JPEG bytes. */
+  async exportImage(preset: Preset, request: ExportModule.ExportRequest, uploadKey: string): Promise<{ fileName: string; width: number; height: number; ms: number }> {
     const start = performance.now()
     const { exportPreset } = (await EXPORT_FILES['../../../src/light/engine/export.ts']()) as typeof ExportModule
     const result = await exportPreset(preset, request)

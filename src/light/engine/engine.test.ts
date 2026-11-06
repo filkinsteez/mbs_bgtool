@@ -1,10 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { linearToOklab, linearToOklch, oklabToLinear } from '../color/oklab'
 import { PACKS } from '../color/packs'
 import { hexToLinear, linearToSrgb, srgbToLinear } from '../color/srgb'
 import { getRecipe, RECIPE_LIST } from '../recipes'
 import { DEFAULT_LENS, RECIPE_IDS, type RecipeContext, type RecipeProgram } from '../scene'
-import { exportFileName, exportSize } from './export'
+import { encodeJpeg, exportFileName, exportSize } from './export'
 import { EXPORT_ASPECTS, EXPORT_SIZES, frameAspect, type ExportAspect } from './frame'
 import { grainAmplitude, grainCellPx, grainField, grainParams, grainUniforms } from './grain'
 import { bloomLevelFactors, halationLevelFactors, lensBaseSize, levelForRadius } from './lens'
@@ -408,14 +408,51 @@ describe('frame aspect', () => {
 })
 
 describe('export', () => {
-  it('names files <recipe>-<pack or reference>-<aspect>-seed<seed>.png', () => {
+  it('names files <recipe>-<pack or reference>-<aspect>-seed<seed>.jpg', () => {
     const scene = { recipe: 'sunset.ramp' as const, seed: 7 }
-    expect(exportFileName({ id: 'x', pack: 'bold', scene }, exportSize({ aspect: '16:9' }).label)).toBe('sunset.ramp-bold-16x9-seed7.png')
+    expect(exportFileName({ id: 'x', pack: 'bold', scene }, exportSize({ aspect: '16:9' }).label)).toBe('sunset.ramp-bold-16x9-seed7.jpg')
     expect(exportFileName({ id: 'x', referenceId: 'sunset-sky-peach', scene }, exportSize({ width: 925, height: 1001 }).label)).toBe(
-      'sunset.ramp-sunset-sky-peach-925x1001-seed7.png',
+      'sunset.ramp-sunset-sky-peach-925x1001-seed7.jpg',
     )
     expect(exportSize({ aspect: '4:5' })).toEqual({ width: 3072, height: 3840, label: '4x5' })
-    expect(exportFileName({ id: 'x', pack: 'bold', scene: { ...scene, output: { grain: 0.5 } } }, '16x9')).toBe('sunset.ramp-bold-16x9-seed7-grain50.png')
-    expect(exportFileName({ id: 'x', pack: 'bold', scene: { ...scene, output: { grain: 0 } } }, '16x9')).toBe('sunset.ramp-bold-16x9-seed7.png')
+    expect(exportFileName({ id: 'x', pack: 'bold', scene: { ...scene, output: { grain: 0.5 } } }, '16x9')).toBe('sunset.ramp-bold-16x9-seed7-grain50.jpg')
+    expect(exportFileName({ id: 'x', pack: 'bold', scene: { ...scene, output: { grain: 0 } } }, '16x9')).toBe('sunset.ramp-bold-16x9-seed7.jpg')
+  })
+
+  it('encodes a JPEG at quality 0.95 from an opaque canvas', async () => {
+    const calls: unknown[] = []
+    class FakeCanvas {
+      constructor(
+        readonly width: number,
+        readonly height: number,
+      ) {}
+      getContext(type: string, options: unknown) {
+        calls.push(['getContext', type, options])
+        return { putImageData: (image: { width: number; height: number }, x: number, y: number) => calls.push(['putImageData', image.width, image.height, x, y]) }
+      }
+      async convertToBlob(options: unknown) {
+        calls.push(['convertToBlob', options])
+        return new Blob([])
+      }
+    }
+    class FakeImageData {
+      constructor(
+        readonly data: Uint8ClampedArray,
+        readonly width: number,
+        readonly height: number,
+      ) {}
+    }
+    vi.stubGlobal('OffscreenCanvas', FakeCanvas)
+    vi.stubGlobal('ImageData', FakeImageData)
+    try {
+      await encodeJpeg(new Uint8Array(2 * 1 * 4), 2, 1)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    expect(calls).toEqual([
+      ['getContext', '2d', { alpha: false }],
+      ['putImageData', 2, 1, 0, 0],
+      ['convertToBlob', { type: 'image/jpeg', quality: 0.95 }],
+    ])
   })
 })

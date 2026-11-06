@@ -9,7 +9,7 @@ describe('export file names', () => {
   it('carry Intensity, Softness and the mood control after the seed, and the filter last', () => {
     const parts = controlNameParts('sunset', { ...DEFAULTS, mood: 0.28 })
     expect(exportFileName({ id: 'tool', pack: 'bold', scene: scene('sunset.ramp', 3, { grain: 0.5 }) }, '16x9', parts)).toBe(
-      'sunset.ramp-bold-16x9-seed3-i50-s50-h28-grain50.png',
+      'sunset.ramp-bold-16x9-seed3-i50-s50-h28-grain50.jpg',
     )
   })
 

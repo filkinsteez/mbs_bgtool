@@ -32,8 +32,11 @@ export function exportSize(request: ExportRequest): { width: number; height: num
   return { width: Math.round(request.width), height: Math.round(request.height), label: `${Math.round(request.width)}x${Math.round(request.height)}` }
 }
 
+/** JPEG quality of exports. At 0.92 and below, smooth dark gradients show 8 px blocks and stepped bands once their contrast is raised. */
+export const JPEG_QUALITY = 0.95
+
 /**
- * `<recipe>-<pack or reference id>-<aspect>-seed<seed>.png`. Name parts follow the seed, and a filter that is on
+ * `<recipe>-<pack or reference id>-<aspect>-seed<seed>.jpg`. Name parts follow the seed, and a filter that is on
  * adds its name and strength last (`-i50-s50-h28-grain50`).
  */
 export function exportFileName(
@@ -43,22 +46,22 @@ export function exportFileName(
 ): string {
   const source = preset.pack ?? preset.referenceId ?? preset.id
   const parts = nameParts.map((part) => `-${part}`).join('')
-  return `${preset.scene.recipe}-${source}-${sizeLabel}-seed${preset.scene.seed}${parts}${filterFileTag(preset.scene.output)}.png`
+  return `${preset.scene.recipe}-${source}-${sizeLabel}-seed${preset.scene.seed}${parts}${filterFileTag(preset.scene.output)}.jpg`
 }
 
-/** Encodes top-down RGBA8 pixels as an RGB PNG. Every alpha must be 255: the opaque canvas drops it. */
-export async function encodePng(pixels: Uint8Array<ArrayBuffer>, width: number, height: number): Promise<Blob> {
+/** Encodes top-down RGBA8 pixels as a JPEG. Every alpha must be 255: the opaque canvas drops it. */
+export async function encodeJpeg(pixels: Uint8Array<ArrayBuffer>, width: number, height: number): Promise<Blob> {
   const canvas = new OffscreenCanvas(width, height)
   const context = canvas.getContext('2d', { alpha: false })
-  if (!context) throw new Error('2D canvas is not available for PNG encoding.')
+  if (!context) throw new Error('2D canvas is not available for JPEG encoding.')
   const image = new ImageData(new Uint8ClampedArray(pixels.buffer, pixels.byteOffset, pixels.byteLength), width, height)
   context.putImageData(image, 0, 0)
-  return canvas.convertToBlob({ type: 'image/png' })
+  return canvas.convertToBlob({ type: 'image/jpeg', quality: JPEG_QUALITY })
 }
 
 /**
  * Renders a preset on its own offscreen renderer (preview canvases stay
- * untouched) and returns a PNG. Throws a LightEngineError when the context is
+ * untouched) and returns a JPEG. Throws a LightEngineError when the context is
  * lost or the GPU runs out of memory, so a caller can retry at 1x.
  */
 export async function exportPreset(preset: Preset, request: ExportRequest): Promise<ExportResult> {
@@ -68,7 +71,7 @@ export async function exportPreset(preset: Preset, request: ExportRequest): Prom
     renderer.render(preset.scene, { width, height, supersample: request.supersample ?? 2 })
     renderer.gpu.checkErrors()
     const pixels = renderer.readPixels()
-    const blob = await encodePng(pixels, width, height)
+    const blob = await encodeJpeg(pixels, width, height)
     return { blob, fileName: exportFileName(preset, label, request.nameParts), width, height }
   } finally {
     renderer.dispose()

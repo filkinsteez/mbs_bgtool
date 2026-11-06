@@ -617,13 +617,13 @@ try {
   }
 
   if (wanted('export') && Object.keys(recipeErrors).length > 0) {
-    skip('export: 16:9 PNG at 3840x2160 matches the preview', `the export path loads every recipe, and ${Object.keys(recipeErrors).join(', ')} did not load`)
+    skip('export: 16:9 JPEG at 3840x2160 matches the preview', `the export path loads every recipe, and ${Object.keys(recipeErrors).join(', ')} did not load`)
   } else if (wanted('export')) {
     const preset = { id: 'check', pack: 'bold', scene: { recipe: 'sunset.ramp', seed: 4, colors: [], params: {}, lens: {}, output: {} } }
-    const result = await harness.call('exportPng', preset, { aspect: '16:9' }, 'export')
-    const png = harness.takeUpload('export')
-    const meta = await sharp(png).metadata()
-    const exported = { width: meta.width, height: meta.height, data: (await sharp(png).ensureAlpha().raw().toBuffer()) }
+    const result = await harness.call('exportImage', preset, { aspect: '16:9' }, 'export')
+    const jpeg = harness.takeUpload('export')
+    const meta = await sharp(jpeg).metadata()
+    const exported = { width: meta.width, height: meta.height, data: (await sharp(jpeg).ensureAlpha().raw().toBuffer()) }
     const preview = await harness.render({ scene: preset.scene, width: 960, height: 540, supersample: 2 })
     const small = await resizeRgba(exported, 960, 540, 'lanczos3')
     const { metrics } = compareImages(preview, small, buildMask(960, 540, [], 0))
@@ -631,11 +631,11 @@ try {
       { image: preview, caption: 'preview 960x540' },
       { image: small, caption: `${result.fileName}, downsampled` },
     ])
-    const ok = meta.format === 'png' && meta.width === 3840 && meta.height === 2160 && result.fileName === 'sunset.ramp-bold-16x9-seed4.png' && metrics.deltaE.mean < 0.004
+    const ok = meta.format === 'jpeg' && meta.width === 3840 && meta.height === 2160 && result.fileName === 'sunset.ramp-bold-16x9-seed4.jpg' && metrics.deltaE.mean < 0.004
     record(
-      'export: 16:9 PNG at 3840x2160 matches the preview',
+      'export: 16:9 JPEG at 3840x2160 matches the preview',
       ok,
-      `${result.fileName} ${meta.width}x${meta.height} ${meta.format}, ${(png.length / 1e6).toFixed(1)} MB in ${(result.ms / 1000).toFixed(2)} s; vs preview mean ${metrics.deltaE.mean.toFixed(4)} p95 ${metrics.deltaE.p95.toFixed(4)}`,
+      `${result.fileName} ${meta.width}x${meta.height} ${meta.format}, ${(jpeg.length / 1e6).toFixed(1)} MB in ${(result.ms / 1000).toFixed(2)} s; vs preview mean ${metrics.deltaE.mean.toFixed(4)} p95 ${metrics.deltaE.p95.toFixed(4)}`,
     )
   }
 
