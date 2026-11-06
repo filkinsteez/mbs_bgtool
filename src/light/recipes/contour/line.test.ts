@@ -173,6 +173,28 @@ describe('every dragged composition', () => {
   })
 })
 
+describe('Streaks seeds under the same line', () => {
+  it('keep their own composition: two seeds with one light differ in at least two choices', () => {
+    const owner = { from: [1.011, 1.224] as [number, number], to: [-0.078, -0.067] as [number, number] }
+    for (const drag of [owner, HIGH_ABOVE]) {
+      for (const pack of PACKS) {
+        const frames = SEEDS.map((seed) => contourStreaks.compose!({ pack: getPack(pack), controls: { ...MIDDLE, drag }, seed, aspect: ASPECT }))
+        const choices = frames.map(({ params }) => {
+          const sky = params.sky as number[]
+          return [Math.sign(sky[1] - sky[0]), (params.clouds as number[])[3], sky[2], (params.floor as number[])[2], Math.round(Math.abs(sky[1] - sky[0]) * 2)]
+        })
+        for (let a = 0; a < SEEDS.length; a++) {
+          for (let b = a + 1; b < SEEDS.length; b++) {
+            if (frames[a].colors[1] !== frames[b].colors[1]) continue
+            const differ = choices[a].filter((v, i) => Math.abs(v - choices[b][i]) > 1e-3).length
+            expect(differ, `${pack} s${SEEDS[a]}/s${SEEDS[b]}`).toBeGreaterThanOrEqual(2)
+          }
+        }
+      }
+    }
+  })
+})
+
 describe('the packs that share Meta Blue', () => {
   it("keep Bold's Meta Blue saturated and turning Cyan, and veil Atmospheric's", () => {
     for (const recipe of [contourBeam, contourStreaks]) {

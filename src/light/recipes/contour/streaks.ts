@@ -88,6 +88,7 @@ uniform vec2 uNearShape;   // the darker sky near the point: distance it starts 
 uniform vec4 uAirGlow;     // a point outside the frame: level of its glow in the air (scattered units; 0: off), falloff, sharpness (power), scale (1 at the frame's brightest point)
 uniform vec4 uGlowLine;    // where that point is (screen, unturned), twice
 uniform float uVeilBand;   // how much more chroma the veil keeps in its band of levels (1: twice the share)
+uniform vec2 uCloudAnchor; // where the cloud layer's pattern is fixed (scene): the frame's center, or a dragged line's start, so the clouds move with it
 ${AIR_GLOW_GLSL}
 const int SHADOW_TAPS = 20;
 const int SHORT_TAPS = 8;
@@ -165,7 +166,7 @@ float shaftLight(vec2 d, float r, float unlit) {
     float between = smoothstep(rk - dr, rk + dr, r);
     if (between <= 0.0) break;
     float density = mix(1.0, uLayer.z, smoothstep(r1 - dr, r1 + dr, rk));
-    depth += between * density * cloudCover(uCenter + dir * rk);
+    depth += between * density * cloudCover(uCenter - uCloudAnchor + dir * rk);
   }
   // Past the lit sky the clouds thicken: the shadow there follows the clouds, so its edge
   // breaks into shafts and gaps, and less sky light reaches the shadows.
@@ -519,7 +520,12 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
   }
   if (controls.drag) {
     const line = lineInShorts(controls.drag, aspect)
-    Object.assign(params, streaksOnLine(params, line, skyHeight), airGlowParams(light, [...line.from, ...line.from], aspect, geo(intensity, 0.22, 0.75, 1.4) / 0.75, (params.fall as number[])[0]))
+    // Under a line the seed's layout choices that the line takes over (where the point sits, its
+    // height, the lit side) become the clouds' thickness, the lit sky's sides and the floor's
+    // gloss; a broad fan's light glows wider past the frame, a thick-cloud one fades faster.
+    const shade = past ? (light.tail ? THICK_WARM : THICK_CLOUDS) : [1, 1, 1]
+    const glow = airGlowParams(light, [...line.from, ...line.from], aspect, geo(intensity, 0.22, 0.75, 1.4) / 0.75, (params.fall as number[])[0], broadFan ? WIDE_GLOW : NARROW_GLOW, past)
+    Object.assign(params, streaksOnLine(params, line, skyHeight, shade, low, broadFan), glow)
   }
 
   return {
@@ -539,6 +545,44 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
 const HORIZON_MARGIN = 0.25
 
 /**
+ * Where a dragged line sits across the lit sky, from its bright end: near it, so the brightest
+ * shafts run along the line and the rest of the fan opens to the seed's own side of it, as the
+ * seed's sky does without a line. Two seeds then differ in which side of the line is lit.
+ */
+const LINE_IN_FAN = 0.2
+
+/** How far inside the lit sky's sides a dragged line stays, as a share of its width. */
+const LINE_MARGIN = 0.08
+
+/** Share of the seed's lit-sky width a dragged line keeps (about 45 to 105 degrees). */
+const FAN_ON_LINE = 0.55
+
+/**
+ * Thick clouds under a dragged line: the light's level, the clouds' optical depth and the light
+ * left in their shadows, each as a factor. Thin-cloud seeds keep their own.
+ */
+const THICK_CLOUDS = [0.55, 2, 0.32]
+
+/**
+ * Thick clouds for a warm light: its own level, since dim warm haze already falls off fast
+ * (dimmer, its shafts end in a sunburst at the point instead of reaching along the line).
+ */
+const THICK_WARM = [1, 1.4, 0.5]
+
+/** The lit sky's side softness for a seed with crisp sides under a dragged line, as a factor. */
+const CRISP_SIDES = 0.55
+
+/**
+ * A glossy floor's reflection of the light under a dragged line, as factors on the seed's
+ * floor pool: its level, how far it runs toward the camera, and its width.
+ */
+const GLOSSY_PATH = [0.25, 3, 0.45]
+
+/** Falloff (short-side units) of the glow past the frame for a broad and a narrow fan. */
+const WIDE_GLOW = 0.27
+const NARROW_GLOW = 0.16
+
+/**
  * The scene for a dragged line: the shafts meet at the line's start and fan out toward its
  * end. The lit sky turns toward the line as far as it stays above the horizon; once the line
  * points closer to the horizon than that, the horizon tilts with it, and as the line turns to
@@ -547,15 +591,17 @@ const HORIZON_MARGIN = 0.25
  * rise sit at the seed's shares of it, the clouds keep the seed's number of gaps, and past
  * the reach the shafts fade into the dark.
  */
-function streaksOnLine(params: Record<string, ParamValue>, line: ShortLine, skyHeight: number): Record<string, ParamValue> {
+function streaksOnLine(params: Record<string, ParamValue>, line: ShortLine, skyHeight: number, shade: readonly number[], crisp: number, broad: number): Record<string, ParamValue> {
   const sky = params.sky as number[]
   const layer = params.layer as number[]
   const rise = params.rise as number[]
   const clouds = params.clouds as number[]
   const near = params.near as number[]
   const skyLevel = params.skyLevel as number[]
-  // The lit sky's width (bright end first) and how far it can turn either way above the horizon.
-  const width = sky[1] - sky[0]
+  const floor = params.floor as number[]
+  // The lit sky's width (bright end first), narrower than without a line so a dark side shows
+  // in a frame the line fills, and how far it can turn either way above the horizon.
+  const width = (sky[1] - sky[0]) * FAN_ON_LINE
   const room = Math.max(0, (Math.PI - Math.abs(width)) / 2)
   // The line's angle from straight up, positive toward +x, and the part of it taken without
   // tilting the horizon: all of it until the line comes near the horizon, then less and less,
@@ -564,25 +610,39 @@ function streaksOnLine(params: Record<string, ParamValue>, line: ShortLine, skyH
   const free = Math.PI / 2 - HORIZON_MARGIN
   const past = Math.min(1, Math.max(0, (Math.abs(fromUp) - free) / (Math.PI - free)))
   const level = fromUp * (1 - past * past * (3 - 2 * past))
-  const fan = room > 1e-3 ? room * Math.tanh(level / room) : 0
+  // Where the line sits across the lit sky (0 at its bright end): LINE_IN_FAN, or as near it as
+  // the lit sky can turn while it stays above the horizon (its middle within `room` of straight
+  // up), and never outside it. The lit sky's middle follows from that.
+  const across = (middle: number) => 0.5 + (level - middle) / width
+  const [lo, hi] = [across(-room), across(room)].sort((a, b) => a - b)
+  const inLo = Math.max(LINE_MARGIN, lo)
+  const inHi = Math.min(1 - LINE_MARGIN, hi)
+  const share = inLo <= inHi ? Math.min(inHi, Math.max(inLo, LINE_IN_FAN)) : Math.min(1 - LINE_MARGIN, Math.max(LINE_MARGIN, (lo + hi) / 2))
+  const fan = level - (share - 0.5) * width
   const reach = Math.hypot(line.length, 0.04)
   const scale = reach / Math.max(skyHeight, 0.05)
   return {
     center: line.from.map(round4),
-    sky: [round4(-Math.PI / 2 + fan - width / 2), round4(-Math.PI / 2 + fan + width / 2), sky[2], sky[3]],
+    // The clouds move with the line's start, so dragging it moves the shafts as one piece
+    // instead of opening and closing gaps as the point passes under a fixed cloud layer.
+    cloudAnchor: line.from.map(round4),
+    sky: [round4(-Math.PI / 2 + fan - width / 2), round4(-Math.PI / 2 + fan + width / 2), round4(sky[2] * (crisp ? CRISP_SIDES : 1)), sky[3]],
     turn: turnParam(fromUp - level, line.from, line.from),
     // The light stays brightest at the floor band: the shafts brighten little away from the
     // point and fade out by the line's end.
     reach: round4(0.8 * reach),
     layer: [round4(layer[0] * scale), round4(layer[1] * scale), layer[2], layer[3]],
     rise: [round4(0.25 * rise[0]), round4(rise[1] * scale), round4(rise[2] * scale), rise[3]],
-    clouds: [round4(Math.min(64, clouds[0] / scale)), clouds[1], clouds[2], clouds[3]],
+    clouds: [round4(Math.min(64, clouds[0] / scale)), clouds[1], round4(clouds[2] * shade[1]), round4(clouds[3] * shade[2])],
     near: [round4(near[0] * scale), round4(near[1] * scale), near[2], near[3]],
     nearShape: [round4((params.nearShape as number[])[0] * scale), (params.nearShape as number[])[1]],
+    // A clear-air seed's floor is glossy: the light's reflection runs far toward the camera,
+    // as dim as it is long.
+    floor: crisp ? [floor[0], round4(floor[1] * GLOSSY_PATH[0]), round4(floor[2] * GLOSSY_PATH[1]), round4(floor[3] * GLOSSY_PATH[2] * (broad ? 1.4 : 0.75))] : floor,
     // The brightest shafts point along the line, and the rest of the fan keeps a good share of
     // their light, so the shafts spread broadly instead of gathering into one column.
-    skyPeak: round4(Math.min(0.9, Math.max(0.1, 0.5 + (level - fan) / (Math.abs(width) > 1e-3 ? width : 1e-3)))),
-    skyLevel: [skyLevel[0], round4(0.35 * skyLevel[0]), skyLevel[2]],
+    skyPeak: round4(share),
+    skyLevel: [round4(skyLevel[0] * shade[0]), round4(0.35 * skyLevel[0] * shade[0]), skyLevel[2]],
   }
 }
 
@@ -630,6 +690,7 @@ export const contourStreaks: RecipeDefinition = {
     { kind: 'vector', key: 'airGlow', label: 'Glow past the frame', min: 0, max: 100, step: 0.0001, default: [0, 0.18, 2, 1] },
     { kind: 'vector', key: 'glowLine', label: 'Point past the frame', min: -8, max: 8, step: 0.0005, default: [0, 0, 0, 0] },
     { kind: 'number', key: 'veilBand', label: 'More color in the band', min: 0, max: 2, step: 0.005, default: 1 },
+    { kind: 'vector', key: 'cloudAnchor', label: 'Clouds fixed at', min: -4, max: 4, step: 0.0005, default: [0, 0] },
   ],
   fragment: STREAKS_GLSL,
   uniforms: (ctx) => ({
@@ -669,6 +730,7 @@ export const contourStreaks: RecipeDefinition = {
     uAirGlow: ctx.vec('airGlow'),
     uGlowLine: ctx.vec('glowLine'),
     uVeilBand: ctx.num('veilBand'),
+    uCloudAnchor: ctx.vec('cloudAnchor'),
   }),
   scatter: [{ source: 'aux', radius: () => SKY_CACHE_BLUR, size: () => SKY_CACHE_SIZE }],
   lens: { bloom: 0.04, bloomLevels: [1, 0.5, 0.25, 0.1, 0, 0, 0, 0], halation: 0 },

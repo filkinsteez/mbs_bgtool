@@ -184,16 +184,25 @@ const AIR_GLOW_GAIN = 1.6
  * over a dark of another hue (Meta Blue over Plum), so the dark shows in most of the frame
  * instead of mixing with the light into a third color. It
  * comes in as the light leaves the frame, and is off (level 0) while any of the light is in the
- * frame. The glow is (scale * airGlow)^sharpness times the level, where scale makes airGlow 1
- * at the frame's brightest point; the level is in scattered-light units (one unit has the
- * haze's luminance).
+ * frame. A look may give a seed its own falloff (`core`) and a faster fade (`sharper`, added
+ * to the sharpness), so seeds differ under the same line. The glow is (scale * airGlow)^sharpness
+ * times the level, where scale makes airGlow 1 at the frame's brightest point; the level is in
+ * scattered-light units (one unit has the haze's luminance).
  */
-export function airGlowParams(light: ContourLight, seg: readonly number[], aspect: number, intensity: number, fallFrom: number): { airGlow: number[]; glowLine: number[] } {
+export function airGlowParams(
+  light: ContourLight,
+  seg: readonly number[],
+  aspect: number,
+  intensity: number,
+  fallFrom: number,
+  core = AIR_GLOW_CORE,
+  sharper = 0,
+): { airGlow: number[]; glowLine: number[] } {
   const { halfW, halfH } = frameHalf(aspect)
   const outside = segmentOutside(seg, halfW, halfH)
   const clip = clipLuminanceOf(light.haze)
   const target = AIR_GLOW_GAIN * Math.max(luminanceOf(light.haze), light.tail ? fallFrom * clip : AIR_GLOW_LUMINANCE)
-  const sharpness = light.fall > 1 || !darkMatches(light) ? 3 : 2
+  const sharpness = Math.min(3, (light.fall > 1 || !darkMatches(light) ? 3 : 2) + sharper)
   const share = outside <= 0 ? 0 : smoothstep(0, AIR_GLOW_FROM, outside)
   let brightest = 0
   const n = 48
@@ -206,10 +215,10 @@ export function airGlowParams(light: ContourLight, seg: readonly number[], aspec
       [-halfW, y],
       [halfW, y],
     ] as [number, number][])
-      brightest = Math.max(brightest, airGlowAt(p, seg, AIR_GLOW_CORE))
+      brightest = Math.max(brightest, airGlowAt(p, seg, core))
   }
   const level = share > 0 && brightest > 0 ? (share * target * intensity) / Math.max(luminanceOf(light.haze), 1e-6) : 0
-  return { airGlow: [round4(level), AIR_GLOW_CORE, sharpness, round4(1 / Math.max(brightest, 0.01))], glowLine: seg.map(round4) }
+  return { airGlow: [round4(level), round4(core), sharpness, round4(1 / Math.max(brightest, 0.01))], glowLine: seg.map(round4) }
 }
 
 const smoothstep = (a: number, b: number, x: number) => {
