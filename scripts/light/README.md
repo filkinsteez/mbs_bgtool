@@ -97,6 +97,12 @@ node scripts/light/look-switch.mjs [--start sunset|contour] [--no-parallel] [--u
 
 Whether switching looks freezes the tool's page. Loads the tool from the dev server in a fresh Chrome profile (1280x800) and switches through all seven looks with the panel's keys, twice in one page and once in a second page of the same browser. Every fragment shader gets a line unique to the run, so the first page compiles from scratch and the second finds the browser's shader cache warm. For the page load and each switch it prints the longest main-thread task until the new look's settled frame (it should be 0), the time spent in compile status queries, GL calls over 5 ms by name, and the time to the first and the settled frame. It also prints the canvas's times for the new look's first 1x and 2x frames: `fastMs` and `settledMs` run from issuing a frame until it is on the canvas (whole animation frames), and `fastGpuMs` and `settledGpuMs` are the GPU timer's reading for the render. On this Mac that reading is 1 to 3 times the profile's stage times, so use it to compare looks, not as a cost. `--no-parallel` hides KHR_parallel_shader_compile, to see how a browser without it behaves (each new look's first frame then blocks the page while its shaders compile). A compile status query over 50 ms is saved with its stack. Writes `look-switch-<start>[-no-parallel].json` (default `artifacts/look-switch`). The page start (Ramp, or Rim with `--start contour`) compiles in the page load, so run both starts to time every look's first switch.
 
+```sh
+node scripts/light/panel-pictures.mjs [--out public/panel] [--seed n] [--sheet file.jpg]
+```
+
+Renders the fixed pictures on the tool panel's Mood, Look and Filter tiles into `public/panel/` (WebP, 136 KB in all): every look in every pack at 384x216 with the seed in `SEEDS`, and every filter in every pack as a crop of Bands where the filter's marks are large enough to see. They are not live; run it again after a look or a filter changes a lot. `--seed` renders every look at one seed, to compare seeds; `--sheet` also writes a contact sheet. `src/tool/TilePicker.test.ts` fails when a picture is missing.
+
 ### Palette check
 
 ```sh

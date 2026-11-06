@@ -39,9 +39,12 @@ Later on 2026-11-02 the owner asked for crops of the Meta logo outline as Contou
 - Sunset and Contour first. Warp Speed later. Filters (Grain, ASCII,
   Pixel) after the gradients are locked down.
 - Controls stay minimal for non-designers: Intensity, Softness, one
- control per mood, and the seed. No free color pickers: Colors shows each
- pack as a strip of its exact hexes, and you pick a pack (owner,
- 2026-11-06). Filter sits near Format at the bottom of the panel.
+ control per mood, and Shuffle (no Seed slider and no Back button; owner,
+ 2026-11-06). Mood, Look, Filter and Format are picked from small
+ pictures and shapes, not dropdowns; the pictures are fixed renders from
+ `scripts/light/panel-pictures.mjs`, not live. No free color pickers:
+ Colors shows each pack as a strip of its exact hexes, and you pick a
+ pack. Filter sits near Format at the bottom of the panel.
 - Brief: `docs/light/BRIEF.md`. Roadmap: `docs/light/ROADMAP.md`.
 
 ## This is a RASTER tool (owner directive)

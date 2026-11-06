@@ -4,7 +4,7 @@ import '@/styles/dialkit.css'
 import '@/styles/dial-panel.css'
 import '@/styles/tool.css'
 import { DialStore, useDialKitController } from 'dialkit'
-import { useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { flushSync } from 'react-dom'
 import { EXPORT_SIZES, getPack, type ExportAspect } from '@/light'
 import {
@@ -21,8 +21,8 @@ import {
 import { buildDialConfig, PACK_DIAL_KEY, PANEL_ID, PANEL_NAME, readToolState, SEED_DIAL_KEY } from './dialConfig'
 import { exportPng } from './exportImage'
 import { FILTER_DIAL_KEY, readChoice, withFilter } from './filterControl'
-import { PackPicker } from './PackPicker'
 import { panelAccessFor, usePanelAccess } from './panelAccess'
+import { FilterPicker, FormatPicker, LookPicker, MoodPicker, PackPicker } from './panelPickers'
 import { Preview } from './Preview'
 import { EMPTY_SEED_HISTORY, recordSeedChange, stepBack, stepForward, type SeedStep } from './seedHistory'
 import { clampUnit, fixLook, isMoodId, parseQuery, randomSeed, readSeed, toQuery, type SearchParams } from './state'
@@ -31,13 +31,13 @@ import { ToolPanel } from './ToolPanel'
 const EXPORT_LABEL = 'Export PNG'
 const EXPORTING_LABEL = 'Exporting…'
 const EXPORT_FAILED_LABEL = 'Export failed'
-const BACK_LABEL = 'Back'
-/** Back and Shuffle go right under the Seed slider. */
-const SEED_ROW_AFTER = [SEED_DIAL_KEY]
-/** The pack swatches take the place of DialKit's Colors select. */
+/** The tiles take the place of DialKit's selects, and Shuffle the place of the Seed slider. */
+const MOOD_PATHS = ['mood']
+const LOOK_PATHS = ['look']
 const PACK_PATHS = [PACK_DIAL_KEY]
-/** The Seed slider's track; panelAccess marks it with its path. */
-const SEED_SLIDER = `[data-dial-path="${SEED_DIAL_KEY}"]`
+const SEED_PATHS = [SEED_DIAL_KEY]
+const FILTER_PATHS = [FILTER_DIAL_KEY]
+const FORMAT_PATHS = ['format']
 const URL_DELAY_MS = 200
 
 type ExportStatus = 'idle' | 'busy' | 'failed'
@@ -55,9 +55,6 @@ const frameAspect = (format: ExportAspect) => EXPORT_SIZES[format].width / EXPOR
 const isTextField = (target: EventTarget | null) =>
   target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select') !== null)
 
-/** Back with nothing to go back to is marked off by the panel (aria-disabled, dimmed) but stays focusable; it isn't busy. */
-const OFF_BUTTON: CSSProperties = { cursor: 'default' }
-
 export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const [start] = useState(() => parseQuery(searchParams))
   const panelMood = useSyncExternalStore(subscribePanel, readPanelMood, readNoMood)
@@ -74,8 +71,6 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   // before React renders, so these tell a slider move by the user from this component's own updates.
   const dragRef = useRef(start.drag)
   const seedRef = useRef(start.seed)
-  /** The seed when a press on the Seed slider began, until the press ends. */
-  const seedPressRef = useRef<number | null>(null)
   const moodValueRef = useRef<number | undefined>(start.moodControl)
   const panelMoodRef = useRef(start.mood)
   const dragEndedRef = useRef(false)
@@ -92,11 +87,9 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     return withFilter(buildScene(look, getPack(pack), seed, controls, frameAspect(format)), { filter, strength })
   }, [look, pack, seed, intensity, softness, moodControl, drag, format, filter, strength])
 
-  // A disabled button would drop keyboard focus when Back runs out, so Back is only marked off.
-  const backOff = seedHistory.back.length === 0
   const access = useMemo(
-    () => panelAccessFor(PANEL_ID, PANEL_NAME, config, { busy: [...(exportStatus === 'busy' ? [EXPORTING_LABEL] : []), ...(backOff ? [BACK_LABEL] : [])] }),
-    [config, exportStatus, backOff],
+    () => panelAccessFor(PANEL_ID, PANEL_NAME, config, { busy: exportStatus === 'busy' ? [EXPORTING_LABEL] : [] }),
+    [config, exportStatus],
   )
   usePanelAccess(panelRef, access)
 
@@ -206,39 +199,16 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     followScene()
   }, [sceneKey])
 
-  // Every seed change goes in the history, so Back can return to it: one per Shuffle or arrow-key step. A press on the
-  // Seed slider is one change however many seeds it passes: the seed it began at goes in when the press ends.
+  // Every Shuffle goes in the history, so Cmd/Ctrl+Z can return to the seed before it.
   const onSeedChange = useEffectEvent(() => {
     const previous = seedRef.current
     const next = readSeed(DialStore.getValue(PANEL_ID, SEED_DIAL_KEY), previous)
     if (next === previous) return
     seedRef.current = next
-    if (seedPressRef.current === null) setSeedHistory((history) => recordSeedChange(history, previous))
+    setSeedHistory((history) => recordSeedChange(history, previous))
   })
 
   useEffect(() => DialStore.subscribe(PANEL_ID, () => onSeedChange()), [])
-
-  useEffect(() => {
-    const panel = panelRef.current
-    if (!panel) return
-    const press = (event: PointerEvent) => {
-      if (event.target instanceof Element && event.target.closest(SEED_SLIDER)) seedPressRef.current = seedRef.current
-    }
-    // On the window, so it runs after the slider's own pointerup, which sets the seed a click lands on.
-    const release = () => {
-      const from = seedPressRef.current
-      seedPressRef.current = null
-      if (from !== null && from !== seedRef.current) setSeedHistory((history) => recordSeedChange(history, from))
-    }
-    panel.addEventListener('pointerdown', press)
-    window.addEventListener('pointerup', release)
-    window.addEventListener('pointercancel', release)
-    return () => {
-      panel.removeEventListener('pointerdown', press)
-      window.removeEventListener('pointerup', release)
-      window.removeEventListener('pointercancel', release)
-    }
-  }, [])
 
   function shuffle() {
     setValue(SEED_DIAL_KEY, randomSeed(seedRef.current))
@@ -287,21 +257,10 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     }
   }
 
-  const seedActions = (
-    <div className="tool-seed-actions">
-      <button
-        type="button"
-        className="dialkit-button"
-        style={backOff ? OFF_BUTTON : undefined}
-        aria-keyshortcuts="Meta+Z Control+Z"
-        onClick={() => travel(stepBack(seedHistory, seed))}
-      >
-        {BACK_LABEL}
-      </button>
-      <button type="button" className="dialkit-button" onClick={shuffle}>
-        Shuffle
-      </button>
-    </div>
+  const shuffleButton = (
+    <button type="button" className="dialkit-button" onClick={shuffle}>
+      Shuffle
+    </button>
   )
 
   return (
@@ -318,8 +277,12 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
         <ToolPanel
           panelId={PANEL_ID}
           slots={[
+            { paths: MOOD_PATHS, node: <MoodPicker value={mood} pack={pack} onChange={(next) => setValue('mood', next)} />, replace: true },
+            { paths: LOOK_PATHS, node: <LookPicker mood={mood} value={look} pack={pack} onChange={(next) => setValue('look', next)} />, replace: true },
             { paths: PACK_PATHS, node: <PackPicker value={pack} onChange={(next) => setValue(PACK_DIAL_KEY, next)} />, replace: true },
-            { paths: SEED_ROW_AFTER, node: seedActions },
+            { paths: SEED_PATHS, node: shuffleButton, replace: true },
+            { paths: FILTER_PATHS, node: <FilterPicker value={filter} pack={pack} onChange={(next) => setValue(FILTER_DIAL_KEY, next)} />, replace: true },
+            { paths: FORMAT_PATHS, node: <FormatPicker value={format} onChange={(next) => setValue('format', next)} />, replace: true },
           ]}
         />
       </aside>

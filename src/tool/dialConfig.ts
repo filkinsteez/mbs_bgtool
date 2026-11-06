@@ -6,17 +6,21 @@ import { clampUnit, DEFAULT_STATE, fixLook, isExportAspect, readSeed, SEED_MAX, 
 
 export const PANEL_ID = 'tool'
 export const PANEL_NAME = 'Background'
-/** Panel key; DialKit shows it as "Seed". */
+/** Panel key of the seed; the panel shows only Shuffle for it. */
 export const SEED_DIAL_KEY = 'seed'
-/** Panel key of the pack; the tool draws it as swatches (`PackPicker`) instead of DialKit's select. */
+/** Panel key of the pack. */
 export const PACK_DIAL_KEY = 'colors'
 
-const MOOD_OPTIONS = [
+export const MOOD_OPTIONS = [
   { value: 'sunset', label: 'Sunset' },
   { value: 'contour', label: 'Contour' },
 ] satisfies { value: MoodId; label: string }[]
 
-const PACK_OPTIONS = PACKS.map((pack) => ({ value: pack.id, label: pack.name }))
+export const PACK_OPTIONS = PACKS.map((pack) => ({ value: pack.id, label: pack.name }))
+
+export const FORMAT_OPTIONS = EXPORT_ASPECTS.map((aspect) => ({ value: aspect, label: aspect }))
+
+export const lookOptions = (mood: MoodId) => recipesForMood(mood).map((recipe) => ({ value: recipe.id, label: recipe.label }))
 
 /**
  * The panel config for the current mood. Defaults come from the state the page
@@ -31,18 +35,14 @@ export function buildDialConfig(mood: MoodId, initial: ToolState, exportLabel: s
   const sameMood = mood === initial.mood
   return {
     mood: { type: 'select', options: MOOD_OPTIONS, default: initial.mood },
-    look: {
-      type: 'select',
-      options: looks.map((recipe) => ({ value: recipe.id, label: recipe.label })),
-      default: sameMood ? initial.look : looks[0].id,
-    },
+    look: { type: 'select', options: lookOptions(mood), default: sameMood ? initial.look : looks[0].id },
     [PACK_DIAL_KEY]: { type: 'select', options: PACK_OPTIONS, default: initial.pack },
     intensity: [initial.intensity, 0, 1, 0.01],
     softness: [initial.softness, 0, 1, 0.01],
     [MOOD_DIAL_KEY[mood]]: [sameMood ? initial.moodControl : DEFAULT_CONTROLS.mood, 0, 1, 0.01],
     [SEED_DIAL_KEY]: [initial.seed, SEED_MIN, SEED_MAX, 1],
     ...filterDials(initial, filter),
-    format: { type: 'select', options: [...EXPORT_ASPECTS], default: initial.format },
+    format: { type: 'select', options: FORMAT_OPTIONS, default: initial.format },
     export: { type: 'action', label: exportLabel },
   }
 }

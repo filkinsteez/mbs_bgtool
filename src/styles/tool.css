@@ -80,60 +80,57 @@
   border-left: 1px solid var(--chrome-2);
 }
 
-.tool-seed-actions {
-  display: flex;
-  gap: 6px;
-}
-
-.tool-seed-actions .dialkit-button:disabled {
-  opacity: 0.4;
-  cursor: default;
-  background: var(--dial-surface);
-  color: var(--dial-text-secondary);
-}
-
-.tool-packs {
+.tool-tiles {
+  --tile-height: 40px;
+  --shape-box: 18px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   padding: 10px 12px 12px;
   border-radius: var(--dial-radius);
   background: var(--dial-surface);
 }
 
-.tool-packs-head {
+.tool-tiles[data-kind='swatch'] {
+  --tile-height: 26px;
+}
+
+.tool-tiles-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-.tool-packs-options {
+.tool-tiles-options {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--tile-columns), minmax(0, 1fr));
   gap: 8px;
 }
 
-.tool-pack {
+.tool-tile {
   position: relative;
   display: flex;
-  height: 26px;
+  height: var(--tile-height);
   padding: 0;
   border: none;
   border-radius: 6px;
   overflow: hidden;
+  background: var(--dial-surface);
+  color: var(--dial-text-secondary);
+  font-family: inherit;
   cursor: pointer;
   outline: 2px solid transparent;
   outline-offset: 2px;
-  transition: outline-color 0.15s;
+  transition: outline-color 0.15s, color 0.15s;
 }
 
-.tool-pack > span {
+.tool-tile > span {
   flex: 1;
 }
 
-/* A thin edge, so dark swatches (Forest, Plum, Near-black) stay visible on the dark panel. */
-.tool-pack::after {
+/* A thin edge, so dark swatches (Forest, Plum, Near-black) and Contour's black stay visible on the dark panel. */
+.tool-tile::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -142,13 +139,60 @@
   pointer-events: none;
 }
 
-.tool-pack:hover {
+.tool-tile:hover {
   outline-color: var(--dial-border-hover);
 }
 
-.tool-pack[aria-checked='true'],
-.tool-pack:focus-visible {
+.tool-tile[aria-checked='true'],
+.tool-tile:focus-visible {
   outline-color: var(--dial-text-primary);
+  color: var(--dial-text-primary);
+}
+
+.tool-tile-picture {
+  background-position: center;
+  background-size: cover;
+}
+
+.tool-tile-format {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.tool-tile-shape {
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+}
+
+.tool-tile[aria-checked='true'] .tool-tile-shape {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.tool-tile-format-label {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-height: 780px) {
+  .tool-tiles {
+    --tile-height: 34px;
+    --shape-box: 14px;
+    gap: 7px;
+    padding: 8px 12px 10px;
+  }
+
+  .tool-tiles[data-kind='swatch'] {
+    --tile-height: 24px;
+  }
+
+  .tool-tile-format {
+    gap: 4px;
+  }
 }
 
 @media (max-height: 600px) {
@@ -170,13 +214,20 @@
     padding-bottom: 8px;
   }
 
-  .tool-packs {
-    gap: 8px;
-    padding: 8px 12px 10px;
+  .tool-tiles {
+    --tile-height: 28px;
+    --shape-box: 12px;
+    gap: 6px;
+    padding: 7px 12px 9px;
   }
 
-  .tool-pack {
-    height: 22px;
+  .tool-tiles[data-kind='swatch'] {
+    --tile-height: 20px;
+  }
+
+  .tool-tile-format {
+    flex-direction: row;
+    gap: 6px;
   }
 }
 
@@ -199,13 +250,15 @@
     padding-bottom: 5px;
   }
 
-  .tool-packs {
-    gap: 6px;
-    padding: 6px 12px 8px;
+  .tool-tiles {
+    --tile-height: 22px;
+    --shape-box: 10px;
+    gap: 4px;
+    padding: 5px 12px 7px;
   }
 
-  .tool-pack {
-    height: 18px;
+  .tool-tiles[data-kind='swatch'] {
+    --tile-height: 16px;
   }
 }
 
@@ -237,7 +290,7 @@
     align-items: center;
   }
 
-  .tool-packs {
+  .tool-tiles {
     grid-column: 1 / -1;
   }
 }

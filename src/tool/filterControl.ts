@@ -36,6 +36,9 @@ const LABELS: Readonly<Record<FilterChoice, string>> = { none: 'None', grain: 'G
 
 const CHOICES: readonly FilterChoice[] = ['none', ...TOOL_FILTERS]
 
+/** The Filter choice's options, in panel order. */
+export const FILTER_OPTIONS: readonly { value: FilterChoice; label: string }[] = CHOICES.map((value) => ({ value, label: LABELS[value] }))
+
 /** The filter a panel or URL value picks; anything missing or unknown is none. */
 export function readChoice(value: unknown): FilterChoice {
   return typeof value === 'string' && (CHOICES as readonly string[]).includes(value) ? (value as FilterChoice) : 'none'
@@ -58,7 +61,7 @@ export function isFilterOn(value: unknown): boolean {
  */
 export function filterDials(initial: FilterState, chosen: FilterChoice): DialConfig {
   return {
-    [FILTER_DIAL_KEY]: { type: 'select', options: CHOICES.map((value) => ({ value, label: LABELS[value] })), default: readChoice(initial.filter) },
+    [FILTER_DIAL_KEY]: { type: 'select', options: [...FILTER_OPTIONS], default: readChoice(initial.filter) },
     ...(chosen === 'none' ? {} : { [STRENGTH_DIAL_KEYS[chosen]]: [readStrength(initial.strength), 0, 1, 0.01] as [number, number, number, number] }),
   }
 }
