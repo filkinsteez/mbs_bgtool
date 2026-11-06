@@ -62,6 +62,8 @@ export interface AccessOptions {
   busy?: readonly string[]
   /** Arrow-key steps by dot path, for sliders whose DialKit step is finer than a useful key step. */
   keySteps?: Readonly<Record<string, number>>
+  /** Labels the panel shows in place of DialKit's, by dot path (ToolPanel's `labels`). */
+  labels?: Readonly<Record<string, string>>
 }
 
 /** The sliders and selects of a panel config, found by walking its folders. */
@@ -72,7 +74,8 @@ export function panelAccessFor(panelId: string, panelName: string, config: DialC
     for (const [key, control] of Object.entries(node)) {
       if (key === '_collapsed') continue
       const path = prefix ? `${prefix}.${key}` : key
-      const place = where ? `${where} / ${dialLabel(key)}` : dialLabel(key)
+      const label = options.labels?.[path] ?? dialLabel(key)
+      const place = where ? `${where} / ${label}` : label
       if (isSlider(control)) {
         const [, min, max, step = 0.01] = control
         sliders.push({ panelId, panelName, path, where: place, min, max, step: options.keySteps?.[path] ?? step, precision: step })
@@ -117,14 +120,22 @@ function placeOf(element: Element, label: string): Where {
   return parts.join(' / ')
 }
 
-/** With several panels DialKit puts each in a folder named after the panel; with one it does not. */
-function byPlace<T extends { panelName: string; where: Where }>(entries: readonly T[]): Map<Where, T> {
-  const map = new Map<Where, T>()
+/**
+ * The entry for each element, from the place the element shows. With several panels DialKit puts each in a folder
+ * named after the panel; with one it does not. Elements that show the same place (two sliders labelled "Strength")
+ * take that place's entries in panel order, the order DialKit draws them in.
+ */
+export function matchByPlace<T extends { panelName: string; where: Where }>(places: readonly Where[], entries: readonly T[]): (T | undefined)[] {
+  const byPlace = new Map<Where, T[]>()
   for (const entry of entries) {
-    map.set(entry.where, entry)
-    map.set(`${entry.panelName} / ${entry.where}`, entry)
+    for (const place of [entry.where, `${entry.panelName} / ${entry.where}`]) byPlace.set(place, [...(byPlace.get(place) ?? []), entry])
   }
-  return map
+  const taken = new Map<Where, number>()
+  return places.map((place) => {
+    const index = taken.get(place) ?? 0
+    taken.set(place, index + 1)
+    return byPlace.get(place)?.[index]
+  })
 }
 
 function asButton(element: HTMLElement, name: string | null): void {
@@ -139,10 +150,13 @@ function asButton(element: HTMLElement, name: string | null): void {
  * This finds DialKit's elements by their labels and adds what is missing.
  */
 export function applyPanelAccess(root: HTMLElement, access: PanelAccess): void {
-  const sliders = byPlace(access.sliders)
-  for (const track of root.querySelectorAll<HTMLElement>('.dialkit-slider')) {
-    const label = textOf(track.querySelector('.dialkit-slider-label'))
-    const slider = sliders.get(placeOf(track, label))
+  const tracks = [...root.querySelectorAll<HTMLElement>('.dialkit-slider')]
+  const sliders = matchByPlace(
+    tracks.map((track) => placeOf(track, textOf(track.querySelector('.dialkit-slider-label')))),
+    access.sliders,
+  )
+  for (const [index, track] of tracks.entries()) {
+    const slider = sliders[index]
     if (!slider) continue
     const value = Number(DialStore.getValue(slider.panelId, slider.path))
     setAttribute(track, 'data-dial-panel', slider.panelId)
@@ -155,9 +169,13 @@ export function applyPanelAccess(root: HTMLElement, access: PanelAccess): void {
     setAttribute(track, 'aria-valuenow', Number.isFinite(value) ? String(value) : null)
   }
 
-  const selects = byPlace(access.selects)
-  for (const trigger of root.querySelectorAll<HTMLElement>('.dialkit-select-trigger')) {
-    const select = selects.get(placeOf(trigger, textOf(trigger.querySelector('.dialkit-select-label'))))
+  const triggers = [...root.querySelectorAll<HTMLElement>('.dialkit-select-trigger')]
+  const selects = matchByPlace(
+    triggers.map((trigger) => placeOf(trigger, textOf(trigger.querySelector('.dialkit-select-label')))),
+    access.selects,
+  )
+  for (const [index, trigger] of triggers.entries()) {
+    const select = selects[index]
     if (!select) continue
     setAttribute(trigger, 'data-dial-panel', select.panelId)
     setAttribute(trigger, 'data-dial-path', select.path)

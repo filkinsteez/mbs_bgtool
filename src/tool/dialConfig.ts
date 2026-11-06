@@ -1,7 +1,7 @@
 import type { DialConfig } from 'dialkit'
 import { EXPORT_ASPECTS, isPackId, PACKS, recipesForMood, type MoodId } from '@/light'
 import { DEFAULT_CONTROLS, MOOD_DIAL_KEY } from './controls'
-import { filterDials, readFilter, type FilterChoice } from './filterControl'
+import { filterDials, readFilter, STRENGTH_DIAL_KEYS, type FilterChoice } from './filterControl'
 import { clampUnit, DEFAULT_STATE, fixLook, isExportAspect, readSeed, SEED_MAX, SEED_MIN, type ToolState } from './state'
 
 export const PANEL_ID = 'tool'
@@ -10,6 +10,15 @@ export const PANEL_NAME = 'Background'
 export const SEED_DIAL_KEY = 'seed'
 /** Panel key of the pack. */
 export const PACK_DIAL_KEY = 'colors'
+
+/**
+ * Labels the panel shows in place of DialKit's, which come from the keys: the light's Intensity and the filter's slider
+ * both read "Strength" (owner, 2026-11-06). Keys and URL names stay `intensity` and `density`, `strength=`.
+ */
+export const PANEL_LABELS: Readonly<Record<string, string>> = Object.fromEntries([
+  ['intensity', 'Strength'],
+  ...Object.values(STRENGTH_DIAL_KEYS).map((key) => [key, 'Strength']),
+])
 
 export const MOOD_OPTIONS = [
   { value: 'sunset', label: 'Sunset' },

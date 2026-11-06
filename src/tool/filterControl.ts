@@ -14,8 +14,8 @@ export interface FilterState {
 /** Panel key; DialKit shows it as "Filter". */
 export const FILTER_DIAL_KEY = 'filter'
 /**
- * The key of the slider under Filter for each filter, which DialKit shows as its label: what the slider sets for
- * that filter. Its value is the filter's strength, `strength` in the URL.
+ * The key of the slider under Filter for each filter. The tool panel shows it as "Strength" (`PANEL_LABELS`). Its
+ * value is the filter's strength, `strength` in the URL.
  */
 export const STRENGTH_DIAL_KEYS: Readonly<Record<FilterKey, string>> = { grain: 'density', ascii: 'density', pixel: 'density' }
 

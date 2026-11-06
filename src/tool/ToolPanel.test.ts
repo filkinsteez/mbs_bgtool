@@ -1,8 +1,8 @@
 import { DialStore } from 'dialkit'
 import { describe, expect, it } from 'vitest'
-import { buildDialConfig } from './dialConfig'
+import { buildDialConfig, PANEL_LABELS } from './dialConfig'
 import { DEFAULT_STATE } from './state'
-import { panelLayout, type PanelBlock } from './ToolPanel'
+import { panelLayout, withLabels, type PanelBlock } from './ToolPanel'
 
 /** The tool's slots in panel order, as `Tool` lays them out. */
 const SLOTS = [
@@ -65,5 +65,19 @@ describe('tool panel layout', () => {
       { key: 'slot-1', card: undefined, parts: [{ key: 'slot-1', slot: 1, control: undefined }] },
       { key: 'controls-last', card: undefined, parts: [{ key: 'controls-last', from: 4, to: 4 }] },
     ])
+  })
+
+  it('shows the light and filter sliders as Strength with their keys kept, and every other label as DialKit makes it', () => {
+    const id = 'labels-check'
+    DialStore.registerPanel(id, 'Check', buildDialConfig('sunset', DEFAULT_STATE, 'Export', 'grain'))
+    const controls = withLabels(DialStore.getPanel(id)!.controls, PANEL_LABELS)
+    expect(controls.filter((control) => control.type === 'slider').map((control) => [control.path, control.label])).toEqual([
+      ['intensity', 'Strength'],
+      ['softness', 'Softness'],
+      ['horizon', 'Horizon'],
+      ['seed', 'Seed'],
+      ['density', 'Strength'],
+    ])
+    DialStore.unregisterPanel(id)
   })
 })

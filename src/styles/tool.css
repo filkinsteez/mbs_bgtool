@@ -80,17 +80,21 @@
   border-left: 1px solid var(--chrome-2);
 }
 
-/* A card of the panel (ToolPanel's `card`): one surface, its rows split by the line DialKit draws between folders. */
-.tool-card {
-  display: flex;
-  flex-direction: column;
-  border-radius: var(--dial-radius);
-  overflow: hidden;
-  background: var(--dial-surface);
+/* Between the panel's cards: more than between the controls inside a card. */
+.tool-panel .dialkit-folder-inner {
+  gap: 12px;
 }
 
-.tool-card > * + * {
-  border-top: 1px solid var(--dial-surface-subtle);
+/* A card of the panel (ToolPanel's `card`): one surface with its sliders and buttons inside, inset like the tiles. */
+.tool-card {
+  --card-gap: 8px;
+  --card-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-gap);
+  padding-bottom: var(--card-bottom);
+  border-radius: var(--dial-radius);
+  background: var(--dial-surface);
 }
 
 .tool-card > .tool-tiles {
@@ -98,50 +102,19 @@
   background: none;
 }
 
-/* Sliders and buttons in a card are full-width rows on the card's surface, their labels in line with the tiles'. */
-.tool-card .dialkit-slider {
-  border-radius: 0;
-  background: none;
+/* A chosen tile's ring reaches 4px past it, so the space under the ring matches the space between controls. */
+.tool-card > .tool-tiles:not(:last-child) {
+  padding-bottom: 4px;
 }
 
-.tool-card .dialkit-slider-label {
-  left: 12px;
-}
-
-.tool-card .dialkit-slider-value,
-.tool-card .dialkit-slider-input {
-  right: 12px;
+.tool-card > :not(.tool-tiles) {
+  margin-inline: 12px;
 }
 
 .tool-panel .tool-card > .dialkit-button {
-  position: relative;
   flex: none;
   height: var(--dial-row-height);
   padding-block: 0;
-  border-radius: 0;
-  background: none;
-}
-
-.tool-panel .tool-card > .dialkit-button:hover {
-  background: var(--dial-surface-hover);
-}
-
-.tool-panel .tool-card > .dialkit-button:active {
-  background: var(--dial-surface-active);
-}
-
-/* The focus ring of a row sits inside it: the card clips what is outside, and a slider's fill would cover an outline. */
-.tool-panel .tool-card :is(.dialkit-slider, .dialkit-button):focus-visible {
-  outline: none;
-}
-
-.tool-panel .tool-card :is(.dialkit-slider, .dialkit-button):focus-visible::after {
-  content: '';
-  position: absolute;
-  inset: 2px;
-  border: 2px solid var(--text);
-  border-radius: 6px;
-  pointer-events: none;
 }
 
 .tool-tiles {
@@ -276,7 +249,17 @@
   font-variant-numeric: tabular-nums;
 }
 
-@media (max-height: 780px) {
+/* The full-size panel is about 810px tall with a filter on. */
+@media (max-height: 820px) {
+  .tool-panel .dialkit-folder-inner {
+    gap: 8px;
+  }
+
+  .tool-card {
+    --card-gap: 6px;
+    --card-bottom: 8px;
+  }
+
   .tool-tiles {
     --tile-height: 34px;
     --shape-box: 14px;
@@ -307,13 +290,18 @@
   }
 
   .tool-panel .dialkit-folder-inner {
-    gap: 4px;
+    gap: 6px;
     padding-bottom: 8px;
   }
 
   .tool-panel .dialkit-button {
     padding-top: 8px;
     padding-bottom: 8px;
+  }
+
+  .tool-card {
+    --card-gap: 4px;
+    --card-bottom: 7px;
   }
 
   .tool-tiles {
@@ -351,13 +339,18 @@
   }
 
   .tool-panel .dialkit-folder-inner {
-    gap: 3px;
+    gap: 4px;
     padding-bottom: 6px;
   }
 
   .tool-panel .dialkit-button {
     padding-top: 5px;
     padding-bottom: 5px;
+  }
+
+  .tool-card {
+    --card-gap: 3px;
+    --card-bottom: 6px;
   }
 
   .tool-tiles {

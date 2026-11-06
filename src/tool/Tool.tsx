@@ -18,7 +18,7 @@ import {
   moveDragWithMood,
   type LightDrag,
 } from './controls'
-import { buildDialConfig, PACK_DIAL_KEY, PANEL_ID, PANEL_NAME, readToolState, SEED_DIAL_KEY } from './dialConfig'
+import { buildDialConfig, PACK_DIAL_KEY, PANEL_ID, PANEL_LABELS, PANEL_NAME, readToolState, SEED_DIAL_KEY } from './dialConfig'
 import { exportImage } from './exportImage'
 import { FILTER_DIAL_KEY, readChoice, withFilter } from './filterControl'
 import { panelAccessFor, usePanelAccess } from './panelAccess'
@@ -88,7 +88,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   }, [look, pack, seed, intensity, softness, moodControl, drag, format, filter, strength])
 
   const access = useMemo(
-    () => panelAccessFor(PANEL_ID, PANEL_NAME, config, { busy: exportStatus === 'busy' ? [EXPORTING_LABEL] : [] }),
+    () => panelAccessFor(PANEL_ID, PANEL_NAME, config, { busy: exportStatus === 'busy' ? [EXPORTING_LABEL] : [], labels: PANEL_LABELS }),
     [config, exportStatus],
   )
   usePanelAccess(panelRef, access)
@@ -284,6 +284,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
             { paths: FILTER_PATHS, node: <FilterPicker value={filter} onChange={(next) => setValue(FILTER_DIAL_KEY, next)} />, replace: true, card: 'filter' },
             { paths: FORMAT_PATHS, node: <FormatPicker value={format} onChange={(next) => setValue('format', next)} />, replace: true },
           ]}
+          labels={PANEL_LABELS}
         />
       </aside>
     </main>
