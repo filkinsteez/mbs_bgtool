@@ -159,6 +159,9 @@ export const BANDS_PARAMS: readonly ParamSpec[] = [
   // Above a dark band the veil gives way again, from `from` to `to` (frame heights), so the lens mixes the sky's own
   // color with the dark band's. The default lies below every scene: nowhere.
   { kind: 'vector', key: 'skyVeilEnd', label: 'Sky veil gives way again from, to', min: -1, max: 10, step: 0.0005, default: [9, 10] },
+  // The sky's own boundaries (where the veil begins, where the far sky turns dark) wander: how far (frame heights,
+  // RMS) and along what lattice (short sides).
+  { kind: 'vector', key: 'skyDrift', label: 'Sky boundaries wander, lattice', min: 0, max: 4, step: 0.0005, default: [0, 1] },
   // The light that veil adds, in linear light: a tint of the pack's own colors (Cyan, Lime, Steel).
   { kind: 'vector', key: 'skyTint', label: 'Sky veil light, linear red, green, blue', min: 0, max: 4, step: 0.0005, default: [1, 1, 1] },
   // Under a long line the farthest sky sinks toward a dark pack color: its linear light and how far, full above

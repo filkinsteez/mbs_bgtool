@@ -258,6 +258,8 @@ interface Scene {
   skyVeil: [number, number, number, number]
   /** Where that veil gives way again to the sky's own color, above a dark band (frame heights). */
   skyVeilEnd: [number, number]
+  /** How far the sky's own boundaries wander (frame heights, RMS) and their lattice (short sides). */
+  skyDrift: [number, number]
   /** The light that veil adds, linear: the pack's own tint. */
   skyTint: number[]
   /** Under a long line: the dark pack color the farthest sky sinks toward, how far, and where (frame heights). */
@@ -866,6 +868,9 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   const sun: [number, number] = [rnd.between(0.2, 0.8), rnd.between(0.22, 0.35)]
   // Haze near the light (`hazeOf`).
   const skyVeil = haze.sky
+  // The sky's own boundaries (where it pales, where its far part turns dark) wander like the band edges.
+  const skyRnd = random(seed * 9241 + pack.id.length * 5 + 19)
+  const skyDrift: [number, number] = [skyRnd.between(0.025, 0.05), skyRnd.between(0.9, 1.5)]
   bands.forEach((b, k) => {
     if (haze.veils[k] > 0) b.veil = haze.veils[k]
   })
@@ -883,6 +888,8 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     seedSpan,
     skyVeil,
     skyVeilEnd: haze.skyEnd,
+    // The sky's own boundaries (where it pales, where its far part turns dark) wander like the band edges.
+    skyDrift,
     skyTint,
     farSky: lineSky.far,
     foreWater,
@@ -1016,6 +1023,7 @@ function writeScene(scene: Scene, R: number, stack: ReturnType<typeof stackMap>)
   params.sky = [scene.skyLift, scene.skyFall, 0.5]
   params.skyVeil = scene.skyVeil
   params.skyVeilEnd = scene.skyVeilEnd
+  params.skyDrift = scene.skyDrift
   params.skyTint = scene.skyTint
   const far = scene.farSky
   params.farSky = far ? [...hexToLinear(far.hex), far.amount] : [0, 0, 0, 0]

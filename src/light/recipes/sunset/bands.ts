@@ -136,6 +136,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     uSkyVeilColor: ctx.vec('skyTint').map((v) => v * Math.max(0, ctx.vec('skyVeil')[0])),
     uSkyVeilSpan: ctx.vec('skyVeil').slice(1, 4),
     uSkyVeilEnd: ctx.vec('skyVeilEnd'),
+    uSkyDrift: ctx.vec('skyDrift'),
     uFarSky: ctx.vec('farSky'),
     uFarSpan: ctx.vec('farSpan'),
     uBumpAt: bumps.at,
@@ -218,6 +219,7 @@ uniform vec4 uBandVeil[BAND_MAX];   // pale light of the band's own hue at its l
 uniform vec3 uSkyVeilColor;          // light of the pack's own tint where the sky meets the light's side (0: none)
 uniform vec3 uSkyVeilSpan;           // where that veil starts and is full (frame heights), the sky's own light change there
 uniform vec2 uSkyVeilEnd;            // above a dark band, where the veil gives way again to the sky's own color (frame heights)
+uniform vec2 uSkyDrift;              // how far the sky's own boundaries wander (frame heights, RMS) and their lattice (short sides)
 uniform vec4 uFarSky;                // under a long line: the dark pack color the farthest sky sinks toward (linear), how far
 uniform vec2 uFarSpan;               // where the far sky has that color fully and where it is gone (frame heights)
 uniform vec4 uBumpAt[BAND_MAX];
@@ -356,13 +358,15 @@ vec3 scene(float x, float v, vec2 p) {
   }
   float giveWay = exp(-uExtinction * glowDepth);
   vec3 c = base * skyGain * giveWay;
+  // The sky's own boundaries (where it pales, where its far part turns dark) wander like the band edges.
+  float vSky = v + uSkyDrift.x * edgeWave(p.x, uSkyDrift.y, 41.0, uEdgeSeed) / uStackFrame.x;
   if (uSkyVeilColor != vec3(0.0) || uSkyVeilSpan.z != 0.0) {
     // The sky pales toward the light: its full color only at the far edge, then it gives way to a tint of the pack's
     // own colors all the way down to where the bands begin.
-    float t = smoothstep(uSkyVeilSpan.x, uSkyVeilSpan.y, v) * (1.0 - smoothstep(uSkyVeilEnd.x, uSkyVeilEnd.y, v));
+    float t = smoothstep(uSkyVeilSpan.x, uSkyVeilSpan.y, vSky) * (1.0 - smoothstep(uSkyVeilEnd.x, uSkyVeilEnd.y, v));
     c = c * (1.0 + uSkyVeilSpan.z * t) + toMix(uSkyVeilColor) * t * skyGain * giveWay;
   }
-  if (uFarSky.w > 0.0) c = mix(c, toMix(uFarSky.rgb) * skyGain * giveWay, uFarSky.w * (1.0 - smoothstep(uFarSpan.x, max(uFarSpan.y, uFarSpan.x + 1e-4), v)));
+  if (uFarSky.w > 0.0) c = mix(c, toMix(uFarSky.rgb) * skyGain * giveWay, uFarSky.w * (1.0 - smoothstep(uFarSpan.x, max(uFarSpan.y, uFarSpan.x + 1e-4), vSky)));
   // Share of the frame here that no covering band hides; the glow shows through it.
   float open = 1.0;
 
