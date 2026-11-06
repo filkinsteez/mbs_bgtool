@@ -1144,7 +1144,7 @@ export function farParams(prefix: string, label: string, defaults: Defaults = {}
       { kind: 'number', key: `${prefix}Light`, label: `${label} light field (0 none, 1, 2)`, min: 0, max: 2, step: 1, default: 1 },
       { kind: 'number', key: `${prefix}LightGamma`, label: `${label} light gamma`, min: 0, max: 12, step: 0.01, default: 1 },
       { kind: 'number', key: `${prefix}Grow`, label: `${label} width grows with light (0 none, 1, 2)`, min: 0, max: 2, step: 1, default: 0 },
-      { kind: 'vector', key: `${prefix}GrowBy`, label: `${label} growth gain, gamma`, min: 0, max: 12, step: 0.01, default: [0, 1] },
+      { kind: 'vector', key: `${prefix}GrowBy`, label: `${label} growth gain, gamma`, min: -0.95, max: 12, step: 0.01, default: [0, 1] },
       { kind: 'number', key: `${prefix}MaskInset`, label: `${label} side edge inset`, min: -1, max: 1, step: 0.0001, default: 0 },
       { kind: 'number', key: `${prefix}MaskSoft`, label: `${label} side edge softness`, min: 0, max: 1, step: 0.0001, default: 0 },
       { kind: 'number', key: `${prefix}Pale`, label: `${label} share in the pale color`, min: 0, max: 1, step: 0.001, default: 0 },

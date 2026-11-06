@@ -340,8 +340,9 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     ...(rings && partner ? { ring1Color2: 4 } : {}),
     ...(drift ? { ring1Drift: drift.ratios, ring1DriftShape: [drift.knee, drift.sharpness] } : {}),
     ring1Pale: accent.pale ? 5 : 0,
-    ...(accent.body > 0 && !rings ? { ring1n1Pale: accent.body, ...(paleArc ? { ring1n2Pale: accent.body } : {}) } : {}),
-    ...(accent.air > 0 ? { ring1f1Pale: accent.air, ring1f2Pale: accent.air, ring1f3Pale: accent.air } : {}),
+    // A colored band's body is far part 3 (and far part 1 outside a crest); the rest of the far light is haze.
+    ...Object.fromEntries((rings ? [] : paleArc ? ['f3'] : ['f1', 'f3']).map((k) => [`ring1${k}Pale`, accent.body])),
+    ...Object.fromEntries((rings || paleArc ? ['f1', 'f2'] : ['f2']).map((k) => [`ring1${k}Pale`, accent.air])),
     ...accent.params,
     ...offFrameGlow(controls.drag, light.hex, aspect, accent.air),
     ring2On: Boolean(crossing),

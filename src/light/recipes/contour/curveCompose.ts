@@ -585,6 +585,9 @@ export function productionParts(prefix: string, light: ProductionLight): Record<
 const prefixed = (prefix: string, values: Record<string, number | number[]>) =>
   Object.fromEntries(Object.entries(values).map(([key, value]) => [`${prefix}${key}`, value]))
 
+/** A colored halo band's body level, which its core tops up to the light's near-white level. */
+const HALO_BODY = 1.6
+
 /** Oklab chroma a light still has where it is overexposed to near white: a little above the palette check's white. */
 const NEAR_WHITE_CHROMA = 0.04
 const nearWhiteLevels = new Map<string, number>()
@@ -654,18 +657,22 @@ export function haloParts(prefix: string, hex: string): Record<string, number | 
   // between about 1.5 and 5 times its own level into one flat lemon, so the band's body stays near the light's level
   // and only a narrow core (near part 2) goes near white where the light is strong, up to the light's near-white level.
   // A white or grey light has no color to keep, so its band keeps a broad bright body that overexposes to white.
+  // A colored light's body is drawn from the curve's blurred light instead (far parts, on the 0.09 blur at full
+  // light), which costs the same whatever its width: a near part this wide summed every piece of the curve within
+  // almost a short side of each pixel. Most of the body is outside the curve (far part 1) and some of it spills
+  // inside (far part 3), so the inside of the arc stays dark, as in the yellow-halo example.
   const band = { Side: 0, Offset: -0.05, Light: 1, Grow: 1, GrowBy: [-0.375, 0.5] }
   const white = nearWhiteLevel(hex) <= 1
-  const body = white ? { Weight: 4, Width: 0.12, Shape: 8 } : { Weight: 1.6, Width: 0.17, Shape: 6 }
-  const core = white ? 0 : round4(Math.min(9, Math.max(0, nearWhiteLevel(hex) - body.Weight)))
-  // With a pale color (packAccent), the core takes it; the recipe sets the body's share (n1Pale).
+  const core = white ? 0 : round4(Math.min(9, Math.max(0, nearWhiteLevel(hex) - HALO_BODY)))
+  const blurred = { Light: 1, LightGamma: 1, Grow: 1, GrowBy: [-0.375, 0.5], Width: 0.144 }
+  // With a pale color (packAccent), the core takes it; the recipe sets the body's share.
   const parts: Record<string, number | number[]> = {
-    ...prefixed('n1', { ...band, ...body, LightGamma: 1 }),
+    ...(white ? prefixed('n1', { ...band, Weight: 4, Width: 0.12, Shape: 8, LightGamma: 1 }) : { n1Weight: 0 }),
     ...prefixed('n2', { ...band, Weight: core, Width: 0.055, Shape: 8, LightGamma: 2.5, Pale: 1 }),
     n3Weight: 0,
-    f1Weight: 0,
+    ...(white ? { f1Weight: 0 } : prefixed('f1', { ...blurred, Side: 2, Weight: 1, MaskSoft: 0.06 })),
     ...prefixed('f2', { ...outside, Weight: white ? 0.8 : 0.7, Width: 0.22, MaskSoft: 0.04 }),
-    f3Weight: 0,
+    ...(white ? { f3Weight: 0 } : prefixed('f3', { ...blurred, Side: 0, Weight: 0.9 })),
   }
   return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
 }
@@ -774,17 +781,21 @@ export function arcParts(prefix: string, hex: string): Record<string, number | n
   // The band widens where the light dims, so its two edges spread apart along the curve instead of running parallel,
   // and its ends fade out broad instead of narrowing to a point. As in haloParts, the two bands stay near the light's
   // own level and only a narrow core between them (near part 3) goes near white where the light is strong, up to the
-  // light's near-white level (the two bands add to about 1.7 there). A white or grey light keeps brighter bands.
+  // light's near-white level (the two bands add to about 1.7 there). A white or grey light keeps brighter bands. A
+  // colored light's two bands are drawn from the curve's blurred light as one body (far part 3, on the 0.09 blur),
+  // as in haloParts. It doesn't widen where the light dims: a wider blur there lays a broad haze over the frame, and
+  // the core and the inside glow already give the band's ends their fade.
   const white = nearWhiteLevel(hex) <= 1
   const band = { Shape: white ? 8 : 6, Side: 0, Light: 1, LightGamma: 1, Grow: 1, GrowBy: [-0.4, 0.5], Width: white ? 0.1 : 0.11 }
   const core = white ? 0 : round4(Math.min(8, Math.max(0, nearWhiteLevel(hex) - 1.7)))
   const parts: Record<string, number | number[]> = {
-    ...prefixed('n1', { ...band, Weight: white ? 1.5 : 1, Offset: 0 }),
-    ...prefixed('n2', { ...band, Weight: white ? 1.1 : 0.7, Offset: 0.04 }),
+    ...(white
+      ? { ...prefixed('n1', { ...band, Weight: 1.5, Offset: 0 }), ...prefixed('n2', { ...band, Weight: 1.1, Offset: 0.04 }) }
+      : { n1Weight: 0, n2Weight: 0 }),
     ...prefixed('n3', { ...band, Weight: core, Width: 0.04, Shape: 8, Offset: 0.02, LightGamma: 2.5, Pale: 1 }),
     ...prefixed('f1', { Weight: 0.55, Width: 0.09, Side: 1, Light: 1, LightGamma: 1, MaskSoft: 0.015 }),
     ...prefixed('f2', { Weight: 0.12, Width: 0.03, Side: 2, Light: 1, LightGamma: 1, MaskSoft: 0.015 }),
-    f3Weight: 0,
+    ...(white ? { f3Weight: 0 } : prefixed('f3', { Weight: 1.3, Width: 0.09, Side: 0, Light: 1, LightGamma: 1 })),
   }
   return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
 }
