@@ -895,6 +895,11 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     edges.push([Math.max(duskAt, last[0] + margin), duskWidth])
     gains.push(look.dusk[1] * lowGain)
   }
+  // Each edge sits at least half their widths above the one below it. Closer, or crossed where the
+  // low sky's band or the dusk band pushed the lower one up, the stop between them would take a
+  // negative share and draw its color out of the sky: blue drawn out of grey reads olive, out of
+  // Cyan mint.
+  for (let k = edges.length - 1; k > 0; k--) edges[k - 1][0] = Math.min(edges[k - 1][0], edges[k][0] - 0.5 * (edges[k - 1][1] + edges[k][1]))
   const stopParams: Record<string, number> = {}
   edges.forEach(([at, width], j) => {
     stopParams[`at${j + 1}`] = at
