@@ -1,6 +1,6 @@
-// Renders the small pictures on the tool panel's Mood, Look and Filter buttons into public/panel/.
-// They show each look and filter in each pack at fixed settings; they are not live. Run again after a look or filter
-// changes a lot:
+// Renders the small pictures on the tool panel's Mood and Look buttons into public/panel/ (Filter and Format show
+// icons and shapes drawn in the page). They show each look in each pack at fixed settings; they are not live. Run
+// again after a look changes a lot:
 //   node scripts/light/panel-pictures.mjs [--out public/panel] [--seed n] [--sheet file.jpg]
 // --seed renders every look at that seed (to compare seeds); --sheet also writes a contact sheet of the results.
 import { mkdir } from 'node:fs/promises'
@@ -20,24 +20,6 @@ const SEEDS = {
   'contour.beam': 4,
   'contour.halo': 1,
   'contour.streaks': 1,
-}
-/**
- * Filter pictures show one look with the filter on, cropped so the filter's marks are large enough to see. The crop
- * is centered on the band edge two thirds of the way down, so it spans light and dark.
- */
-const FILTER_LOOK = 'sunset.bands'
-const FILTER_SIZE = { width: 192, height: 108 }
-const FILTER_CENTER = { x: 0.5, y: 0.68 }
-/**
- * For each filter: its strength, the frame it is drawn in, and how much of that frame's middle the picture shows
- * (as a share of its width), so ASCII shows a few rows of characters and Pixel a few rows of cells. Grain's specks
- * are about a pixel of a 1080p frame, so its picture is a small crop enlarged. None has no picture; the panel shows
- * an icon for it.
- */
-const FILTERS = {
-  grain: { strength: 1, frame: { width: 1920, height: 1080 }, share: 1 / 15 },
-  ascii: { strength: 0, frame: { width: 768, height: 432 }, share: 0.25 },
-  pixel: { strength: 0, frame: { width: 768, height: 432 }, share: 0.25 },
 }
 
 const argv = process.argv.slice(2)
@@ -65,20 +47,6 @@ try {
       await raw(image).webp({ quality: 82 }).toFile(file)
       written.push({ file, label: `${look} ${pack.id} s${seed}` })
     }
-    const seed = seedOverride ? Number(seedOverride) : SEEDS[FILTER_LOOK]
-    for (const [filter, spec] of Object.entries(FILTERS)) {
-      const { width, height } = spec.frame
-      const scene = withFilter(buildScene(FILTER_LOOK, pack, seed, DEFAULT_CONTROLS, width / height), { filter, strength: spec.strength })
-      const image = await harness.render({ scene, width, height, supersample: 1 })
-      const cropW = Math.round(width * spec.share)
-      const cropH = Math.round((cropW * FILTER_SIZE.height) / FILTER_SIZE.width)
-      const left = Math.min(width - cropW, Math.max(0, Math.round(width * FILTER_CENTER.x - cropW / 2)))
-      const top = Math.min(height - cropH, Math.max(0, Math.round(height * FILTER_CENTER.y - cropH / 2)))
-      const crop = { left, top, width: cropW, height: cropH }
-      const file = path.join(outDir, `filter-${filter}-${pack.id}.webp`)
-      await raw(image).extract(crop).resize(FILTER_SIZE.width, FILTER_SIZE.height, { kernel: 'cubic' }).webp({ quality: 86 }).toFile(file)
-      written.push({ file, label: `${filter} ${pack.id}` })
-    }
   }
 } finally {
   await harness.close()
@@ -86,7 +54,7 @@ try {
 for (const { file } of written) console.log(path.relative(process.cwd(), file))
 
 if (sheetFile) {
-  const cols = 10
+  const cols = 7
   const tileW = 192
   const tileH = 108
   const label = 18

@@ -40,9 +40,11 @@ Later on 2026-11-02 the owner asked for crops of the Meta logo outline as Contou
   Pixel) after the gradients are locked down.
 - Controls stay minimal for non-designers: Intensity, Softness, one
  control per mood, and Shuffle (no Seed slider and no Back button; owner,
- 2026-11-06). Mood, Look, Filter and Format are picked from small
- pictures and shapes, not dropdowns; the pictures are fixed renders from
- `scripts/light/panel-pictures.mjs`, not live. No free color pickers:
+ 2026-11-06). Mood and Look are picked from small pictures, Filter from
+ icons and Format from shapes, each with its name, not dropdowns; the
+ pictures are fixed renders from `scripts/light/panel-pictures.mjs`, not
+ live. Each mood's first look is the one on its Mood picture and the one
+ picking the mood switches to (Sunset: Bands, Contour: Halo). No free color pickers:
  Colors shows each pack as a strip of its exact hexes, and you pick a
  pack. Filter sits near Format at the bottom of the panel.
 - Brief: `docs/light/BRIEF.md`. Roadmap: `docs/light/ROADMAP.md`.

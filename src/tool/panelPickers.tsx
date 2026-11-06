@@ -1,7 +1,8 @@
+import type { ReactNode } from 'react'
 import { EXPORT_SIZES, getPack, type ExportAspect, type MoodId, type PackId, type RecipeId } from '@/light'
 import { FORMAT_OPTIONS, lookOptions, MOOD_OPTIONS, PACK_DIAL_KEY, PACK_OPTIONS } from './dialConfig'
 import { FILTER_DIAL_KEY, FILTER_OPTIONS, type FilterChoice } from './filterControl'
-import { filterPicture, lookPicture, moodPicture } from './panelPictures'
+import { lookPicture, moodPicture } from './panelPictures'
 import { TilePicker } from './TilePicker'
 
 /** A fixed picture of the option in the chosen pack. */
@@ -9,14 +10,12 @@ function Picture({ src }: { src: string }) {
   return <span className="tool-tile-picture" style={{ backgroundImage: `url(${src})` }} />
 }
 
-/** No filter: a circle with a line through it. */
-function OffIcon() {
+/** A shape or icon with the option's name under it. */
+function Mark({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <span className="tool-tile-off">
-      <svg viewBox="0 0 20 20" aria-hidden="true">
-        <circle cx="10" cy="10" r="8" />
-        <path d="M4.3 4.3 15.7 15.7" />
-      </svg>
+    <span className="tool-tile-mark">
+      {children}
+      <span className="tool-tile-label">{label}</span>
     </span>
   )
 }
@@ -64,16 +63,60 @@ export function PackPicker({ value, onChange }: { value: PackId; onChange: (pack
   )
 }
 
-export function FilterPicker({ value, pack, onChange }: { value: FilterChoice; pack: PackId; onChange: (filter: FilterChoice) => void }) {
+/** Grain's specks: x, y and radius in the icon's 20-unit box. */
+const GRAIN_DOTS = [
+  [3.5, 4.5, 1.2],
+  [9, 3, 1],
+  [15.5, 4, 1.3],
+  [6.5, 9, 1.1],
+  [12.5, 8, 1.2],
+  [17, 11, 1],
+  [3, 13.5, 1.1],
+  [9.5, 13, 1.3],
+  [14.5, 15, 1.1],
+  [6, 17.5, 1],
+  [11.5, 18, 1.1],
+  [17.5, 17.5, 1.2],
+] as const
+
+/** Pixel's cells: a 3 by 3 mosaic that fades from the top left. */
+const PIXEL_CELLS = [0, 1, 2].flatMap((row) => [0, 1, 2].map((col) => ({ x: col * 7.25, y: row * 7.25, opacity: 1 - (row + col) * 0.2 })))
+
+/** The filters' icons, in the tile's text color like the format shapes. */
+const FILTER_ICONS: Readonly<Record<FilterChoice, ReactNode>> = {
+  none: (
+    <>
+      <circle cx="10" cy="10" r="8" />
+      <path d="M4.3 4.3 15.7 15.7" />
+    </>
+  ),
+  grain: GRAIN_DOTS.map(([x, y, r]) => <circle key={`${x} ${y}`} className="tool-tile-fill" cx={x} cy={y} r={r} />),
+  ascii: (
+    <text className="tool-tile-glyph" x="10" y="15" textAnchor="middle">
+      A
+    </text>
+  ),
+  pixel: PIXEL_CELLS.map(({ x, y, opacity }) => (
+    <rect key={`${x} ${y}`} className="tool-tile-fill" x={x} y={y} width="5.5" height="5.5" rx="1" fillOpacity={opacity} />
+  )),
+}
+
+export function FilterPicker({ value, onChange }: { value: FilterChoice; onChange: (filter: FilterChoice) => void }) {
   return (
     <TilePicker
       label="Filter"
       path={FILTER_DIAL_KEY}
-      kind="picture"
+      kind="shape"
       options={FILTER_OPTIONS}
       value={value}
       onChange={onChange}
-      tile={(option) => (option.value === 'none' ? <OffIcon /> : <Picture src={filterPicture(option.value, pack)} />)}
+      tile={(option) => (
+        <Mark label={option.label}>
+          <svg className="tool-tile-icon" viewBox="0 0 20 20" aria-hidden="true">
+            {FILTER_ICONS[option.value]}
+          </svg>
+        </Mark>
+      )}
     />
   )
 }
@@ -95,10 +138,9 @@ export function FormatPicker({ value, onChange }: { value: ExportAspect; onChang
       value={value}
       onChange={onChange}
       tile={(option) => (
-        <span className="tool-tile-format">
+        <Mark label={option.label}>
           <span className="tool-tile-shape" style={shapeStyle(option.value)} />
-          <span className="tool-tile-format-label">{option.label}</span>
-        </span>
+        </Mark>
       )}
     />
   )

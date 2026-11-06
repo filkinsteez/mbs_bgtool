@@ -154,31 +154,38 @@
   background-size: cover;
 }
 
-.tool-tile-off {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.tool-tile-off svg {
-  width: var(--shape-box);
-  height: var(--shape-box);
-  fill: none;
-  stroke: currentColor;
-}
-
-/* The same 1.5px line as the format shapes at every tile size. */
-.tool-tile-off svg > * {
-  stroke-width: 1.5px;
-  vector-effect: non-scaling-stroke;
-}
-
-.tool-tile-format {
+.tool-tile-mark {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 5px;
+}
+
+.tool-tile-icon {
+  width: var(--shape-box);
+  height: var(--shape-box);
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+}
+
+/* The same 1.5px line as the format shapes at every tile size. */
+.tool-tile-icon > * {
+  stroke-width: 1.5px;
+  vector-effect: non-scaling-stroke;
+}
+
+.tool-tile-icon > .tool-tile-fill,
+.tool-tile-icon > .tool-tile-glyph {
+  fill: currentColor;
+  stroke: none;
+}
+
+.tool-tile-glyph {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .tool-tile-shape {
@@ -190,7 +197,7 @@
   background: rgba(255, 255, 255, 0.16);
 }
 
-.tool-tile-format-label {
+.tool-tile-label {
   font-size: 11px;
   font-weight: 500;
   line-height: 1;
@@ -209,7 +216,7 @@
     --tile-height: 24px;
   }
 
-  .tool-tile-format {
+  .tool-tile-mark {
     gap: 4px;
   }
 }
@@ -244,7 +251,7 @@
     --tile-height: 20px;
   }
 
-  .tool-tile-format {
+  .tool-tile-mark {
     flex-direction: row;
     gap: 6px;
   }

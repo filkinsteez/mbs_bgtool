@@ -5,7 +5,7 @@ export interface TileOption<T extends string> {
   label: string
 }
 
-/** What the tiles show, which sets their height in tool.css: color strips, pictures, or format shapes. */
+/** What the tiles show, which sets their height in tool.css: color strips, pictures, or shapes and icons with a name. */
 export type TileKind = 'swatch' | 'picture' | 'shape'
 
 /** The option an arrow, Home or End key moves to from `index` of `count`, or null for other keys. Arrows wrap around. */

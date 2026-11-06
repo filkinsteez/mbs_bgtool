@@ -281,7 +281,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
             { paths: LOOK_PATHS, node: <LookPicker mood={mood} value={look} pack={pack} onChange={(next) => setValue('look', next)} />, replace: true },
             { paths: PACK_PATHS, node: <PackPicker value={pack} onChange={(next) => setValue(PACK_DIAL_KEY, next)} />, replace: true },
             { paths: SEED_PATHS, node: shuffleButton, replace: true },
-            { paths: FILTER_PATHS, node: <FilterPicker value={filter} pack={pack} onChange={(next) => setValue(FILTER_DIAL_KEY, next)} />, replace: true },
+            { paths: FILTER_PATHS, node: <FilterPicker value={filter} onChange={(next) => setValue(FILTER_DIAL_KEY, next)} />, replace: true },
             { paths: FORMAT_PATHS, node: <FormatPicker value={format} onChange={(next) => setValue('format', next)} />, replace: true },
           ]}
         />
