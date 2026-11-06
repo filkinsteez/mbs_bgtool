@@ -22,11 +22,12 @@ export function paleTint(c: Rgb, power = 0.12): Rgb {
  * Bridge light for a glow: its pale tint with green raised to at least its
  * red, scaled to luminance 1. Blue sky plus peach or yellow light is short of
  * green, which shows as a lavender ring; this pale yellow-white fills that,
- * so the blend passes through near neutral before the blue.
+ * so the blend passes through near neutral before the blue. With `raise`
+ * below 1 green goes only that share of the way (peach-cream).
  */
-export function bridgeTint(c: Rgb): Rgb {
+export function bridgeTint(c: Rgb, raise = 1): Rgb {
   const [r, g, b] = paleTint(c)
-  const t: Rgb = [r, Math.max(g, r), b]
+  const t: Rgb = [r, g + (Math.max(g, r) - g) * raise, b]
   const y = luminance(t)
   return [t[0] / y, t[1] / y, t[2] / y]
 }

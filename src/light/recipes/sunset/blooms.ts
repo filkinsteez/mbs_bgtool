@@ -61,7 +61,6 @@ function glowParams(i: number, glow: GlowSpec): ParamSpec[] {
     num(`glow${n}Haze`, `Glow ${n} haze`, 0, 8, 0.01, glow.haze),
     num(`glow${n}Vary`, `Glow ${n} edge variation`, 0, 1, 0.01, glow.vary),
     num(`glow${n}Bend`, `Glow ${n} bend`, -0.6, 0.6, 0.005, glow.bend),
-    num(`glow${n}BehindLead`, `Glow ${n} behind the lead's haze`, 0, 1, 0.01, glow.behindLead ?? 0),
   ]
 }
 
@@ -116,7 +115,6 @@ function readLayout(ctx: RecipeContext): BloomsLayout {
       haze: ctx.num(`glow${n}Haze`),
       vary: ctx.num(`glow${n}Vary`),
       bend: ctx.num(`glow${n}Bend`),
-      behindLead: ctx.num(`glow${n}BehindLead`),
     }
   })
   const zenithAt = ctx.vec('zenithAt')
@@ -197,7 +195,6 @@ function layoutParams(layout: BloomsLayout): Record<string, ParamValue> {
     out[`glow${n}Haze`] = glow.haze
     out[`glow${n}Vary`] = glow.vary
     out[`glow${n}Bend`] = glow.bend
-    out[`glow${n}BehindLead`] = glow.behindLead ?? 0
   })
   for (const spec of PARAMS) {
     const value = out[spec.key]
@@ -242,6 +239,10 @@ const BRIDGE_MAX_C = 0.06
 const CORE_ABOVE_BRIDGE = 0.86
 const CORE_LIFT = 10
 const MAX_CORE = 2
+/** How much more light an orange-red core has: enough for the tone curve to take it through amber to cream. */
+const RED_CORE = 2.5
+/** Share of the way an orange-red light's faint tint raises its green toward its red (bridgeTint). */
+const SUN_TAIL_GREEN = 0.4
 
 /**
  * Bridge light for one glow, per unit of its tint, solved at this Intensity's
@@ -295,7 +296,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
   const glowAxis: number[] = []
   const glowEdge: number[] = []
   const glowDeepFade: number[] = []
-  const glowBehindLead: number[] = []
+  const glowFire: number[] = []
   const glowBridge: number[] = []
   const glowLobes: number[] = []
   const glowLobeFalloff: number[] = []
@@ -317,7 +318,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
       glowAxis.push(1, 0, 1, 1)
       glowEdge.push(0, 1, 0, 0)
       glowDeepFade.push(0)
-      glowBehindLead.push(0)
+      glowFire.push(0)
       glowBridge.push(0, 0, 0)
       continue
     }
@@ -340,23 +341,31 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     // sky is already light there, and that much pale light would whiten into a rim around the core.
     const y = luminance(light) * gain * paleLight
     const tailShare = otherHue(sky, light)
-    // Red-orange light pales through its own warm pale tint instead: blue added to it turns it pink.
+    // Red-orange light pales through its own warm pale tint instead: blue added to it turns it pink. Strong
+    // red-orange light (Orange-red, not a pale peach) burns like fire, and its pale tint is peach-cream: a
+    // yellow-white meets blue in sage.
     const red = isRed(base)
+    const lab = linearToOklab(base)
+    const fire = red && Math.hypot(lab[1], lab[2]) >= FIRE_CHROMA
     const tint = bridgeTint(light)
-    const pale = red ? tint : skyPale
+    const pale = fire ? bridgeTint(light, SUN_TAIL_GREEN) : red ? tint : skyPale
     glowTail.push(...light.map((c, ch) => c * gain * (1 - tailShare) + pale[ch] * y * tailShare))
     // A muted warm light (Tan) has no deeper member that is still a light: deepened, it reads brown, so it
     // keeps its own color low down and over a deep area.
-    const lab = linearToOklab(base)
     const muted = isWarm(base) && Math.hypot(lab[1], lab[2]) < MUTED_CHROMA
     // A warm light's deeper member keeps its luminance, so its low side is a brighter amber, not a dark one.
-    const deeper = deepMember(light)
-    const lowLight = isWarm(base) ? scale(deeper, luminance(light) / Math.max(luminance(deeper), 1e-6)) : deeper
+    // Fire instead is deep red where it is dim toward the horizon (its member far deeper), and where it is bright
+    // the tone curve takes it through amber to cream.
+    // (Its deep red keeps the light's red channel, so it is darker: brought up to Orange-red's luminance it would need
+    // more than full red, which the tone curve pales to pink.)
+    const deeper = fire ? deepen(light, FIRE_DEPTH) : deepMember(light)
+    const lowLight = isWarm(base) && !fire ? scale(deeper, luminance(light) / Math.max(luminance(deeper), 1e-6)) : deeper
     glowLow.push(...scale(muted ? light : lowLight, gain))
     glowWarm.push(isWarm(base) && !muted ? 1 : 0)
+    glowFire.push(fire ? 1 : 0)
     // Only a light has a source to brighten toward; a patch of sky or a pack grey stays soft throughout.
     const short = bridgeGate(sky, light) * Math.max(0, CORE_ABOVE_BRIDGE - linearToOklab(base)[0])
-    const core = isSourceLight(glow.color, base) ? Math.min(MAX_CORE, layout.core * (1 + CORE_LIFT * short)) : 0
+    const core = isSourceLight(glow.color, base) ? Math.min(MAX_CORE, layout.core * (1 + CORE_LIFT * short)) * (fire ? RED_CORE : 1) : 0
     glowCore.push(core)
     // The core whitens through the light's own pale tint; a red-orange core is more of its own light, which the
     // tone curve takes through amber, not salmon (as Bands does).
@@ -365,7 +374,6 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     glowAxis.push(...axis(glow.radius * reach, glow.aniso, glow.angle))
     glowEdge.push(glow.vary, 1.15, 1.7 * i + 0.3, front)
     glowDeepFade.push(deepFade(sky, deep, light))
-    glowBehindLead.push(i > 0 ? clamp(glow.behindLead ?? 0, 0, 1) : 0)
     // A dim glow's bridge stays below its own brightest point, so it never gets a pale ring lighter than itself.
     const floor = Math.min(layout.bridgeFloor, linearToOklab(scale(light, gain * (1 + core)))[0] - 0.04)
     const amount = front * layout.bridge * bridgeLight(sky, light, tint, haze, intensity, skyGain, gain, floor)
@@ -397,7 +405,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     uGlowCore: glowCore,
     uGlowCoreTint: glowCoreTint,
     uGlowDeepFade: glowDeepFade,
-    uGlowBehindLead: glowBehindLead,
+    uGlowFire: glowFire,
     uLeadHides: layout.glows[0] && isRed(slot(layout.glows[0].color)) ? 1 : 0,
     uGlowShape: glowShape,
     uGlowAxis: glowAxis,
@@ -415,15 +423,18 @@ const DARK_L = 0.45
 
 /** Oklab chroma under which a warm light is muted (Tan), with no deeper member that still reads as a light. */
 const MUTED_CHROMA = 0.1
+/** How much deeper than its own color a red-orange light is where it is dim: its deep red. */
+const FIRE_DEPTH = 2.4
+/** Oklab chroma from which a red-orange light burns like fire (Orange-red, 0.22; a pale peach is about 0.11). */
+const FIRE_CHROMA = 0.15
 
 /**
  * The colors by role: Meta Blue for the sky, the pack's dark colors (in pack
  * order) as the colors the sky deepens toward, and the two lightest other
  * colors as lights. A pack with no dark colors deepens toward no light
- * (black), so its sky only gets darker. The third light is the next lightest
- * color (Bold's Orange-red). In a pack like Bold, every third seed (2, 5, 8,
- * ...) swaps the two warm lights: the red-orange one leads, as an orange-red
- * sun, and the lightest (Yellow) becomes the third light, the sun's glow.
+ * (black), so its sky only gets darker. In a pack with a third, red-orange
+ * light (Bold's Orange-red), every third seed (2, 5, 8, ...) has it in place of
+ * its other warm light (Yellow), as an orange-red sun.
  */
 function rolesFromPack(pack: ColorPack, seed = 1): string[] {
   const [sky, ...rest] = pack.colors.map((c) => c.hex)
@@ -432,9 +443,9 @@ function rolesFromPack(pack: ColorPack, seed = 1): string[] {
   const lights = rest.filter((hex) => lightness(hex) >= DARK_L).sort((a, b) => lightness(b) - lightness(a))
   const light1 = lights[0] ?? sky
   const light2 = lights[1] ?? light1
-  const light3 = lights[2] ?? light2
-  const redSeed = Math.round(seed) % 3 === 2 && isWarm(hexToLinear(light1)) && isRed(hexToLinear(light3))
-  return [sky, dark[0] ?? NO_LIGHT, dark[1] ?? dark[0] ?? NO_LIGHT, ...(redSeed ? [light3, light2, light1] : [light1, light2, light3])]
+  const red = lights.slice(2).find((hex) => isRed(hexToLinear(hex)))
+  const redSeed = Math.round(seed) % 3 === 2 && red !== undefined && isWarm(hexToLinear(light1))
+  return [sky, dark[0] ?? NO_LIGHT, dark[1] ?? dark[0] ?? NO_LIGHT, redSeed ? red : light1, light2]
 }
 
 /**
@@ -455,15 +466,16 @@ export const sunsetBlooms: RecipeDefinition = {
     { key: 'deep2', label: 'Deep 2' },
     { key: 'light1', label: 'Light 1' },
     { key: 'light2', label: 'Light 2' },
-    { key: 'light3', label: 'Light 3' },
   ],
-  defaultColors: ['#0064E0', '#000000', '#000000', '#FFD61E', '#1FCDF0', '#FF4F00'],
+  defaultColors: ['#0064E0', '#000000', '#000000', '#FFD61E', '#1FCDF0'],
   params: PARAMS,
   fragment: `${BOUNDARY_GLSL}
 #define GLOW_COUNT ${GLOW_COUNT}
 #define LOBES ${LOBES}
 #define TAIL_END ${TAIL_END.toFixed(2)}
 #define LOW_HAZE 1.5
+#define FIRE_SKY_LIGHT 2.0
+#define FIRE_SKY_HAZE 1.55
 #define CORE_RADIUS 0.3
 #define BEHIND_REACH 1.0
 #define BLOOM_MINOR_REF ${BLOOM_MINOR_REF.toFixed(6)}
@@ -492,8 +504,8 @@ uniform vec3 uGlowTail[GLOW_COUNT];   // color of the faint outer light toward t
 uniform vec3 uGlowLow[GLOW_COUNT];    // the glow's deeper member, for its lower side and over a deep area
 uniform float uGlowWarm[GLOW_COUNT];  // 1 for warm light, whose lower part takes the deeper member
 uniform float uGlowDeepFade[GLOW_COUNT]; // how far the glow's hue is from the deepened sky's, 0..1
-uniform float uGlowBehindLead[GLOW_COUNT]; // how much of the glow lies behind the lead's haze, 0..1
-uniform float uLeadHides;             // 1: the lead's haze hides the sky behind it whatever the haze floor (a sun in its halo)
+uniform float uLeadHides;             // 1: the lead's haze hides the sky and the other glows behind it whatever the haze floor (an orange-red sun)
+uniform float uGlowFire[GLOW_COUNT];  // 1: the glow burns like fire: deep red where dim toward the horizon, cream toward the sky (Orange-red)
 uniform vec4 uGlowShape[GLOW_COUNT];  // center (frame fractions), falloff exponent, haze
 uniform vec4 uGlowAxis[GLOW_COUNT];   // cos, sin, 1 / long radius, 1 / short radius
 uniform vec4 uGlowEdge[GLOW_COUNT];   // edge variation, its frequency, its phase, in front 0..1
@@ -652,11 +664,17 @@ vec3 bloomsScene(vec2 uv) {
   float k[GLOW_COUNT];
   float kc[GLOW_COUNT];
   float low[GLOW_COUNT];
+  float own[GLOW_COUNT];
+  float air[GLOW_COUNT];
   float ext = 0.0;
+  // Low in the frame, toward the horizon, the light crosses the most air (in short sides from the bottom edge).
+  float horizon = 1.0 - smoothstep(0.0, 0.5, (0.5 * frame.y - P.y) * shortUnit);
   for (int i = 0; i < GLOW_COUNT; i++) {
     k[i] = 0.0;
     kc[i] = 0.0;
     low[i] = 0.0;
+    own[i] = 0.0;
+    air[i] = 0.0;
     if (i < uGlowCount) {
       for (int j = 0; j < LOBES; j++) {
         lobe[j] = uGlowLobe[i * LOBES + j];
@@ -667,15 +685,18 @@ vec3 bloomsScene(vec2 uv) {
       low[i] = smoothstep(-0.25, 1.0, (P.y - c.y) * uGlowAxis[i].w * stretch.y);
       // Low down the light passes through more air, which hides more of the sky behind it. Not where the sky
       // below it is the deep sky (a light above the frame): hiding the deep blue leaves a dim warm light, dark gold.
-      ext += uGlowShape[i].w * k[i] * k[i] * (1.0 + LOW_HAZE * low[i] * (1.0 - above));
+      // A light that burns like fire (Orange-red) and sits low lights the air along the horizon far out: there
+      // even its dim light hides the sky. One higher up lights no horizon in the frame. Toward the open sky its
+      // haze is thin, so the blue shows through as it dims: its dim light seen alone would be beige.
+      air[i] = uGlowFire[i] * horizon * (1.0 - smoothstep(0.15, 0.4, (0.5 * frame.y - c.y) * shortUnit));
+      float k2 = k[i] * k[i];
+      own[i] = uGlowShape[i].w * mix(mix(k2, FIRE_SKY_HAZE * k2 * k2, uGlowFire[i]), k[i], air[i]) * (1.0 + LOW_HAZE * max(low[i], air[i]) * (1.0 - above));
+      ext += own[i];
     }
   }
   float T = exp(-ext);
-  // What the lead's own haze lets through, and how much of a glow behind it (its halo) shows: the halo is hidden
-  // only by the lead's bright body, so where the lead fades its glow is already at full strength and the light
-  // gets paler outward (Orange-red, orange, Yellow), never a dim yellow over the sky, which reads tan and khaki.
-  float leadSeen = exp(-uGlowShape[0].w * k[0] * k[0] * (1.0 + LOW_HAZE * low[0] * (1.0 - above)));
-  float haloSeen = 1.0 - smoothstep(0.45, 0.85, k[0]);
+  // What the lead's own haze lets through.
+  float leadSeen = exp(-own[0]);
   vec3 behind = sky;
   vec3 front = vec3(0.0);
   float lit = 0.0;
@@ -704,20 +725,40 @@ vec3 bloomsScene(vec2 uv) {
     float skyRel = dot(sky, vec3(0.2126, 0.7152, 0.0722)) / max(dot(uGlowColor[i], vec3(0.2126, 0.7152, 0.0722)), 1e-4);
     float bodyShare = smoothstep(mix(0.5, 0.15, smoothstep(0.45, 1.0, skyRel) * deepLit), 0.8, k[i]);
     vec3 body = mix(uGlowColor[i], uGlowLow[i], low[i] * uGlowWarm[i] * toLight);
+    // A light that burns like fire (Orange-red): its bright middle goes through amber to cream by the tone curve.
+    // Toward the horizon, through more air, it deepens as it dims, to deep red at the far end of its falloff, but
+    // only where its haze hides the sky: dim red over blue is dusky rose or purple. Toward the open sky it pales as
+    // it dims, so it meets the blue through cream.
+    float hides = 1.0 - exp(-own[i]);
+    float airSide = air[i] * smoothstep(0.75, 0.97, hides);
+    // Toward the sky its light is scattered by the air: whitish cream near it, where the haze is, and farther out
+    // blue, the sky's own color, so the blue only gets brighter toward it (cream over blue is grey). It fades out
+    // before the far sky.
+    vec3 skyLight = uSky / max(dot(uSky, vec3(0.2126, 0.7152, 0.0722)), 1e-5) * dot(uGlowTail[i], vec3(0.2126, 0.7152, 0.0722));
+    vec3 scattered = mix(skyLight, uGlowTail[i], smoothstep(0.25, 0.55, k[i])) * (FIRE_SKY_LIGHT * smoothstep(0.05, 0.35, k[i]));
+    vec3 skySide = mix(scattered, uGlowColor[i], smoothstep(0.6, 0.95, k[i]));
+    vec3 horizonSide = mix(uGlowLow[i], uGlowColor[i], smoothstep(0.08, 0.4, k[i]));
+    body = mix(body, mix(skySide, horizonSide, airSide), uGlowFire[i]);
+    bodyShare = mix(bodyShare, 1.0, uGlowFire[i]);
     vec3 faint = mix(uGlowTail[i], uGlowLow[i], deepArea);
     // The core is the light's own pale tint, so an overexposed source whitens the way fire does (Orange-red
     // through yellow-white), not through pink.
-    float seen = mix(1.0, haloSeen, uGlowBehindLead[i]);
-    vec3 light = (mix(faint * edgeLit, body * bodyLit, bodyShare) * (k[i] - kc[i]) + uGlowCoreTint[i] * kc[i]) * ground * seen;
+    vec3 light = (mix(faint * edgeLit, body * bodyLit, bodyShare) * (k[i] - kc[i]) + uGlowCoreTint[i] * kc[i]) * ground;
+    // An orange-red sun is the nearest light: its haze hides the other glows too, whose cyan or blue light over it
+    // would turn it pink.
+    if (i > 0) light *= mix(1.0, leadSeen, uLeadHides);
     float f = uGlowEdge[i].w;
     behind += (1.0 - f) * light;
     front += f * light;
-    lit += f * k[i] * seen;
+    lit += f * k[i];
     // The pale light where a glow meets the sky is its own light, so it does not dim with the deeper sky: dimmed,
     // warm light and blue meet in a grey. Near a held dark ground it still dims with the sky, so it lays no grey
     // veil over the ground's soft edge.
     float bridgeLit = mix(1.0, deepLit, uZenithHold * smoothstep(0.0, 0.3, z));
-    bridge += uGlowBridge[i] * (k[i] * bridgeLit * ground * (1.0 - deepArea) * seen);
+    // A fire light's long faint edge reaches across the sky; its pale bridge stays where it is still bright, so the
+    // far sky keeps its blue.
+    float near = mix(1.0, smoothstep(0.12, 0.45, k[i]), uGlowFire[i]);
+    bridge += uGlowBridge[i] * (k[i] * near * bridgeLit * ground * (1.0 - deepArea));
   }
   // The glows' haze is lit by their light, so it hides at most as much of the sky's light as they add: no
   // ring darker than the open sky around a glow, below it or where the sky is pale.
@@ -725,10 +766,10 @@ vec3 bloomsScene(vec2 uv) {
     vec3 luma = vec3(0.2126, 0.7152, 0.0722);
     float need = (dot(sky, luma) - dot(front, luma)) / max(dot(behind, luma), 1e-5);
     // An orange-red sun's own haze hides the sky behind its body all the same: darker than a pale sky, it would
-    // only pale it to salmon. Its yellow glow lies around it, so no ring there is darker than the open sky.
-    float own = mix(1.0, leadSeen, uLeadHides);
-    float rest = T / max(own, 1e-5);
-    T = mix(rest, max(rest, clamp(need, 0.0, 1.0)), uHazeFloor) * own;
+    // only pale it to salmon. Toward the open sky its haze is thin, so no ring there is darker than the open sky.
+    float leadPart = mix(1.0, leadSeen, uLeadHides);
+    float rest = T / max(leadPart, 1e-5);
+    T = mix(rest, max(rest, clamp(need, 0.0, 1.0)), uHazeFloor) * leadPart;
   }
   // Pale light where the glows and the sky weigh about the same, reaching further out on the sky
   // side, where faint warm light over blue would read as a lavender ring; zero at both ends, and

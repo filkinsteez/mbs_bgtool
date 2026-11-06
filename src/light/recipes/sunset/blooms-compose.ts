@@ -3,8 +3,8 @@ import type { Rgb } from '../../color/srgb'
 import { placeHorizon } from './horizon'
 
 /** Color slots of sunset.blooms. `deep1` and `deep2` are the colors the sky deepens toward, `light1` and `light2` the glow colors. */
-export const SLOT = { sky: 0, deep1: 1, deep2: 2, light1: 3, light2: 4, light3: 5 } as const
-export const SLOT_COUNT = 6
+export const SLOT = { sky: 0, deep1: 1, deep2: 2, light1: 3, light2: 4 } as const
+export const SLOT_COUNT = 5
 export const GLOW_COUNT = 4
 
 /** One glow. Positions are frame fractions (outside 0..1 is off-frame); sizes are in units of sqrt(width * height). */
@@ -26,8 +26,6 @@ export interface GlowSpec {
   vary: number
   /** How much the long axis bows: positive lowers both ends, so the light is highest above its source. */
   bend: number
-  /** How much of this glow lies behind the lead's haze, 0..1: a glow around the lead (its halo) is hidden by the lead's body. */
-  behindLead?: number
 }
 
 /** Where and how strongly the sky deepens toward a deep color. Its radius is in units of the frame's short side. */
@@ -214,13 +212,8 @@ function followDrag(
   // deep end, where its dim light reads olive: toward the frame's point nearest the light beside a warm lead,
   // toward the middle beside a cool one (on it, cyan and yellow light make mint).
   const target = warm(layout.glows[0].color) ? insideFrame01(drag.from) : [0.5, 0.5]
-  const leadRadius = reach / Math.sqrt(leadAniso)
   const placed = layout.glows.map((glow, i) => {
-    const onLead = { at: [drag.from[0], drag.from[1]] as [number, number], angle: (lineAngle * 180) / Math.PI, aniso: leadAniso }
-    if (i === 0) return { ...glow, ...onLead, radius: leadRadius }
-    // A halo stays on the lead, its size and shape to the lead's.
-    const lead = layout.glows[0]
-    if (glow.behindLead) return { ...glow, ...onLead, radius: leadRadius * (glow.radius / lead.radius), aniso: leadAniso * (glow.aniso / lead.aniso) }
+    if (i === 0) return { ...glow, at: [drag.from[0], drag.from[1]] as [number, number], angle: (lineAngle * 180) / Math.PI, aniso: leadAniso, radius: reach / Math.sqrt(leadAniso) }
     const [x, y] = spots[(i - 1) % spots.length]
     const pull = warm(glow.color) ? DRAG_WARM_TOWARD_LIGHT : 0
     return { ...glow, at: [lerp(x, target[0], pull), lerp(y, target[1], pull)] as [number, number], angle: glow.angle + degrees }
@@ -254,8 +247,7 @@ function followDrag(
   const cyanGlow = (g: GlowSpec) => g.color !== SLOT.sky && cyan(g.color)
   const keptOut = placed.map((glow, i) => {
     const lead = placed[0]
-    const kept = i > 0 && !glow.behindLead && (warm(lead.color) || (cyanGlow(lead) && warm(glow.color)))
-    return kept ? { ...glow, at: clearOfLead(glow.at, lead) } : glow
+    return i > 0 && (warm(lead.color) || (cyanGlow(lead) && warm(glow.color))) ? { ...glow, at: clearOfLead(glow.at, lead) } : glow
   })
   const glows = keptOut.map((glow, i) => {
     if (i === 0 || !cyanGlow(glow)) return glow
@@ -414,7 +406,7 @@ function isGrey(c: Rgb): boolean {
 
 /** A glow that is a light (a light slot whose color is not a pack grey such as Steel), so it has a source. */
 export function isSourceLight(slot: number, c: Rgb): boolean {
-  return (slot === SLOT.light1 || slot === SLOT.light2 || slot === SLOT.light3) && !isGrey(c)
+  return (slot === SLOT.light1 || slot === SLOT.light2) && !isGrey(c)
 }
 
 /** A dark color the sky blends into without a third hue between: a grey, or one within 40 degrees of the sky's hue. */
@@ -580,8 +572,8 @@ function pickLead(colors: readonly Rgb[], u: number, arrangement: Arrangement): 
   if (warmA !== warmB) {
     const warm = warmA ? a : b
     const cool = warmA ? b : a
-    // Red-orange light (Orange-red) always leads, as a sun in its yellow glow: beside a cyan lead it would sit
-    // alone on the sky and turn pink.
+    // Red-orange light (Orange-red) always leads, as a sun: beside a cyan lead it would sit alone on the sky as a
+    // small bloom and turn pink.
     if (isRed(colors[warm])) return { lead: warm, other: cool }
     const coolLeads = isCyan(colors[cool]) ? arrangement === 'side' || arrangement === 'high' : u >= 1 - (isGreen(colors[cool]) ? 0.25 : 0.35)
     return coolLeads ? { lead: cool, other: warm } : { lead: warm, other: cool }
@@ -605,14 +597,12 @@ export function isRed(c: Rgb): boolean {
   return isWarm(c) && linearToOklch(c)[2] < RED_HUE
 }
 
-/** An orange-red sun's yellow glow against the sun's radius: just wider than the sun, so its own Yellow shows little. */
-const RED_HALO = 1.15
-/** The yellow glow's strength against Yellow's own body: above its hex, so it shows as cream. */
-const RED_HALO_GAIN = 1.35
-/** The yellow glow's width / length against the sun's. */
-const RED_HALO_ANISO = 0.8
 /** A cyan bloom's size beside an orange-red sun, against its usual size. */
-const RED_CYAN_SCALE = 0.55
+const RED_CYAN_SCALE = 0.65
+/** An orange-red sun's size, strength at its middle (against its hex) and falloff exponent, against a Yellow one's. */
+const RED_SUN_SIZE = 1.6
+const RED_SUN_GAIN = 1.0
+const RED_SUN_FALLOFF = 0.8
 
 /**
  * How a seed arranges the light. Every arrangement is one large field of pack light on a sky, from a lead
@@ -741,8 +731,8 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const sameHalfWidth = Math.sqrt(2 ** (1 / 2.2) - 1) / Math.sqrt(2 ** (1 / beta) - 1)
   // A darker light (Tan, Orange-red) keeps its body near its hex and gets its weight in the frame from a
   // larger glow instead.
-  // An orange-red sun gets its weight from its yellow glow instead.
-  const darkerLight = isRed(colors[lead]) ? 1 : clamp(Math.sqrt(0.6 / Math.max(luminance(colors[lead]), 1e-4)), 1, 1.35)
+  // An orange-red sun is one wide light, a third of the frame or more.
+  const darkerLight = isRed(colors[lead]) ? RED_SUN_SIZE : clamp(Math.sqrt(0.6 / Math.max(luminance(colors[lead]), 1e-4)), 1, 1.35)
   const size = lerp(0.8, 1.2, r()) * lerp(0.95, 1.08, soft) * sameHalfWidth * lerp(0.88, 1.16, rise) * (isGreen(colors[lead]) ? 0.95 : darkerLight)
   const bend = () => lerp(0.04, 0.2, r())
 
@@ -776,13 +766,26 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // The lead stays narrower than the frame, so there is sky beside it for the other blooms.
   radius *= Math.min(1, LEAD_MAX_LONG_RADIUS / (radius * Math.sqrt(aniso)))
   const angle = -side * tilt
-  // A grey lead (Steel) is haze at its own hex; brightened, it reads as the paler light (Ice).
-  const leadGain = (isGrey(colors[lead]) ? 1 : lightGain(colors[lead])) * lerp(isWarm(colors[lead]) ? 1 : 0.94, 1.06, r())
+  // A grey lead (Steel) is haze at its own hex; brightened, it reads as the paler light (Ice). An orange-red sun
+  // is well over its own hex at its middle, which the tone curve takes through amber to cream.
+  const leadGain = (isGrey(colors[lead]) ? 1 : lightGain(colors[lead]) * (isRed(colors[lead]) ? RED_SUN_GAIN : 1)) * lerp(isWarm(colors[lead]) ? 1 : 0.94, 1.06, r())
 
   const glows: GlowSpec[] = [
     // A warm light hides the sky where it comes from (warmHaze). White or cool light over blue only pales it,
     // so it needs less haze and leaves more of the blue.
-    { color: lead, at, radius, aniso, angle, gain: leadGain, beta, haze: isWarm(colors[lead]) ? warmHaze(colors[lead], r()) : lerp(1.8, 2.6, r()), vary: lerp(0.45, 0.85, r()), bend: bend() },
+    {
+      color: lead,
+      at,
+      radius,
+      aniso,
+      angle,
+      gain: leadGain,
+      // An orange-red sun falls off slowly, so its dim end is a long way out.
+      beta: beta * (isRed(colors[lead]) ? RED_SUN_FALLOFF : 1),
+      haze: isWarm(colors[lead]) ? warmHaze(colors[lead], r()) : lerp(1.8, 2.6, r()),
+      vary: lerp(0.45, 0.85, r()),
+      bend: bend(),
+    },
   ]
 
   // Some seeds get a second bloom of the same light across the frame and higher, with sky between the two
@@ -812,16 +815,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
       bend: bend(),
     })
   }
-  // An orange-red sun sits in a glow of the pack's other warm light (Yellow, the third light) just wider than
-  // itself, on the same middle, so the light runs Orange-red, orange, then pale into the sky, as in the red-yellow
-  // arcs: Orange-red over a pale or blue sky turns salmon and pink. The glow lies behind the sun's body, so the
-  // sun keeps its own color, and it is brighter than Yellow's hex, so what shows of it is cream, the sun's own
-  // overexposed light, not Yellow as a second warm color.
-  if (isRed(colors[lead]) && lead !== SLOT.light3 && isWarm(colors[SLOT.light3])) {
-    const glow = colors[SLOT.light3]
-    // Rounder than the sun: about its length, wider across, so it rings the sun instead of running on past its ends.
-    glows.push({ color: SLOT.light3, at: [at[0], at[1]], radius: radius * RED_HALO, aniso: aniso * RED_HALO_ANISO, angle, gain: lightGain(glow) * RED_HALO_GAIN, beta: beta * 0.8, haze: warmHaze(glow, 0.5), vary: 0.6, bend: 0, behindLead: 1 })
-  }
+
   // Higher on the same side, a fainter and wider bloom with its center inside the frame, so the
   // light is a few blooms at different heights and sizes, not one glow on an edge. It changes the
   // sky's color more than its brightness where a light can do that faintly: the other light when
