@@ -15,6 +15,46 @@ export interface PanelSlot {
   node: ReactNode
   /** Shown instead of the control; otherwise after it. The control's value stays in the panel store. */
   replace?: boolean
+  /**
+   * The card the slot sits in: one surface with a line between its rows. Neighbouring slots with the same card share
+   * it, and the DialKit controls after a slot, up to the next slot, sit in the slot's card too.
+   */
+  card?: string
+}
+
+/** DialKit's controls from index `from` up to `to`, or a slot with its control when the slot doesn't replace it. */
+export type PanelPart = { key: string } & ({ from: number; to: number } | { slot: number; control?: number })
+
+/** A card and the parts in it, or one part in no card. */
+export interface PanelBlock {
+  key: string
+  card?: string
+  parts: PanelPart[]
+}
+
+/**
+ * The panel in order: the DialKit controls before each slot, the slot, and the controls after the last slot, in their
+ * cards. The blocks, parts and keys follow from the slots alone, so a control that changes its path or comes and goes
+ * (the mood control, Density) never moves a part to another place in the tree, where React would rebuild it.
+ */
+export function panelLayout(paths: readonly string[], slots: readonly Omit<PanelSlot, 'node'>[]): PanelBlock[] {
+  const blocks: PanelBlock[] = []
+  const add = (part: PanelPart, card: string | undefined) => {
+    const last = blocks.at(-1)
+    if (card !== undefined && last?.card === card) last.parts.push(part)
+    else blocks.push({ key: card === undefined ? part.key : `card-${part.key}`, card, parts: [part] })
+  }
+  let from = 0
+  let card: string | undefined
+  for (const [index, slot] of slots.entries()) {
+    const at = paths.findIndex((path, i) => i >= from && slot.paths.includes(path))
+    add({ key: `controls-${index}`, from, to: at === -1 ? from : at }, card)
+    add({ key: `slot-${index}`, slot: index, control: at === -1 || slot.replace ? undefined : at }, slot.card)
+    card = slot.card
+    if (at !== -1) from = at + 1
+  }
+  add({ key: 'controls-last', from, to: paths.length }, card)
+  return blocks
 }
 
 /**
@@ -28,18 +68,16 @@ export function ToolPanel({ panelId, slots }: { panelId: string; slots: readonly
   const subscribeValues = useCallback((onChange: () => void) => DialStore.subscribe(panelId, onChange), [panelId])
   const values = useSyncExternalStore(subscribeValues, () => DialStore.getValues(panelId), () => NO_VALUES)
   if (!panel) return null
-  // One group of DialKit controls before each slot and one after the last, so a group keeps its place in the
-  // tree and its controls aren't rebuilt when another group changes.
-  const parts: ReactNode[] = []
-  let from = 0
-  for (const [index, slot] of slots.entries()) {
-    const at = panel.controls.findIndex((control, i) => i >= from && slot.paths.includes(control.path))
-    const end = at === -1 ? from : slot.replace ? at : at + 1
-    parts.push(<ControlRenderer key={`controls-${index}`} panelId={panelId} controls={panel.controls.slice(from, end)} values={values} />)
-    parts.push(<Fragment key={`slot-${index}`}>{slot.node}</Fragment>)
-    if (at !== -1) from = at + 1
-  }
-  parts.push(<ControlRenderer key="controls-last" panelId={panelId} controls={panel.controls.slice(from)} values={values} />)
+  const renderPart = (part: PanelPart) =>
+    'slot' in part ? (
+      <Fragment key={part.key}>
+        {part.control === undefined ? null : <ControlRenderer panelId={panelId} controls={panel.controls.slice(part.control, part.control + 1)} values={values} />}
+        {slots[part.slot].node}
+      </Fragment>
+    ) : (
+      <ControlRenderer key={part.key} panelId={panelId} controls={panel.controls.slice(part.from, part.to)} values={values} />
+    )
+  const blocks = panelLayout(panel.controls.map((control) => control.path), slots)
   return (
     <div className="dialkit-root" data-mode="inline" data-theme="dark">
       <div className="dialkit-panel" data-mode="inline">
@@ -47,7 +85,17 @@ export function ToolPanel({ panelId, slots }: { panelId: string; slots: readonly
           <div className="dialkit-panel-inner dialkit-panel-inline">
             <div className="dialkit-folder dialkit-folder-root">
               <div className="dialkit-folder-content">
-                <div className="dialkit-folder-inner">{parts}</div>
+                <div className="dialkit-folder-inner">
+                  {blocks.map((block) =>
+                    block.card === undefined ? (
+                      <Fragment key={block.key}>{block.parts.map(renderPart)}</Fragment>
+                    ) : (
+                      <div key={block.key} className="tool-card">
+                        {block.parts.map(renderPart)}
+                      </div>
+                    ),
+                  )}
+                </div>
               </div>
             </div>
           </div>
