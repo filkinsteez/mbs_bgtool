@@ -102,8 +102,13 @@
   background: none;
 }
 
-/* A chosen tile's ring reaches 4px past it, so the space under the ring matches the space between controls. */
+/* The controls under the tiles sit as far below the names, or below a chosen square's ring (4px past it), as they
+   sit apart. */
 .tool-card > .tool-tiles:not(:last-child) {
+  padding-bottom: 0;
+}
+
+.tool-card > .tool-tiles[data-kind='shape']:not(:last-child) {
   padding-bottom: 4px;
 }
 
@@ -120,6 +125,7 @@
 .tool-tiles {
   --tile-height: 40px;
   --shape-box: 18px;
+  --name-gap: 8px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -145,37 +151,50 @@
   gap: 8px;
 }
 
+/* A tile is its face (the picture, strip or square, which takes the ring) with the name under it or inside it. */
 .tool-tile {
-  position: relative;
-  display: flex;
-  height: var(--tile-height);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: var(--name-gap);
   padding: 0;
   border: none;
-  border-radius: 6px;
-  overflow: hidden;
-  background: var(--dial-surface);
+  background: none;
   color: var(--dial-text-secondary);
   font-family: inherit;
   cursor: pointer;
-  outline: 2px solid transparent;
-  outline-offset: 2px;
-  transition: outline-color 0.15s, color 0.15s;
+  outline: none;
+  transition: color 0.15s;
 }
 
-.tool-tile > span {
+.tool-tile-face {
+  position: relative;
+  display: flex;
+  height: var(--tile-height);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--dial-surface);
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  transition: outline-color 0.15s;
+}
+
+.tool-tile-face > span {
   flex: 1;
 }
 
 /* Filter and Format: square buttons, at most 64px across. */
 .tool-tiles[data-kind='shape'] .tool-tile {
   width: min(100%, 64px);
-  height: auto;
-  aspect-ratio: 1;
   justify-self: center;
 }
 
+.tool-tiles[data-kind='shape'] .tool-tile-face {
+  height: auto;
+  aspect-ratio: 1;
+}
+
 /* A thin edge, so dark swatches (Forest, Plum, Near-black) and Contour's black stay visible on the dark panel. */
-.tool-tile::after {
+.tool-tile-face::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -184,14 +203,18 @@
   pointer-events: none;
 }
 
-.tool-tile:hover {
+.tool-tile:hover .tool-tile-face {
   outline-color: var(--dial-border-hover);
 }
 
 .tool-tile[aria-checked='true'],
 .tool-tile:focus-visible {
-  outline-color: var(--dial-text-primary);
   color: var(--dial-text-primary);
+}
+
+.tool-tile[aria-checked='true'] .tool-tile-face,
+.tool-tile:focus-visible .tool-tile-face {
+  outline-color: var(--dial-text-primary);
 }
 
 .tool-tile-picture {
@@ -249,8 +272,17 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* The full-size panel is about 810px tall with a filter on. */
-@media (max-height: 820px) {
+/* The name under a picture or strip. */
+.tool-tile > .tool-tile-label {
+  overflow: hidden;
+  line-height: 13px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The full-size panel is about 870px tall with a filter on. */
+@media (max-height: 870px) {
   .tool-panel .dialkit-folder-inner {
     gap: 8px;
   }
@@ -263,6 +295,7 @@
   .tool-tiles {
     --tile-height: 34px;
     --shape-box: 14px;
+    --name-gap: 7px;
     gap: 7px;
     padding: 8px 12px 10px;
   }
@@ -280,7 +313,7 @@
   }
 }
 
-@media (max-height: 600px) {
+@media (max-height: 740px) {
   .tool-panel .dialkit-root {
     --dial-row-height: 32px;
   }
@@ -307,6 +340,7 @@
   .tool-tiles {
     --tile-height: 28px;
     --shape-box: 12px;
+    --name-gap: 6px;
     gap: 6px;
     padding: 7px 12px 9px;
   }
@@ -318,9 +352,12 @@
   /* Too short for squares: the buttons fill the row again, with the icon beside the name. */
   .tool-tiles[data-kind='shape'] .tool-tile {
     width: auto;
+    justify-self: stretch;
+  }
+
+  .tool-tiles[data-kind='shape'] .tool-tile-face {
     height: var(--tile-height);
     aspect-ratio: auto;
-    justify-self: stretch;
   }
 
   .tool-tile-mark {
@@ -329,7 +366,7 @@
   }
 }
 
-@media (max-height: 440px) {
+@media (max-height: 620px) {
   .tool-panel .dialkit-root {
     --dial-row-height: 28px;
   }
@@ -356,6 +393,7 @@
   .tool-tiles {
     --tile-height: 22px;
     --shape-box: 10px;
+    --name-gap: 5px;
     gap: 4px;
     padding: 5px 12px 7px;
   }

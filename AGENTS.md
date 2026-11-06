@@ -49,7 +49,10 @@ Later on 2026-11-02 the owner asked for crops of the Meta logo outline as Contou
  2026-11-06). Each mood's first look is the one on its Mood picture and the one
  picking the mood switches to (Sunset: Bands, Contour: Halo). No free color pickers:
  Colors shows each pack as a strip of its exact hexes, and you pick a
- pack. Filter sits near Format at the bottom of the panel.
+ pack. Filter sits near Format at the bottom of the panel. Every option's
+ name shows under its picture or strip, and inside the Filter and Format
+ squares; a card's title has no value beside it, since the ring marks
+ the pick (owner, 2026-11-06).
 - Brief: `docs/light/BRIEF.md`. Roadmap: `docs/light/ROADMAP.md`.
 
 ## This is a RASTER tool (owner directive)

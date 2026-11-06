@@ -5,7 +5,10 @@ export interface TileOption<T extends string> {
   label: string
 }
 
-/** What the tiles show, which sets their height in tool.css: color strips, pictures, or shapes and icons with a name. */
+/**
+ * What the tiles show, which sets their height in tool.css: color strips or pictures with the option's name under
+ * them, or shapes and icons with the name inside.
+ */
 export type TileKind = 'swatch' | 'picture' | 'shape'
 
 /** The option an arrow, Home or End key moves to from `index` of `count`, or null for other keys. Arrows wrap around. */
@@ -42,8 +45,8 @@ interface TilePickerProps<T extends string> {
 }
 
 /**
- * A panel choice drawn as a row of tiles, the chosen one ringed and named. A radio group: the arrow keys move the
- * choice, and Tab reaches the chosen tile only.
+ * A panel choice drawn as a row of named tiles, the chosen one ringed. A radio group: the arrow keys move the choice,
+ * and Tab reaches the chosen tile only.
  */
 export function TilePicker<T extends string>({ label, path, kind, options, value, onChange, tile }: TilePickerProps<T>) {
   const buttons = useRef<(HTMLButtonElement | null)[]>([])
@@ -61,7 +64,6 @@ export function TilePicker<T extends string>({ label, path, kind, options, value
     <div className="tool-tiles" data-kind={kind} role="radiogroup" aria-label={label}>
       <div className="tool-tiles-head" aria-hidden="true">
         <span className="dialkit-select-label">{label}</span>
-        <span className="dialkit-select-value">{chosen.label}</span>
       </div>
       <div className="tool-tiles-options" style={{ '--tile-columns': options.length } as CSSProperties}>
         {options.map((option, index) => (
@@ -73,13 +75,13 @@ export function TilePicker<T extends string>({ label, path, kind, options, value
             className="tool-tile"
             aria-checked={option.value === chosen.value}
             aria-label={option.label}
-            title={option.label}
             tabIndex={option.value === chosen.value ? 0 : -1}
             data-dial-path={option.value === chosen.value ? path : undefined}
             onClick={() => onChange(option.value)}
             onKeyDown={(event) => handleKeyDown(event, index)}
           >
-            {tile(option)}
+            <span className="tool-tile-face">{tile(option)}</span>
+            {kind !== 'shape' && <span className="tool-tile-label">{option.label}</span>}
           </button>
         ))}
       </div>
