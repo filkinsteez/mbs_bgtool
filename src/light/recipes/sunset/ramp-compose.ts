@@ -405,6 +405,8 @@ const NAVY_TURN = 0.5
 const NAVY_END = [0.24, 0.12, 0.17]
 /** The darkest the zenith may go under a dragged line, as a share of Meta Blue; without one it stays at its old floor. */
 const NAVY_FLOOR = 0.08
+/** The navy band of a Bold open sky behind a glow above the frame, as a share of the low sky's gain. */
+const BEHIND_NAVY = 0.2
 /** How far (short sides) the start goes below the horizon before the sun's own light dims by e. */
 const SINK_FADE = 0.6
 /**
@@ -904,16 +906,23 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // the sky's own light, so it gains with daylight like the low sky. Its edge is about as soft as
   // land's: the lens softens it, and a wider one mixes the two sides into a third hue.
   // The sky's lowest edge moves up out of the band's way, as far as the top fifth allows.
-  if (look.dusk) {
+  // Under a line that puts the glow above the whole frame, Bold's open sky deepens away from the
+  // light: a band of navy rises at the frame's far side, as far as the frame lies behind the glow,
+  // and otherwise stays under the horizon.
+  let frameHigh = -Infinity
+  for (const [x, y] of [[-half, -tall / 2], [half, -tall / 2], [-half, tall / 2], [half, tall / 2]]) frameHigh = Math.max(frameHigh, -rampAt(frame, axis, x, y))
+  const behind = line && !ground ? clamp01((glowRise - frameHigh) / (0.1 * tall)) : 0
+  const dusk: Tone | null = look.dusk ?? (packId === 'bold' && line && !ground ? [look.zenith, BEHIND_NAVY] : null)
+  if (dusk) {
     const last = edges[edges.length - 1]
     const duskWidth = 0.04 * Math.sqrt(haze) * skyScale
-    const duskAt = -lerp(0.75, 0.9, duskPick) * glowReach
+    const duskAt = look.dusk ? -lerp(0.75, 0.9, duskPick) * glowReach : lerp(0.3, -lerp(0.75, 0.9, duskPick) * glowReach, behind)
     const margin = 0.3 * (last[1] + duskWidth)
     const above = edges.length > 1 ? edges[edges.length - 2] : null
     const ceiling = Math.max(-(topHeight - zenithRoom - tail * last[1]), above ? above[0] + 0.3 * (above[1] + last[1]) : -Infinity)
     last[0] = Math.min(last[0], Math.max(ceiling, duskAt - margin))
     edges.push([Math.max(duskAt, last[0] + margin), duskWidth])
-    gains.push(look.dusk[1] * lowGain)
+    gains.push(dusk[1] * lowGain)
   }
   // Each edge sits at least half their widths above the one below it. Closer, or crossed where the
   // low sky's band or the dusk band pushed the lower one up, the stop between them would take a
@@ -1049,7 +1058,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     bridgeLift: look.bridgeLift + 0.12 * softness,
     bridgeWarmth: look.bridgeWarmth,
     bridgeFloor: look.bridgeFloor,
-    duskStop: look.dusk ? gains.length - 1 : -1,
+    duskStop: dusk ? gains.length - 1 : -1,
     land: 0,
     // One lens over the whole scene: Softness is its radius.
     lensRadius: lerp(0.045, 0.12, softness),
@@ -1091,5 +1100,5 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     groundBottomGain: Math.max(0.35 * look.landTop[1] * groundGain * lerp(1, 0.55, depth), look.landBottom[1] * groundGain * lerp(1, 0.5, depth) * (land ? Math.min(1, ((0.4 * tall) / landRoom) ** 1.5) : 1)),
     waterGain: look.water[1] * groundGain * lerp(1, 0.6, depth),
   }
-  return { colors: slotColors(look, midSky), params, lens: {}, output: { exposure: 0 } }
+  return { colors: slotColors({ ...look, dusk }, midSky), params, lens: {}, output: { exposure: 0 } }
 }
