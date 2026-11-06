@@ -635,10 +635,13 @@ vec3 bloomsScene(vec2 uv) {
   float above = clamp((uSkyRamp.y - vSky) / max(uSkyRamp.y, 0.05), 0.0, 1.0);
   float topLight = exp2(-uSkyRamp.x * pow(above, 1.4));
   // With uZenithHold the dark color is the pack's ground, not darker sky: it keeps its hex under the darker
-  // top. With uZenithMeet the blue darkens where it comes in, so a dark color of another hue (Plum, Forest)
-  // and the blue meet where both are dark, with no lighter purple or teal band between them.
-  float meet = 1.0 - uZenithMeet * smoothstep(0.0, 0.6, z);
-  vec3 sky = mix(uSky * meet, uDeep * mix(1.0, 1.0 / topLight, uZenithHold), z);
+  // top. With uZenithMeet the blue darkens where it comes in, and a dark color of another hue (Plum, Forest)
+  // comes in only once the blue is nearly dark, so the two meet through the dark base: blue and Plum lit
+  // together are indigo, blue and Forest teal, so their blend is at most a thin dark seam, never a wide fade.
+  float other = clamp(uZenithMeet / 0.6, 0.0, 1.0);
+  float meet = 1.0 - mix(uZenithMeet * smoothstep(0.0, 0.6, z), 0.9 * smoothstep(0.0, 0.45, z), other);
+  float deepIn = mix(z, smoothstep(0.3, 0.85, z), other);
+  vec3 sky = mix(uSky * meet, uDeep * mix(1.0, 1.0 / topLight, uZenithHold), deepIn);
   sky *= topLight * exp(uSkyRamp.w * 3.0 * noise2x2(P * 2.6 + vec2(7.1, 2.3), uSeed + 23).x);
   // The sky pales toward its light: a veil of pale light in its own hue rises from the line where it is its
   // exact hex toward the light, so full-strength blue is only a band toward the far edge. Not over the dark
