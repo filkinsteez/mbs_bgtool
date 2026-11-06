@@ -17,6 +17,7 @@ import { BLOOM_BOUNDARY, BLOOM_MINOR_REF, BLOOM_ROW, bloomBoundaryUniforms } fro
 import {
   composeLayout,
   GLOW_COUNT,
+  isRed,
   isSourceLight,
   isWarm,
   LOBES,
@@ -60,6 +61,7 @@ function glowParams(i: number, glow: GlowSpec): ParamSpec[] {
     num(`glow${n}Haze`, `Glow ${n} haze`, 0, 8, 0.01, glow.haze),
     num(`glow${n}Vary`, `Glow ${n} edge variation`, 0, 1, 0.01, glow.vary),
     num(`glow${n}Bend`, `Glow ${n} bend`, -0.6, 0.6, 0.005, glow.bend),
+    num(`glow${n}BehindLead`, `Glow ${n} behind the lead's haze`, 0, 1, 0.01, glow.behindLead ?? 0),
   ]
 }
 
@@ -114,6 +116,7 @@ function readLayout(ctx: RecipeContext): BloomsLayout {
       haze: ctx.num(`glow${n}Haze`),
       vary: ctx.num(`glow${n}Vary`),
       bend: ctx.num(`glow${n}Bend`),
+      behindLead: ctx.num(`glow${n}BehindLead`),
     }
   })
   const zenithAt = ctx.vec('zenithAt')
@@ -194,6 +197,7 @@ function layoutParams(layout: BloomsLayout): Record<string, ParamValue> {
     out[`glow${n}Haze`] = glow.haze
     out[`glow${n}Vary`] = glow.vary
     out[`glow${n}Bend`] = glow.bend
+    out[`glow${n}BehindLead`] = glow.behindLead ?? 0
   })
   for (const spec of PARAMS) {
     const value = out[spec.key]
@@ -291,6 +295,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
   const glowAxis: number[] = []
   const glowEdge: number[] = []
   const glowDeepFade: number[] = []
+  const glowBehindLead: number[] = []
   const glowBridge: number[] = []
   const glowLobes: number[] = []
   const glowLobeFalloff: number[] = []
@@ -312,6 +317,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
       glowAxis.push(1, 0, 1, 1)
       glowEdge.push(0, 1, 0, 0)
       glowDeepFade.push(0)
+      glowBehindLead.push(0)
       glowBridge.push(0, 0, 0)
       continue
     }
@@ -334,7 +340,11 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     // sky is already light there, and that much pale light would whiten into a rim around the core.
     const y = luminance(light) * gain * paleLight
     const tailShare = otherHue(sky, light)
-    glowTail.push(...light.map((c, ch) => c * gain * (1 - tailShare) + skyPale[ch] * y * tailShare))
+    // Red-orange light pales through its own warm pale tint instead: blue added to it turns it pink.
+    const red = isRed(base)
+    const tint = bridgeTint(light)
+    const pale = red ? tint : skyPale
+    glowTail.push(...light.map((c, ch) => c * gain * (1 - tailShare) + pale[ch] * y * tailShare))
     // A muted warm light (Tan) has no deeper member that is still a light: deepened, it reads brown, so it
     // keeps its own color low down and over a deep area.
     const lab = linearToOklab(base)
@@ -348,12 +358,14 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     const short = bridgeGate(sky, light) * Math.max(0, CORE_ABOVE_BRIDGE - linearToOklab(base)[0])
     const core = isSourceLight(glow.color, base) ? Math.min(MAX_CORE, layout.core * (1 + CORE_LIFT * short)) : 0
     glowCore.push(core)
-    const tint = bridgeTint(light)
-    glowCoreTint.push(...scale(tint, luminance(light) * gain))
+    // The core whitens through the light's own pale tint; a red-orange core is more of its own light, which the
+    // tone curve takes through amber, not salmon (as Bands does).
+    glowCoreTint.push(...(red ? scale(light, gain) : scale(tint, luminance(light) * gain)))
     glowShape.push(glow.at[0], glow.at[1], glow.beta, haze)
     glowAxis.push(...axis(glow.radius * reach, glow.aniso, glow.angle))
     glowEdge.push(glow.vary, 1.15, 1.7 * i + 0.3, front)
     glowDeepFade.push(deepFade(sky, deep, light))
+    glowBehindLead.push(i > 0 ? clamp(glow.behindLead ?? 0, 0, 1) : 0)
     // A dim glow's bridge stays below its own brightest point, so it never gets a pale ring lighter than itself.
     const floor = Math.min(layout.bridgeFloor, linearToOklab(scale(light, gain * (1 + core)))[0] - 0.04)
     const amount = front * layout.bridge * bridgeLight(sky, light, tint, haze, intensity, skyGain, gain, floor)
@@ -385,6 +397,8 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     uGlowCore: glowCore,
     uGlowCoreTint: glowCoreTint,
     uGlowDeepFade: glowDeepFade,
+    uGlowBehindLead: glowBehindLead,
+    uLeadHides: layout.glows[0] && isRed(slot(layout.glows[0].color)) ? 1 : 0,
     uGlowShape: glowShape,
     uGlowAxis: glowAxis,
     uGlowEdge: glowEdge,
@@ -406,16 +420,21 @@ const MUTED_CHROMA = 0.1
  * The colors by role: Meta Blue for the sky, the pack's dark colors (in pack
  * order) as the colors the sky deepens toward, and the two lightest other
  * colors as lights. A pack with no dark colors deepens toward no light
- * (black), so its sky only gets darker.
+ * (black), so its sky only gets darker. The third light is the next lightest
+ * color (Bold's Orange-red). In a pack like Bold, every third seed (2, 5, 8,
+ * ...) swaps the two warm lights: the red-orange one leads, as an orange-red
+ * sun, and the lightest (Yellow) becomes the third light, the sun's glow.
  */
-function rolesFromPack(pack: ColorPack): string[] {
+function rolesFromPack(pack: ColorPack, seed = 1): string[] {
   const [sky, ...rest] = pack.colors.map((c) => c.hex)
   const lightness = (hex: string) => linearToOklab(hexToLinear(hex))[0]
   const dark = rest.filter((hex) => lightness(hex) < DARK_L)
   const lights = rest.filter((hex) => lightness(hex) >= DARK_L).sort((a, b) => lightness(b) - lightness(a))
   const light1 = lights[0] ?? sky
   const light2 = lights[1] ?? light1
-  return [sky, dark[0] ?? NO_LIGHT, dark[1] ?? dark[0] ?? NO_LIGHT, light1, light2]
+  const light3 = lights[2] ?? light2
+  const redSeed = Math.round(seed) % 3 === 2 && isWarm(hexToLinear(light1)) && isRed(hexToLinear(light3))
+  return [sky, dark[0] ?? NO_LIGHT, dark[1] ?? dark[0] ?? NO_LIGHT, ...(redSeed ? [light3, light2, light1] : [light1, light2, light3])]
 }
 
 /**
@@ -436,8 +455,9 @@ export const sunsetBlooms: RecipeDefinition = {
     { key: 'deep2', label: 'Deep 2' },
     { key: 'light1', label: 'Light 1' },
     { key: 'light2', label: 'Light 2' },
+    { key: 'light3', label: 'Light 3' },
   ],
-  defaultColors: ['#0064E0', '#000000', '#000000', '#FFD61E', '#1FCDF0'],
+  defaultColors: ['#0064E0', '#000000', '#000000', '#FFD61E', '#1FCDF0', '#FF4F00'],
   params: PARAMS,
   fragment: `${BOUNDARY_GLSL}
 #define GLOW_COUNT ${GLOW_COUNT}
@@ -472,6 +492,8 @@ uniform vec3 uGlowTail[GLOW_COUNT];   // color of the faint outer light toward t
 uniform vec3 uGlowLow[GLOW_COUNT];    // the glow's deeper member, for its lower side and over a deep area
 uniform float uGlowWarm[GLOW_COUNT];  // 1 for warm light, whose lower part takes the deeper member
 uniform float uGlowDeepFade[GLOW_COUNT]; // how far the glow's hue is from the deepened sky's, 0..1
+uniform float uGlowBehindLead[GLOW_COUNT]; // how much of the glow lies behind the lead's haze, 0..1
+uniform float uLeadHides;             // 1: the lead's haze hides the sky behind it whatever the haze floor (a sun in its halo)
 uniform vec4 uGlowShape[GLOW_COUNT];  // center (frame fractions), falloff exponent, haze
 uniform vec4 uGlowAxis[GLOW_COUNT];   // cos, sin, 1 / long radius, 1 / short radius
 uniform vec4 uGlowEdge[GLOW_COUNT];   // edge variation, its frequency, its phase, in front 0..1
@@ -646,6 +668,11 @@ vec3 bloomsScene(vec2 uv) {
     }
   }
   float T = exp(-ext);
+  // What the lead's own haze lets through, and how much of a glow behind it (its halo) shows: the halo is hidden
+  // only by the lead's bright body, so where the lead fades its glow is already at full strength and the light
+  // gets paler outward (Orange-red, orange, Yellow), never a dim yellow over the sky, which reads tan and khaki.
+  float leadSeen = exp(-uGlowShape[0].w * k[0] * k[0] * (1.0 + LOW_HAZE * low[0] * (1.0 - above)));
+  float haloSeen = 1.0 - smoothstep(0.45, 0.85, k[0]);
   vec3 behind = sky;
   vec3 front = vec3(0.0);
   float lit = 0.0;
@@ -677,23 +704,28 @@ vec3 bloomsScene(vec2 uv) {
     vec3 faint = mix(uGlowTail[i], uGlowLow[i], deepArea);
     // The core is the light's own pale tint, so an overexposed source whitens the way fire does (Orange-red
     // through yellow-white), not through pink.
-    vec3 light = (mix(faint * edgeLit, body * bodyLit, bodyShare) * (k[i] - kc[i]) + uGlowCoreTint[i] * kc[i]) * ground;
+    float seen = mix(1.0, haloSeen, uGlowBehindLead[i]);
+    vec3 light = (mix(faint * edgeLit, body * bodyLit, bodyShare) * (k[i] - kc[i]) + uGlowCoreTint[i] * kc[i]) * ground * seen;
     float f = uGlowEdge[i].w;
     behind += (1.0 - f) * light;
     front += f * light;
-    lit += f * k[i];
+    lit += f * k[i] * seen;
     // The pale light where a glow meets the sky is its own light, so it does not dim with the deeper sky: dimmed,
     // warm light and blue meet in a grey. Near a held dark ground it still dims with the sky, so it lays no grey
     // veil over the ground's soft edge.
     float bridgeLit = mix(1.0, deepLit, uZenithHold * smoothstep(0.0, 0.3, z));
-    bridge += uGlowBridge[i] * (k[i] * bridgeLit * ground * (1.0 - deepArea));
+    bridge += uGlowBridge[i] * (k[i] * bridgeLit * ground * (1.0 - deepArea) * seen);
   }
   // The glows' haze is lit by their light, so it hides at most as much of the sky's light as they add: no
   // ring darker than the open sky around a glow, below it or where the sky is pale.
   if (uHazeFloor > 0.0) {
     vec3 luma = vec3(0.2126, 0.7152, 0.0722);
     float need = (dot(sky, luma) - dot(front, luma)) / max(dot(behind, luma), 1e-5);
-    T = mix(T, max(T, clamp(need, 0.0, 1.0)), uHazeFloor);
+    // An orange-red sun's own haze hides the sky behind its body all the same: darker than a pale sky, it would
+    // only pale it to salmon. Its yellow glow lies around it, so no ring there is darker than the open sky.
+    float own = mix(1.0, leadSeen, uLeadHides);
+    float rest = T / max(own, 1e-5);
+    T = mix(rest, max(rest, clamp(need, 0.0, 1.0)), uHazeFloor) * own;
   }
   // Pale light where the glows and the sky weigh about the same, reaching further out on the sky
   // side, where faint warm light over blue would read as a lavender ring; zero at both ends, and
@@ -731,9 +763,9 @@ vec3 combine(vec2 uv, vec2 p, vec3 direct, vec3 seen) {
   scatter: [LENS],
   radianceScale: 0.5,
   lens: { bloom: 0.12, bloomRadius: 0.75, bloomWidth: 1.5 },
-  fromPack: rolesFromPack,
+  fromPack: (pack: ColorPack) => rolesFromPack(pack),
   compose: ({ pack, controls, seed, aspect }): Composition => {
-    const colors = rolesFromPack(pack)
+    const colors = rolesFromPack(pack, seed)
     const layout = composeLayout(
       colors.map(hexToLinear),
       seed,
