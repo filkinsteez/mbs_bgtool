@@ -587,7 +587,8 @@ vec3 rampScene(vec2 p) {
   if (kind == 0) return seen;
   // The sky high above the frame, which near water mirrors under a high line, is darker than the
   // sky in it.
-  if (kind == 2 && uMirrorDeep > 0.0) seen *= exp(-max(0.0, -0.5 * uFrameAspect.y - q.y) / uMirrorDeep);
+  // A glow above the frame is not part of that darker sky: the dimming starts above the band over it.
+  if (kind == 2 && uMirrorDeep > 0.0) seen *= exp(-max(0.0, min(-0.5 * uFrameAspect.y, line - uSunPath.w - uSunLight.y) - q.y) / uMirrorDeep);
   // One call site, as for rampSky: land itself, or the far bank as the water mirrors it.
   vec3 mirror = kind == 2 ? seen : landLight(kind == 1 ? p : mirrored, top, seen, patches);
   if (kind == 1) return mirror;

@@ -740,7 +740,13 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const setDepth = line ? Math.min(0.9, Math.max(0, 0.03 - lineRise)) : 0
   const setGlow = Math.exp(-setDepth / SINK_FADE)
   const setShrink = Math.exp(-setDepth / (packId === 'bold' ? BOLD_SET_SHRINK : SET_SHRINK))
-  const dragReach = line ? dragRise + line.length : 0
+  // How far the frame lies behind a glow that a line puts above water: 1 when the glow's line is
+  // above the whole frame. The sky above that glow shows only in the water, which mirrors it from
+  // the horizon toward the viewer, so it reaches at least a frame height past the glow: room for
+  // the sky's lighter bridge and its Cyan band before the deep sky.
+  // Elemental's high sky greys under its veil, so its water keeps mirroring the low sky.
+  const waterBehind = line && water && packId !== 'elemental' ? clamp01((dragRise - frameHigh) / (0.1 * tall)) : 0
+  const dragReach = line ? dragRise + lerp(line.length, Math.max(line.length, tall), waterBehind) : 0
   const dragTop = skyTopOf(dragReach, tall)
   const skyHeight = Math.max(0.2, line ? dragTop : horizonY * tall)
   // Under a dragged line the sun sits on the line's axis, just past the horizon below its start.
@@ -1087,7 +1093,9 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // The strip under the line is thin and bright, so it still shows after the lens. Under a high
     // line the ripples draw the short sky's reflection out over more of the water, so the water
     // carries the sky's colors and not only the zenith's.
-    water: [Math.min(1.25, Math.max(0.5, (0.77 * lineY) / Math.max(0.05, 1 - lineY))), lerp(look.waterDegrees[0], look.waterDegrees[1], ridgePick) * [0.6, 1.6, 1][variant], 0.12, 1.5],
+    // Under a glow above the frame the reflection climbs past the glow within the water's top half:
+    // the warm part is a band near the horizon, and the high sky takes the near water.
+    water: [lerp(Math.min(1.25, Math.max(0.5, (0.77 * lineY) / Math.max(0.05, 1 - lineY))), Math.min(3, (3 * glowRise) / Math.max(0.2, (1 - lineY) * tall)), waterBehind), lerp(look.waterDegrees[0], look.waterDegrees[1], ridgePick) * [0.6, 1.6, 1][variant], 0.12, 1.5],
     waterMirror: water ? look.waterMirror : 1,
     // Under a high line the near water mirrors the sky high above the frame, which is darker.
     // Deep water mirrors more of that darker sky.
