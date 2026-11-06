@@ -266,16 +266,21 @@ function followDrag(
     return { ...glow, at, gain: glow.gain * lerp(DRAG_OVERLAP_GAIN, 1, smoothstep(0.5, 1, near)) }
   })
   // The dark area slides along the frame's edge from where the line meets it, by the seed's share of the way.
+  // The edge the line runs toward is found from a point a little in from the light toward the frame's middle,
+  // never from on an edge: from a light at an edge, a line turning along that edge would leave the frame first
+  // through the far side, then right beside the light, and the dark area would jump between them.
   const slide = DRAG_DARK_SLIDE * darkTurn * Math.min(frame[0], frame[1])
+  const held = insideFrame(start, frame)
+  const middle = [held[0] * (1 - DARK_FROM_IN), held[1] * (1 - DARK_FROM_IN)]
   const darkAt = (angle: number, along: number): ZenithSpec => {
-    const z: ZenithSpec = { ...layout.zenith, at: fromP(alongEdge(toP(farEdge(start, angle, frame)), along, frame)), angle: (lineAngle * 180) / Math.PI + 90 }
+    const z: ZenithSpec = { ...layout.zenith, at: fromP(alongEdge(toP(farEdge(middle, angle, frame)), along, frame)), angle: (lineAngle * 180) / Math.PI + 90 }
     z.radius = sizeDark(z)
     return z
   }
   // The sky darkens along the line, leaning a little toward where the seed puts the dark area.
   const skyAngle = lineAngle + 0.6 * darkTurn
   const front = darkAt(lineAngle, slide)
-  const dark = toP(farEdge(start, lineAngle, frame))
+  const dark = toP(farEdge(middle, lineAngle, frame))
   const ahead = ((dark[0] - start[0]) * line[0] + (dark[1] - start[1]) * line[1]) / (length * length)
   // Ahead of the light the dark area lies at the edge the line runs toward. When that edge falls behind the
   // light it fades out there, and past DARK_TURN it fades in at the frame's far side from the light instead;
@@ -320,6 +325,8 @@ const DRAG_DARK_SLIDE = 2
 const DARK_TURN = -0.05
 /** Over how many line lengths of that edge's distance the dark area fades, so it changes slowly as the line moves. */
 const DARK_FADE = 0.85
+/** How far in from the light toward the frame's middle the edge the line runs toward is looked for, 0..1. */
+const DARK_FROM_IN = 0.5
 
 /**
  * A point just past the frame's edge (frame units from its middle, as farEdge gives), moved `along` that
