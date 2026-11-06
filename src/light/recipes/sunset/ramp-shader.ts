@@ -60,6 +60,7 @@ uniform vec3 uVeil;          // white light over the sky: under the far band, mo
 uniform vec2 uVeilFar;       // heights above the horizon between which the veil fades out into the far band of full Meta Blue (0, 0: none)
 uniform vec3 uVeilTint;      // the veil's color away from the light: a pale tint of one of the pack's colors, at luminance 1
 uniform float uVeilMute;     // share of the sky's color the veil greys toward its own tint at the same light (0: none)
+uniform float uHazeMass;     // share by which the veil thickens and thins with the sky's masses (0: none)
 uniform float uBlueHue;      // 1: sky blues turned toward violet go back to Meta Blue's hue (pack frames); 0: they keep it
 uniform vec3 uVeilNear;      // the veil's color near the light, at luminance 1 (0, 0, 0: the bridge's)
 uniform float uGlowOffset;
@@ -245,11 +246,14 @@ float hueSpread(LightMix mixed) {
 // The sky's light, glow included, changes slowly in patches wider than they are tall, like haze,
 // with zero mean over the top fifth of the frame. The haze is in front of land and water too, so
 // it follows the pixel, not the sky a point mirrors.
+float skyMass(vec2 p) {
+  vec2 q = vec2(p.x / uSkyPatch.w, p.y) * uSkyPatch.y;
+  return (gradientNoise(q + vec2(3.1, 7.7), uSeed + 811) + 0.5 * gradientNoise(2.0 * q + vec2(-5.3, 1.9), uSeed + 823)) / 0.3052 - uSkyPatch.z;
+}
+
 float skyPatch(vec2 p) {
   if (uSkyPatch.x <= 0.0) return 1.0;
-  vec2 q = vec2(p.x / uSkyPatch.w, p.y) * uSkyPatch.y;
-  float n = (gradientNoise(q + vec2(3.1, 7.7), uSeed + 811) + 0.5 * gradientNoise(2.0 * q + vec2(-5.3, 1.9), uSeed + 823)) / 0.3052;
-  return max(0.0, 1.0 + uSkyPatch.x * (n - uSkyPatch.z));
+  return max(0.0, 1.0 + uSkyPatch.x * skyMass(p));
 }
 
 // Meta Blue's Oklab hue, in radians (259 degrees).
@@ -401,13 +405,16 @@ vec3 rampSky(vec2 p) {
   if (uVeil.x > 0.0 || uVeil.y > 0.0) {
     float low = exp(-height / max(uVeil.z, 1e-4));
     float far = uVeilFar.y > uVeilFar.x ? 1.0 - smoothstep(uVeilFar.x, uVeilFar.y, height) : 1.0;
-    float open = (1.0 - clamp(duskCover, 0.0, 1.0)) * far;
+    // The haze is thicker and thinner in the sky's masses: thicker it is paler, thinner the sky's
+    // own color shows through.
+    float mass = uHazeMass > 0.0 ? max(0.0, 1.0 + uHazeMass * skyMass(p)) : 1.0;
+    float open = (1.0 - clamp(duskCover, 0.0, 1.0)) * far * mass;
     // An overcast haze greys the sky toward the veil's own hue at the same light, so the blue
     // turns grey-blue instead of the periwinkle that white light over it makes.
     // Near the light the sky keeps its own color, and only blue greys: a warm low sky keeps its own.
     if (uVeilMute > 0.0) {
       float blue = clamp(-linearToOklab(max(sky, vec3(0.0))).z / 0.04, 0.0, 1.0);
-      sky = mix(sky, luminance(sky) * uVeilTint, uVeilMute * open * (1.0 - low) * blue);
+      sky = mix(sky, luminance(sky) * uVeilTint, min(1.0, uVeilMute * open * (1.0 - low) * blue));
     }
     sky += (uVeil.x + uVeil.y * low) * open * mix(uVeilTint, uVeilNear.x > 0.0 ? uVeilNear : uBridgeTint, low);
   }

@@ -400,6 +400,8 @@ const DEPTH = [0, 1, 0.5]
  * Elemental's seeds differ by their light and ground.
  */
 const NAVY_SHARE = [[0.04, 0.14], [0.38, 0.56], [0.2, 0.34]] as const
+/** Under a long line, how much Bold's and Atmospheric's haze thickens and thins in the sky's masses, by warm turn (compact, broad, between). */
+const HAZE_MASS = [0.15, 1, 0.6]
 /** The zenith's light where the sky turns toward navy, and at the line's end by depth turn, as shares of Meta Blue. */
 const NAVY_TURN = 0.5
 const NAVY_END = [0.24, 0.12, 0.17]
@@ -1011,6 +1013,10 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // light's color), or toward Steel (Atmospheric, overcast), instead of turning periwinkle.
     // Atmospheric's light seeds are overcast grey, its deep seeds keep more of their clear blue.
     veilMute: packId === 'atmospheric' ? 0.8 * lerp(1.15, 0.5, depth) : packId === 'elemental' ? 0.5 : 0,
+    // Under a long line the haze thickens and thins in the sky's masses, so skies that a line
+    // leaves without a glow still differ in where they are paler and deeper: most in a broad
+    // seed's hazy air, least in a compact seed's clear air, more in a light seed's.
+    hazeMass: HAZE_MASS[warmTurn] * lerp(1.3, 0.8, depth) * navyReach,
     blueHue: 1,
     // Elemental's veil takes its light's own color near the light, so the pale side reads Tan or
     // Lime; the other packs take the bridge's warm white there.
