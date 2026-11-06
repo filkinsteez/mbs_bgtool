@@ -31,10 +31,10 @@ const FILTER_CENTER = { x: 0.5, y: 0.68 }
 /**
  * For each filter: its strength, the frame it is drawn in, and how much of that frame's middle the picture shows
  * (as a share of its width), so ASCII shows a few rows of characters and Pixel a few rows of cells. Grain's specks
- * are about a pixel of a 1080p frame, so its picture is a small crop enlarged.
+ * are about a pixel of a 1080p frame, so its picture is a small crop enlarged. None has no picture; the panel shows
+ * an icon for it.
  */
 const FILTERS = {
-  none: { strength: 0, frame: { width: 768, height: 432 }, share: 0.25 },
   grain: { strength: 1, frame: { width: 1920, height: 1080 }, share: 1 / 15 },
   ascii: { strength: 0, frame: { width: 768, height: 432 }, share: 0.25 },
   pixel: { strength: 0, frame: { width: 768, height: 432 }, share: 0.25 },
@@ -69,7 +69,7 @@ try {
     for (const [filter, spec] of Object.entries(FILTERS)) {
       const { width, height } = spec.frame
       const scene = withFilter(buildScene(FILTER_LOOK, pack, seed, DEFAULT_CONTROLS, width / height), { filter, strength: spec.strength })
-      const image = await harness.render({ scene, width, height, supersample: filter === 'none' ? 2 : 1 })
+      const image = await harness.render({ scene, width, height, supersample: 1 })
       const cropW = Math.round(width * spec.share)
       const cropH = Math.round((cropW * FILTER_SIZE.height) / FILTER_SIZE.width)
       const left = Math.min(width - cropW, Math.max(0, Math.round(width * FILTER_CENTER.x - cropW / 2)))
@@ -86,7 +86,7 @@ try {
 for (const { file } of written) console.log(path.relative(process.cwd(), file))
 
 if (sheetFile) {
-  const cols = 11
+  const cols = 10
   const tileW = 192
   const tileH = 108
   const label = 18

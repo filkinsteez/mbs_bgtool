@@ -1,12 +1,24 @@
 import { EXPORT_SIZES, getPack, type ExportAspect, type MoodId, type PackId, type RecipeId } from '@/light'
 import { FORMAT_OPTIONS, lookOptions, MOOD_OPTIONS, PACK_DIAL_KEY, PACK_OPTIONS } from './dialConfig'
 import { FILTER_DIAL_KEY, FILTER_OPTIONS, type FilterChoice } from './filterControl'
-import { filterPicture, lookPicture, MOOD_PICTURE_LOOK } from './panelPictures'
+import { filterPicture, lookPicture, moodPicture } from './panelPictures'
 import { TilePicker } from './TilePicker'
 
 /** A fixed picture of the option in the chosen pack. */
 function Picture({ src }: { src: string }) {
   return <span className="tool-tile-picture" style={{ backgroundImage: `url(${src})` }} />
+}
+
+/** No filter: a circle with a line through it. */
+function OffIcon() {
+  return (
+    <span className="tool-tile-off">
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <circle cx="10" cy="10" r="8" />
+        <path d="M4.3 4.3 15.7 15.7" />
+      </svg>
+    </span>
+  )
 }
 
 export function MoodPicker({ value, pack, onChange }: { value: MoodId; pack: PackId; onChange: (mood: MoodId) => void }) {
@@ -18,7 +30,7 @@ export function MoodPicker({ value, pack, onChange }: { value: MoodId; pack: Pac
       options={MOOD_OPTIONS}
       value={value}
       onChange={onChange}
-      tile={(option) => <Picture src={lookPicture(MOOD_PICTURE_LOOK[option.value], pack)} />}
+      tile={(option) => <Picture src={moodPicture(option.value, pack)} />}
     />
   )
 }
@@ -61,7 +73,7 @@ export function FilterPicker({ value, pack, onChange }: { value: FilterChoice; p
       options={FILTER_OPTIONS}
       value={value}
       onChange={onChange}
-      tile={(option) => <Picture src={filterPicture(option.value, pack)} />}
+      tile={(option) => (option.value === 'none' ? <OffIcon /> : <Picture src={filterPicture(option.value, pack)} />)}
     />
   )
 }

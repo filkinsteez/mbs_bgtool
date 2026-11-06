@@ -35,7 +35,7 @@ export const SEED_MAX = 100
 
 export const DEFAULT_STATE: ToolState = {
   mood: 'sunset',
-  look: 'sunset.ramp',
+  look: 'sunset.bands',
   pack: 'bold',
   intensity: DEFAULT_CONTROLS.intensity,
   softness: DEFAULT_CONTROLS.softness,

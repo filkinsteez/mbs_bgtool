@@ -2,7 +2,7 @@
 // switches through all seven looks with the panel's keyboard keys, twice in the same page and once in a second page
 // of the same browser. For each switch: the longest main-thread task (Long Tasks API) from the key press until the
 // new look's settled frame, the time to its first frame and to its settled frame. Also the time from page load to
-// the first frame. The page starts on Ramp (or Rim with --start contour), so that look's first compile is in the
+// the first frame. The page starts on Bands (or Halo with --start contour), so that look's first compile is in the
 // page load; run both to time every look's first switch. The canvas's times for the new look's first 1x and 2x
 // frames are kept too: from issuing the frame until it is on the canvas (data-fast-ms, data-settled-ms; whole
 // animation frames, and any compile), and the GPU's own time for the render (data-fast-gpu-ms, data-settled-gpu-ms;
@@ -23,23 +23,23 @@ const outDir = path.resolve(ROOT, typeof args.out === 'string' ? args.out : 'art
 const start = args.start === 'contour' ? 'contour' : 'sunset'
 const START =
   start === 'contour'
-    ? '/?mood=contour&look=rim&pack=bold&intensity=0.5&softness=0.5&light=0.5&seed=1&format=16x9'
-    : '/?mood=sunset&look=ramp&pack=bold&intensity=0.5&softness=0.5&horizon=0.5&seed=1&format=16x9'
+    ? '/?mood=contour&look=halo&pack=bold&intensity=0.5&softness=0.5&light=0.5&seed=1&format=16x9'
+    : '/?mood=sunset&look=bands&pack=bold&intensity=0.5&softness=0.5&horizon=0.5&seed=1&format=16x9'
 
 /** Each step: which select to move and which way, and the look it lands on. Switching the mood lands on its first look. */
 const SUNSET = [
-  ['look', 'ArrowDown', 'sunset.bands'],
+  ['look', 'ArrowDown', 'sunset.ramp'],
   ['look', 'ArrowDown', 'sunset.blooms'],
 ]
 const CONTOUR = [
-  ['look', 'ArrowDown', 'contour.halo'],
+  ['look', 'ArrowDown', 'contour.rim'],
   ['look', 'ArrowDown', 'contour.beam'],
   ['look', 'ArrowDown', 'contour.streaks'],
 ]
 const STEPS =
   start === 'contour'
-    ? [...CONTOUR, ['mood', 'ArrowUp', 'sunset.ramp'], ...SUNSET, ['mood', 'ArrowDown', 'contour.rim']]
-    : [...SUNSET, ['mood', 'ArrowDown', 'contour.rim'], ...CONTOUR, ['mood', 'ArrowUp', 'sunset.ramp']]
+    ? [...CONTOUR, ['mood', 'ArrowUp', 'sunset.bands'], ...SUNSET, ['mood', 'ArrowDown', 'contour.halo']]
+    : [...SUNSET, ['mood', 'ArrowDown', 'contour.halo'], ...CONTOUR, ['mood', 'ArrowUp', 'sunset.bands']]
 
 // Runs in the page before its scripts: long tasks, key presses and the canvas's frame and settled marks, with times.
 const RECORDER = () => {

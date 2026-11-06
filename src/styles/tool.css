@@ -154,6 +154,25 @@
   background-size: cover;
 }
 
+.tool-tile-off {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tool-tile-off svg {
+  width: var(--shape-box);
+  height: var(--shape-box);
+  fill: none;
+  stroke: currentColor;
+}
+
+/* The same 1.5px line as the format shapes at every tile size. */
+.tool-tile-off svg > * {
+  stroke-width: 1.5px;
+  vector-effect: non-scaling-stroke;
+}
+
 .tool-tile-format {
   display: flex;
   flex-direction: column;

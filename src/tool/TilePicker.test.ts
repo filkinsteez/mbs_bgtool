@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { PACKS, RECIPE_IDS } from '@/light'
-import { FILTER_OPTIONS } from './filterControl'
+import { TOOL_FILTERS } from './filterControl'
 import { filterPicture, lookPicture } from './panelPictures'
 import { optionForKey } from './TilePicker'
 
@@ -20,7 +20,7 @@ describe('panel tiles', () => {
   it('have a picture for every look and filter in every pack', () => {
     const pictures = PACKS.flatMap((pack) => [
       ...RECIPE_IDS.map((look) => lookPicture(look, pack.id)),
-      ...FILTER_OPTIONS.map((option) => filterPicture(option.value, pack.id)),
+      ...TOOL_FILTERS.map((filter) => filterPicture(filter, pack.id)),
     ])
     expect(pictures.filter((src) => !existsSync(path.join(process.cwd(), 'public', src)))).toEqual([])
   })

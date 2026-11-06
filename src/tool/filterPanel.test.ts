@@ -26,7 +26,7 @@ describe('filter control in the panel', () => {
     DialStore.updateValue(id, 'density', 0.8)
     const state = readToolState(DialStore.getValues(id), 'sunset')
     expect(state).toMatchObject({ filter: 'grain', strength: 0.8 })
-    expect(toQuery(state)).toBe('mood=sunset&look=ramp&pack=bold&intensity=0.5&softness=0.5&horizon=0.5&seed=1&format=16x9&filter=grain&strength=0.8')
+    expect(toQuery(state)).toBe('mood=sunset&look=bands&pack=bold&intensity=0.5&softness=0.5&horizon=0.5&seed=1&format=16x9&filter=grain&strength=0.8')
     const scene = withFilter(buildScene(state.look, getPack(state.pack), state.seed, { intensity: 0.5, softness: 0.5, mood: 0.5 }), state)
     expect(scene.output).toMatchObject({ grain: 0.8, ascii: 0, pixel: 0 })
 

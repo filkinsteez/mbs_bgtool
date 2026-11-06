@@ -28,7 +28,7 @@ describe('tool state in the URL', () => {
   it('writes the filter last, only when one is on', () => {
     const state: ToolState = { ...DEFAULT_STATE, filter: 'grain', strength: 0.35 }
     const query = toQuery(state)
-    expect(query).toBe('mood=sunset&look=ramp&pack=bold&intensity=0.5&softness=0.5&horizon=0.5&seed=1&format=16x9&filter=grain&strength=0.35')
+    expect(query).toBe('mood=sunset&look=bands&pack=bold&intensity=0.5&softness=0.5&horizon=0.5&seed=1&format=16x9&filter=grain&strength=0.35')
     expect(parseQuery(new URLSearchParams(query))).toEqual(state)
     expect(toQuery(DEFAULT_STATE)).not.toContain('filter')
   })
@@ -40,7 +40,7 @@ describe('tool state in the URL', () => {
 
   it('fixes looks from another mood and clamps values', () => {
     const state = parseQuery({ mood: 'sunset', look: 'rim', intensity: '7', softness: '-1', seed: '0', format: '2:1', pack: 'neon' })
-    expect(state.look).toBe('sunset.ramp')
+    expect(state.look).toBe('sunset.bands')
     expect(state.intensity).toBe(1)
     expect(state.softness).toBe(0)
     expect(state.seed).toBe(1)

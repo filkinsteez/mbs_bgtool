@@ -3,13 +3,17 @@ import type { Rgb } from './color/srgb'
 
 export type MoodId = 'sunset' | 'contour'
 
+/**
+ * In panel order. Each mood's first look is the one picking the mood switches to, and the picture on its Mood
+ * button (owner, 2026-11-06).
+ */
 export const RECIPE_IDS = [
-  'sunset.ramp',
   'sunset.bands',
+  'sunset.ramp',
   'sunset.blooms',
+  'contour.halo',
   'contour.rim',
   'contour.beam',
-  'contour.halo',
   'contour.streaks',
 ] as const
 
