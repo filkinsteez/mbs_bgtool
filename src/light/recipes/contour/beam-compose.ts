@@ -162,6 +162,9 @@ const AIR_GLOW_LUMINANCE = 0.17
 /** How far (short-side units) outside the frame the light is when its glow is all there. */
 const AIR_GLOW_FROM = 0.15
 
+/** Most falloff (short-side units) of the glow past the frame over a dark of another hue. */
+const OTHER_DARK_CORE = 0.14
+
 /**
  * How much brighter than that least level the glow is at its brightest point in the frame: the
  * very edge turns paler toward white, and the glow shows over more of the frame at thumbnail
@@ -185,7 +188,9 @@ const AIR_GLOW_GAIN = 1.6
  * instead of mixing with the light into a third color. It
  * comes in as the light leaves the frame, and is off (level 0) while any of the light is in the
  * frame. A look may give a seed its own falloff (`core`) and a faster fade (`sharper`, added
- * to the sharpness), so seeds differ under the same line. The glow is (scale * airGlow)^sharpness
+ * to the sharpness), so seeds differ under the same line, and may glow from only the part of the
+ * light where its haze is lit (`seg`), while the whole light (`lightSeg`) decides whether it is
+ * outside the frame. The glow is (scale * airGlow)^sharpness
  * times the level, where scale makes airGlow 1 at the frame's brightest point; the level is in
  * scattered-light units (one unit has the haze's luminance).
  */
@@ -197,9 +202,12 @@ export function airGlowParams(
   fallFrom: number,
   core = AIR_GLOW_CORE,
   sharper = 0,
+  lightSeg: readonly number[] = seg,
 ): { airGlow: number[]; glowLine: number[] } {
   const { halfW, halfH } = frameHalf(aspect)
-  const outside = segmentOutside(seg, halfW, halfH)
+  const outside = segmentOutside(lightSeg, halfW, halfH)
+  // Over a dark of another hue the glow stays narrow whatever the seed, so the dark shows.
+  const falloff = darkMatches(light) ? core : Math.min(core, OTHER_DARK_CORE)
   const clip = clipLuminanceOf(light.haze)
   const target = AIR_GLOW_GAIN * Math.max(luminanceOf(light.haze), light.tail ? fallFrom * clip : AIR_GLOW_LUMINANCE)
   const sharpness = Math.min(3, (light.fall > 1 || !darkMatches(light) ? 3 : 2) + sharper)
@@ -215,10 +223,10 @@ export function airGlowParams(
       [-halfW, y],
       [halfW, y],
     ] as [number, number][])
-      brightest = Math.max(brightest, airGlowAt(p, seg, core))
+      brightest = Math.max(brightest, airGlowAt(p, seg, falloff))
   }
   const level = share > 0 && brightest > 0 ? (share * target * intensity) / Math.max(luminanceOf(light.haze), 1e-6) : 0
-  return { airGlow: [round4(level), round4(core), sharpness, round4(1 / Math.max(brightest, 0.01))], glowLine: seg.map(round4) }
+  return { airGlow: [round4(level), round4(falloff), sharpness, round4(1 / Math.max(brightest, 0.01))], glowLine: seg.map(round4) }
 }
 
 const smoothstep = (a: number, b: number, x: number) => {

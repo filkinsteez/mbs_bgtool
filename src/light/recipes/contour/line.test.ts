@@ -137,8 +137,9 @@ describe('a light outside the frame', () => {
         for (const seed of SEEDS) {
           const [level, falloff, sharpness, scale] = compose(recipe, pack, seed, HIGH_ABOVE).airGlow as number[]
           const glowLine = compose(recipe, pack, seed, HIGH_ABOVE).glowLine as number[]
-          // The top edge's middle is the frame point nearest the light; one scattered unit has the haze's own luminance.
-          expect(level * (scale * airGlowAt([0, -0.5], glowLine, falloff)) ** sharpness, `${recipe.id} ${pack} ${seed}`).toBeGreaterThan(0.999)
+          // The glow's brightest point on the top edge, the edge nearest the light; one scattered unit has the haze's own luminance.
+          const brightest = Math.max(...Array.from({ length: 97 }, (_, i) => airGlowAt([(i / 96 - 0.5) * ASPECT, -0.5], glowLine, falloff)))
+          expect(level * (scale * brightest) ** sharpness, `${recipe.id} ${pack} ${seed}`).toBeGreaterThan(0.999)
           // Beam's light is its whole beam, which these lines put in the frame; Streaks' is the point where its shafts meet.
           const inFrame = LINES.filter((d) => recipe === contourBeam || d.from.every((v) => v >= 0 && v <= 1))
           for (const drag of inFrame) expect((compose(recipe, pack, seed, drag).airGlow as number[])[0], `${recipe.id} ${pack} ${seed}`).toBe(0)
@@ -215,8 +216,10 @@ describe("Beam under a line longer than the frame's short side", () => {
       for (const seed of SEEDS) {
         const own = compose(contourBeam, pack, seed)
         const dragged = compose(contourBeam, pack, seed, owner)
-        expect((dragged.ceiling as number[])[1] / (own.ceiling as number[])[1]).toBeGreaterThan(2)
-        expect((dragged.floorHaze as number[])[1] / (own.floorHaze as number[])[1]).toBeGreaterThan(2)
+        // The seed's dense layer (at the source or at the pool) is far deeper, the other no thinner.
+        const ratios = [(dragged.ceiling as number[])[1] / (own.ceiling as number[])[1], (dragged.floorHaze as number[])[1] / (own.floorHaze as number[])[1]]
+        expect(Math.max(...ratios), `${pack} ${seed}`).toBeGreaterThan(2)
+        expect(Math.min(...ratios), `${pack} ${seed}`).toBeGreaterThan(1)
       }
     }
   })

@@ -599,7 +599,25 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
   }
   if (controls.drag) {
     const line = lineInShorts(controls.drag, aspect)
-    Object.assign(params, beamOnLine(params, line, halfH), airGlowParams(light, [...line.from, ...line.to], aspect, geo(intensity, 0.35, 0.75, 1.6) / 0.75, (params.fall as number[])[0]))
+    // Under a line the seed's layout choices that the line takes over (left or right, upright
+    // or leaning) become where the haze is densest along the beam and how the stage's floor is
+    // turned about the pool.
+    const ownLean = leaning ? Math.sign((params.tilt as number[])[0]) * LEAN_OWN : 0
+    const profile = light.tail ? (onRight ? WARM_SOURCE_HAZE : WARM_POOL_HAZE) : onRight ? SOURCE_HAZE : POOL_HAZE
+    const onLine = beamOnLine(params, line, halfH, profile, ownLean)
+    // A light outside the frame glows from where its haze is lit: the beam's first stretch, or
+    // the haze the pool lights in front of the floor, along the floor's normal (the stage's up,
+    // (sin, -cos) of its turn), so a turned floor sends that glow in at an angle. A broad beam
+    // glows wider.
+    const [cos, sin] = onLine.turn as number[]
+    const { halfW } = frameHalf(aspect)
+    const poolOut = Math.hypot(Math.max(0, Math.abs(line.to[0]) - halfW), Math.max(0, Math.abs(line.to[1]) - halfH))
+    const toward = POOL_GLOW * poolOut
+    const glowSeg = onRight
+      ? [...line.from, line.from[0] + SOURCE_GLOW * (line.to[0] - line.from[0]), line.from[1] + SOURCE_GLOW * (line.to[1] - line.from[1])]
+      : [line.to[0] + toward * sin, line.to[1] - toward * cos, line.to[0] + toward * sin, line.to[1] - toward * cos]
+    const glow = airGlowParams(light, glowSeg, aspect, geo(intensity, 0.35, 0.75, 1.6) / 0.75, (params.fall as number[])[0], broad ? WIDE_GLOW : NARROW_GLOW, 0, [...line.from, ...line.to])
+    Object.assign(params, onLine, glow)
   }
 
   return {
@@ -619,15 +637,55 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
 const LEAN_MOST = 0.7
 
 /**
+ * A leaning seed's own lean under a dragged line (radians, before LEAN_MOST eases it): the
+ * beam leans this much more on the stage and the stage turns back by as much, so the beam still
+ * runs along the line and the floor lies at another angle about the pool.
+ */
+const LEAN_OWN = 0.5
+
+/**
+ * The haze layers of a seed whose haze sits at the beam's source, and of one whose haze sits at
+ * its pool, as factors on the seed's [level, depth] of the ceiling haze and of the floor haze.
+ */
+interface HazeProfile {
+  ceiling: number[]
+  floor: number[]
+}
+const SOURCE_HAZE: HazeProfile = { ceiling: [1.6, 1.8], floor: [0.45, 0.6] }
+const POOL_HAZE: HazeProfile = { ceiling: [0.45, 0.6], floor: [1.4, 1.8] }
+
+/**
+ * The same for a warm light, milder: its dim haze already falls off fast and turns toward its
+ * tail colors, so a long dim stretch would read olive (Lime) or brown (Tan).
+ */
+const WARM_SOURCE_HAZE: HazeProfile = { ceiling: [1.3, 1.4], floor: [0.8, 0.85] }
+const WARM_POOL_HAZE: HazeProfile = { ceiling: [0.8, 0.85], floor: [1.15, 1.4] }
+
+/** Share of the beam, from its start, that a source-heavy seed's light past the frame glows from. */
+const SOURCE_GLOW = 0.35
+
+/**
+ * How far along the floor's normal a pool-heavy seed's light past the frame glows from, as a
+ * share of the pool's distance outside the frame (so it stays outside).
+ */
+const POOL_GLOW = 0.75
+
+/** Falloff (short-side units) of the glow past the frame for a broad and a narrow beam. */
+const WIDE_GLOW = 0.27
+const NARROW_GLOW = 0.15
+
+/**
  * The stage for a dragged line: the beam starts at the line's start and lands at its end, with
  * its pool there. A line near straight down leans the beam; for the rest of its angle the whole
  * stage turns about the pool, all the way round, so a line pointing up gives a beam rising to a
  * pool overhead. The lean eases back to upright as the line turns to point straight up, so
  * turning the line never flips the beam from one side to the other. The beam comes out of the
  * dark at the start, under the ceiling haze, which thins out above it; the longer the line, the
- * longer the beam takes to reach all its light.
+ * longer the beam takes to reach all its light. The seed keeps its own composition along the
+ * line: its haze dense at the source or at the pool (`haze`), and its own lean (`ownLean`, see
+ * LEAN_OWN).
  */
-function beamOnLine(params: Record<string, ParamValue>, line: ShortLine, halfH: number): Record<string, ParamValue> {
+function beamOnLine(params: Record<string, ParamValue>, line: ShortLine, halfH: number, haze: HazeProfile, ownLean: number): Record<string, ParamValue> {
   const num = (key: string) => params[key] as number
   const horizon = num('horizon')
   const focal = num('focal')
@@ -640,7 +698,7 @@ function beamOnLine(params: Record<string, ParamValue>, line: ShortLine, halfH: 
   // The line's angle from straight down, positive toward -x, and the beam's direction on the
   // unturned stage (toward the pool) for the lean it takes of it.
   const fromDown = wrapAngle(line.angle - Math.PI / 2)
-  const lean = LEAN_MOST * Math.tanh(Math.sin(fromDown) / LEAN_MOST)
+  const lean = LEAN_MOST * Math.tanh((Math.sin(fromDown) + ownLean) / LEAN_MOST)
   const down = Math.cos(lean)
   const tiltX = (-Math.tan(lean) * (landingZ - tiltZ) + landingX * tiltZ) / landingZ
   // Screen heights of the beam's start and of where it has all its light, and the world
@@ -655,12 +713,12 @@ function beamOnLine(params: Record<string, ParamValue>, line: ShortLine, halfH: 
   const grow = Math.max(1, line.length)
   const ceiling = params.ceiling as number[]
   const floorHaze = params.floorHaze as number[]
-  const depth = round4(ceiling[1] * grow)
+  const depth = round4(ceiling[1] * grow * haze.ceiling[1])
   return {
     tilt: [round4(Math.min(1, Math.max(-1, tiltX))), tiltZ],
-    ceiling: [ceiling[0], depth, round4(Math.min(4, Math.max(-2, start + halfH + ceiling[2])))],
+    ceiling: [round4(ceiling[0] * haze.ceiling[0]), depth, round4(Math.min(4, Math.max(-2, start + halfH + ceiling[2])))],
     ceilingTop: depth,
-    floorHaze: [floorHaze[0], round4(floorHaze[1] * grow)],
+    floorHaze: [round4(floorHaze[0] * haze.floor[0]), round4(floorHaze[1] * grow * haze.floor[1])],
     haze: round4(num('haze') * Math.sqrt(grow)),
     turn: turnParam(fromDown - lean, line.to, pool),
     source: [startHeight, round4(Math.max(heightAt(full), startHeight + 0.001))],
