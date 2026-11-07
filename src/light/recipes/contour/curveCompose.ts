@@ -244,8 +244,11 @@ export function packBase(base: { hex: string; gain: number }, accentBase: string
  * before it reaches the second light and turns teal) and `faceGain` times for a rim's face, since its thin edge
  * lights little of the frame; Atmospheric's base is Slate where the seed picks a Meta Blue one (packBase). The glow
  * at the frame's edge from a light dragged outside it (offFrameGlow) takes `edge` of the pale color, less than the
- * haze: with more, a Meta Blue seed's edge looks like a Cyan or Ice seed's. Null for other lights, which only their
- * own pack has. Shares in the pale
+ * haze: with more, a Meta Blue seed's edge looks like a Cyan or Ice seed's. A rim has no wide haze of its own, so
+ * where its light is strongest it lights the air about it too (`mist`: that glow's width and weight, short sides,
+ * and its share in the pale color): Bold's a saturated blue, mostly Meta Blue, since dim Cyan has little color left;
+ * Atmospheric's a brighter Steel grey, like light in fog. Null for other lights, which only their own pack has.
+ * Shares in the pale
  * color: `body` of a band's body, `line` of a rim's thin core line, which is near white wherever it shows, so a grey
  * there stays grey, `band` of the rim's color band beside it, `air` of the dim haze around the light and `face` of a
  * rim's face. The band, the haze and the face are at or below the light's own level, where the tone curve doesn't
@@ -267,15 +270,39 @@ export function packAccent(
   edge: number
   base: PackColor | null
   second: PackColor | null
+  mist: { width: number; weight: number; pale: number } | null
 } | null {
   if (light.hex.toUpperCase() !== '#0064E0') return null
   const named = (name: string) => pack.colors.find((c) => c.name === name) ?? null
-  const accent = { body: 0, line: 0, band: 0, air: 0, face: 0, haze: 1, faceGain: 1, edge: 0, base: null, second: null }
+  const accent = { body: 0, line: 0, band: 0, air: 0, face: 0, haze: 1, faceGain: 1, edge: 0, base: null, second: null, mist: null }
   switch (pack.id) {
     case 'bold':
-      return { ...accent, pale: named('Cyan'), body: 0.5, line: 0.5, band: 0.15, air: 0.8, face: 0.6, haze: 1.5, faceGain: 3 }
+      return {
+        ...accent,
+        pale: named('Cyan'),
+        body: 0.5,
+        line: 0.5,
+        band: 0.15,
+        air: 0.8,
+        face: 0.6,
+        haze: 1.5,
+        faceGain: 3,
+        mist: look === 'rim' ? { width: 0.12, weight: 0.12, pale: 0.3 } : null,
+      }
     case 'atmospheric':
-      return { ...accent, pale: named('Steel'), line: 0.6, band: 0.4, air: 1, face: 1, haze: 2, faceGain: 3, edge: 0.6, base: named('Slate') }
+      return {
+        ...accent,
+        pale: named('Steel'),
+        line: 0.6,
+        band: 0.4,
+        air: 1,
+        face: 1,
+        haze: 2,
+        faceGain: 5,
+        edge: 0.6,
+        base: named('Slate'),
+        mist: look === 'rim' ? { width: 0.14, weight: 0.14, pale: 1 } : null,
+      }
     case 'elemental':
       return look === 'rim'
         ? { ...accent, pale: named('Forest'), face: 1, haze: SECOND_HAZE, faceGain: 4.5, second: named('Lime') }
@@ -332,6 +359,7 @@ export function accentParams(
   base: string | null
   second: string | null
   haze: number
+  mist: { width: number; weight: number; pale: number } | null
   params: Record<string, number | number[]>
 } {
   const pale = accent?.pale?.hex ?? null
@@ -340,8 +368,9 @@ export function accentParams(
   const faceGain = accent?.faceGain ?? 1
   const haze = accent?.haze ?? 1
   const base = accent?.base?.hex ?? null
+  const mist = accent?.mist ?? null
   const second = accent?.second ?? null
-  if (!second) return { pale, body, line, band, air, face, faceGain, edge, base, second: null, haze, params: {} }
+  if (!second) return { pale, body, line, band, air, face, faceGain, edge, base, second: null, haze, mist, params: {} }
   const [fw, fh] = frameSize(aspect)
   const drift = warmDrift(second.hex)
   const start: Vec2 | null = drag ? [(drag.from[0] - 0.5) * fw, (drag.from[1] - 0.5) * fh] : null
@@ -371,7 +400,7 @@ export function accentParams(
       ...(drift ? { [`air${i}Drift`]: drift.ratios, [`air${i}DriftShape`]: [drift.knee, drift.sharpness] } : {}),
     })
   })
-  return { pale, body, line, band, air, face, faceGain, edge, base, second: second.hex, haze, params }
+  return { pale, body, line, band, air, face, faceGain, edge, base, second: second.hex, haze, mist, params }
 }
 
 /**

@@ -449,6 +449,8 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     // The core line leans toward the pale color; the color band beside it only as a band's body does and less, so
     // the edge keeps the light's own color.
     ...(accent.pale ? { n1Pale: accent.line, n2Pale: accent.band, f1Pale: accent.air, f2Pale: accent.air, f3Pale: accent.face } : {}),
+    // Where a Meta Blue light is strongest it lights the air about the edge in its pack's pale color (packAccent).
+    ...(accent.mist ? { f2Width: accent.mist.width, f2Weight: accent.mist.weight, f2Pale: accent.mist.pale } : {}),
     ...accent.params,
     ...offFrameGlow(controls.drag, light.hex, aspect, accent.edge),
     // A Tan edge's glow is two bands side by side just inside the edge, a flat stretch a little above Tan's level
