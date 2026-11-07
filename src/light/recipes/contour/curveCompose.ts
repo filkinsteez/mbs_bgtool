@@ -943,8 +943,8 @@ export function levelForLightness(hex: string, L: number, pale = 0, cap = 40): n
  * (radius 0.65 short sides, the size of the recipe's smallest) the band holds its level to about 0.035 in, is half of
  * it at 0.06 and gone by 0.13: a near gaussian RING_BAND_WIDTH wide, RING_BAND_OFFSET inside the curve. Wider on a
  * larger ring, its inside glowed for a tenth of the frame. Outside, line and band stop within about RING_EDGE of the
- * curve. A light color (Cyan, Yellow, Lime, Ice) has its rim at its own lightness up to RING_LIGHT_RIM_L: under its
- * own lightness a paler tint of it reads as that color only from L 0.78 up, and lower down as olive or grey.
+ * curve. A light cool color (Cyan, Ice) has its rim at its own lightness up to RING_LIGHT_RIM_L: under its own
+ * lightness a paler tint of it reads as that color only from L 0.78 up, and lower down as grey.
  */
 const RING_RIM_L = 0.74
 const RING_LIGHT_RIM_L = 0.84
@@ -954,53 +954,73 @@ const RING_BAND_WIDTH = 0.035
 const RING_BAND_OFFSET = 0.015
 const RING_EDGE = { MaskInset: -0.002, MaskSoft: 0.001 }
 /**
- * Shares of the line and the band in white (the ring's pale color), so the rim reads pastel. A band keeps
- * RING_KEEP_CHROMA of its color's chroma on the rim (a Cyan band moved further to grey reads as Atmospheric's Ice), and
- * a warm light's band all of it: as the band fades inside, a warm color moved to grey reads olive, brown or mauve, and
- * a red one turns pink while its own light turns orange toward white.
+ * Shares of the line, the band and the glows in white (the ring's pale color), so the rim reads pastel. A cool band
+ * keeps RING_KEEP_CHROMA of its color's chroma on the rim (a Cyan band moved further to grey reads as Atmospheric's
+ * Ice). A warm ring is pastel the way bright light is: its rim sits RING_WARM_WHITE of the way from its light's own
+ * lightness to white, and its line and band move to white as far as keeps their hue within RING_WARM_HUE degrees of
+ * the light's own at that lightness, up to RING_WARM_PALE (pale lime-cream for Lime, cream for Tan, apricot for
+ * Orange-red, whose white share turns pink while its own light turns amber toward white). Its glows keep their color:
+ * dim and moved to grey, a warm color reads olive, brown or mauve.
  */
 const RING_PALE = { line: 0.6, band: 0.5 }
-const RING_WARM_PALE = { line: 0.2, band: 0 }
 const RING_KEEP_CHROMA = 2 / 3
-const ringPales = new Map<string, { line: number; band: number }>()
+const RING_WARM_WHITE = 0.6
+const RING_WARM_PALE = 0.4
+const RING_WARM_HUE = 8
+const ringPales = new Map<string, { line: number; band: number; glow: number }>()
 
 function ringRimL(hex: string): number {
-  return Math.min(RING_LIGHT_RIM_L, Math.max(RING_RIM_L, linearToOklab(hexToLinear(hex))[0]))
+  const own = linearToOklab(hexToLinear(hex))[0]
+  return warmTail(hex) ? own + (1 - own) * RING_WARM_WHITE : Math.min(RING_LIGHT_RIM_L, Math.max(RING_RIM_L, own))
 }
 
-function ringPale(hex: string): { line: number; band: number } {
-  if (warmTail(hex)) return RING_WARM_PALE
+/** Chroma and hue (degrees) of `hex` at Oklab lightness `L` through the tone curve, with a share `pale` moved to grey at the same luminance. */
+function toneAt(hex: string, L: number, pale: number): [number, number] {
+  const light = hexToLinear(hex)
+  const grey = linearLuminance(light)
+  const color = light.map((v) => v + (grey - v) * pale)
+  const [, a, b] = linearToOklab(toneCurve(color.map((v) => v * levelForLightness(hex, L, pale))))
+  return [Math.hypot(a, b), (Math.atan2(b, a) * 180) / Math.PI]
+}
+
+/** The largest share up to `most` that `keeps` (true at 0, false past some share). */
+function largestShare(most: number, keeps: (share: number) => boolean): number {
+  if (keeps(most)) return most
+  let lo = 0
+  let hi = most
+  for (let i = 0; i < 20; i++) {
+    const mid = (lo + hi) / 2
+    if (keeps(mid)) lo = mid
+    else hi = mid
+  }
+  return lo
+}
+
+function ringPale(hex: string): { line: number; band: number; glow: number } {
   const known = ringPales.get(hex)
   if (known) return known
   const L = ringRimL(hex)
-  const light = hexToLinear(hex)
-  const grey = linearLuminance(light)
-  const chroma = (pale: number) => {
-    const color = light.map((v) => v + (grey - v) * pale)
-    const [, a, b] = linearToOklab(toneCurve(color.map((v) => v * levelForLightness(hex, L, pale))))
-    return Math.hypot(a, b)
+  const [chroma, hue] = toneAt(hex, L, 0)
+  let pale: { line: number; band: number; glow: number }
+  if (warmTail(hex)) {
+    const turn = (share: number) => Math.abs(((toneAt(hex, L, share)[1] - hue + 540) % 360) - 180)
+    const share = round4(largestShare(RING_WARM_PALE, (s) => turn(s) <= RING_WARM_HUE))
+    pale = { line: share, band: share, glow: 0 }
+  } else {
+    const band = round4(largestShare(RING_PALE.band, (s) => toneAt(hex, L, s)[0] >= RING_KEEP_CHROMA * chroma))
+    pale = { line: RING_PALE.line, band, glow: band }
   }
-  const keep = RING_KEEP_CHROMA * chroma(0)
-  let band = RING_PALE.band
-  if (chroma(band) < keep) {
-    let lo = 0
-    for (let i = 0; i < 20; i++) {
-      const mid = (lo + band) / 2
-      if (chroma(mid) >= keep) lo = mid
-      else band = mid
-    }
-    band = lo
-  }
-  const pale = { line: RING_PALE.line, band: round4(band) }
   ringPales.set(hex, pale)
   return pale
 }
 /**
  * The band's Oklab lightness at the center of the hot spot (light field 2), the rest of the rim about four fifths of
- * it. The extra light goes pale the way the light's own color does toward white, with no share in white: Meta Blue
- * moved to grey turns violet, while its own light turns toward cyan.
+ * it; a warm ring's is RING_WARM_HOT of the way from its rim's to white. The extra light goes pale the way the light's
+ * own color does toward white, with no share in white: Meta Blue moved to grey turns violet, while its own light turns
+ * toward cyan.
  */
 const RING_HOT_L = 0.9
+const RING_WARM_HOT = 0.5
 /** Faint glows inside and outside, times the rim's level. Wider or brighter, two rings' insides fill their overlap like a sail. */
 const RING_INSIDE = 0.04
 const RING_OUTSIDE = 0.015
@@ -1029,15 +1049,16 @@ export function ringDrift(drift: { ratios: number[]; knee: number; sharpness: nu
 export function ringParts(prefix: string, hex: string): Record<string, number | number[]> {
   const rim = ringLevel(hex)
   const pale = ringPale(hex)
-  const hot = Math.max(0, levelForLightness(hex, RING_HOT_L) - (1 - RING_LINE) * rim)
+  const hotL = warmTail(hex) ? ringRimL(hex) + (1 - ringRimL(hex)) * RING_WARM_HOT : RING_HOT_L
+  const hot = Math.max(0, levelForLightness(hex, hotL) - (1 - RING_LINE) * rim)
   const line = { Width: RING_LINE_WIDTH, Shape: 8, Side: 1, ...RING_EDGE, Offset: 0, Grow: 0 }
   const band = { Width: RING_BAND_WIDTH, Shape: 8, Side: 1, ...RING_EDGE, Offset: RING_BAND_OFFSET, LightGamma: 1, Grow: 0 }
   const parts: Record<string, number | number[]> = {
     ...prefixed('n1', { ...line, Weight: round4(RING_LINE * rim), Light: 1, LightGamma: 1, Pale: pale.line }),
     ...prefixed('n2', { ...band, Weight: round4((1 - RING_LINE) * rim), Light: 1, Pale: pale.band }),
     ...prefixed('n3', { ...band, Weight: round4(hot), Light: 2, Pale: 0 }),
-    ...prefixed('f1', { Weight: round4(RING_INSIDE * rim), Width: 0.05, Side: 1, Light: 1, LightGamma: 1, MaskSoft: 0.01, Pale: pale.band }),
-    ...prefixed('f2', { Weight: round4(RING_OUTSIDE * rim), Width: 0.04, Side: 2, Light: 1, LightGamma: 1, MaskSoft: 0.01, Pale: pale.band }),
+    ...prefixed('f1', { Weight: round4(RING_INSIDE * rim), Width: 0.05, Side: 1, Light: 1, LightGamma: 1, MaskSoft: 0.01, Pale: pale.glow }),
+    ...prefixed('f2', { Weight: round4(RING_OUTSIDE * rim), Width: 0.04, Side: 2, Light: 1, LightGamma: 1, MaskSoft: 0.01, Pale: pale.glow }),
     f3Weight: 0,
   }
   return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
