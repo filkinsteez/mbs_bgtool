@@ -16,6 +16,7 @@ import {
   offFrameSpread,
   packAccent,
   packBase,
+  paleBridge,
   ringHues,
   ringParts,
   suitsRings,
@@ -488,7 +489,7 @@ export function haloEmitters(ctx: RecipeContext): EmitterSettings[] {
         })
       : null
     // With more colors the rim's hue turns along it, like a thin film catching the light. Where two colors meet,
-    // the light of both adds, so the stretch between them is lighter than either and never a dark or muddy mix.
+    // the stretch between them is lighter than either and paler (paleBridge), never a dark or muddy mix.
     const color = slotColor(ctx, ctx.num(`ring${i}Color`))
     const ringGain = ctx.num(`ring${i}Gain`)
     const slots = ctx.vec(`ring${i}StopColor`).map(Math.round)
@@ -499,7 +500,7 @@ export function haloEmitters(ctx: RecipeContext): EmitterSettings[] {
       slots[0] > 0
         ? placed.flatMap((s, k) => {
             const prev = placed[k - 1]
-            const bridge = prev && prev.slot !== s.slot ? [{ t: (prev.t + s.t) / 2, color: prev.color.map((v, c) => v + s.color[c]), gain: ringGain }] : []
+            const bridge = prev && prev.slot !== s.slot ? [{ t: (prev.t + s.t) / 2, color: paleBridge(prev.color, s.color), gain: ringGain }] : []
             return [...bridge, { t: s.t, color: s.color, gain: ringGain }]
           })
         : [{ t: 0, color, gain: ringGain }]

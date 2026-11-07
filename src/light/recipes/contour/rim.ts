@@ -18,6 +18,7 @@ import {
   offFrameSpread,
   packAccent,
   packBase,
+  paleBridge,
   pickBase,
   pickLight,
   pickWeighted,
@@ -65,13 +66,6 @@ const STOPS = 6
 const LINE_HUE_HOLD = 0.2
 /** Color slots of a line's colors after the light's own (lineHues). */
 const LINE_HUE_SLOTS = [4, 7, 8]
-/**
- * Where two of a rim's colors meet, the stretch between has this times the lighter one's luminance, and this share
- * of it is white light (readStops), so it reads as the pale meeting of the two (contour-light-line passes through a
- * pale white between its blue and yellow), not as a third color.
- */
-const BRIDGE_LIFT = 1.1
-const BRIDGE_PALE = 0.6
 /**
  * How strongly a logo crop's edges face a dragged line's way. An edge turned fully away keeps 1 minus this of the
  * light; at 0.85, crops whose edges all ran along the line went nearly black (SHARED.md, 2026-11-05 11:22 AM).
@@ -640,9 +634,8 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
 }
 
 /**
- * The emission stops in their order along the curve. Where two colors meet, the light of both adds halfway between
- * them, so the stretch between is lighter than either and never a dark or muddy mix: BRIDGE_LIFT times the lighter
- * side's luminance, since at their full sum a line's glow swells there, and paler (BRIDGE_PALE).
+ * The emission stops in their order along the curve. Where two colors meet, the stretch between is lighter than
+ * either and paler (paleBridge), never a dark or muddy mix.
  */
 function readStops(ctx: RecipeContext): EmissionStop[] {
   const count = Math.round(ctx.num('stops'))
@@ -653,12 +646,8 @@ function readStops(ctx: RecipeContext): EmissionStop[] {
   return placed.flatMap((s, i) => {
     const prev = placed[i - 1]
     if (!prev || prev.slot === s.slot) return [{ t: s.t, color: s.color, gain: 1 }]
-    const sum = prev.color.map((v, c) => v + s.color[c])
-    const scale = Math.min(1, (BRIDGE_LIFT * Math.max(luminance(prev.color), luminance(s.color))) / Math.max(1e-9, luminance(sum)))
-    const bridge = sum.map((v) => v * scale)
-    const grey = luminance(bridge)
     return [
-      { t: (prev.t + s.t) / 2, color: bridge.map((v) => v + (grey - v) * BRIDGE_PALE), gain: 1 },
+      { t: (prev.t + s.t) / 2, color: paleBridge(prev.color, s.color), gain: 1 },
       { t: s.t, color: s.color, gain: 1 },
     ]
   })

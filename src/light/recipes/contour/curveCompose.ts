@@ -844,19 +844,47 @@ export function dragLight(
 }
 
 /**
+ * Where two of a curve's colors meet, the stretch between has this times the lighter one's luminance, and this share
+ * of it is white light (paleBridge), so it reads as the pale meeting of the two (contour-light-line passes through a
+ * pale white between its blue and yellow), not as a third color.
+ */
+const BRIDGE_LIFT = 1.1
+const BRIDGE_PALE = 0.6
+const linearLuminance = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+/**
+ * The light halfway between two colors along a curve: the sum of both, held to BRIDGE_LIFT times the lighter one's
+ * luminance and BRIDGE_PALE of the way to grey. At their full sum Meta Blue and Lime met as a bright mint, a color
+ * neither pack has.
+ */
+export function paleBridge(a: readonly number[], b: readonly number[]): number[] {
+  const sum = a.map((v, c) => v + b[c])
+  const scale = Math.min(1, (BRIDGE_LIFT * Math.max(linearLuminance(a), linearLuminance(b))) / Math.max(1e-9, linearLuminance(sum)))
+  const bridge = sum.map((v) => v * scale)
+  const grey = linearLuminance(bridge)
+  return bridge.map((v) => v + (grey - v) * BRIDGE_PALE)
+}
+
+/**
+ * A ring's rim line: thin and bright enough that the tone curve takes its core toward white (the iridescent-rings
+ * reference's rim is a pale line at Oklab L about 0.72 around a tinted inside).
+ */
+const RING_RIM = { weight: 2.5, width: 0.0028 }
+
+/**
  * A thin glass rim under a key prefix (the iridescent-rings reference): a fine bright line on the curve with a soft
- * glow on both sides, the inside faintly lit like a translucent body and a faint glow outside. All parts follow
- * light field 1.
+ * glow on its inside only, so the outside edge stays crisp, the inside faintly lit like a translucent body for
+ * about a twelfth of the short side, and a faint glow outside. All parts follow light field 1.
  */
 export function ringParts(prefix: string): Record<string, number | number[]> {
   // The inside glow fades across the line instead of stopping at it: where two rings cross, their inside glows add,
   // and with a crisp edge the overlap read as a filled sail between the arcs, most of all under a drag.
   const parts: Record<string, number | number[]> = {
-    ...prefixed('n1', { Weight: 0.9, Width: 0.0035, Shape: 8, Side: 0, Offset: 0, Light: 1, LightGamma: 1, Grow: 0 }),
-    ...prefixed('n2', { Weight: 0.4, Width: 0.02, Shape: 4, Side: 0, Offset: 0, Light: 1, LightGamma: 1, Grow: 0 }),
+    ...prefixed('n1', { Weight: RING_RIM.weight, Width: RING_RIM.width, Shape: 8, Side: 0, Offset: 0, Light: 1, LightGamma: 1, Grow: 0 }),
+    ...prefixed('n2', { Weight: 0.45, Width: 0.024, Shape: 4, Side: 1, Offset: 0, Light: 1, LightGamma: 1, Grow: 0, MaskSoft: 0.003 }),
     n3Weight: 0,
-    ...prefixed('f1', { Weight: 0.2, Width: 0.12, Side: 1, Light: 1, LightGamma: 1, MaskSoft: 0.14 }),
-    ...prefixed('f2', { Weight: 0.05, Width: 0.09, Side: 2, Light: 1, LightGamma: 1, MaskSoft: 0.01 }),
+    ...prefixed('f1', { Weight: 0.2, Width: 0.08, Side: 1, Light: 1, LightGamma: 1, MaskSoft: 0.14 }),
+    ...prefixed('f2', { Weight: 0.025, Width: 0.06, Side: 2, Light: 1, LightGamma: 1, MaskSoft: 0.01 }),
     f3Weight: 0,
   }
   return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
@@ -903,14 +931,16 @@ export function suitsRings(light: PackColor): boolean {
  * The pack colors a thin ring's light runs through along its length, the light's own color first, as the hue of a
  * thin film turns with the angle around it (iridescent-rings reference). Each is the next one in pack order, among
  * the colors light enough to be a rim's light (Forest, Plum, Slate and Near-black are not): Bold's Meta Blue into
- * Cyan, Elemental's into Lime, Atmospheric's into Ice and Steel greys. A Tan ring stays one color: its neighbors are
- * dark, and its dim fall (toward copper) and Lime's (toward Forest) can't share a ring.
+ * Cyan, Atmospheric's into Ice and Steel greys. Elemental's rings stay one color: Meta Blue and Lime add to a teal
+ * and a green neither pack has (lineHues keeps them apart on a line too), and on a thin rim that stretch was over a
+ * fifth of the light. A Tan ring stays one color: its neighbors are dark, and its dim fall (toward copper) and
+ * Lime's (toward Forest) can't share a ring.
  */
 export function ringHues(pack: ColorPack, light: PackColor): PackColor[] {
   const named = (names: string[]) => names.flatMap((name) => pack.colors.find((c) => c.name === name) ?? [])
   const next: Record<ColorPack['id'], Record<string, string[]>> = {
     bold: { 'Meta Blue': ['Cyan'], Cyan: ['Meta Blue'], 'Orange-red': ['Yellow'] },
-    elemental: { 'Meta Blue': ['Lime'], Lime: ['Meta Blue'] },
+    elemental: {},
     atmospheric: { 'Meta Blue': ['Ice', 'Steel'], Ice: ['Meta Blue'], Steel: ['Ice', 'Meta Blue'] },
   }
   return [light, ...named(next[pack.id][light.name] ?? [])]
