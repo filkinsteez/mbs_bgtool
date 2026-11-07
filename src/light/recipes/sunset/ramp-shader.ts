@@ -89,6 +89,8 @@ uniform vec2 uOcclude;       // how much the land hides the sun glow, and the wi
 
 uniform vec3 uBridge;        // amount, lift toward white, luminance below which it fades out
 uniform vec3 uBridgeTint;    // luminance 1
+uniform vec3 uBandTint;      // under a field of glints, the low sky's pale tint that the band along the water's far edge takes
+                             // away from the light, at luminance 1
 uniform float uBridgeSky;    // how far the bridge's tint turns neutral toward the sky's side of it
 uniform int uDuskStop;       // a dark dusk band low in the sky that the bridge leaves alone (-1: none)
 
@@ -613,6 +615,8 @@ const float SHEEN_DEPTH = 0.18;
 const float WATER_BRIDGE = 0.3;
 // The same where a field of glints' warm strip and the blue water past it meet half and half.
 const float STRIP_BRIDGE = 0.6;
+// How fully the band along the water's far edge under a field of glints takes the reflected sky's own tint.
+const float BAND_TINT = 0.85;
 // How much less the water near the horizon squeezes the sky it mirrors under the sun, and how much more far to its sides.
 const float GATHER = 0.5;
 
@@ -642,6 +646,8 @@ vec3 rampScene(vec2 p) {
   float brighter = 0.0;
   float glinting = 0.0;
   float sheen = 0.0;
+  float band = 0.0;
+  float bandSide = 0.0;
   vec2 mirrored = p;
   if (uGround != 0) {
     line = groundLine(p.x);
@@ -733,7 +739,12 @@ vec3 rampScene(vec2 p) {
         // bridge, which fades toward the viewer: the water is paler there and deeper near the viewer.
         // Its light changes along the edge, so it never runs as an even band.
         float edgeLight = 1.0 + 0.4 * edgeFbm(p.x * 1.3 + 5.3, uSeed + 1021, 2);
-        sheen = uWaterLift.w * edgeLight * exp(-max(depth - bankDepth - uWaterLift.y, 0.0) / SHEEN_DEPTH) * smoothstep(bankDepth + 0.5 * uWaterLift.y, bankDepth + uWaterLift.y, depth);
+        float sheenShape = exp(-max(depth - bankDepth - uWaterLift.y, 0.0) / SHEEN_DEPTH) * smoothstep(bankDepth + 0.5 * uWaterLift.y, bankDepth + uWaterLift.y, depth);
+        sheen = uWaterLift.w * edgeLight * sheenShape;
+        // The band along the far edge under a field of glints: the strip's end and the sheen past it,
+        // and how far it lies off to the sun's sides.
+        band = uSunGlints.x * max(4.0 * past * (1.0 - past), sheenShape);
+        bandSide = smoothstep(0.3, 1.0, abs(across) / max(uGlowSpread.y, 1e-3));
         mirrored = vec2(p.x, line - up);
         q = mirrored;
         if (uShore.x > 0.0 && mirrored.y > top) {
@@ -774,6 +785,13 @@ vec3 rampScene(vec2 p) {
   // through the light's own pale tint, cream to near-white, as the sky's bridge does: mixed, the
   // two make lavender or grey.
   water += STRIP_BRIDGE * uSunGlints.x * 4.0 * past * (1.0 - past) * luminance(water) * uBridgeTint;
+  // The band takes the reflected sky's own color at its own lightness: the light's pale tint near
+  // the light, going over through white to the low sky's clear pale tint toward the sides, never
+  // the grey, lavender or mint of the two mixed.
+  if (band > 1e-3) {
+    vec3 tint = mix(mix(uBridgeTint, vec3(1.0), clamp(2.0 * bandSide, 0.0, 1.0)), uBandTint, clamp(2.0 * bandSide - 1.0, 0.0, 1.0));
+    water = mix(water, luminance(water) * tint, BAND_TINT * band);
+  }
   // Light adds: the glints lighten the water under them and never darken it toward grey.
   if (glinting > 1e-3) {
     vec3 sun = luminance(uSunGlowColor[0]) > 1e-4 ? uSunGlowColor[0] : uGlowColor[0];

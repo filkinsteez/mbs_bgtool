@@ -466,6 +466,8 @@ const SIDE_SHAPE = 3
 const SIDE_SOFT = 0.22
 /** Under a sideways line, an open sky's edges' own S-shaped wave at most, before the room scale (base units at their ends). */
 const SIDE_WAVE = 0.05
+/** How deep the pale tint of the low sky is that the band along the water's far edge takes away from the light (0 white, 1 the color itself). */
+const BAND_DEPTH = 0.35
 /** Under a sideways line, the most lean, bow and wave all of an open sky's edges share, per short side the frame's height runs past one (base units at their ends). */
 const SIDE_SHARED = [0.2, 0.16, 0.16]
 /** Under a long line, how far Elemental's bridge lifts toward white. */
@@ -1286,6 +1288,9 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // Elemental's veil takes its light's own color near the light, so the pale side reads Tan or
     // Lime; the other packs take the bridge's warm white there.
     veilNear: packId === 'elemental' ? paleTint(look.light, 0.6) : [0, 0, 0],
+    // Under a field of glints the band along the water's far edge mirrors the sky just above the
+    // horizon, which away from the light is a clear pale tint of the low sky.
+    bandTint: paleTint(look.lowSky, BAND_DEPTH),
     glowVary: 0,
     // A sun's glow is tallest near the sun and narrows away from it along the horizon, keeping its
     // light, so its edges are never parallel: far from the sun it reaches up only a share of its
