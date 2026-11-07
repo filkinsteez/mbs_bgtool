@@ -133,6 +133,11 @@ const T = {
   // line's core peaks 0.06 to 0.08 under its hex when it reads as its color (Yellow, Lime at a 12 px core of 180,
   // Cyan at 8 px); thinner it reads lavender, and an Orange-red or Tan line on Meta Blue reads pink or mauve.
   line: { ownL: 0.09, length: 0.3, thickness: 0.015, elongation: 8, contrast: 0.06 },
+  // A dark pack color under the present share counts as a shape (a bank, hill or ground) when its largest piece at its
+  // own lightness (within `ownL` of its hex) covers `share` of the frame, is `thickness` thick (share of the short side)
+  // and `contrast` from what lies 3 to 6 px beside it, and is no corner: a piece touching two adjacent edges and
+  // spanning under `cornerSpan` of both is a corner shadow.
+  darkShape: { ownL: 0.08, share: 0.01, thickness: 0.03, contrast: 0.12, cornerSpan: 0.3 },
   // --main bright (the 11:30 AM rule of 2026-11-05, withdrawn at 12:50 PM): the main light is the color of the frame's
   // brightest `bright.share`, short of the near-white core (L `bright.whiteL` and up at chroma under `bright.whiteC`),
   // where a pixel is a colored light's when it keeps `bright.onPath` of that color's path chroma. An Ice light whose
@@ -154,6 +159,9 @@ const CLEAN_MIXES = {
   atmospheric: 'all',
 }
 const WARM = { bold: ['Yellow', 'Orange-red'], elemental: ['Lime', 'Tan'], atmospheric: [] }
+// The dark pack colors that can count as a shape (T.darkShape): Elemental's Forest and Plum banks and grounds, and
+// Atmospheric's Slate. Near-black is left out: a near-black corner is a shadow.
+const DARK_SHAPES = { bold: [], elemental: ['Forest', 'Plum'], atmospheric: ['Slate'] }
 const NEUTRALS = { atmospheric: ['Ice', 'Steel', 'Slate', 'Near-black'] }
 
 // The light each Contour reference shows (SHARED.md, "Reference images"), for its main-light check: any of these
@@ -289,9 +297,12 @@ try {
     const Lmin = L0 * Math.cbrt(2 ** -minStops)
     const C = new Float32Array(LSTEPS + 1).fill(NaN)
     const h = new Float32Array(LSTEPS + 1).fill(NaN)
+    // Up to and including the hex's own step: the path above it starts at the next step, so a hex whose lightness
+    // rounds up would leave its own step empty and its exact color would read as outside the pack.
+    const own = Math.round(L0 * LSTEPS)
     for (let i = 0; i <= LSTEPS; i++) {
       const L = i / LSTEPS
-      if (L >= Lmin && L <= L0) {
+      if (L >= Lmin && i <= own) {
         C[i] = (C0 * L) / L0
         h[i] = h0
       }
@@ -702,6 +713,7 @@ try {
     const tinted = Int16Array.from(bucket)
     const tintCounts = Float64Array.from(shares)
     const lines = {}
+    const darkShapes = {}
     if (!contour) {
       const at = (name) => k.colors.findIndex((c) => c.name === name)
       const meta = at('Meta Blue')
@@ -744,18 +756,14 @@ try {
         }
         return both
       }
-      for (const [i, c] of k.colors.entries()) {
-        if (c.lab[0] < T.lightL || tintCounts[i] >= T.present * counted) continue
-        // Bold's Orange-red paler than its hex is peach or cream, which Yellow's deep tones reach too: its line must be
-        // at its own brightness.
-        const warmOverlap = packId === 'bold' && c.name === 'Orange-red'
-        const own = (p) => tinted[p] === i && Ls[p] >= c.path.L0 - T.line.ownL && (!warmOverlap || Ls[p] <= c.path.L0)
-        const seenLine = new Uint8Array(n)
+      // The largest connected piece (8 neighbours) of the pixels `own` accepts.
+      const largestPiece = (own) => {
+        const seen = new Uint8Array(n)
         let piece = []
         for (let p = 0; p < n; p++) {
-          if (seenLine[p] || !own(p)) continue
+          if (seen[p] || !own(p)) continue
           const list = [p]
-          seenLine[p] = 1
+          seen[p] = 1
           for (let head = 0; head < list.length; head++) {
             const q = list[head]
             const x = q % W
@@ -765,15 +773,19 @@ try {
               const yy = y + dy
               if (xx < 0 || xx >= W || yy < 0 || yy >= H) continue
               const s = yy * W + xx
-              if (!seenLine[s] && own(s)) {
-                seenLine[s] = 1
+              if (!seen[s] && own(s)) {
+                seen[s] = 1
                 list.push(s)
               }
             }
           }
           if (list.length > piece.length) piece = list
         }
-        if (!piece.length) continue
+        return piece
+      }
+      // A piece's extent, its brightest L, and how far it is from what lies 3 to 6 px beside it (of 320), past the
+      // lens's soft shoulder (mean Oklab distance from the piece's mean color).
+      const pieceStats = (piece) => {
         let [x0, x1, y0, y1] = [W, -1, H, -1]
         const inPiece = new Uint8Array(n)
         const mean = [0, 0, 0]
@@ -787,9 +799,6 @@ try {
           inPiece[p] = 1
           for (let j = 0; j < 3; j++) mean[j] += labs[3 * p + j] / piece.length
         }
-        const across = x1 - x0 >= y1 - y0
-        const span = across ? x1 - x0 + 1 : y1 - y0 + 1
-        // Beside the line: 3 to 6 px from it (of 320), past the lens's soft shoulder.
         const near = dilate(inPiece, 2)
         const far = dilate(inPiece, 6)
         let ring = 0
@@ -799,8 +808,38 @@ try {
           ring++
           diff += Math.hypot(labs[3 * p] - mean[0], labs[3 * p + 1] - mean[1], labs[3 * p + 2] - mean[2])
         }
-        const peakL = piece.reduce((top, p) => Math.max(top, Ls[p]), 0)
-        lines[c.name] = { share: piece.length / counted, length: span / (across ? W : H), thickness: piece.length / span / Math.min(W, H), elongation: (span * span) / piece.length, contrast: ring ? diff / ring : 0, peakL }
+        return { x0, x1, y0, y1, contrast: ring ? diff / ring : 0, peakL: piece.reduce((top, p) => Math.max(top, Ls[p]), 0) }
+      }
+      for (const [i, c] of k.colors.entries()) {
+        if (c.lab[0] < T.lightL || tintCounts[i] >= T.present * counted) continue
+        // Bold's Orange-red paler than its hex is peach or cream, which Yellow's deep tones reach too: its line must be
+        // at its own brightness.
+        const warmOverlap = packId === 'bold' && c.name === 'Orange-red'
+        const piece = largestPiece((p) => tinted[p] === i && Ls[p] >= c.path.L0 - T.line.ownL && (!warmOverlap || Ls[p] <= c.path.L0))
+        if (!piece.length) continue
+        const s = pieceStats(piece)
+        const across = s.x1 - s.x0 >= s.y1 - s.y0
+        const span = across ? s.x1 - s.x0 + 1 : s.y1 - s.y0 + 1
+        lines[c.name] = { share: piece.length / counted, length: span / (across ? W : H), thickness: piece.length / span / Math.min(W, H), elongation: (span * span) / piece.length, contrast: s.contrast, peakL: s.peakL }
+      }
+      // (c) A dark pack color's shape (DARK_SHAPES), its largest piece at its own lightness.
+      for (const name of DARK_SHAPES[packId]) {
+        const i = k.colors.findIndex((c) => c.name === name)
+        if (tintCounts[i] >= T.present * counted) continue
+        const L0 = k.colors[i].path.L0
+        const piece = largestPiece((p) => tinted[p] === i && Math.abs(Ls[p] - L0) <= T.darkShape.ownL)
+        if (!piece.length) continue
+        const s = pieceStats(piece)
+        const [w, h] = [(s.x1 - s.x0 + 1) / W, (s.y1 - s.y0 + 1) / H]
+        const side = (s.x0 === 0 || s.x1 === W - 1) && (s.y0 === 0 || s.y1 === H - 1)
+        darkShapes[name] = {
+          share: piece.length / counted,
+          width: +w.toFixed(3),
+          height: +h.toFixed(3),
+          thickness: piece.length / Math.max(s.x1 - s.x0 + 1, s.y1 - s.y0 + 1) / Math.min(W, H),
+          corner: side && w < T.darkShape.cornerSpan && h < T.darkShape.cornerSpan,
+          contrast: s.contrast,
+        }
       }
     }
     if (mapFile) {
@@ -954,6 +993,7 @@ try {
       clearYellow: frac(clearYellow),
       tintShares: Object.fromEntries(k.colors.map((c, i) => [c.name, frac(tintCounts[i])])),
       lines,
+      darkShapes,
       // The share of the frame that is a pack color at any lightness (Atmospheric's white is Ice).
       shown: frac(shares.reduce((s, v) => s + v, 0)),
       meanL: frac(Ls.reduce((s, v) => s + v, 0)),
