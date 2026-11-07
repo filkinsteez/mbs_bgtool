@@ -142,6 +142,20 @@ const DRAG_RADIUS: readonly [number, number] = [0.1, 1.6]
 /** How far past the frame edge a dark area sits, in units of sqrt(width * height). */
 const DARK_PAST_EDGE = 0.04
 /**
+ * A dark ground (Plum, Forest, Slate, Near-black): how far past the edge its middle sits, how much longer than wide it
+ * is along the edge, and how far it tilts off the edge (degrees).
+ */
+const GROUND_PAST = 0.12
+const GROUND_ANISO: readonly [number, number] = [3.0, 4.2]
+const GROUND_TILT = 14
+/** Under a dragged line a dark ground sits less far past the edge, so it keeps the shape its seed slides along the edge. */
+const GROUND_DRAG_PAST = 0.23
+/**
+ * There it tilts further off the edge: the line sets the light's place and way in every seed, so a ground lying the same
+ * way along the same edge makes the seeds one picture shifted.
+ */
+const GROUND_DRAG_TILT = 28
+/**
  * How far above the frame's middle (below it for a light from an upper corner) the sky's direction aims, in short
  * sides, so it never jumps as a lead nears the middle.
  */
@@ -428,6 +442,7 @@ function followDrag(
     behindScale,
     litRound,
     paleLight,
+    groundTilt,
   } = seedDrag
   const frame = [Math.sqrt(aspect), 1 / Math.sqrt(aspect)]
   const toP = (p: readonly number[]): [number, number] => [(p[0] - 0.5) * frame[0], (p[1] - 0.5) * frame[1]]
@@ -500,22 +515,31 @@ function followDrag(
   const slide = DRAG_DARK_SLIDE * darkSlide * darkWay * Math.min(frame[0], frame[1]) * lerp(SLIDE_SHORT, SLIDE_LONG, slideRoom)
   const held = insideFrame(start, frame)
   const middle = [held[0] * (1 - DARK_FROM_IN), held[1] * (1 - DARK_FROM_IN)]
-  const darkAt = (angle: number, along: number): ZenithSpec => {
-    const at = alongEdge(toP(farEdge(middle, angle, frame)), along, frame)
-    const z: ZenithSpec = { ...layout.zenith, at: fromP(at), angle: bank ? edgeAngle(at, frame) : (lineAngle * 180) / Math.PI + 90 }
+  // A dark ground of the sky's family (held, with no meet) ahead of the light lies a little beyond the edge, along it,
+  // tilted by the seed, as at the default view. One of another hue (Plum, Forest) stays in the corner the line runs
+  // toward, already dark: along the edge it reaches the light under the line, olive and grey. On the frame's far side
+  // behind a light pointing away it stays a rounder area: lying along that edge in every seed, the frames are one picture.
+  const ground = layout.zenith.hold >= 0.5 && layout.zenith.meet < 0.3
+  const darkAt = (angle: number, along: number, asGround: boolean): ZenithSpec => {
+    const at = alongEdge(toP(farEdge(middle, angle, frame, asGround ? GROUND_DRAG_PAST : DARK_PAST_EDGE)), along, frame)
+    const z: ZenithSpec = {
+      ...layout.zenith,
+      at: fromP(at),
+      angle: bank ? edgeAngle(at, frame) : asGround ? edgeAngle(at, frame) + groundTilt : (lineAngle * 180) / Math.PI + 90,
+    }
     z.radius = sizeDark(z)
     return z
   }
   // The sky darkens along the line, leaning a little toward where the seed puts the dark area.
   const skyTurn = (DRAG_SKY_TURN * Math.PI) / 180
   const skyAngle = lineAngle + 0.6 * clamp(darkWay, -skyTurn, skyTurn)
-  const front = darkAt(lineAngle, slide)
+  const front = darkAt(lineAngle, slide, ground)
   const dark = toP(farEdge(middle, lineAngle, frame))
   const ahead = ((dark[0] - start[0]) * line[0] + (dark[1] - start[1]) * line[1]) / (length * length)
   // Ahead of the light the dark area lies at the edge the line runs toward. When that edge falls behind the
   // light it fades out there, and past DARK_TURN it fades in at the frame's far side from the light instead;
   // it moves while it is invisible, so the picture never jumps.
-  const back = ahead > DARK_TURN ? null : darkAt(lineAngle + Math.PI, -slide)
+  const back = ahead > DARK_TURN ? null : darkAt(lineAngle + Math.PI, -slide, false)
   const zenith: ZenithSpec = back
     ? { ...back, amount: back.amount * smoothstep(DARK_TURN, DARK_TURN - DARK_FADE, ahead) }
     : { ...front, amount: front.amount * smoothstep(DARK_TURN, DARK_TURN + DARK_FADE, ahead) }
@@ -828,6 +852,8 @@ interface DragSeed {
   litRound: number
   /** A white light without color of its own (Ice). */
   paleLight: (slot: number) => boolean
+  /** How far a dark ground of the sky's family tilts off the edge it lies along (degrees). */
+  groundTilt: number
 }
 
 /** A dragged lead's length / width along the line, by kind: alone, a broad wash (a warm one stays round); else round. */
@@ -977,7 +1003,6 @@ function edgeAngle(p: readonly number[], frame: readonly number[]): number {
 }
 /** How square that rounded box is: higher keeps a bank flat along more of each edge and turns it faster at a corner. */
 const EDGE_ROUND = 2
-
 function insideFrame01(at: readonly number[]): [number, number] {
   return [clamp(at[0], DRAG_INSIDE, 1 - DRAG_INSIDE), clamp(at[1], DRAG_INSIDE, 1 - DRAG_INSIDE)]
 }
@@ -1214,7 +1239,7 @@ function cornerCoverage(z: ZenithSpec, aspect: number, radius: number, lobe: Lob
 /** The corner's radius scaled so its coverage falls within `share`. */
 function sizeCorner(z: ZenithSpec, aspect: number, share: readonly [number, number], lobe: Lobes): number {
   let radius = z.radius
-  for (let step = 0; step < 3; step++) {
+  for (let step = 0; step < 5; step++) {
     const now = cornerCoverage(z, aspect, radius, lobe)
     const goal = clamp(now, share[0], share[1])
     radius *= now <= 1e-4 ? 1.5 : clamp(Math.sqrt(goal / now), 0.7, 1.5)
@@ -1960,16 +1985,28 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // The dark color keeps its own hex under the darker sky, so it shows the pack's ground at its hex over a
   // real share of the frame, not a darker mix that reads as night sky. One of another hue reaches into the
   // frame with the blue darkening where it comes in, so the two still meet dark.
-  const darkAt = farEdge(leadP, awayAngle, frameP)
-  const darkAngle = (awayAngle * 180) / Math.PI + 90 + lerp(-8, 8, r())
+  // A dark ground lies a little beyond that edge, long along it, so the frame shows a broad dark along the edge where the
+  // light is weakest, its soft edge bending with the lobes and the warp: lying across the light's way at the edge itself,
+  // half of a round area came into the light as a blob, and near a corner its lobes as horns. From Atmospheric's two upper
+  // corners the dark already lies along the bottom, where the sky darkens straight down to it, so it keeps its shape there
+  // (those frames' lights lie mostly beyond the top corners, and a longer ground takes the little of them that shows).
+  const groundForm = darkGround && plan !== UPPER_PAIR
+  const darkAt = farEdge(leadP, awayAngle, frameP, groundForm ? GROUND_PAST : DARK_PAST_EDGE)
+  const uDarkTilt = r()
+  const darkAngle = groundForm
+    ? edgeAngle([(darkAt[0] - 0.5) * frameP[0], (darkAt[1] - 0.5) * frameP[1]], frameP) + lerp(-GROUND_TILT, GROUND_TILT, uDarkTilt)
+    : (awayAngle * 180) / Math.PI + 90 + lerp(-8, 8, uDarkTilt)
+  // The dark area's draws, in the order they have always been taken.
+  const [uDarkRadius, uDarkAniso, uDarkAmount] = [r(), r(), r()]
+  const groundAniso = lerp(GROUND_ANISO[0], GROUND_ANISO[1], uDarkAniso)
   const zenith: ZenithSpec = darkGround
     ? {
         color: deep,
         at: darkAt,
-        radius: lerp(0.62, 0.85, r()) * lerp(0.92, 1.12, soft),
-        aniso: lerp(1.6, 2.4, r()),
+        radius: lerp(0.62, 0.85, uDarkRadius) * lerp(0.92, 1.12, soft),
+        aniso: groundForm ? groundAniso : lerp(1.6, 2.4, uDarkAniso),
         angle: darkAngle,
-        amount: skyFamily ? lerp(1.6, 2.0, r()) : lerp(1.7, 2.0, r()),
+        amount: skyFamily ? lerp(1.6, 2.0, uDarkAmount) : lerp(1.7, 2.0, uDarkAmount),
         // One of another hue ends faster, so there is little of the blend between it and the blue.
         falloff: skyFamily ? 1.7 : 2.2,
         hold: 1,
@@ -1978,11 +2015,11 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     : {
         color: deep,
         at: farEdge(leadP, awayAngle, frameP, 0.2),
-        radius: lerp(0.48, 0.64, r()) * lerp(0.92, 1.12, soft),
-        aniso: lerp(1.5, 2.1, r()),
+        radius: lerp(0.48, 0.64, uDarkRadius) * lerp(0.92, 1.12, soft),
+        aniso: lerp(1.5, 2.1, uDarkAniso),
         angle: darkAngle,
         // Seeds differ in how deep the far sky gets, from a slightly darker blue to deep navy.
-        amount: lerp(0.12, 0.45, r()),
+        amount: lerp(0.12, 0.45, uDarkAmount),
         falloff: 2.2,
         hold: 0,
         meet: 0,
@@ -2082,11 +2119,16 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const stripAniso = rk()
   // In a tall frame a bank along a side edge would run the frame's whole height, a wall, so there it stays shorter.
   const bankAniso = lerp(lerp(STRIP_ANISO[0], BANK_ANISO[0], smoothstep(0.5, 1, aspect)), lerp(STRIP_ANISO[1], BANK_ANISO[1], smoothstep(0.5, 1, aspect)), stripAniso)
+  // Any other dark ground under a line keeps the seed's own length, shorter than at the default view, so where along its
+  // edge the seed slides it still shows (followDrag); one of another hue reaches the light when long, olive and grey.
+  const ownAniso = lerp(1.6, 2.4, uDarkAniso)
   const dragZenith: ZenithSpec = stripGround
     ? { ...zenith, aniso: bank ? bankAniso : lerp(STRIP_ANISO[0], STRIP_ANISO[1], stripAniso) }
     : otherHueGround && dragStyle === 'third'
-      ? { ...zenith, edge: ZENITH_RAGGED }
-      : zenith
+      ? { ...zenith, aniso: ownAniso, edge: ZENITH_RAGGED }
+      : darkGround
+        ? { ...zenith, aniso: ownAniso }
+        : zenith
   const pale = (slot: number) => isPaleGrey(colors[slot])
   // Where the ground is of another hue (Elemental), the seed also picks which light sits at the line's start: its own
   // lead, or its other light, the lead taking the other light's place.
@@ -2176,6 +2218,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
           // its lit side reaches down the frame (a whole side of deep blue leaves it the least).
           edgeShift: boldForm ? side * lerp(EDGE_SHIFT[0], EDGE_SHIFT[1], random(seed * 9173 + 31)()) : 0,
           behindScale: boldForm ? FORM_BEHIND[boldForm.deep] : 1,
+          groundTilt: lerp(-GROUND_DRAG_TILT, GROUND_DRAG_TILT, uDarkTilt),
           litRound: boldForm ? FORM_LIT_ROUND[boldForm.deep] : 0,
           paleLight: pale,
         },
