@@ -29,6 +29,7 @@ import {
   SLOT,
   SLOT_COUNT,
   TAIL_END,
+  ZENITH_EDGE,
   ZENITH_LOBE_INDEX,
   ZENITH_VARY,
   type BloomsLayout,
@@ -81,6 +82,7 @@ const PARAMS: readonly ParamSpec[] = [
   num('zenithFalloff', 'Zenith falloff', 1, 5, 0.01, 2.6),
   num('zenithHold', 'Zenith keeps its hex under the darker top (0: darkens with the sky)', 0, 1, 0.01, 0),
   num('zenithMeet', 'Share of the blue taken away where the zenith comes in', 0, 0.9, 0.01, 0),
+  num('zenithEdge', 'How much the zenith edge wanders along its length (0.5 a gentle drift)', 0, 2, 0.01, ZENITH_EDGE),
   num('warp', 'Warp', 0, 0.3, 0.002, 0.07),
   num('warpScale', 'Warp scale', 0.2, 4, 0.05, 1.1),
   num('bridge', 'Bridge', 0, 3, 0.01, 1),
@@ -143,6 +145,7 @@ function readLayout(ctx: RecipeContext): BloomsLayout {
       falloff: ctx.num('zenithFalloff'),
       hold: ctx.num('zenithHold'),
       meet: ctx.num('zenithMeet'),
+      edge: ctx.num('zenithEdge'),
     },
     sky: {
       top: ctx.num('skyTop'),
@@ -195,6 +198,7 @@ function layoutParams(layout: BloomsLayout): Record<string, ParamValue> {
     zenithFalloff: layout.zenith.falloff,
     zenithHold: layout.zenith.hold,
     zenithMeet: layout.zenith.meet,
+    zenithEdge: layout.zenith.edge ?? ZENITH_EDGE,
     skyTop: layout.sky.top,
     skyMid: layout.sky.mid,
     skyTilt: layout.sky.tilt,
@@ -484,6 +488,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     uZenithShape: [z.at[0], z.at[1], clamp(z.amount, 0, 2), z.falloff],
     uZenithHold: clamp(z.hold, 0, 1),
     uZenithMeet: clamp(z.meet, 0, 0.9),
+    uZenithEdge: z.edge ?? ZENITH_EDGE,
     uZenithAxis: axis(z.radius, z.aniso, z.angle),
     uZenithLobe: zenithLobes.shape,
     uZenithLobeFalloff: zenithLobes.falloff,
@@ -595,6 +600,7 @@ uniform float uBridgeSky;             // 1: on the sky side a bridge is pale lig
 uniform vec4 uZenithShape;           // center (frame fractions), amount, falloff exponent
 uniform float uZenithHold;           // 1: the deep area keeps its hex under the darker top; 0: it darkens with the sky
 uniform float uZenithMeet;           // share of the blue's light taken away where the deep area comes in
+uniform float uZenithEdge;           // how much the deep area's edge wanders along its length (0.5 a gentle drift)
 uniform vec4 uZenithAxis;            // cos, sin, 1 / long radius, 1 / short radius
 uniform vec4 uZenithLobe[LOBES];     // offset along and across (in radii), 1 / size, weight
 uniform float uZenithLobeFalloff[LOBES];
@@ -717,9 +723,10 @@ vec3 bloomsScene(vec2 uv) {
     lobe[j] = uZenithLobe[j];
     falloff[j] = uZenithLobeFalloff[j];
   }
-  // The deep area's edge drifts like a glow's, on the field row after the glows'.
+  // The deep area's edge drifts like a glow's, on the field row after the glows'; a ragged one wanders more and faster.
   float noCore;
-  float z = min(1.0, uZenithShape.z * bloom(P, warp, (uZenithShape.xy - 0.5) * frame, uZenithAxis, vec2(shortUnit), uZenithShape.w, vec3(0.5, 1.1, 2.3), 0.0, 9, shortUnit, lobe, falloff, vec2(0.0, 1.0), noCore));
+  vec3 zenithEdge = vec3(uZenithEdge, 1.1 * (1.0 + max(0.0, uZenithEdge - 0.5)), 2.3);
+  float z = min(1.0, uZenithShape.z * bloom(P, warp, (uZenithShape.xy - 0.5) * frame, uZenithAxis, vec2(shortUnit), uZenithShape.w, zenithEdge, 0.0, 9, shortUnit, lobe, falloff, vec2(0.0, 1.0), noCore));
   // The sky keeps changing up to the top edge: it is its exact hex along a mid-sky line (tilted, and
   // bent by the shared warp) and above it gets darker without changing hue; a dark pack color comes in
   // only where it is already dark, so blue and it meet without a lighter purple or teal band between.

@@ -43,7 +43,12 @@ export interface ZenithSpec {
   hold: number
   /** Share of the blue's light taken away where the deep color comes in, so the two meet where both are dark. */
   meet: number
+  /** How much its edge wanders along its length: ZENITH_EDGE (the default) drifts gently, more is ragged. */
+  edge?: number
 }
+
+/** The dark area's edge drift by default. */
+export const ZENITH_EDGE = 0.5
 
 /**
  * The sky above mid-sky. It is its exact hex at frame height `mid` and gets
@@ -336,6 +341,7 @@ function followDrag(
     band,
     bandGain,
     nearLight,
+    bank,
   } = seedDrag
   const frame = [Math.sqrt(aspect), 1 / Math.sqrt(aspect)]
   const toP = (p: readonly number[]): [number, number] => [(p[0] - 0.5) * frame[0], (p[1] - 0.5) * frame[1]]
@@ -403,7 +409,8 @@ function followDrag(
   const held = insideFrame(start, frame)
   const middle = [held[0] * (1 - DARK_FROM_IN), held[1] * (1 - DARK_FROM_IN)]
   const darkAt = (angle: number, along: number): ZenithSpec => {
-    const z: ZenithSpec = { ...layout.zenith, at: fromP(alongEdge(toP(farEdge(middle, angle, frame)), along, frame)), angle: (lineAngle * 180) / Math.PI + 90 }
+    const at = alongEdge(toP(farEdge(middle, angle, frame)), along, frame)
+    const z: ZenithSpec = { ...layout.zenith, at: fromP(at), angle: bank ? edgeAngle(at, frame) : (lineAngle * 180) / Math.PI + 90 }
     z.radius = sizeDark(z)
     return z
   }
@@ -612,6 +619,27 @@ function dragKindFor(seed: number): DragKind {
   return DRAG_KINDS[(((DARK_STYLES.indexOf(darkStyleFor(seed)) + run) % count) + count) % count]
 }
 
+/**
+ * Which light sits at a dragged line's start where the pack's ground is of another hue (Elemental): the seed's own
+ * lead or its other light. (Light of the sky's own hue there, a brightened blue, reads pale blue and lavender beside
+ * the Plum or Forest ground.)
+ */
+type DragLead = 'own' | 'other'
+const DRAG_LEADS: readonly DragLead[] = ['own', 'other']
+
+/** Seeds come in runs of two for their dragged lead, each run taking both in a seeded order. */
+function dragLeadFor(seed: number): DragLead {
+  const n = Math.round(seed) - 1
+  const count = DRAG_LEADS.length
+  const r = random(Math.floor(n / count) * 61 + 19)
+  const order = DRAG_LEADS.map((_, i) => i)
+  for (let i = count - 1; i > 0; i--) {
+    const j = Math.floor(r() * (i + 1))
+    ;[order[i], order[j]] = [order[j], order[i]]
+  }
+  return DRAG_LEADS[order[((n % count) + count) % count]]
+}
+
 /** The seed's own choices for a dragged line (composeLayout draws them, followDrag places the scene with them). */
 interface DragSeed {
   /** The dark area's radius that covers the seed's share of the frame. */
@@ -648,6 +676,8 @@ interface DragSeed {
   bandGain: number
   /** A light that stays near the lead as the second light (warm or green: in the deep end its dim light reads olive). */
   nearLight: (slot: number) => boolean
+  /** The dark area is a long low bank: its long axis lies along the frame edge it meets. */
+  bank: boolean
 }
 
 /** A dragged lead's length / width along the line, by kind: alone, a broad wash (a warm one stays round); else round. */
@@ -700,6 +730,9 @@ const DRAG_STYLE_SHARE: Readonly<Record<DarkStyle, readonly [number, number]>> =
 /** The same for a dark ground of another hue (Plum, Forest), which stays smaller. */
 const DRAG_OTHER_SHARE: Readonly<Record<DarkStyle, readonly [number, number]>> = { none: [0.04, 0.06], strip: [0.05, 0.08], corner: [0.07, 0.11], third: [0.11, 0.15] }
 const STRIP_ANISO: readonly [number, number] = [3, 4]
+/** A long low bank's length against its thickness, and a ragged ground's edge drift (ZenithSpec.edge). */
+const BANK_ANISO: readonly [number, number] = [4.5, 6]
+const ZENITH_RAGGED = 1.4
 /**
  * Under a dragged line the seed's dark style sets how far and how deep the sky darkens along it: where the deep sky
  * begins (a share of the line's length), how much of the seed's darkening toward the far end it keeps, and how many of
@@ -781,6 +814,19 @@ function alongEdge(p: readonly number[], along: number, frame: readonly number[]
   const out = Math.max(Math.hypot(e[0], e[1]), 1e-6)
   return [e[0] + (e[0] / out) * past, e[1] + (e[1] / out) * past]
 }
+
+/**
+ * The direction (degrees, y down) of the frame edge nearest a point at the frame's edge (frame units from its middle):
+ * along the top or bottom edge 0, along a side edge 90, turning gradually along each edge toward its corners (the
+ * frame taken as a rounded box), so a bank sliding round a corner turns over a long way, not at once.
+ */
+function edgeAngle(p: readonly number[], frame: readonly number[]): number {
+  const [nx, ny] = [p[0] / (frame[0] / 2), p[1] / (frame[1] / 2)]
+  const normal = [Math.sign(nx) * Math.abs(nx) ** EDGE_ROUND, Math.sign(ny) * Math.abs(ny) ** EDGE_ROUND]
+  return (Math.atan2(normal[1], normal[0]) * 180) / Math.PI + 90
+}
+/** How square that rounded box is: higher keeps a bank flat along more of each edge and turns it faster at a corner. */
+const EDGE_ROUND = 2
 
 function insideFrame01(at: readonly number[]): [number, number] {
   return [clamp(at[0], DRAG_INSIDE, 1 - DRAG_INSIDE), clamp(at[1], DRAG_INSIDE, 1 - DRAG_INSIDE)]
@@ -1714,10 +1760,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const sizeDragDark = (z: ZenithSpec) => (darkGround ? sizeCorner(z, aspect, [dragTarget, dragTarget], zenithLobes) : z.radius * lerp(0.7, 1.6, dragShare))
   const kind = dragKindFor(seed)
   const rd = random(seed * 2903 + 5)
-  // A warm or green lead stays round: as a broad wash its pale outer light lies over the blue and the cyan, grey and
-  // green, and over a dark ground of another hue, mauve.
-  const anisoRange = kind === 'alone' && (isWarm(colors[lead]) || isGreen(colors[lead])) ? DRAG_ANISO.band : DRAG_ANISO[kind]
-  const leadAniso = lerp(anisoRange[0], anisoRange[1], rd())
+  const uLeadAniso = rd()
   // Where the other blooms sit under a dragged line: each seed's own places, spread over the frame.
   const spots = Array.from({ length: GLOW_COUNT - 1 }, (): [number, number] => [lerp(0.18, 0.82, rd()), lerp(0.2, 0.8, rd())])
   // Where along the far side the dark area sits under a dragged line: the seed turns it off the line's way, clearly to
@@ -1747,14 +1790,43 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   }
   const rk = random(seed * 5381 + 23)
   const draws = Array.from({ length: 8 }, () => rk())
-  // A strip of dark lies long along the frame's edge, a low band.
+  // A strip of dark lies long along the frame's edge, a low band; one of another hue (Elemental) is a long low bank lying
+  // along the edge it meets. A large ground of another hue rises with a ragged edge.
   const stripGround = (groundBlends || otherHueGround) && dragStyle === 'strip'
-  const dragZenith = stripGround ? { ...zenith, aniso: lerp(STRIP_ANISO[0], STRIP_ANISO[1], rk()) } : zenith
+  const bank = otherHueGround && dragStyle === 'strip'
+  const stripAniso = rk()
+  // In a tall frame a bank along a side edge would run the frame's whole height, a wall, so there it stays shorter.
+  const bankAniso = lerp(lerp(STRIP_ANISO[0], BANK_ANISO[0], smoothstep(0.5, 1, aspect)), lerp(STRIP_ANISO[1], BANK_ANISO[1], smoothstep(0.5, 1, aspect)), stripAniso)
+  const dragZenith: ZenithSpec = stripGround
+    ? { ...zenith, aniso: bank ? bankAniso : lerp(STRIP_ANISO[0], STRIP_ANISO[1], stripAniso) }
+    : otherHueGround && dragStyle === 'third'
+      ? { ...zenith, edge: ZENITH_RAGGED }
+      : zenith
   const pale = (slot: number) => isPaleGrey(colors[slot])
+  // Where the ground is of another hue (Elemental), the seed also picks which light sits at the line's start: its own
+  // lead, or its other light, the lead taking the other light's place.
+  const dragLead = otherHueGround ? dragLeadFor(seed) : 'own'
+  const recolor = (g: GlowSpec, i: number): GlowSpec => {
+    const color = dragLead === 'other' ? (g.color === lead ? other : g.color === other ? lead : g.color) : g.color
+    if (color === g.color) return g
+    const c = colors[color]
+    const asLead = i === 0
+    return {
+      ...g,
+      color,
+      gain: lightGain(c) * (asLead ? 1.03 : 1),
+      haze: isWarm(c) ? warmHaze(c, 0.5) * (asLead ? 1 : 0.8) : isGreen(c) ? (asLead ? lerp(1.8, 2.6, 0.5) : lerp(1.2, 1.6, 0.5)) : g.haze,
+    }
+  }
+  const leadSlot = recolor(seedGlows[0], 0).color
+  // A warm or green lead stays round: as a broad wash its pale outer light lies over the blue and the cyan, grey and
+  // green, and over a dark ground of another hue, mauve.
+  const anisoRange = kind === 'alone' && (isWarm(colors[leadSlot]) || isGreen(colors[leadSlot])) ? DRAG_ANISO.band : DRAG_ANISO[kind]
+  const leadAniso = lerp(anisoRange[0], anisoRange[1], uLeadAniso)
   // A white or grey lead (Ice, Steel) hides more of the sky behind it where the seed's far side is light and less where
   // it is dark, so seeds differ in how much of the blue shows.
-  const leadHaze = pale(lead) || isGrey(colors[lead]) ? DRAG_STYLE_HAZE[dragStyle] : 1
-  const dragGlows = seedGlows.slice(0, GLOW_COUNT).map((g, i) => (i === 0 ? { ...g, haze: g.haze * leadHaze } : g))
+  const leadHaze = pale(leadSlot) || isGrey(colors[leadSlot]) ? DRAG_STYLE_HAZE[dragStyle] : 1
+  const dragGlows = seedGlows.slice(0, GLOW_COUNT).map(recolor).map((g, i) => (i === 0 ? { ...g, haze: g.haze * leadHaze } : g))
   // The second light is the seed's other light: a pale one (Ice) or Cyan, then a light of another color, then one of
   // the lead's color (two suns of one color flood the frame with it), then a patch of sky; never a grey (Steel), whose
   // light over the blue barely shows.
@@ -1765,7 +1837,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     slot === SLOT.sky ? skyRank(1) : isGrey(colors[slot]) ? 0 : pale(slot) || isCyan(colors[slot]) ? 4 : slot === dragGlows[0].color ? 2 : 3
   // Beside a warm lead a cyan band crosses its pale light, teal and mint.
   const hazeRank = (slot: number) =>
-    slot === SLOT.sky ? skyRank(3) : pale(slot) ? 3 : isCyan(colors[slot]) ? (isWarm(colors[lead]) ? 0 : 2) : isGrey(colors[slot]) ? 1 : 0
+    slot === SLOT.sky ? skyRank(3) : pale(slot) ? 3 : isCyan(colors[slot]) ? (isWarm(colors[leadSlot]) ? 0 : 2) : isGrey(colors[slot]) ? 1 : 0
   const best = (rank: (slot: number) => number) =>
     dragGlows.reduce((at, g, i) => (i > 0 && rank(g.color) > 0 && (at < 0 || rank(g.color) >= rank(dragGlows[at].color)) ? i : at), -1)
   const companion = best(lightRank)
@@ -1798,6 +1870,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
           band,
           bandGain: band > 0 ? hazeGain(band) : 0,
           nearLight: (slot: number) => isWarm(colors[slot]) || isGreen(colors[slot]),
+          bank,
         },
         warmSlot,
         cyanSlot,
