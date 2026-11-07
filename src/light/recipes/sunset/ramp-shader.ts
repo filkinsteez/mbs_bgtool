@@ -87,6 +87,7 @@ uniform vec2 uOcclude;       // how much the land hides the sun glow, and the wi
 
 uniform vec3 uBridge;        // amount, lift toward white, luminance below which it fades out
 uniform vec3 uBridgeTint;    // luminance 1
+uniform float uBridgeSky;    // how far the bridge's tint turns neutral toward the sky's side of it
 uniform int uDuskStop;       // a dark dusk band low in the sky that the bridge leaves alone (-1: none)
 
 uniform vec4 uSkyPatch;      // light change inside the sky: amount, 1 / patch size, mean over the top fifth (removed), width over height
@@ -298,11 +299,22 @@ vec3 keepBlueHue(vec3 c) {
 const float SKY_GREY_KNEE = ${SKY_GREY_KNEE.toFixed(3)};
 const float SKY_GREY_TOP = ${SKY_GREY_TOP.toFixed(3)};
 
+// Pale light past nominal also eases off in strength, the paler the sooner: the tone curve fills a
+// pale color's lower channels to white a little above nominal, a saturated color's only far above.
+const float PALE_ROOM = 2.0;
+
 vec3 holdGrey(vec3 c) {
   float grey = min(c.r, min(c.g, c.b));
-  if (grey <= SKY_GREY_KNEE) return c;
-  float room = SKY_GREY_TOP - SKY_GREY_KNEE;
-  return c - (grey - SKY_GREY_KNEE - room * (1.0 - exp(-(grey - SKY_GREY_KNEE) / room)));
+  if (grey > SKY_GREY_KNEE) {
+    float room = SKY_GREY_TOP - SKY_GREY_KNEE;
+    c -= grey - SKY_GREY_KNEE - room * (1.0 - exp(-(grey - SKY_GREY_KNEE) / room));
+  }
+  float top = maxComponent(c);
+  if (top <= 1.0) return c;
+  float pale = min(c.r, min(c.g, c.b)) / top;
+  float most = 1.0 + PALE_ROOM * (1.0 - pale) * (1.0 - pale);
+  float held = 1.0 + (most - 1.0) * (1.0 - exp(-(top - 1.0) / (most - 1.0)));
+  return c * mix(1.0, held / top, smoothstep(0.45, 0.75, pale));
 }
 
 // The sky at a point: the stop ramp, the glow, the sun glow and the bridge, without anything in front.
@@ -440,6 +452,14 @@ vec3 rampSky(vec2 p, out vec3 core) {
       gather(mixed, max(c, vec3(0.0)) * skyGain);
     }
   }
+  // The bridge's tint holds on the glow's side and turns neutral toward the sky's, so a warm tint
+  // never meets Cyan as green.
+  vec3 bridgeTint = uBridgeTint;
+  if (uBridgeSky > 0.0) {
+    float warmLight = luminance(glow + sunGlow);
+    float warmShare = warmLight / max(warmLight + luminance(max(sky, vec3(0.0)) * skyGain), 1e-4);
+    bridgeTint = mix(uBridgeTint, vec3(1.0), uBridgeSky * (1.0 - smoothstep(0.3, 0.7, warmShare)));
+  }
   // A veil of scattered white light over the sky's own light, thin at the top and denser toward
   // the horizon, mutes the sky's colors and pales the middles between them. It stays off the dusk
   // band, which is in front of it.
@@ -459,7 +479,7 @@ vec3 rampSky(vec2 p, out vec3 core) {
       float blue = clamp(-linearToOklab(max(sky, vec3(0.0))).z / 0.04, 0.0, 1.0);
       sky = mix(sky, luminance(sky) * uVeilTint, min(1.0, uVeilMute * open * (1.0 - low) * blue));
     }
-    sky += (uVeil.x + uVeil.y * low) * open * mix(uVeilTint, uVeilNear.x > 0.0 ? uVeilNear : uBridgeTint, low);
+    sky += (uVeil.x + uVeil.y * low) * open * mix(uVeilTint, uVeilNear.x > 0.0 ? uVeilNear : bridgeTint, low);
   }
   sky = max(sky, vec3(0.0)) * skyGain;
   // The dusk band is a low bank of the sky's shadowed light in front of the glow and hides the
@@ -475,7 +495,7 @@ vec3 rampSky(vec2 p, out vec3 core) {
     float bright = uBridge.z > 0.0 ? smoothstep(0.5 * uBridge.z, 1.5 * uBridge.z, y) : 1.0;
     float pull = min(1.0, uBridge.x * hueSpread(mixed) / 0.25) * bright * lightReach * behind;
     float lifted = max(y, 1.0 - (1.0 - y) * (1.0 - uBridge.y));
-    light += pull * (lifted * uBridgeTint - light);
+    light += pull * (lifted * bridgeTint - light);
   }
   // The bridge leaves the dusk band alone: lifted where the glow meets it, the band would draw a
   // pale line between the two.

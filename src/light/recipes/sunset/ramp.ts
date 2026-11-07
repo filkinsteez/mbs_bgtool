@@ -115,6 +115,8 @@ const PARAMS: ParamSpec[] = [
   num('bridgeLift', 'Bridge lift', 0, 1, 0.005, 0.25),
   num('bridgeWarmth', 'Bridge warmth', 0, 1, 0.005, 0.5),
   num('bridgeFloor', 'Bridge fades out below this luminance', 0, 1, 0.001, 0),
+  num('bridgeCore', "Share of the bridge's tint taken from the sun glow's color instead of the glow's", 0, 1, 0.005, 0),
+  num('bridgeSky', "How far the bridge's tint turns neutral toward the sky's side of it", 0, 1, 0.005, 0),
   num('duskStop', 'Stop that is a dark dusk band the bridge leaves alone (-1: none)', -1, RAMP_COLORS - 1, 1, -1),
   num('land', 'Land', 0, 1, 0.005, 0),
   num('landAt', 'Land height', -1, 2, 0.001, 0.85),
@@ -173,6 +175,7 @@ const COLOR_SLOTS = [
 
 const luma = (c: Rgb) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 const scale = (c: Rgb, k: number): number[] => [c[0] * k, c[1] * k, c[2] * k]
+const mixRgb = (a: Rgb, b: Rgb, t: number): Rgb => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
 
 /** The bridge's neutral at luminance 1, warmed toward a pale member of the glow light's family. */
 function bridgeTint(glow: Rgb, warmth: number): number[] {
@@ -248,7 +251,8 @@ function uniforms(ctx: RecipeContext): UniformMap {
     uSunGlowShape: [ctx.num('sunGlowAspect'), ctx.num('sunGlowBeta')],
     uOcclude: [ctx.num('occlude'), ctx.num('occludeWidth')],
     uBridge: [ctx.num('bridge'), ctx.num('bridgeLift'), ctx.num('bridgeFloor')],
-    uBridgeTint: bridgeTint(ctx.color('glow1'), ctx.num('bridgeWarmth')),
+    uBridgeTint: bridgeTint(mixRgb(ctx.color('glow1'), ctx.color('sunGlow'), ctx.num('bridgeCore')), ctx.num('bridgeWarmth')),
+    uBridgeSky: ctx.num('bridgeSky'),
     uDuskStop: Math.round(ctx.num('duskStop')),
     uLand: [ctx.num('land'), ctx.num('landAt'), ctx.num('landTilt'), ctx.num('landDrop')],
     uLandWarp: [ctx.num('landWarp'), ctx.num('landWarpScale'), ctx.num('landWarpPhase'), Math.round(ctx.num('landOctaves'))],

@@ -404,6 +404,8 @@ const NAVY_SHARE = [[0.04, 0.14], [0.38, 0.56], [0.2, 0.34]] as const
 const HAZE_MASS = [0.15, 1, 0.6]
 /** Under a dragged line, how far up the frame's own sky Elemental's highest sky edge lies at most. */
 const ELEMENTAL_ZENITH = 0.77
+/** Under a long line, the range of a seed's own factor on its sky edges' widths. */
+const DRAG_SOFT = [0.6, 1.2] as const
 /** The zenith's light where the sky turns toward navy, and at the line's end by depth turn, as shares of Meta Blue. */
 const NAVY_TURN = 0.5
 const NAVY_END = [0.24, 0.12, 0.17]
@@ -964,9 +966,12 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
       const highest = glowRise + (-edges[0][0] - glowRise) * stretch
       if (highest > target && target > glowRise) nearer = lerp(1, Math.max(0.3, (target - glowRise) / (highest - glowRise)), longLine)
     }
+    // Under a long line Bold's and Atmospheric's seeds differ in how softly the low sky turns to
+    // the deep sky (Elemental's edge between them stays as narrow as it can).
+    const soft = lerp(1, lerp(DRAG_SOFT[0], DRAG_SOFT[1], seeded(Math.round(seed) * 61 + 29)()), navyReach)
     for (const edge of edges) {
       edge[0] = -glowRise + (edge[0] + glowRise) * stretch * nearer
-      edge[1] = Math.min(6, edge[1] * stretch * nearer)
+      edge[1] = Math.min(6, edge[1] * stretch * nearer * soft)
     }
     navyEnd = edgeTop - zenithRoom
   } else {
@@ -1165,6 +1170,11 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     bridgeLift: look.bridgeLift + 0.12 * softness,
     bridgeWarmth: look.bridgeWarmth,
     bridgeFloor: look.bridgeFloor,
+    // A light whose core is another color (Bold's Orange-red, whose core is Yellow) pales through
+    // it, as bright orange light goes amber, cream and then white, and its bridge turns neutral
+    // toward the sky: it meets Cyan through amber cream and white, not peach, salmon or green.
+    bridgeCore: 1,
+    bridgeSky: look.coreColor !== look.light ? 1 : 0,
     duskStop: dusk ? gains.length - 1 : -1,
     land: 0,
     // One lens over the whole scene: Softness is its radius.
