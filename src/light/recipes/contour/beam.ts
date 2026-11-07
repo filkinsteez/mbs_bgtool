@@ -93,6 +93,8 @@ uniform float uVeilBand;  // how much more chroma the veil keeps in its band of 
 uniform vec4 uAirGlow;    // a light outside the frame: level of its glow in the air (scattered units; 0: off), falloff, sharpness (power), scale (1 at the frame's brightest point)
 uniform vec4 uGlowLine;   // where that light is: its segment on screen (unturned)
 uniform float uBeamHaze;  // share of the beam's light its haze scatters, over the seed's own (1)
+uniform vec2 uHalo;       // the beam's light the haze scatters around it: share of the beam's light, how much wider (screen, short-side units)
+uniform float uGlowCore;  // least size of the pool's glow in the haze (screen, short-side units; 0: the beam's own)
 ${AIR_GLOW_GLSL}
 const int BEAM_STEPS = 16;
 
@@ -276,6 +278,15 @@ vec3 radiance(vec2 uv, vec2 screen) {
   // over the whole edge instead of stopping where the floor is fully there.
   float beamSeen = rounded < 1.0 ? beamInScatter(p, 0.01, 1e6, 1.0, 0.0, noise, 10) : 0.0;
   if (rounded > 0.0) beamSeen = mix(beamSeen, beamInScatter(p, 0.01, zFloor, 1.0, 0.0, noise, 10), rounded);
+  // Light the haze scatters out of the beam lights the haze around it: the same light spread
+  // over a wider beam, added to the beam's own, so a narrow beam keeps its core and gets soft,
+  // lit sides instead of reading as a stroke.
+  if (uHalo.x > 0.0) {
+    float widen = uHalo.y * zb / F;
+    float halo = rounded < 1.0 ? beamInScatter(p, 0.01, 1e6, 1.0, widen, noise, 8) : 0.0;
+    if (rounded > 0.0) halo = mix(halo, beamInScatter(p, 0.01, zFloor, 1.0, widen, noise, 8), rounded);
+    beamSeen += uHalo.x * halo;
+  }
   float scatter = uBeamLight.x * uBeamHaze * beamSeen;
 
   // The pool's light scattered by the haze around it. The pool is a flat emitter as wide as
@@ -283,7 +294,7 @@ vec3 radiance(vec2 uv, vec2 screen) {
   // floor the camera looks through the lit haze in front of the pool, so the glow runs on
   // past the stage edge and falls off below the pool as it does above it.
   float beamX = uWorld.y * F / zb;
-  float core = 0.35 * aScreen;
+  float core = max(0.35 * aScreen, uGlowCore);
   float below = p.y - contactY;
   float glow = poolGlow(vec2(abs(p.x - beamX), below > 0.0 ? below * uEdge.y : -below), aScreen, core, hazeHere);
   scatter += uBeamLight.x * glow;
@@ -449,6 +460,24 @@ const HALF_SCALE_EDGE = 0.012
 const NARROW_WIDTH = 0.11
 
 /**
+ * A narrow beam's light the haze scatters around it, as a share of the beam's own light, and how
+ * much wider that light spreads (screen, short-side units, added to the beam's radius in
+ * quadrature): two to three times a narrow beam's radius, so it gets soft sides. A broad beam
+ * already lights a wide stretch of haze.
+ */
+const HALO = [0.3, 0.3]
+
+/**
+ * Least size (screen, short-side units) of the glow a pool lights in the haze around it: a
+ * medium beam's. How far the pool's light reaches is the room's haze, not the beam's width, so a
+ * narrow beam's pool lights the haze and floor around it instead of ending in a small bright head.
+ */
+const GLOW_CORE = 0.056
+
+/** Least reach (screen, short-side units) of the pool's light the haze spills onto the floor: a broad beam's. */
+const SPILL_REACH = 0.22
+
+/**
  * Share of the floor haze a warm light's beam gets, and (halved pale mix) so its bright base
  * and pool stay the light's own warm color instead of a wide white area (Tan).
  */
@@ -547,6 +576,7 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
   // reflection) is far less bright: its pool keeps a smooth ramp up to a pale center instead
   // of a wide flat top whose outline follows every bump of the light under it.
   const warmFloor = light.tail ? WARM_FLOOR_LIGHT : 1
+  const spillReach = Math.max(soft(0.8, 1.1), SPILL_REACH / width)
   const pool = lerp(6, 8.5, random()) * (luminanceOf(light.haze) / Math.max(luminanceOf(light.light), 0.01)) * (light.tail ? 0.3 * WARM_FLOOR_LIGHT : 1)
 
   const params: Record<string, ParamValue> = {
@@ -560,9 +590,11 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     tilt: tilt.map(round4),
     // A nearly parallel column, or (for narrow beams) a cone that narrows toward the source. A
     // broad beam is always a column, bright up to the frame's top as in the moodboard; a broad
-    // cone thins and dims toward the top.
-    spread: round4(either(cone && !broad ? 1 : 0, [-0.04, 0.03], [0.2, 0.3])),
+    // cone thins and dims toward the top. A narrow column still widens a little toward its pool.
+    spread: round4(either(cone && !broad ? 1 : 0, broad ? [-0.04, 0.03] : [0.05, 0.1], [0.2, 0.3])),
     beamEdge: round4(soft(3.6, 2.2)),
+    halo: broad ? [0, 0] : HALO,
+    glowCore: GLOW_CORE,
     hollow: [round4(lerp(0.42, 0.58, random())), round4(lerp(0.35, 0.6, random()))],
     power: round4(Math.min(20, power)),
     extinction: round4(lerp(0, 0.25, random())),
@@ -579,7 +611,9 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     // and the haze spills its light onto the floor just around the pool, so the floor beside
     // the pool stays dark instead of glowing across the frame.
     bounce: [round4(lerp(0.7, 1, random()) * Math.sqrt(warmFloor)), round4(soft(0.5, 0.8) * Math.min(1, 0.5 + halfH)), round4(lerp(0.5, 0.7, random())), round4(lerp(0.12, 0.2, random()))],
-    pool: [round4(Math.min(10, pool)), round4(lerp(1.3, 2, random()) * warmFloor), round4(soft(0.8, 1.1))],
+    // The haze spills the pool's light onto the floor around it as far as the room's haze carries
+    // it (SPILL_REACH), so a narrow beam lights the floor around its pool too, a little dimmer.
+    pool: [round4(Math.min(10, pool)), round4(lerp(1.3, 2, random()) * warmFloor * Math.sqrt(soft(0.8, 1.1) / spillReach)), round4(spillReach)],
     edgeSoftness: round4(soft(HALF_SCALE_EDGE, 0.024)),
     edgeHaze: EDGE_HAZE,
     // The floor's mirror of a warm beam is dimmer still: its bright column under the pool
@@ -612,7 +646,7 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     // turned about the pool.
     const ownLean = leaning ? Math.sign((params.tilt as number[])[0]) * LEAN_OWN : 0
     const profile = light.tail ? (onRight ? WARM_SOURCE_HAZE : WARM_POOL_HAZE) : onRight ? SOURCE_HAZE : POOL_HAZE
-    const onLine = beamOnLine(params, line, halfH, profile, ownLean)
+    const onLine = beamOnLine(params, line, halfH, profile, ownLean, broad ? BROAD_RAMP[0] + BROAD_RAMP[1] * line.length : SOURCE_RAMP)
     // A line longer than the frame's short side spreads the beam's haze layers along its length,
     // and the light they take out on its way dims the whole beam, so the haze gives back more of
     // the beam's light: the beam still reaches its own color along its length (dimmer, warm light
@@ -688,17 +722,26 @@ const WIDE_GLOW = 0.27
 const NARROW_GLOW = 0.15
 
 /**
+ * How far past its start (screen, short-side units) a dragged line's narrow beam has all its
+ * light: a short way, as a lamp's does, so it reads as light along its whole length instead of
+ * a stroke that brightens toward its pool. A broad beam takes longer the longer the line (its
+ * pale core would otherwise start as a flat white end at the frame's edge).
+ */
+const SOURCE_RAMP = 0.08
+const BROAD_RAMP = [0.03, 0.25]
+
+/**
  * The stage for a dragged line: the beam starts at the line's start and lands at its end, with
  * its pool there. A line near straight down leans the beam; for the rest of its angle the whole
  * stage turns about the pool, all the way round, so a line pointing up gives a beam rising to a
  * pool overhead. The lean eases back to upright as the line turns to point straight up, so
  * turning the line never flips the beam from one side to the other. The beam comes out of the
- * dark at the start, under the ceiling haze, which thins out above it; the longer the line, the
- * longer the beam takes to reach all its light. The seed keeps its own composition along the
+ * dark at the start, under the ceiling haze, which thins out above it, and has all its light
+ * `ramp` past it. The seed keeps its own composition along the
  * line: its haze dense at the source or at the pool (`haze`), and its own lean (`ownLean`, see
  * LEAN_OWN).
  */
-function beamOnLine(params: Record<string, ParamValue>, line: ShortLine, halfH: number, haze: HazeProfile, ownLean: number): Record<string, ParamValue> {
+function beamOnLine(params: Record<string, ParamValue>, line: ShortLine, halfH: number, haze: HazeProfile, ownLean: number, ramp: number): Record<string, ParamValue> {
   const num = (key: string) => params[key] as number
   const horizon = num('horizon')
   const focal = num('focal')
@@ -717,7 +760,7 @@ function beamOnLine(params: Record<string, ParamValue>, line: ShortLine, halfH: 
   // Screen heights of the beam's start and of where it has all its light, and the world
   // height on the beam's axis at a screen height.
   const start = pool[1] - line.length * down
-  const full = start + (0.03 + 0.25 * line.length) * down
+  const full = start + ramp * down
   const heightAt = (e: number) => Math.min(2, Math.max(-50, ((e - horizon) * (landingZ - tiltZ)) / (focal - (e - horizon) * tiltZ)))
   const startHeight = round4(heightAt(start))
   // A beam longer than the frame's short side keeps the haze layers' share of its length, and
@@ -806,6 +849,8 @@ export const contourBeam: RecipeDefinition = {
     { kind: 'vector', key: 'airGlow', label: 'Glow past the frame', min: 0, max: 100, step: 0.0001, default: [0, 0.18, 2, 1] },
     { kind: 'vector', key: 'glowLine', label: 'Light past the frame', min: -8, max: 8, step: 0.0005, default: [0, 0, 0, 0] },
     { kind: 'number', key: 'beamHaze', label: 'Beam light in its haze', min: 0, max: 4, step: 0.005, default: 1 },
+    { kind: 'vector', key: 'halo', label: 'Light around the beam', min: 0, max: 2, step: 0.0005, default: [0, 0] },
+    { kind: 'number', key: 'glowCore', label: 'Least pool glow size', min: 0, max: 1, step: 0.0005, default: 0 },
   ],
   fragment: BEAM_GLSL,
   uniforms: (ctx) => {
@@ -852,6 +897,8 @@ export const contourBeam: RecipeDefinition = {
       uAirGlow: ctx.vec('airGlow'),
       uGlowLine: ctx.vec('glowLine'),
       uBeamHaze: ctx.num('beamHaze'),
+      uHalo: ctx.vec('halo'),
+      uGlowCore: ctx.num('glowCore'),
     }
   },
   radianceScale: (ctx) => (ctx.num('edgeSoftness') >= HALF_SCALE_EDGE ? 0.5 : 1),
