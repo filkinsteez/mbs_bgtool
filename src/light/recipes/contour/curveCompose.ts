@@ -250,9 +250,10 @@ export function packBase(base: { hex: string; gain: number }, accentBase: string
  * Atmospheric's a brighter Steel grey, like light in fog. Null for other lights, which only their own pack has.
  * Shares in the pale
  * color: `body` of a band's body, `line` of a rim's thin core line, which is near white wherever it shows, so a grey
- * there stays grey, `band` of the rim's color band beside it, `air` of the dim haze around the light and `face` of a
- * rim's face. The band, the haze and the face are at or below the light's own level, where the tone curve doesn't
- * turn a mix violet, so Atmospheric's are an overcast grey-blue.
+ * there stays grey, `band` of the rim's color band beside it, `air` of the dim haze around the light, `face` of a
+ * rim's face and `core` of its hot core. The band, the haze and the face are at or below the light's own level,
+ * where the tone curve doesn't turn a mix violet, so Atmospheric's are an overcast grey-blue. Elemental's hot core
+ * keeps Meta Blue: Forest is no pale color, and at the light's level it turned the core teal beside the blue edge.
  */
 export function packAccent(
   pack: ColorPack,
@@ -265,6 +266,7 @@ export function packAccent(
   band: number
   air: number
   face: number
+  core: number
   haze: number
   faceGain: number
   edge: number
@@ -274,7 +276,7 @@ export function packAccent(
 } | null {
   if (light.hex.toUpperCase() !== '#0064E0') return null
   const named = (name: string) => pack.colors.find((c) => c.name === name) ?? null
-  const accent = { body: 0, line: 0, band: 0, air: 0, face: 0, haze: 1, faceGain: 1, edge: 0, base: null, second: null, mist: null }
+  const accent = { body: 0, line: 0, band: 0, air: 0, face: 0, core: 1, haze: 1, faceGain: 1, edge: 0, base: null, second: null, mist: null }
   switch (pack.id) {
     case 'bold':
       return {
@@ -305,7 +307,7 @@ export function packAccent(
       }
     case 'elemental':
       return look === 'rim'
-        ? { ...accent, pale: named('Forest'), face: 1, haze: SECOND_HAZE, faceGain: 4.5, second: named('Lime') }
+        ? { ...accent, pale: named('Forest'), face: 1, core: 0, haze: SECOND_HAZE, faceGain: 4.5, second: named('Lime') }
         : { ...accent, pale: null, haze: SECOND_HAZE, second: named('Lime') }
     default: {
       const unknown: never = pack.id
@@ -354,6 +356,7 @@ export function accentParams(
   band: number
   air: number
   face: number
+  core: number
   faceGain: number
   edge: number
   base: string | null
@@ -363,14 +366,14 @@ export function accentParams(
   params: Record<string, number | number[]>
 } {
   const pale = accent?.pale?.hex ?? null
-  const shares = { body: 0, line: 0, band: 0, air: 0, face: 0, edge: 0, ...(pale && accent ? accent : {}) }
-  const { body, line, band, air, face, edge } = shares
+  const shares = { body: 0, line: 0, band: 0, air: 0, face: 0, core: 1, edge: 0, ...(pale && accent ? accent : {}) }
+  const { body, line, band, air, face, core, edge } = shares
   const faceGain = accent?.faceGain ?? 1
   const haze = accent?.haze ?? 1
   const base = accent?.base?.hex ?? null
   const mist = accent?.mist ?? null
   const second = accent?.second ?? null
-  if (!second) return { pale, body, line, band, air, face, faceGain, edge, base, second: null, haze, mist, params: {} }
+  if (!second) return { pale, body, line, band, air, face, core, faceGain, edge, base, second: null, haze, mist, params: {} }
   const [fw, fh] = frameSize(aspect)
   const drift = warmDrift(second.hex)
   const start: Vec2 | null = drag ? [(drag.from[0] - 0.5) * fw, (drag.from[1] - 0.5) * fh] : null
@@ -400,7 +403,7 @@ export function accentParams(
       ...(drift ? { [`air${i}Drift`]: drift.ratios, [`air${i}DriftShape`]: [drift.knee, drift.sharpness] } : {}),
     })
   })
-  return { pale, body, line, band, air, face, faceGain, edge, base, second: second.hex, haze, mist, params }
+  return { pale, body, line, band, air, face, core, faceGain, edge, base, second: second.hex, haze, mist, params }
 }
 
 /**

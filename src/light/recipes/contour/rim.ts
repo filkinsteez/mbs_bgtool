@@ -497,7 +497,7 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     pale: turns ? 4 : accent.pale ? 5 : 0,
     // The core line leans toward the pale color; the color band beside it only as a band's body does and less, so
     // the edge keeps the light's own color.
-    ...(accent.pale ? { n1Pale: accent.line, n2Pale: accent.band, f1Pale: accent.air, f2Pale: accent.air, f3Pale: accent.face } : {}),
+    ...(accent.pale ? { n1Pale: accent.line, n2Pale: accent.band, n3Pale: accent.core, f1Pale: accent.air, f2Pale: accent.air, f3Pale: accent.face } : {}),
     // Where a Meta Blue light is strongest it lights the air about the edge in its pack's pale color (packAccent).
     ...(accent.mist ? { f2Width: accent.mist.width, f2Weight: accent.mist.weight, f2Pale: accent.mist.pale } : {}),
     // A line that turns through colors opens like a flame toward its bright end, with the light's own color on one
