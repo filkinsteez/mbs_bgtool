@@ -155,6 +155,9 @@ const MIN_OPEN_SHARE = 0.16
 /** Most a lead grows to reach its share. */
 const LEAD_GROW = 1.6
 const OPEN_MID: readonly [number, number] = [0.35, 0.7]
+const CYAN_OPEN_MID: readonly [number, number] = [0.35, 0.55]
+/** Most a warm lead beside a near-equal second sun of its color is wider than tall (the pair arrangement). */
+const PAIR_MAX_ANISO = 1.6
 const DEEP_STOPS: readonly [number, number] = [1.1, 2.0]
 const DEEP_SOFT: readonly [number, number] = [0.1, 0.19]
 const DEEP_CURVE: readonly [number, number] = [0.25, 0.9]
@@ -234,7 +237,8 @@ function spanAlong(p: readonly number[], u: readonly number[], frame: readonly n
 /**
  * A glow whose body ends before `limit` (a distance from the lead at `leadP` along `away`): it moves back along
  * `away`, but not back past `from` (the end of the lead's body, so it never lands on the lead), and what still
- * reaches past `limit` it gives up by shrinking, keeping its shape (flattened, it would read as a streak).
+ * reaches past `limit` it gives up by shrinking (unless `shrink` is false), keeping its shape (flattened, it would
+ * read as a streak).
  */
 function keepBefore(
   glow: GlowSpec,
@@ -244,6 +248,7 @@ function keepBefore(
   limit: number,
   frame: readonly number[],
   stretch: readonly number[],
+  shrink = true,
 ): GlowSpec {
   const p = [(glow.at[0] - 0.5) * frame[0], (glow.at[1] - 0.5) * frame[1]]
   const along = (p[0] - leadP[0]) * away[0] + (p[1] - leadP[1]) * away[1]
@@ -253,7 +258,7 @@ function keepBefore(
   const back = Math.max(0, Math.min(along + reach - limit, along - from))
   const moved: GlowSpec = { ...glow, at: [(p[0] - away[0] * back) / frame[0] + 0.5, (p[1] - away[1] * back) / frame[1] + 0.5] }
   const room = limit - (along - back)
-  if (room >= reach) return moved
+  if (room >= reach || !shrink) return moved
   return { ...moved, radius: (glow.radius * Math.max(room, 0.25 * reach)) / reach }
 }
 
@@ -1237,6 +1242,14 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     radius = fitted.radius
     aniso = fitted.aniso
   }
+  // Beside a near-equal second sun of its own warm color (the pair arrangement) a wide lead reaches across under it,
+  // and where the two lie on each other they add up to a pale wash: its long axis is held to PAIR_MAX_ANISO times
+  // its short one.
+  const twoSuns = arrangement === 'pair' && isWarm(colors[lead]) && !isRed(colors[lead])
+  if (twoSuns && aniso > PAIR_MAX_ANISO) {
+    radius *= Math.sqrt(PAIR_MAX_ANISO / aniso)
+    aniso = PAIR_MAX_ANISO
+  }
   const leadEnd = Math.min(bodyEnd, bodyReach(leadBeta) * supportAlong(radius, aniso, angle, away, stretch))
   // A grey lead (Steel) is haze at its own hex; brightened, it reads as the paler light (Ice). An orange-red sun
   // is well over its own hex at its middle, which the tone curve takes through amber to cream.
@@ -1394,7 +1407,8 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     // From a side edge a very wide shape reads as a streak, so it is rounder there.
     const un = r()
     const farAniso = lerp(lerp(1.8, 2.4, un), lerp(2.4, 3.0, un), corner)
-    // The warm light under a cool lead keeps enough of the frame to show as the pack's warm color.
+    // The warm light under a cool lead keeps enough of the frame to show as the pack's warm color, as a round soft
+    // light: narrow and firm-edged it reads as a lozenge.
     const farRadius = warmUnderCool ? fieldRadius * lerp(0.5, 0.65, r()) : radius * ACCENT_SCALE * lerp(0.55, 0.72, r())
     // A color the inner bloom already shows (cyan) gets no second bloom; two of them make it the sky.
     const green = isGreen(colors[other])
@@ -1403,12 +1417,12 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
         color: other,
         at: farAt,
         radius: farRadius * (green ? 0.85 : 1),
-        aniso: warmUnderCool ? lerp(1.2, 1.7, r()) : green ? lerp(1.3, 1.8, r()) : farAniso,
+        aniso: warmUnderCool ? lerp(1.0, 1.25, r()) : green ? lerp(1.3, 1.8, r()) : farAniso,
         angle: farAngle,
         // A light never sits below its own hex at its middle, however small: dimmed, Yellow reads dark gold, Tan
         // brown and Lime olive.
         gain: lightGain(colors[other]) * lerp(1.0, 1.06, r()),
-        beta: beta * lerp(0.85, 0.95, r()),
+        beta: beta * (warmUnderCool ? lerp(0.75, 0.85, r()) : lerp(0.85, 0.95, r())),
         // Little haze: a dim light that hides the blue behind it turns grey. The warm bloom under a cool lead
         // and a green far light are lights of their own, so they show their color at their middle.
         haze: warmUnderCool ? warmHaze(colors[other], r()) : green ? lerp(1.2, 1.6, r()) : lerp(0.1, 0.35, r()),
@@ -1443,7 +1457,10 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // frame height per unit of the ramp, from the frame's middle (vSky in the shader).
   const rampAt = (distance: number) => 0.5 - (leadP[0] * away[0] + leadP[1] * away[1] + distance) / frameP[1]
   const uMid = r()
-  const midDistance = leadEnd + lerp(OPEN_MID[0], OPEN_MID[1], uMid) * (deepEdge - leadEnd)
+  // In a pack with cyan light the sky reaches its exact hex nearer the light: farther out, its pale veil and the cyan
+  // bloom turn most of the frame pastel.
+  const openMid = cyanPack ? CYAN_OPEN_MID : OPEN_MID
+  const midDistance = leadEnd + lerp(openMid[0], openMid[1], uMid) * (deepEdge - leadEnd)
   // Along a dragged line the ramp runs from the line's start (1) to its end (0) instead, so its exact hex sits at a
   // share of the line from the seed's arrangement.
   const dragMid = lerp(0.52, 0.38, rise) + DRAG_MID[arrangement] + lerp(-0.08, 0.08, uMid) + lerp(DRAG_MID_SHIFT[0], DRAG_MID_SHIFT[1], paleReach)
@@ -1465,13 +1482,14 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
       angle: (deepAngle * 180) / Math.PI,
     },
   }
-  // No other light's body lies over the deep sky: one that reaches past the deep edge moves back toward the lead. Light
-  // of the sky's own hue (Cyan, a paler patch of sky) only dims there with the sky, so it stays. A dragged line places
-  // the blooms anew, so it keeps their own sizes.
+  // No other light's body lies over the deep sky: one that reaches past the deep edge moves back toward the lead and
+  // gives up what still reaches past by shrinking. Cyan light only moves back: over the navy it dims to teal, so the
+  // deep sky never goes dark, and smaller it barely shows. A paler patch of sky only dims there with the sky, so it
+  // stays. A dragged line places the blooms anew, so it keeps their own sizes.
   const seedGlows = glows.slice()
   for (let i = 1; i < glows.length; i++) {
-    if (sky.deep && sky.deep.stops > 0 && glows[i].color !== SLOT.sky && !isCyan(colors[glows[i].color])) {
-      glows[i] = keepBefore(glows[i], leadP, away, leadEnd, deepEdge, frameP, stretch)
+    if (sky.deep && sky.deep.stops > 0 && glows[i].color !== SLOT.sky) {
+      glows[i] = keepBefore(glows[i], leadP, away, leadEnd, deepEdge, frameP, stretch, !isCyan(colors[glows[i].color]))
     }
   }
   // With dark colors in the pack (Plum and Forest, Slate and Near-black), the corner away from the
