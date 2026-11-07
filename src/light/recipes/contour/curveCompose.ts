@@ -385,10 +385,13 @@ export function accentParams(
     Math.min(...lights.map(([l, m]) => smoothstep(0.3, 0.6, Math.hypot((at[0] - 0.5) * fw - l[0], (at[1] - 0.5) * fh - l[1]) - m)))
   const across = acrossFrom(home, aspect, SECOND_BEYOND)
   const beside = acrossFrom([-home[0], -home[1]], aspect, SECOND_BEYOND)
+  // A glow reads by its lightness, about the cube root of its light, so faded in light it still showed its last tenth
+  // and then was gone at once (a jump in Halo Elemental s7's drag sweep). Each place's share is cubed, so its glow's
+  // lightness follows the fade evenly and goes out gently.
   const first = away(across)
   const places: [readonly number[], number][] = [
-    [across, first],
-    [beside, away(beside) * (1 - first)],
+    [across, first ** 3],
+    [beside, (away(beside) * (1 - first)) ** 3],
   ]
   const params: Record<string, number | number[]> = {}
   places.forEach(([at, share], k) => {
