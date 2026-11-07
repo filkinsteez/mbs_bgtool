@@ -133,11 +133,14 @@ const T = {
   // line's core peaks 0.06 to 0.08 under its hex when it reads as its color (Yellow, Lime at a 12 px core of 180,
   // Cyan at 8 px); thinner it reads lavender, and an Orange-red or Tan line on Meta Blue reads pink or mauve.
   line: { ownL: 0.09, length: 0.3, thickness: 0.015, elongation: 8, contrast: 0.06 },
-  // A dark pack color under the present share counts as a shape (a bank, hill or ground) when its largest piece at its
-  // own lightness (within `ownL` of its hex) covers `share` of the frame, is `thickness` thick (share of the short side)
-  // and `contrast` from what lies 3 to 6 px beside it, and is no corner: a piece touching two adjacent edges and
-  // spanning under `cornerSpan` of both is a corner shadow.
-  darkShape: { ownL: 0.08, share: 0.01, thickness: 0.03, contrast: 0.12, cornerSpan: 0.3 },
+  // Sunset at the default light, the 11:45 PM rule (SHARED.md, 2026-11-06): a dark pack color under the present share
+  // counts as a shape (a bank, hill or ground) when its largest piece at its own lightness (within `ownL` of its hex)
+  // covers `share` of the frame, is `thickness` thick (share of the short side) and `contrast` from what lies 3 to 6 px
+  // beside it, and is no corner: a piece within `edge` (of the short side) of two adjacent edges and spanning under
+  // `cornerSpan` of both is a corner. Set by eye on artifacts/compare/rounds/16/dark/: a hill 40% wide and 10% tall or
+  // a far bank counts (contrast 0.33 to 0.35, Ramp's Elemental banks 0.11 to 0.16); a soft corner shadow (0.04 to
+  // 0.08), a thin dark line along the bottom edge (1 to 2% thick), a 15% corner wedge and a Plum dot of 0.5% don't.
+  darkShape: { ownL: 0.08, share: 0.01, thickness: 0.03, contrast: 0.1, cornerSpan: 0.3, edge: 0.03 },
   // --main bright (the 11:30 AM rule of 2026-11-05, withdrawn at 12:50 PM): the main light is the color of the frame's
   // brightest `bright.share`, short of the near-white core (L `bright.whiteL` and up at chroma under `bright.whiteC`),
   // where a pixel is a colored light's when it keeps `bright.onPath` of that color's path chroma. An Ice light whose
@@ -831,7 +834,9 @@ try {
         if (!piece.length) continue
         const s = pieceStats(piece)
         const [w, h] = [(s.x1 - s.x0 + 1) / W, (s.y1 - s.y0 + 1) / H]
-        const side = (s.x0 === 0 || s.x1 === W - 1) && (s.y0 === 0 || s.y1 === H - 1)
+        // The lens lightens a shape's outermost pixels, so a piece counts as touching an edge from a few pixels in.
+        const e = Math.round(T.darkShape.edge * Math.min(W, H))
+        const side = (s.x0 <= e || s.x1 >= W - 1 - e) && (s.y0 <= e || s.y1 >= H - 1 - e)
         darkShapes[name] = {
           share: piece.length / counted,
           width: +w.toFixed(3),
@@ -1084,6 +1089,11 @@ try {
         .filter(([name, l]) => !present.some((x) => x.replace(' (overexposed)', '') === name) && l.length >= T.line.length && l.thickness >= T.line.thickness && l.elongation >= T.line.elongation && l.contrast >= T.line.contrast)
         .sort((a, b) => b[1].contrast - a[1].contrast)
       if (counted.length) present.push(`${counted[0][0]} (line)`)
+      // A dark pack color's shape (a bank, hill or ground), not a corner shadow (the 11:45 PM rule).
+      for (const [name, d] of Object.entries(m.darkShapes ?? {})) {
+        if (present.includes(name)) continue
+        if (d.share >= T.darkShape.share && d.thickness >= T.darkShape.thickness && d.contrast >= T.darkShape.contrast && !d.corner) present.push(`${name} (shape)`)
+      }
     }
     m.present = present
     if (m.largestPatch >= T.largestPatch || m.wideShare >= T.wideShare) {
