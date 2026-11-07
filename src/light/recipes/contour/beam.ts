@@ -98,6 +98,7 @@ uniform float uGlowCore;  // least size of the pool's glow in the haze (screen, 
 uniform vec4 uMouth;      // a hanging lamp's mouth glowing in the haze around it: level (share of the beam's light; 0: none), core (screen), where it is (screen, unturned)
 ${AIR_GLOW_GLSL}
 const int BEAM_STEPS = 16;
+const float MOUTH_REACH = 0.12; // how far (screen, short-side units) a hanging lamp's halo carries through the haze
 
 float beamSoftDisk(float r, float k) { return exp(-0.5 * pow(max(r, 0.0), k)); }
 
@@ -303,9 +304,13 @@ vec3 radiance(vec2 uv, vec2 screen) {
   float below = p.y - contactY;
   float glow = poolGlow(vec2(abs(p.x - beamX), below > 0.0 ? below * uEdge.y : -below), aScreen, core, hazeHere);
   scatter += uBeamLight.x * glow;
-  // A hanging lamp's mouth lights the haze around it, falling off as the view ray's integral of
-  // its light does (1 / distance past a core), so the beam comes out of a soft glow.
-  if (uMouth.x > 0.0) scatter += uBeamLight.x * uMouth.x * hazeHere * uMouth.y / (uMouth.y + length(screen - uMouth.zw));
+  // A hanging lamp's mouth: a small source, the brightest point, whose light the haze around it
+  // scatters as a soft halo (1 / distance past a small core), lost in the haze over a short way,
+  // so the cone comes out of it and the rest of the room stays dark.
+  if (uMouth.x > 0.0) {
+    float d = length(screen - uMouth.zw);
+    scatter += uBeamLight.x * uMouth.x * uMouth.y / (uMouth.y + d) * exp(-d / MOUTH_REACH);
+  }
 
   // Haze just over the floor is lit from below by the floor's spill under it, and over the
   // pit by the spill at the stage's edge, thinning upward over the floor haze's depth. So
@@ -548,9 +553,11 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
   // the pool lands mid-frame with a wide floor in front of it; or neither.
   const stage = seededRandom(seed, 0xbeb)
   const [kind] = seedShares(seed, 0xbeb, 1, stage)
-  // A dragged line places the beam itself, on the seed's usual stage.
-  const hanging = !controls.drag && kind < HANGING_SHARE
-  const highEdge = !controls.drag && kind >= HANGING_SHARE && kind < HANGING_SHARE + HIGH_EDGE_SHARE
+  // A dragged line places the beam itself, on the seed's usual stage. Only a narrow beam hangs,
+  // as a cone from its lamp (a broad column starting in mid-air reads as a dome); a broad one
+  // in its place has the high edge instead.
+  const hanging = !controls.drag && kind < HANGING_SHARE && !broad
+  const highEdge = !controls.drag && !hanging && kind < HANGING_SHARE + HIGH_EDGE_SHARE
   const either = (choice: number, lo: [number, number], hi: [number, number]) => (choice ? lerp(hi[0], hi[1], random()) : lerp(lo[0], lo[1], random()))
   let edgeAt = highEdge ? lerp(0.4, 0.5, floorShare) : wide ? lerp(0.52, 0.82, floorShare) : lerp(0.56, 0.84, floorShare)
   // A broad beam that would land in front of the edge lands on it instead, with the edge moved
@@ -657,7 +664,11 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
   }
   // A hanging lamp's beam starts inside the frame, a fifth to nearly half of the way down; a
   // dragged line puts the start at the line's start instead.
-  if (hanging) Object.assign(params, beamHanging(params, -halfH + 2 * halfH * lerp(0.2, 0.45, stage()), halfH, lerp(MOUTH_GLOW[0], MOUTH_GLOW[1], stage())))
+  // The lamp's mouth is the frame's brightest point, a little brighter than a cool light's pool
+  // (a warm light's pool is held down so it doesn't flatten into a saturated area, but the mouth
+  // is a small core, which may go to white).
+  const mouthLevel = (lerp(MOUTH_GLOW[0], MOUTH_GLOW[1], stage()) * (params.pool as number[])[0] * (luminanceOf(light.light) / Math.max(luminanceOf(light.haze), 1e-6))) / (light.tail ? 0.3 * WARM_FLOOR_LIGHT : 1)
+  if (hanging) Object.assign(params, beamHanging(params, -halfH + 2 * halfH * lerp(0.2, 0.45, stage()), halfH, mouthLevel))
   if (controls.drag) {
     const line = lineInShorts(controls.drag, aspect)
     // Under a line the seed's layout choices that the line takes over (left or right, upright
@@ -758,8 +769,11 @@ const HIGH_EDGE_SHARE = 0.3
  * light per unit of haze) within a core (screen, short-side units).
  */
 const HANGING_RAMP = 0.1
-const MOUTH_GLOW = [0.6, 1]
-const MOUTH_CORE = 0.04
+const MOUTH_GLOW = [1.1, 1.4]
+const MOUTH_CORE = 0.012
+
+/** A hanging lamp's beam width at its mouth, as a share of its width at the pool. */
+const MOUTH_WIDTH = 0.12
 
 /**
  * The stage for a dragged line: the beam starts at the line's start and lands at its end, with
@@ -844,6 +858,8 @@ function beamHanging(params: Record<string, ParamValue>, start: number, halfH: n
     ceiling: [ceiling[0], ceiling[1], round4(Math.min(4, Math.max(-2, start + halfH + ceiling[2])))],
     ceilingTop: ceiling[1],
     source: [startHeight, round4(Math.max(heightAt(start + HANGING_RAMP), startHeight + 0.001))],
+    // A cone from the lamp: MOUTH_WIDTH of its width at the mouth, widening down to the pool.
+    spread: round4(Math.min(1, (1 - MOUTH_WIDTH) / Math.max(1 - startHeight, 0.1))),
     mouth: [round4(mouth), MOUTH_CORE, round4(x), round4(start)],
   }
 }
@@ -918,7 +934,7 @@ export const contourBeam: RecipeDefinition = {
     { kind: 'number', key: 'beamHaze', label: 'Beam light in its haze', min: 0, max: 4, step: 0.005, default: 1 },
     { kind: 'vector', key: 'halo', label: 'Light around the beam', min: 0, max: 2, step: 0.0005, default: [0, 0] },
     { kind: 'number', key: 'glowCore', label: 'Least pool glow size', min: 0, max: 1, step: 0.0005, default: 0 },
-    { kind: 'vector', key: 'mouth', label: 'Lamp mouth glow', min: -8, max: 8, step: 0.0005, default: [0, 0.04, 0, 0] },
+    { kind: 'vector', key: 'mouth', label: 'Lamp mouth glow', min: -8, max: 32, step: 0.0005, default: [0, 0.04, 0, 0] },
   ],
   fragment: BEAM_GLSL,
   uniforms: (ctx) => {
