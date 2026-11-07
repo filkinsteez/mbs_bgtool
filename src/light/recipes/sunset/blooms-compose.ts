@@ -439,6 +439,7 @@ function followDrag(
     fireLead,
     spots,
     darkTurn,
+    darkSide,
     darkSlide,
     deepReach,
     kind,
@@ -534,8 +535,8 @@ function followDrag(
   // toward, already dark: along the edge it reaches the light under the line, olive and grey. On the frame's far side
   // behind a light pointing away it stays a rounder area: lying along that edge in every seed, the frames are one picture.
   const ground = layout.zenith.hold >= 0.5 && layout.zenith.meet < 0.3
-  const darkAt = (angle: number, along: number, asGround: boolean): ZenithSpec => {
-    const at = alongEdge(toP(farEdge(middle, angle, frame, asGround ? GROUND_DRAG_PAST : DARK_PAST_EDGE)), along, frame)
+  const darkAt = (angle: number, along: number, asGround: boolean, from: readonly number[] = middle): ZenithSpec => {
+    const at = alongEdge(toP(farEdge(from, angle, frame, asGround ? GROUND_DRAG_PAST : DARK_PAST_EDGE)), along, frame)
     const z: ZenithSpec = {
       ...layout.zenith,
       at: fromP(at),
@@ -554,9 +555,15 @@ function followDrag(
   // light it fades out there, and past DARK_TURN it fades in at the frame's far side from the light instead;
   // it moves while it is invisible, so the picture never jumps.
   const back = ahead > DARK_TURN ? null : darkAt(lineAngle + Math.PI, -slide, false)
-  const zenith: ZenithSpec = back
-    ? { ...back, amount: back.amount * smoothstep(DARK_TURN, DARK_TURN - DARK_FADE, ahead) }
-    : { ...front, amount: front.amount * smoothstep(DARK_TURN, DARK_TURN + DARK_FADE, ahead) }
+  // A third of ground of the sky's family (Atmospheric) lies along the frame's side beside the line instead, on the side
+  // the seed turns its dark area to, from wherever the light is: across the far side, with the deeper sky there, half the
+  // frame or more was dark, and the seeds' far sides were alike.
+  const zenith: ZenithSpec =
+    darkSide !== 0 && ground
+      ? darkAt(lineAngle + (darkSide * Math.PI) / 2, SIDE_SLIDE * slide, true, [0, 0])
+      : back
+        ? { ...back, amount: back.amount * smoothstep(DARK_TURN, DARK_TURN - DARK_FADE, ahead) }
+        : { ...front, amount: front.amount * smoothstep(DARK_TURN, DARK_TURN + DARK_FADE, ahead) }
   // A bloom moves out of a warm lead's bright body, so the body keeps the light's own color: on it a second bloom
   // or a cyan one adds up to cream or white. A bloom at e (the body's size is 1) moves straight away from the
   // light's middle to 2e - e^2: one at the body's edge stays, and none moves faster than twice the line, so as the
@@ -856,6 +863,8 @@ interface DragSeed {
   /** How far the dark area turns off the line's way (radians), and how far along the edge it slides for that, 0..1. */
   darkTurn: number
   darkSlide: number
+  /** A third of ground of the sky's family (Atmospheric): the side of the line it lies along, -1 or 1 (0: at the far side). */
+  darkSide: number
   /** Where along the line the deep sky begins, as a share of its length. */
   deepReach: number
   kind: DragKind
@@ -940,7 +949,7 @@ const BAND_TOWARD_LIGHT = 0.4
  * Under a dragged line, where the pack's dark colors blend with the blue (Atmospheric), the seed's dark style sets the
  * share of the frame the dark ground covers, and for a strip how long it lies along the edge (width / height).
  */
-const DRAG_STYLE_SHARE: Readonly<Record<DarkStyle, readonly [number, number]>> = { none: [0.06, 0.12], strip: [0.05, 0.09], corner: [0.12, 0.2], third: [0.26, 0.38] }
+const DRAG_STYLE_SHARE: Readonly<Record<DarkStyle, readonly [number, number]>> = { none: [0.06, 0.12], strip: [0.05, 0.09], corner: [0.12, 0.2], third: [0.18, 0.26] }
 /** The same for a dark ground of another hue (Plum, Forest), which stays smaller. */
 const DRAG_OTHER_SHARE: Readonly<Record<DarkStyle, readonly [number, number]>> = { none: [0.04, 0.06], strip: [0.05, 0.08], corner: [0.07, 0.11], third: [0.11, 0.15] }
 const STRIP_ANISO: readonly [number, number] = [3, 4]
@@ -1007,6 +1016,8 @@ const SLIDE_LONG = 1.3
 const DARK_TURN = -0.05
 /** Over how many line lengths of that edge's distance the dark area fades, so it changes slowly as the line moves. */
 const DARK_FADE = 0.85
+/** How far a third of ground along the frame's side beside the line slides, against the far side's slide: it stays on its side. */
+const SIDE_SLIDE = 0.35
 /** How far in from the light toward the frame's middle the edge the line runs toward is looked for, 0..1. */
 const DARK_FROM_IN = 0.5
 
@@ -2156,20 +2167,23 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // sky turns grey, so there the style only lightens it. A dark ground of another hue (Plum, Forest) meets the blue
   // only where the sky is already dark, so there the sky stays the seed's own.
   const dragStyle = darkStyleFor(seed)
+  // Where the dark colors blend with the blue (Atmospheric) a third of ground is the frame's dark, so its sky stays a
+  // corner's: with the deeper sky as well, half the frame or more was dark.
+  const skyStyle: DarkStyle = groundBlends && dragStyle === 'third' ? 'corner' : dragStyle
   // Without a ground, a warm lead keeps the seed's own sky too: a sun's wide light over a pale sky leaves only cream.
   const otherHueGround = darkGround && !skyFamily
   const ownSky = otherHueGround || (!darkGround && isWarm(colors[lead]))
-  const styleMid = ownSky ? null : DRAG_STYLE_MID[dragStyle]
+  const styleMid = ownSky ? null : DRAG_STYLE_MID[skyStyle]
   // A large ground of another hue (a third) needs the deeper sky, so the two still meet where both are dark.
   const styleDarkens = groundBlends || (!darkGround && !ownSky && DRAG_STYLE_TOP[dragStyle] < 1) || (otherHueGround && dragStyle === 'third')
-  const deepRange = boldForm ? FORM_DRAG_DEEP[boldForm.deep] : DRAG_STYLE_DEEP[styleDarkens ? dragStyle : 'corner']
+  const deepRange = boldForm ? FORM_DRAG_DEEP[boldForm.deep] : DRAG_STYLE_DEEP[styleDarkens ? skyStyle : 'corner']
   const deepReach = lerp(deepRange[0], deepRange[1], rd())
   const dragSky: SkySpec = {
     ...layout.sky,
     mid: styleMid ? lerp(styleMid[0], styleMid[1], uMid) : dragMid,
-    top: skyTop * (styleDarkens ? DRAG_STYLE_TOP[dragStyle] : 1),
+    top: skyTop * (styleDarkens ? DRAG_STYLE_TOP[skyStyle] : 1),
     deep: layout.sky.deep
-      ? { ...layout.sky.deep, stops: lerp(DEEP_STOPS[0], DEEP_STOPS[1], uDeepStops) * (styleDarkens ? DRAG_STYLE_STOPS[dragStyle] : 1) }
+      ? { ...layout.sky.deep, stops: lerp(DEEP_STOPS[0], DEEP_STOPS[1], uDeepStops) * (styleDarkens ? DRAG_STYLE_STOPS[skyStyle] : 1) }
       : undefined,
   }
   const rk = random(seed * 5381 + 23)
@@ -2265,6 +2279,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
           spots,
           darkTurn,
           darkSlide: otherHueGround ? OTHER_HUE_SLIDE : 1,
+          darkSide: groundBlends && skyFamily && dragStyle === 'third' ? Math.sign(turnDraw) || 1 : 0,
           deepReach,
           kind,
           draws,
