@@ -404,6 +404,8 @@ const NAVY_SHARE = [[0.04, 0.14], [0.38, 0.56], [0.2, 0.34]] as const
 const HAZE_MASS = [0.15, 1, 0.6]
 /** Under a dragged line, how far up the frame's own sky Elemental's highest sky edge lies at most. */
 const ELEMENTAL_ZENITH = 0.77
+/** Under a long line, the widest Elemental's sky edges get, in short sides. */
+const ELEMENTAL_EDGE = 0.3
 /** Under a long line, the range of a seed's own factor on its sky edges' widths. */
 const DRAG_SOFT = [0.6, 1.2] as const
 /** The zenith's light where the sky turns toward navy, and at the line's end by depth turn, as shares of Meta Blue. */
@@ -969,9 +971,12 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // Under a long line Bold's and Atmospheric's seeds differ in how softly the low sky turns to
     // the deep sky (Elemental's edge between them stays as narrow as it can).
     const soft = lerp(1, lerp(DRAG_SOFT[0], DRAG_SOFT[1], seeded(Math.round(seed) * 61 + 29)()), navyReach)
+    // Elemental's Meta Blue and its warm low sky blend through grey, so under a long line their
+    // edge stays narrow: a band of Meta Blue at the far side, not a wide grey field.
+    const widest = packId === 'elemental' ? lerp(6, ELEMENTAL_EDGE, longLine) : 6
     for (const edge of edges) {
       edge[0] = -glowRise + (edge[0] + glowRise) * stretch * nearer
-      edge[1] = Math.min(6, edge[1] * stretch * nearer * soft)
+      edge[1] = Math.min(widest, edge[1] * stretch * nearer * soft)
     }
     navyEnd = edgeTop - zenithRoom
   } else {
@@ -1108,7 +1113,15 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // is hazier than the pack's own sky, and the band of full Meta Blue reaches further down from
     // the line's end, so the frame keeps a second pack color.
     veil: [look.veil[0] * zenithGain * dragVeil, look.veil[1] * zenithGain * dragVeil, (packId === 'elemental' ? 0.6 : 0.3) * Math.max(0.2, topHeight)],
-    veilFar: navyVeil ?? (line ? [topHeight - 0.3 * tall, topHeight - 0.08 * tall] : [topHeight - 0.22 * tall, topHeight - 0.05 * tall]),
+    // Under a long line Elemental's veil fades out across its highest edge, so the Meta Blue that
+    // holds the frame's far side shows clear instead of greyed.
+    veilFar:
+      navyVeil ??
+      (line && packId === 'elemental' && longLine > 0
+        ? [lerp(topHeight - 0.3 * tall, -edges[0][0] - 0.5 * edges[0][1], longLine), lerp(topHeight - 0.08 * tall, -edges[0][0] + 0.5 * edges[0][1], longLine)]
+        : line
+          ? [topHeight - 0.3 * tall, topHeight - 0.08 * tall]
+          : [topHeight - 0.22 * tall, topHeight - 0.05 * tall]),
     veilTint: paleTint(look.veilColor, packId === 'bold' ? 0.35 : packId === 'elemental' ? 0.25 : 0.6),
     // Under the far band the sky's blue greys at its own hue (Elemental, whose pale side is its
     // light's color), or toward Steel (Atmospheric, overcast), instead of turning periwinkle.
