@@ -1,4 +1,5 @@
 import { getPack, type PackId } from '../../color/packs'
+import { linearToOklab } from '../../color/oklab'
 import { hexToSrgb, srgbToLinearRgb } from '../../color/srgb'
 import type { Composition, ControlValues, ParamValue } from '../../scene'
 import { horizonRise, horizonScene, placeHorizon } from './horizon'
@@ -458,6 +459,8 @@ const WATER_HIGHEST = 0.18
 const GLINT_RAMP = 0.2
 /** Under a glow above the frame, the most (short sides) the sun stands above the water's horizon, by seed. */
 const SUN_RISE = 0.1
+/** Oklab lightness under which a pack color reads as itself only up to one stop over its own (Forest, Plum, Slate). */
+const DARK_L = 0.5
 /** Under a long line, how far Elemental's bridge lifts toward white. */
 const ELEMENTAL_FAR_LIFT = 0.8
 /** Under a long line, the range of a seed's own factor on its sky edges' widths. */
@@ -1178,6 +1181,10 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // The seed's sea under a field of glints, from calm (0) to rough (1).
   const sea = thirdPick(seed, seeded(Math.round(seed) * 97 + 53)())
   const lensStrip = 0.05 + 1.5 * lensRadius
+  // A dark land color (Oklab L under DARK_L) reads as itself only up to one stop over its own, and
+  // under a warm light it has no clean mix with the light.
+  const darkLand = warmLight && linearToOklab(srgbToLinearRgb(hexToSrgb(look.landTop[0])))[0] < DARK_L
+  const litMost = darkLand ? Math.max(1, (2 / look.landTop[1] - 1) / Math.max(look.landLit, 1e-3)) : Infinity
   const strip = lerp(lensStrip, Math.max(lerp(GLINT_SEA.strip[0], GLINT_SEA.strip[1], sea) * (0.5 * tall - lineAt), bankHeight > 0 ? lensStrip : 0.05), glints)
 
   const params: Record<string, ParamValue> = {
@@ -1359,11 +1366,14 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // packs' water keeps its own Slate or Meta Blue.
     waterTint: water && (packId === 'bold' || (lift > 0 && packId === 'elemental')) ? 0.6 : 0,
     // A tall land area reaches nearer the viewer: the haze over its far ground reaches further
-    // down, and its near ground is darker.
-    groundHaze: [look.landHaze, land ? Math.max(0.1 * tall, 0.25 * landRoom) : 0.05 * tall],
+    // down, and its near ground is darker. A dark land color's haze doesn't: through more air
+    // Forest under Lime light turns olive, and Plum under Tan grey-brown.
+    groundHaze: [look.landHaze, land ? (darkLand ? 0.1 * tall : Math.max(0.1 * tall, 0.25 * landRoom)) : 0.05 * tall],
     groundVeil: [land ? look.groundVeil * groundGain : 0, 0.35 * landRoom],
-    // A tall land area carries more of the light, so a high line doesn't leave a dark field.
-    landLit: [ground ? look.landLit * (land ? 1 + 1.5 * clamp01((landRoom - 0.4 * tall) / (0.4 * tall)) : 1) : 0, lerp(0.3, 0.5, widthPick) * frameWidth, ground ? 0.6 : 0],
+    // A tall land area carries more of the light, so a high line doesn't leave a dark field. A dark
+    // land color takes no more of it than one stop over its own: brighter, Plum turns magenta and
+    // Forest green.
+    landLit: [ground ? look.landLit * (land ? Math.min(1 + 1.5 * clamp01((landRoom - 0.4 * tall) / (0.4 * tall)), litMost) : 1) : 0, lerp(0.3, 0.5, widthPick) * frameWidth, ground ? 0.6 : 0],
     // A deep seed's ground is darker. A light seed's keeps the pack's own: brightened, Plum turns
     // magenta.
     groundTopGain: look.landTop[1] * groundGain * lerp(1, 0.55, groundDepth),
