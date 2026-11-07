@@ -377,7 +377,7 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   // The rings' colors are placed from where the hot spot sits at the default, so the Light control and a drag move
   // the light along them without moving them.
   const seedHot = pointAlong(path, along(0.5)) ?? layout.anchor
-  const ring1Parts = rings ? ringParts('ring1') : paleArc ? arcParts('ring1', light.hex) : haloParts('ring1', light.hex)
+  const ring1Parts = rings ? ringParts('ring1', light.hex) : paleArc ? arcParts('ring1', light.hex) : haloParts('ring1', light.hex)
   // The widest haze: a crest's outer fade, a pale arc's or a ring's inside glow. A ring's only dims: brighter, it
   // fills the ring like a sail.
   const hazeKey = rings || paleArc ? 'ring1f1Weight' : 'ring1f2Weight'
@@ -417,8 +417,8 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
           ring2Rotate: round4(crossing.shape.rotate),
           ring2Color: 2,
           ring2Gain: 0.85,
-          ...ringParts('ring2'),
-          ...(accent.haze < 1 ? { ring2f1Weight: round4(Number(ringParts('ring2').ring2f1Weight) * accent.haze) } : {}),
+          ...ringParts('ring2', light.hex),
+          ...(accent.haze < 1 ? { ring2f1Weight: round4(Number(ringParts('ring2', light.hex).ring2f1Weight) * accent.haze) } : {}),
           ...prefixKeys('ring2', ringColors(crossing.shape, crossing.anchor, aspect, hues, seedHot)),
           ...(drift ? { ring2Drift: drift.ratios, ring2DriftShape: [drift.knee, drift.sharpness] } : {}),
         }

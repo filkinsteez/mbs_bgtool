@@ -880,15 +880,18 @@ const RING_RIM = { weight: 2.5, width: 0.0028 }
 /**
  * A thin glass rim under a key prefix (the iridescent-rings reference): a fine bright line on the curve with a soft
  * glow on its inside only, so the outside edge stays crisp, the inside faintly lit like a translucent body for
- * about a twelfth of the short side, and a faint glow outside. All parts follow light field 1.
+ * about a twelfth of the short side, and a faint glow outside. Where the light is strongest the rim goes pale, as
+ * the reference's does: a narrow core (near part 3) tops it up to the light's near-white level there and falls
+ * away fast along the rim (the light to the third power), so the rest keeps its tint. All parts follow light field 1.
  */
-export function ringParts(prefix: string): Record<string, number | number[]> {
+export function ringParts(prefix: string, hex: string): Record<string, number | number[]> {
+  const core = round4(Math.min(8, Math.max(0, nearWhiteLevel(hex) - RING_RIM.weight)))
   // The inside glow fades across the line instead of stopping at it: where two rings cross, their inside glows add,
   // and with a crisp edge the overlap read as a filled sail between the arcs, most of all under a drag.
   const parts: Record<string, number | number[]> = {
     ...prefixed('n1', { Weight: RING_RIM.weight, Width: RING_RIM.width, Shape: 8, Side: 0, Offset: 0, Light: 1, LightGamma: 1, Grow: 0 }),
     ...prefixed('n2', { Weight: 0.45, Width: 0.024, Shape: 4, Side: 1, Offset: 0, Light: 1, LightGamma: 1, Grow: 0, MaskSoft: 0.003 }),
-    n3Weight: 0,
+    ...prefixed('n3', { Weight: core, Width: RING_RIM.width, Shape: 8, Side: 0, Offset: 0, Light: 1, LightGamma: 3, Grow: 0, Pale: 0 }),
     ...prefixed('f1', { Weight: 0.2, Width: 0.08, Side: 1, Light: 1, LightGamma: 1, MaskSoft: 0.14 }),
     ...prefixed('f2', { Weight: 0.025, Width: 0.06, Side: 2, Light: 1, LightGamma: 1, MaskSoft: 0.01 }),
     f3Weight: 0,
