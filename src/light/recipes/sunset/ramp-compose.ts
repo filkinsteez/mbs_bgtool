@@ -422,9 +422,9 @@ const GLOW_ARCH_SHAPE = [[0.2, 0.35], [0.45, 0.7], [0.28, 0.5]]
 const ICE_MASSES = [0, 0.2, 0]
 const ICE_GAIN = [1, 1.25, 1]
 /**
- * Water at the seed's own view: how much it squashes the sky it mirrors, the least degrees below the
- * horizon half a short side under the line, and the share of the band above the glow that the sun's
- * path mirrors toward its sides. Elemental's and Atmospheric's
+ * Water at the seed's own view, and Elemental's and Atmospheric's under a dragged line too: how much it
+ * squashes the sky it mirrors, the least degrees below the horizon half a short side under the line, and
+ * the share of the band above the glow that the sun's path mirrors toward its sides. Elemental's and Atmospheric's
  * water past the far bank's image and a strip as deep as the lens is wide mirrors the sky higher up,
  * by a share of that band, and keeps a share of its reflection there, by depth turn (light, dark,
  * between); Bold's keeps mirroring its Cyan.
@@ -437,11 +437,11 @@ const OWN_WATER = {
   keep: [0.85, 0.65, 0.75],
 }
 /**
- * A far bank: its length from the frame's edge to its spit, in short sides at a square frame (a wider frame's
- * bank is longer, by the square root of its width), its height at that edge, its waterline's drop below the
- * horizon as a share of its height, and how many times shorter its mirror image is than the sky's.
+ * A far bank: its length from the frame's edge to its spit, as a share of the frame's width (so it ends inside
+ * the frame at every format), its height at that edge, its waterline's drop below the horizon as a share of its
+ * height, and how many times shorter than the bank its mirror image is, at every view.
  */
-const BANK = { length: [0.95, 1.25], peak: 2.2, foot: 0.1, mirror: 2 }
+const BANK = { length: [0.7, 0.9], peak: 2.2, foot: 0.1, mirror: 3.6 }
 /**
  * Under a dragged line, the most a warm glow lifted above the land's own glow ends above the land,
  * and how far above an open sky's horizon a warm glow's end lies before the sky under it comes
@@ -1031,7 +1031,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // The glow's height that the sun's path mirrors, and the band above it.
   const pathGlow = glowRise + 1.2 * bankHeight
   const skyBand = Math.min(0.3, Math.max(0.05, 0.7 * (-lowSkyEdge - glowRise)))
-  const ownWater = water && !controls.drag
+  const ownWater = water && (packId !== 'bold' || !controls.drag)
   const lift = ownWater && packId !== 'bold' ? OWN_WATER.lift[packId][depthTurn] : 0
   const lensRadius = lerp(0.045, 0.12, softness)
 
@@ -1157,7 +1157,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     shore: [bankHeight, 0.5],
     // A far bank is a headland: thick where it runs off the frame on the side away from the sun and
     // thinning to nothing toward it, its waterline just under the horizon.
-    shoreShape: [-side, lerp(BANK.length[0], BANK.length[1], shorePick) * Math.sqrt(frameWidth), BANK.peak],
+    shoreShape: [-side, lerp(BANK.length[0], BANK.length[1], shorePick) * frameWidth, BANK.peak],
     shoreFoot: bankHeight > 0 ? [BANK.foot, BANK.mirror] : [0, 1],
     // The path mirrors the glow's line, which sits above most of the far bank.
     // Light water is a near mirror with a faint path, deep water dark with a strong one. A tall,

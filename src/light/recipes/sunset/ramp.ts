@@ -141,7 +141,7 @@ const PARAMS: ParamSpec[] = [
   vec('ridge', 'Land: climb toward the light, side it climbs to (+1 right), broad bowl depth, wave length', -2, 2, 0.001, [0, 1, 0, 0.9]),
   vec('shore', 'Far bank on the water: height, change along it', 0, 1, 0.001, [0, 0]),
   vec('shoreShape', "Far bank's height across the frame: its thickest side (+1 right, -1 left, 0: even), length from that edge to its spit, height at that edge", -4, 4, 0.01, [0, 1, 1]),
-  vec('shoreFoot', "Far bank at the water: its waterline's drop below the horizon as a share of its height, how many times shorter its mirror image is", 0, 8, 0.001, [0, 1]),
+  vec('shoreFoot', "Far bank at the water: its waterline's drop below the horizon as a share of its height, how many times shorter than the bank its mirror image is", 0, 8, 0.001, [0, 1]),
   vec('waterLift', "Water under the far bank's image and a strip: how much higher it mirrors the sky (0: none), the strip's depth, share of the reflection kept", 0, 4, 0.001, [0, 0.05, 1]),
   vec('sunPath', "Sun's path on the water: strength, half width at the line, widening per short side of depth, height of the glow it mirrors", 0, 4, 0.001, [0, 0.05, 0.3, 0.2]),
   vec('sunLight', "Sun's path: depth where its middle reaches the glow's paler top, height of the band above the glow its sides climb through", 0.01, 4, 0.001, [0.3, 0.15]),
