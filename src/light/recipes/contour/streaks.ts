@@ -434,6 +434,7 @@ const COOL_POOL_GAIN = 1.6
  * white at a lower level than Meta Blue, so at the same level it would show a flat white field.
  */
 const SKY_WHITE = 0.9
+const SKY_WHITE_DOWN = 0.85
 const POOL_WHITE = 0.6
 const BAND_WHITE = 0.4
 
@@ -619,6 +620,7 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
   const sun = seededRandom(seed, 0x57e7)
   const [sunShare] = seedShares(seed, 0x57e7, 1, sun)
   let drag = controls.drag
+  let down = 0
   if (!drag && sunShare < FROM_ABOVE_SHARE) {
     const x = Math.min(0.95, Math.max(0.05, lerp(0.25, 0.75, sun()) + (mood - 0.5) * 0.35))
     drag = { from: [x, lerp(-0.3, -0.12, sun())], to: [x + lerp(-0.22, 0.22, sun()), lerp(0.55, 0.78, sun())] }
@@ -640,7 +642,7 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
     // A line pointing down from above lands its shafts on a floor whose far edge is at the line's
     // end, with a pool under it, and the shafts reach that floor. The floor comes in as the line
     // turns from sideways to straight down.
-    const down = smoothstep(DOWN_FROM, DOWN_TO, Math.abs(wrapAngle(line.angle + Math.PI / 2)))
+    down = pointsDown(line)
     Object.assign(params, {
       reach: round4((params.reach as number) * (1 + DOWN_REACH * down)),
       downFloor: [round4(down), round4(line.to[1]), round4(soft(0.03, 0.06)), round4(lerp(0.03, 0.07, shape()))],
@@ -649,10 +651,11 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
     })
   }
   // Only the light's core turns flat white (SKY_WHITE). A lifted light (Tan) has more of its lit
-  // area near its peak, so the lift raises its dim and middle light but not its brightest.
+  // area near its peak, so the lift raises its dim and middle light but not its brightest. A sun
+  // above spreads its fan over most of a tall frame, so its bright end stays further from white.
   const white = whiteLevelOf(light, params) / light.lift
   const skyLevel = params.skyLevel as number[]
-  const skyShare = softCap(skyLevel[0], SKY_WHITE * white) / skyLevel[0]
+  const skyShare = softCap(skyLevel[0], SKY_WHITE * lerp(1, SKY_WHITE_DOWN, down) * white) / skyLevel[0]
   const floor = params.floor as number[]
   const band = params.band as number[]
   Object.assign(params, {
@@ -733,6 +736,21 @@ const DOWN_TO = 0.92 * Math.PI
 const DOWN_REACH = 0.4
 const DOWN_POOL = 0.5
 
+/** How far a line points down from above, from 0 (sideways or up) to 1 (straight down or nearly). */
+function pointsDown(line: ShortLine): number {
+  return smoothstep(DOWN_FROM, DOWN_TO, Math.abs(wrapAngle(line.angle + Math.PI / 2)))
+}
+
+/**
+ * The fan under a line pointing down from above: its width as a share of the seed's lit sky,
+ * its side softness as a factor, how many more cloud gaps it has (a share) and the light left
+ * in its shadows (a factor).
+ */
+const FAN_DOWN = 1.25
+const SIDES_DOWN = 1.4
+const GAPS_DOWN = 1.5
+const SHADOW_LIGHT_DOWN = 0.75
+
 /** Share of the seeds whose sun is high above the frame at the seed's own view. */
 const FROM_ABOVE_SHARE = 0.3
 
@@ -757,17 +775,29 @@ function streaksOnLine(params: Record<string, ParamValue>, line: ShortLine, skyH
   const skyLevel = params.skyLevel as number[]
   const floor = params.floor as number[]
   const texture = params.texture as number[]
+  const horizonLine = params.line as number[]
+  const band = params.band as number[]
+  const darkMeet = params.darkMeet as number[]
+  // A line pointing down from above (`down`, as the floor in composeStreaks comes in): the sun is
+  // high, so its fan opens wide and centered on the line, with soft sides and more gaps, so
+  // several shafts come down with narrow shadows between them instead of one lit side and one
+  // dark wedge; the scene's horizon, through the point above the frame, shows no line or band.
+  const down = pointsDown(line)
   // The lit sky's width (bright end first), narrower than without a line so a dark side shows
   // in a frame the line fills, and how far it can turn either way above the horizon.
-  const width = (sky[1] - sky[0]) * FAN_ON_LINE
+  const fanWidth = (sky[1] - sky[0]) * lerp(FAN_ON_LINE, FAN_DOWN, down)
+  const width = Math.sign(fanWidth) * Math.min(0.95 * Math.PI, Math.abs(fanWidth))
   const room = Math.max(0, (Math.PI - Math.abs(width)) / 2)
   // The line's angle from straight up, positive toward +x, and the part of it taken without
   // tilting the horizon: all of it until the line comes near the horizon, then less and less,
-  // and none when it points straight down.
+  // and none when it points straight down. As it comes to point down, the scene turns all the
+  // way over instead and the rest of the line's angle leans the lit sky, so the horizon through
+  // the sun above the frame lies across the line, outside the frame, instead of cutting through
+  // it at a slant (a dark wedge under the sun with a straight edge).
   const fromUp = wrapAngle(line.angle + Math.PI / 2)
   const free = Math.PI / 2 - HORIZON_MARGIN
   const past = Math.min(1, Math.max(0, (Math.abs(fromUp) - free) / (Math.PI - free)))
-  const level = fromUp * (1 - past * past * (3 - 2 * past))
+  const level = lerp(fromUp * (1 - past * past * (3 - 2 * past)), fromUp - Math.sign(fromUp) * Math.PI, down)
   // Where the line sits across the lit sky (0 at its bright end): LINE_IN_FAN, or as near it as
   // the lit sky can turn while it stays above the horizon (its middle within `room` of straight
   // up), and never outside it. The lit sky's middle follows from that.
@@ -775,7 +805,8 @@ function streaksOnLine(params: Record<string, ParamValue>, line: ShortLine, skyH
   const [lo, hi] = [across(-room), across(room)].sort((a, b) => a - b)
   const inLo = Math.max(LINE_MARGIN, lo)
   const inHi = Math.min(1 - LINE_MARGIN, hi)
-  const share = inLo <= inHi ? Math.min(inHi, Math.max(inLo, LINE_IN_FAN)) : Math.min(1 - LINE_MARGIN, Math.max(LINE_MARGIN, (lo + hi) / 2))
+  const inFan = lerp(LINE_IN_FAN, 0.5, down)
+  const share = inLo <= inHi ? Math.min(inHi, Math.max(inLo, inFan)) : Math.min(1 - LINE_MARGIN, Math.max(LINE_MARGIN, (lo + hi) / 2))
   const fan = level - (share - 0.5) * width
   const reach = Math.hypot(line.length, 0.04)
   const scale = reach / Math.max(skyHeight, 0.05)
@@ -784,14 +815,23 @@ function streaksOnLine(params: Record<string, ParamValue>, line: ShortLine, skyH
     // The clouds move with the line's start, so dragging it moves the shafts as one piece
     // instead of opening and closing gaps as the point passes under a fixed cloud layer.
     cloudAnchor: line.from.map(round4),
-    sky: [round4(-Math.PI / 2 + fan - width / 2), round4(-Math.PI / 2 + fan + width / 2), round4(sky[2] * (crisp ? CRISP_SIDES : 1)), sky[3]],
+    sky: [round4(-Math.PI / 2 + fan - width / 2), round4(-Math.PI / 2 + fan + width / 2), round4(sky[2] * lerp(crisp ? CRISP_SIDES : 1, SIDES_DOWN, down)), sky[3]],
     turn: turnParam(fromUp - level, line.from, line.from),
     // The light stays brightest at the floor band: the shafts brighten little away from the
     // point and fade out by the line's end.
     reach: round4(0.8 * reach),
     layer: [round4(layer[0] * scale), round4(layer[1] * scale), layer[2], layer[3]],
     rise: [round4(0.25 * rise[0]), round4(rise[1] * scale), round4(rise[2] * scale), rise[3]],
-    clouds: [round4(Math.min(64, clouds[0] / scale)), clouds[1], round4(clouds[2] * shade[1]), round4(clouds[3] * shade[2])],
+    // A sun high above shines through more gaps, so its shadows are narrow, and less light fills
+    // them, so its shafts still read where its fan covers all of a tall frame.
+    clouds: [round4(Math.min(64, (clouds[0] / scale) * (1 + GAPS_DOWN * down))), clouds[1], round4(clouds[2] * shade[1]), round4(clouds[3] * shade[2] * lerp(1, SHADOW_LIGHT_DOWN, down))],
+    line: [round4(horizonLine[0] * (1 - down)), horizonLine[1]],
+    band: [round4(band[0] * (1 - down)), band[1]],
+    // Over a dark of another hue (Plum) a sun high above has no dark beside its fan: the dark and
+    // the levels where the light's tail meets it fade out together, so the unlit side is the
+    // haze's own near-black instead of a block of the dark's color.
+    darkMeet: darkMeet.map((meet) => round4(meet * (1 - down))),
+    base: darkMeet[1] > 0 ? round4((params.base as number) * (1 - down)) : params.base,
     // The clouds' gaps spread over the line's reach, so a long line has only a few wide ones;
     // the faint streaks inside the shafts keep a few soft streaks of light across them.
     texture: [round4(texture[0] * LINE_STREAKS), texture[1], texture[2]],
