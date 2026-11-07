@@ -410,6 +410,8 @@ const ELEMENTAL_EDGE = 0.3
 const ELEMENTAL_FAR = [0.5, 1.2] as const
 /** Under a long line, the range of a seed's own factor on its sky edges' widths. */
 const DRAG_SOFT = [0.6, 1.2] as const
+/** Under a long line, the most an open sky leans off the line by seed, in degrees. */
+const DRAG_LEAN = 15
 /** The zenith's light where the sky turns toward navy, and at the line's end by depth turn, as shares of Meta Blue. */
 const NAVY_TURN = 0.5
 const NAVY_END = [0.24, 0.12, 0.17]
@@ -545,10 +547,11 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const line = controls.drag ? rampLine(controls.drag, aspect) : null
   // Atmospheric's grey veil keeps its blue under full strength, so its seeds keep their own haze.
   const dragVeil = line && packId !== 'atmospheric' ? Math.max(0.75, Math.min(1, veilScale)) : veilScale
-  // A broad seed's warm haze reaches further along a longer line, so it shows in the frame even
-  // where the line leaves the glow itself outside it. Atmospheric's light is pale Ice, whose haze
-  // reaching further would wash the frame to one color.
-  const dragWarm = line && packId !== 'atmospheric' ? 1 + DRAG_WARM_REACH * line.length * [0, 1, 0.4][warmTurn] : 1
+  // A broad Elemental seed's warm haze reaches further along a longer line, so it shows in the
+  // frame even where the line leaves the glow itself outside it. Atmospheric's light is pale Ice,
+  // whose haze reaching further would wash the frame to one color; Bold's would meet the navy far
+  // sky and mix into grey.
+  const dragWarm = line && packId === 'elemental' ? 1 + DRAG_WARM_REACH * line.length * [0, 1, 0.4][warmTurn] : 1
 
   const tall = Math.max(1, 1 / aspect)
   const frameWidth = Math.max(1, aspect)
@@ -677,7 +680,11 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // reads as level ground seen from the shore. Open skies follow the line all the way round. Over
   // water and land the sky keeps its own lean against the line.
   const lineTilt = line ? (ground ? limitTilt(line.tilt, water ? WATER_MOST_TILT : LAND_MOST_TILT) : line.tilt) : 0
-  const skyTilt = line ? lineTilt + (ground ? tilt : 0) : tilt
+  // Under a long line an open sky leans a little off the line by seed, toward the frame's upright
+  // or away from it (the same way for a line and its mirror image; not at all for an upright
+  // line), so seeds' deep skies sit in different places along the line's far end.
+  const skyLean = line && !ground ? DRAG_LEAN * (2 * seeded(Math.round(seed) * 71 + 37)() - 1) * Math.sin((lineTilt * Math.PI) / 180) * smoothstep(0.9, 1.6, line.length) : 0
+  const skyTilt = line ? lineTilt + (ground ? tilt : skyLean) : tilt
   const turn = (skyTilt * Math.PI) / 180
 
   // The ground's outline. Water is level and nearly still. Land is one ridge climbing toward the
