@@ -346,9 +346,11 @@ function followDrag(
   const outWide = smoothstep(0, OUT_WIDE_AT, outside) * smoothstep(-0.2, 0.6, awayFromFrame)
   // A sun that burns like fire shows its own color only near its middle, so beyond an edge, pointing away, it reaches
   // further to bring its body in as a band; and as far, as a share of the frame, in a wide frame as in a tall one,
-  // which stretches a glow along its axis (glowStretch).
+  // which stretches a glow along its axis (glowStretch), so a wide frame's range is longer. Farther in a tall frame,
+  // its pale outer light lies long over the blue and the cyan, grey and teal.
   const fireOut = fireLead ? outWide : 0
-  const fireReach = (lerp(OUT_FIRE_REACH[0], OUT_FIRE_REACH[1], draws[6]) * glowStretch(aspect)[0]) / glowStretch(9 / 16)[0]
+  const wide = smoothstep(0.5, 1, aspect)
+  const fireReach = lerp(lerp(OUT_FIRE_REACH_TALL[0], OUT_FIRE_REACH[0], wide), lerp(OUT_FIRE_REACH_TALL[1], OUT_FIRE_REACH[1], wide), draws[6])
   const fromLine = length / DRAG_REACH
   const reach = clamp(Math.max(fromLine, DRAG_OUTSIDE_REACH * lerp(1, fireReach, fireOut) * outside), DRAG_RADIUS[0], DRAG_RADIUS[1]) * leadScale
   // The other blooms' sizes follow the line itself, not how far outside the light is, and stay large enough to show
@@ -404,20 +406,8 @@ function followDrag(
   // light passes over a bloom it is pushed aside and comes back, and never jumps across.
   const pushOut = (at: [number, number], c: readonly number[], d: readonly number[], e: number): [number, number] =>
     e >= 1 ? at : insideFrame01(fromP([c[0] + d[0] * (2 - e), c[1] + d[1] * (2 - e)]))
-  // A pack's dark ground stands in front of the sky and stops the light behind it, so a second light moves out of it
-  // the same way, or it would not show; by as much as the ground shows (it fades out to move to the far side).
+  // A second light moves out of a dark ground by as much as the ground shows (it fades out to move to the far side).
   const groundShows = layout.zenith.amount > 0 ? clamp(zenith.amount / layout.zenith.amount, 0, 1) : 0
-  const clearOfGround = (at: [number, number]): [number, number] => {
-    if (zenith.hold < 0.5 || groundShows <= 0) return at
-    const a = (zenith.angle * Math.PI) / 180
-    const short = Math.min(frame[0], frame[1])
-    const c = toP(zenith.at)
-    const q = toP(at)
-    const d = [q[0] - c[0], q[1] - c[1]]
-    const along = (d[0] * Math.cos(a) + d[1] * Math.sin(a)) / (zenith.radius * short * Math.sqrt(zenith.aniso))
-    const across = ((-d[0] * Math.sin(a) + d[1] * Math.cos(a)) * Math.sqrt(zenith.aniso)) / (zenith.radius * short)
-    return pushOut(at, c, d, Math.hypot(along, across) / (GROUND_CLEAR * groundShows))
-  }
   const placed = layout.glows.map((glow, i) => {
     if (i === 0) {
       return {
@@ -427,6 +417,9 @@ function followDrag(
         aniso: leadShape,
         radius: reach / Math.sqrt(leadShape),
         vary: glow.vary * leadVary,
+        // In a tall frame its fade into the blue runs down the frame's whole height, where its pale outer light and the
+        // blue weigh the same over a wide band, grey: there it falls off faster.
+        beta: glow.beta * lerp(1, lerp(OUT_TALL_BETA, 1, wide), outWide),
       }
     }
     const [x, y] = spots[(i - 1) % spots.length]
@@ -448,8 +441,9 @@ function followDrag(
     const size = lerp(BESIDE_SIZE[0], BESIDE_SIZE[1], draws[2]) * besideReach
     return {
       ...glow,
-      at: clearOfGround(insideFrame01(fromP([n[0] * out + u[0] * forward, n[1] * out + u[1] * forward]))),
-      radius: Math.min(cyan(glow.color) ? CYAN_MAX_RADIUS : Infinity, Math.max(glow.radius, size)),
+      at: clearOfGround(insideFrame01(fromP([n[0] * out + u[0] * forward, n[1] * out + u[1] * forward])), zenith, frame, groundShows),
+      // In a narrow frame the lead's light already fills its width, so there it is smaller still.
+      radius: Math.min((cyan(glow.color) ? CYAN_MAX_RADIUS : BESIDE_MAX_RADIUS) * lerp(BESIDE_TALL, 1, wide), Math.max(glow.radius, size)),
       aniso: Math.min(glow.aniso, BESIDE_ANISO),
       gain: companionGain,
     }
@@ -476,7 +470,7 @@ function followDrag(
         break
       case 'left':
       case 'right':
-        placed[companion] = besideLine(placed[companion], kind === 'left' ? -1 : 1)
+        if (companion > 0) placed[companion] = besideLine(placed[companion], kind === 'left' ? -1 : 1)
         break
       case 'band':
         if (band > 0) placed[band] = levelBand(placed[band])
@@ -600,7 +594,7 @@ interface DragSeed {
    * beyond an edge's reach (6, an orange-red sun) and width (7).
    */
   draws: readonly number[]
-  /** Which bloom comes in as the second light beside the line, and its strength there. */
+  /** Which bloom comes in as the second light beside the line (-1: none), and its strength there. */
   companion: number
   companionGain: number
   /**
@@ -622,8 +616,11 @@ const BESIDE_OUT: readonly [number, number] = [0.5, 0.8]
 const BESIDE_AHEAD: readonly [number, number] = [-0.35, 0.05]
 const BESIDE_WARM_AHEAD: readonly [number, number] = [-0.35, -0.05]
 const BESIDE_SIZE: readonly [number, number] = [0.55, 0.75]
-/** The least line reach a second light's size counts with (units of sqrt(width * height)). */
+/** The least line reach a second light's size counts with, and its largest radius (units of sqrt(width * height)). */
 const BESIDE_MIN_REACH = 0.9
+const BESIDE_MAX_RADIUS = 0.6
+/** That largest radius in a tall frame (9:16) against a wide one's. */
+const BESIDE_TALL = 0.7
 /** Least turn (radians) of the dark area away from a second light beside the line (DRAG_DARK_SLIDE per radian). */
 const BESIDE_DARK_TURN = (25 * Math.PI) / 180
 /** Most a second light beside the line is wider than tall: larger, a long one reads as a lozenge. */
@@ -632,8 +629,12 @@ const BESIDE_ANISO = 1.4
 const HAZE_SKY_GAIN = 0.7
 /** A grey (Steel) band's strength against its own: brightened, a grey reads as the pale light (Ice), a haze. */
 const BAND_GREY_GAIN = 1.5
-/** How far a second light stays from a dark ground's middle, in the ground's radii (its light stops at the ground). */
+/**
+ * How far a light stays from a dark ground's middle, in the ground's radii (its light stops at the ground), and the
+ * largest ground radius it counts with (units of the frame's short side).
+ */
 const GROUND_CLEAR = 1.4
+const GROUND_CLEAR_MAX = 0.9
 /**
  * A level band of haze: its height (frame heights), width / height, half-length against the frame's width, tilt
  * either way (degrees), its falloff exponent against the bloom's own (lower is softer), how much its edge drifts, and
@@ -676,7 +677,10 @@ const OUT_WIDE_AT = 0.12
  * An orange-red sun there: its reach against another light's (from a seed's own draw, so seeds differ in how deep
  * its band comes in), and its lobe spread against its own (GlowSpec.vary).
  */
-const OUT_FIRE_REACH: readonly [number, number] = [1.05, 1.55]
+const OUT_FIRE_REACH: readonly [number, number] = [1.2, 1.8]
+const OUT_FIRE_REACH_TALL: readonly [number, number] = [0.95, 1.2]
+/** A lead's falloff there in a tall frame (9:16) against its own. */
+const OUT_TALL_BETA = 1.3
 const OUT_VARY = 0.25
 /** Under a dragged line, a second bloom of the lead's color against its own size. */
 const DRAG_PAIR_SCALE = 0.65
@@ -689,7 +693,7 @@ const DRAG_DARK_TURN = 35
 /** Most (degrees) the sky's darkening turns with it, so its way still follows the line. */
 const DRAG_SKY_TURN = 25
 /** How far a dark ground of another hue (Plum, Forest) slides, against the full slide: it stays where the sky is dark. */
-const OTHER_HUE_SLIDE = 0.75
+const OTHER_HUE_SLIDE = 0.4
 /**
  * Under a dragged line, the shift of the line where the sky is its exact hex by arrangement, and by how far the seed's
  * sky pales (positive toward the light).
@@ -726,6 +730,31 @@ function alongEdge(p: readonly number[], along: number, frame: readonly number[]
 
 function insideFrame01(at: readonly number[]): [number, number] {
   return [clamp(at[0], DRAG_INSIDE, 1 - DRAG_INSIDE), clamp(at[1], DRAG_INSIDE, 1 - DRAG_INSIDE)]
+}
+
+/**
+ * A light's middle moved out of a held dark ground's body (GROUND_CLEAR of its radius, and `shows` of that while the
+ * ground fades): a dark ground stands in front of the sky and stops the light behind it, so a light there would not
+ * show. It moves toward the frame's middle, by more the deeper in it lies (none at the body's edge), never straight
+ * away from the ground's middle: a light passing that middle would swing round to its other side.
+ */
+function clearOfGround(at: [number, number], z: ZenithSpec, frame: readonly number[], shows = 1): [number, number] {
+  if (z.hold < 0.5 || shows <= 0) return at
+  const a = (z.angle * Math.PI) / 180
+  const short = Math.min(frame[0], frame[1])
+  // A ground near a corner resizes fast to keep its share of the frame; the light counts with at most GROUND_CLEAR_MAX
+  // of that size, or it would be dragged along.
+  const r = Math.min(z.radius, GROUND_CLEAR_MAX) * short
+  const c = [(z.at[0] - 0.5) * frame[0], (z.at[1] - 0.5) * frame[1]]
+  const q = [(at[0] - 0.5) * frame[0], (at[1] - 0.5) * frame[1]]
+  const d = [q[0] - c[0], q[1] - c[1]]
+  const along = (d[0] * Math.cos(a) + d[1] * Math.sin(a)) / (r * Math.sqrt(z.aniso))
+  const across = ((-d[0] * Math.sin(a) + d[1] * Math.cos(a)) * Math.sqrt(z.aniso)) / r
+  const e = Math.hypot(along, across) / (GROUND_CLEAR * shows)
+  if (e >= 1) return at
+  const toMiddle = Math.max(Math.hypot(c[0], c[1]), 1e-6)
+  const push = (1 - e) * (1 - e) * GROUND_CLEAR * shows * r
+  return insideFrame01([(q[0] - (c[0] / toMiddle) * push) / frame[0] + 0.5, (q[1] - (c[1] / toMiddle) * push) / frame[1] + 0.5])
 }
 
 const LUMA: Rgb = [0.2126, 0.7152, 0.0722]
@@ -790,6 +819,12 @@ const STEEL_GAIN: readonly [number, number] = [1.0, 1.25]
 export function isGrey(c: Rgb): boolean {
   const [lightness, chroma] = linearToOklch(c)
   return chroma < 0.05 && lightness < 0.8
+}
+
+/** A near-white light without a color of its own, such as Ice. */
+export function isPaleGrey(c: Rgb): boolean {
+  const [lightness, chroma] = linearToOklch(c)
+  return chroma < 0.05 && lightness >= 0.8
 }
 
 /** A glow that is a light (a light slot whose color is not a pack grey such as Steel), so it has a source. */
@@ -1069,7 +1104,9 @@ const STRIP_GROUND_SHARE: readonly [number, number] = [0.08, 0.12]
 const THIRD_GROUND_SHARE: readonly [number, number] = [0.22, 0.32]
 /** Light on light: how much of its usual darkening the far sky keeps, and how much larger the Steel bloom is. */
 const NONE_TOP = 0.45
-const NONE_STEEL = 1.6
+const NONE_STEEL = 2
+/** A grey lead's haze against a white one's. */
+const GREY_LEAD_HAZE = 1.3
 /** Light on light with a Steel lead: how much larger its Ice bloom is, as the frame's bright light. */
 const NONE_ICE = 1.5
 /** Share of those seeds whose light sits in from its edge, and how far toward the middle it moves (0..1). */
@@ -1109,8 +1146,19 @@ const ACCENT_SCALE = 0.5
 const CYAN_ACCENT_SCALE = 0.7
 /** Largest radius of a cyan accent bloom, in units of sqrt(width * height). */
 const CYAN_MAX_RADIUS = 0.65
-/** Nearest a cyan lead's middle comes to a side edge from outside, in frame widths. */
+/** Nearest a cyan lead's middle comes to a side edge from outside, in frame widths, and in a tall frame (9:16). */
 const CYAN_EDGE = 0.02
+const CYAN_EDGE_TALL = 0.16
+/** A cyan lead's size in a tall frame against a wide one's. */
+const CYAN_TALL_SCALE = 0.85
+/** Least radius of the warm light under a cool lead, in units of sqrt(width * height). */
+const WARM_MIN_RADIUS = 0.3
+/** How far in from a tall frame's side edges a light bloom's middle stays (9:16; none from 1:1), in frame widths. */
+const TALL_INSET = 0.22
+/** A Steel accent's size in a tall frame (9:16) against a wide one's: the narrow frame holds less of it. */
+const STEEL_TALL = 1.25
+/** An Ice bloom's haze against another light accent's. */
+const ICE_HAZE = 1.5
 /** How far inside the frame's edges a warm lead's middle stays, in frame fractions. */
 const SUN_EDGE = 0.04
 
@@ -1173,7 +1221,9 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const at: [number, number] = [0.5 + side * lerp(plan.offset[0], plan.offset[1], ux) * (inward ? INWARD : 1), height + lerp(plan.lift[0], plan.lift[1], uy)]
   if (inward) at[1] = lerp(at[1], 0.5, INWARD)
   // A cyan lead is a medium bloom, so its middle stays on or inside a side edge, where the frame shows it.
-  if (cyanLead) at[0] = clamp(at[0], CYAN_EDGE, 1 - CYAN_EDGE)
+  // A tall frame is narrow, so there it stays further in: on the edge half of it would lie outside the frame.
+  const cyanEdge = lerp(CYAN_EDGE_TALL, CYAN_EDGE, smoothstep(0.5, 1, aspect))
+  if (cyanLead) at[0] = clamp(at[0], cyanEdge, 1 - cyanEdge)
   // A warm lead is a sun: its middle stays just inside the frame, so its palest part, the core, is in the picture.
   if (isWarm(colors[lead])) {
     at[0] = clamp(at[0], SUN_EDGE, 1 - SUN_EDGE)
@@ -1196,7 +1246,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // it, turning Yellow pale and olive and Orange-red pink. In a tall frame it is smaller still, or it would
   // cross the frame and lie under the warm light there (cyan and yellow light together make mint).
   const fieldRadius = lerp(0.5, 0.88, leadShare) * size
-  let radius = fieldRadius * (cyanLead ? 0.65 * lerp(0.72, 1, smoothstep(0.5, 1, aspect)) : 1)
+  let radius = fieldRadius * (cyanLead ? 0.65 * lerp(CYAN_TALL_SCALE, 1, smoothstep(0.5, 1, aspect)) : 1)
   // A wide source lights a broad, rounded field: a long narrow oval reads as a shape.
   let aniso = lerp(1.2, 2.0, r())
   // The lead stays narrower than the frame, so there is sky beside it for the other blooms.
@@ -1267,7 +1317,8 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
       gain: leadGain,
       // An orange-red sun falls off slowly, so its dim end is a long way out.
       beta: leadBeta,
-      haze: isWarm(colors[lead]) ? warmHaze(colors[lead], r()) : lerp(1.8, 2.6, r()),
+      // A grey lead (Steel) hides more of the blue behind it, or its light over the blue reads as paler blue, not grey.
+      haze: isWarm(colors[lead]) ? warmHaze(colors[lead], r()) : lerp(1.8, 2.6, r()) * (isGrey(colors[lead]) ? GREY_LEAD_HAZE : 1),
       vary: lerp(0.45, 0.85, r()),
       bend: bend(),
     },
@@ -1347,7 +1398,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
       radius *
         (innerCyan ? CYAN_ACCENT_SCALE : ACCENT_SCALE) *
         (innerGrey
-          ? lerp(0.6, 0.8, uSize) * lerp(1.3, 0.8, leadShare) * (darkStyle === 'none' ? NONE_STEEL : 1)
+          ? lerp(0.6, 0.8, uSize) * lerp(1.3, 0.8, leadShare) * (darkStyle === 'none' ? NONE_STEEL : 1) * lerp(STEEL_TALL, 1, smoothstep(0.5, 1, aspect))
           : innerCyan
             ? lerp(1.0, 1.25, uSize) * lerp(1.45, 0.7, leadShare) * (aspect < 1 ? 0.62 : 1) * (redApart ? RED_CYAN_SCALE : 1)
             : lerp(1.15, 1.4, uSize) * (greyLead && darkStyle === 'none' ? NONE_ICE : 1)),
@@ -1364,7 +1415,14 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     // Enough haze that a light bloom's middle is its own color, not a blend with the blue behind it; the
     // grey patch is thinner, so blue shows through its edges.
     // Beside a sun a cyan bloom is the frame's Cyan, so its middle hides the pale sky behind it and stays Cyan.
-    haze: innerGrey ? lerp(0.8, 1.2, uHaze) : innerColor === SLOT.sky ? 0 : innerCyan && isWarm(colors[lead]) ? lerp(1.7, 2.2, uHaze) : lerp(0.9, 1.3, uHaze),
+    // Ice hides more: over the pale sky its light without color of its own reads as paler blue.
+    haze: innerGrey
+      ? lerp(0.8, 1.2, uHaze)
+      : innerColor === SLOT.sky
+        ? 0
+        : innerCyan && isWarm(colors[lead])
+          ? lerp(1.7, 2.2, uHaze)
+          : lerp(0.9, 1.3, uHaze) * (isPaleGrey(colors[innerColor]) ? ICE_HAZE : 1),
     vary: lerp(0.4, 0.8, r()),
     bend: bend(),
   })
@@ -1409,7 +1467,8 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     const farAniso = lerp(lerp(1.8, 2.4, un), lerp(2.4, 3.0, un), corner)
     // The warm light under a cool lead keeps enough of the frame to show as the pack's warm color, as a round soft
     // light: narrow and firm-edged it reads as a lozenge.
-    const farRadius = warmUnderCool ? fieldRadius * lerp(0.5, 0.65, r()) : radius * ACCENT_SCALE * lerp(0.55, 0.72, r())
+    // In a tall frame it keeps at least WARM_MIN_RADIUS, or the narrow frame holds too little of it.
+    const farRadius = warmUnderCool ? Math.max(WARM_MIN_RADIUS, fieldRadius * lerp(0.5, 0.65, r())) : radius * ACCENT_SCALE * lerp(0.55, 0.72, r())
     // A color the inner bloom already shows (cyan) gets no second bloom; two of them make it the sky.
     const green = isGreen(colors[other])
     if (far === 'other' && innerColor !== other) {
@@ -1482,14 +1541,18 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
       angle: (deepAngle * 180) / Math.PI,
     },
   }
-  // No other light's body lies over the deep sky: one that reaches past the deep edge moves back toward the lead and
-  // gives up what still reaches past by shrinking. Cyan light only moves back: over the navy it dims to teal, so the
-  // deep sky never goes dark, and smaller it barely shows. A paler patch of sky only dims there with the sky, so it
-  // stays. A dragged line places the blooms anew, so it keeps their own sizes.
+  // No other light's body lies over the deep sky: one that reaches past the deep edge moves back toward the lead, and a
+  // warm or green one gives up what still reaches past by shrinking (its dim light over the navy reads olive or dark
+  // gold). Cyan, Ice and Steel only move back: smaller they barely show, and over the navy cyan dims to teal, so the
+  // deep sky never goes dark. A paler patch of sky only dims there with the sky, so it stays. A dragged line places the
+  // blooms anew, so it keeps their own sizes.
   const seedGlows = glows.slice()
   for (let i = 1; i < glows.length; i++) {
     if (sky.deep && sky.deep.stops > 0 && glows[i].color !== SLOT.sky) {
-      glows[i] = keepBefore(glows[i], leadP, away, leadEnd, deepEdge, frameP, stretch, !isCyan(colors[glows[i].color]))
+      const c = colors[glows[i].color]
+      glows[i] = keepBefore(glows[i], leadP, away, leadEnd, deepEdge, frameP, stretch, isWarm(c) || isGreen(c))
+      // The warm light under a cyan lead is the frame's only warm light: it keeps enough size to show.
+      if (cyanLead && coolLeadWarmOther && glows[i].color === other) glows[i] = { ...glows[i], radius: Math.max(glows[i].radius, WARM_MIN_RADIUS) }
     }
   }
   // With dark colors in the pack (Plum and Forest, Slate and Near-black), the corner away from the
@@ -1550,6 +1613,14 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     : OTHER_HUE_CORNER_SHARE
   const sizeDark = (z: ZenithSpec) => (darkGround ? sizeCorner(z, aspect, darkShare, zenithLobes) : z.radius)
   zenith.radius = sizeDark(zenith)
+  // A light bloom moves out of a held ground's body, or it would not show (Ice beside a Steel far side). A tall frame is
+  // narrow, so there a light bloom also keeps in from the side edges, or most of it lies outside the frame.
+  const tallInset = TALL_INSET * (1 - smoothstep(0.5, 1, aspect))
+  for (let i = 1; i < glows.length; i++) {
+    if (glows[i].color === SLOT.sky) continue
+    const at = clearOfGround(glows[i].at, zenith, frameP)
+    glows[i] = { ...glows[i], at: [clamp(at[0], tallInset, 1 - tallInset), at[1]] }
+  }
 
   const layout: BloomsLayout = {
     glows: glows.slice(0, GLOW_COUNT),
@@ -1575,8 +1646,9 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const sizeDragDark = (z: ZenithSpec) => (darkGround ? sizeCorner(z, aspect, [dragTarget, dragTarget], zenithLobes) : z.radius * lerp(0.7, 1.6, dragShare))
   const kind = dragKindFor(seed)
   const rd = random(seed * 2903 + 5)
-  // A warm lead stays round: as a broad wash its pale outer light lies over the blue and the cyan, grey and green.
-  const anisoRange = kind === 'alone' && isWarm(colors[lead]) ? DRAG_ANISO.band : DRAG_ANISO[kind]
+  // A warm or green lead stays round: as a broad wash its pale outer light lies over the blue and the cyan, grey and
+  // green, and over a dark ground of another hue, mauve.
+  const anisoRange = kind === 'alone' && (isWarm(colors[lead]) || isGreen(colors[lead])) ? DRAG_ANISO.band : DRAG_ANISO[kind]
   const leadAniso = lerp(anisoRange[0], anisoRange[1], rd())
   // Where the other blooms sit under a dragged line: each seed's own places, spread over the frame.
   const spots = Array.from({ length: GLOW_COUNT - 1 }, (): [number, number] => [lerp(0.18, 0.82, rd()), lerp(0.2, 0.8, rd())])
@@ -1587,9 +1659,11 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // sky turns grey, so there the style only lightens it. A dark ground of another hue (Plum, Forest) meets the blue
   // only where the sky is already dark, so there the sky stays the seed's own.
   const dragStyle = darkStyleFor(seed)
+  // Without a ground, a warm lead keeps the seed's own sky too: a sun's wide light over a pale sky leaves only cream.
   const otherHueGround = darkGround && !skyFamily
-  const styleMid = otherHueGround ? null : DRAG_STYLE_MID[dragStyle]
-  const styleDarkens = groundBlends || (!darkGround && DRAG_STYLE_TOP[dragStyle] < 1)
+  const ownSky = otherHueGround || (!darkGround && isWarm(colors[lead]))
+  const styleMid = ownSky ? null : DRAG_STYLE_MID[dragStyle]
+  const styleDarkens = groundBlends || (!darkGround && !ownSky && DRAG_STYLE_TOP[dragStyle] < 1)
   const deepRange = DRAG_STYLE_DEEP[styleDarkens ? dragStyle : 'corner']
   const deepReach = lerp(deepRange[0], deepRange[1], rd())
   const dragSky: SkySpec = {
@@ -1604,10 +1678,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const draws = Array.from({ length: 8 }, () => rk())
   // A strip of dark lies long along the frame's edge.
   const dragZenith = groundBlends && darkStyle === 'strip' ? { ...zenith, aniso: lerp(STRIP_ANISO[0], STRIP_ANISO[1], rk()) } : zenith
-  const pale = (slot: number) => {
-    const [lightness, chroma] = linearToOklch(colors[slot])
-    return chroma < 0.05 && lightness >= 0.8
-  }
+  const pale = (slot: number) => isPaleGrey(colors[slot])
   // A white or grey lead (Ice, Steel) hides more of the sky behind it where the seed's far side is light and less where
   // it is dark, so seeds differ in how much of the blue shows.
   const leadHaze = pale(lead) || isGrey(colors[lead]) ? DRAG_STYLE_HAZE[dragStyle] : 1
@@ -1615,12 +1686,17 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // The second light is the seed's other light: a pale one (Ice) or Cyan, then a light of another color, then one of
   // the lead's color (two suns of one color flood the frame with it), then a patch of sky; never a grey (Steel), whose
   // light over the blue barely shows.
+  // Beside a dark ground of another hue (Plum, Forest) a brightened patch of sky reads as pale blue and lavender, so there
+  // it is neither the second light nor the band.
+  const skyRank = (rank: number) => (otherHueGround ? 0 : rank)
   const lightRank = (slot: number) =>
-    slot === SLOT.sky ? 1 : isGrey(colors[slot]) ? 0 : pale(slot) || isCyan(colors[slot]) ? 4 : slot === dragGlows[0].color ? 2 : 3
-  const hazeRank = (slot: number) => (slot === SLOT.sky || pale(slot) ? 3 : isCyan(colors[slot]) ? 2 : isGrey(colors[slot]) ? 1 : 0)
+    slot === SLOT.sky ? skyRank(1) : isGrey(colors[slot]) ? 0 : pale(slot) || isCyan(colors[slot]) ? 4 : slot === dragGlows[0].color ? 2 : 3
+  // Beside a warm lead a cyan band crosses its pale light, teal and mint.
+  const hazeRank = (slot: number) =>
+    slot === SLOT.sky ? skyRank(3) : pale(slot) ? 3 : isCyan(colors[slot]) ? (isWarm(colors[lead]) ? 0 : 2) : isGrey(colors[slot]) ? 1 : 0
   const best = (rank: (slot: number) => number) =>
     dragGlows.reduce((at, g, i) => (i > 0 && rank(g.color) > 0 && (at < 0 || rank(g.color) >= rank(dragGlows[at].color)) ? i : at), -1)
-  const companion = Math.max(1, best(lightRank))
+  const companion = best(lightRank)
   const band = best(hazeRank)
   const hazeGain = (i: number) => {
     const g = dragGlows[i]
@@ -1646,7 +1722,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
           kind,
           draws,
           companion,
-          companionGain: dragGlows[companion].color === SLOT.sky ? Math.max(dragGlows[companion].gain, HAZE_SKY_GAIN) : dragGlows[companion].gain,
+          companionGain: companion < 0 ? 0 : dragGlows[companion].color === SLOT.sky ? Math.max(dragGlows[companion].gain, HAZE_SKY_GAIN) : dragGlows[companion].gain,
           band,
           bandGain: band > 0 ? hazeGain(band) : 0,
         },

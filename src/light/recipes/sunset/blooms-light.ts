@@ -39,12 +39,13 @@ export function bridgeTint(c: Rgb, raise = 1): Rgb {
  * strength to its own hue about 0.25 Oklab L lighter, which for Meta Blue is
  * a pale yellow-green white.
  */
-export function skyPaleTint(sky: Rgb, toward?: Rgb, share = 0): Rgb {
+export function skyPaleTint(sky: Rgb, toward?: Rgb, share = 0, grey = 0): Rgb {
   const [L, C, h] = linearToOklch(sky)
   // With `toward` (a pack's own pale sky color, such as Cyan) the pale light turns `share` of the way to its hue, so
-  // the sky's pale side reads as that pack's.
+  // the sky's pale side reads as that pack's. With `grey` it keeps that much less of the sky's color, so in a pack
+  // whose pale light is a grey (Ice) the pale sky reads as that grey, not periwinkle.
   const turn = toward ? share * (((linearToOklch(toward)[2] - h + 540) % 360) - 180) : 0
-  const pale = oklchToLinear([Math.min(0.95, L + 0.25 + 0.05 * share), C * (0.45 + 0.2 * share), h + turn])
+  const pale = oklchToLinear([Math.min(0.95, L + 0.25 + 0.05 * share), C * (0.45 + 0.2 * share) * (1 - grey), h + turn])
   const w: Rgb = [Math.max(0, pale[0] - 0.75 * sky[0]), Math.max(0, pale[1] - 0.75 * sky[1]), Math.max(0, pale[2] - 0.75 * sky[2])]
   const y = luminance(w)
   return y > 1e-6 ? [w[0] / y, w[1] / y, w[2] / y] : [1, 1, 1]

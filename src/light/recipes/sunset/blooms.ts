@@ -19,6 +19,7 @@ import {
   GLOW_COUNT,
   isCyan,
   isGrey,
+  isPaleGrey,
   isRed,
   isSourceLight,
   isWarm,
@@ -289,6 +290,8 @@ const GREY_CORE = 1.2
 const SUN_TAIL_GREEN = 0.85
 /** How far the pale sky around an orange-red sun turns from Meta Blue's hue toward Cyan's. */
 const SKY_CYAN_SHARE = 1
+/** How much less of the sky's color the pale sky keeps in a pack whose pale light is a grey (Ice). */
+const GREY_SKY_PALE = 0.25
 
 /**
  * Bridge light for one glow, per unit of its tint, solved at this Intensity's
@@ -334,7 +337,10 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
   // grey-white or sage. Beside Yellow it would turn mint, so a Yellow frame's pale sky keeps Meta Blue's hue.
   const lights = [colors[SLOT.light1], colors[SLOT.light2]].filter((c) => c !== undefined)
   const cyanLight = lights.some(isRed) ? lights.find(isCyan) : undefined
-  const skyPale = skyPaleTint(sky, cyanLight, cyanLight ? SKY_CYAN_SHARE : 0)
+  // In pack output a pack whose pale light is a grey (Atmospheric's Ice) pales its sky toward that grey: a sky that
+  // pales to periwinkle shows only Meta Blue.
+  const greyPale = layout.packLight > 0.5 && lights.some(isPaleGrey) ? GREY_SKY_PALE : 0
+  const skyPale = skyPaleTint(sky, cyanLight, cyanLight ? SKY_CYAN_SHARE : 0, greyPale)
   const deep = slot(layout.zenith.color)
   const glowColor: number[] = []
   const glowTail: number[] = []
