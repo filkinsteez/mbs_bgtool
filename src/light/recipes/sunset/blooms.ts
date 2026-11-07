@@ -35,7 +35,7 @@ import {
   type BloomsLayout,
   type GlowSpec,
 } from './blooms-compose'
-import { bridgeAmount, bridgeGate, bridgeTint, deepen, deepFade, deepMember, otherHue, skyPaleTint } from './blooms-light'
+import { bridgeAmount, bridgeGate, bridgeTint, deepen, deepFade, deepMember, otherHue, skyPaleColor, skyPaleTint } from './blooms-light'
 import { BOUNDARY_GLSL } from './boundary'
 
 const DEFAULT_GLOWS: readonly GlowSpec[] = [
@@ -512,6 +512,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     uSkyVeilOwn: scale(skyPaleOwn, luminance(scale(sky, skyGain))),
     uSkyPale: scale(skyPale, luminance(scale(sky, skyGain))),
     uBandSky: bandSky ? 1 : 0,
+    uSkyBandPale: bandSky && cyanLight ? scale(skyPaleColor(sky, cyanLight, SKY_CYAN_SHARE, greyPale), skyGain) : [0, 0, 0],
     uGlowTailNear: glowTailNear,
     uSkyLine: layout.sky.line ? [...layout.sky.line.from, ...layout.sky.line.to] : [0.5, 1, 0.5, 0],
     uSkyLineOn: layout.sky.line ? 1 : 0,
@@ -632,6 +633,7 @@ uniform float uSkyVeilRise;           // share of the way from the exact hex lin
 uniform vec3 uSkyVeilOwn;             // the sky's own pale light (no pack tint), at the sky's luminance
 uniform vec3 uSkyPale;                // the pale sky around the lights (Cyan's round an orange-red sun), at the sky's luminance
 uniform float uBandSky;               // 1: pack output with a band of pale sky beside the light (Bold)
+uniform vec3 uSkyBandPale;            // that band's pale sky color (Cyan's), at this Intensity
 uniform vec4 uSkyLine;                // a dragged line's start and end (frame fractions) the sky darkens along, with uSkyLineOn
 uniform float uSkyLineOn;
 uniform float uSkyBehind;             // how far behind the line's start the sky reaches the far sky (short sides)
@@ -904,7 +906,14 @@ vec3 bloomsScene(vec2 uv) {
   }
   // In pack output it takes the pack's tint (Bold's Cyan) as it comes in: weak, toward the exact hex line, it is the sky's
   // own pale light, so the blue there stays Meta Blue and only the full band is Cyan.
-  vec3 veilTint = mix(uSkyVeil.rgb, mix(uSkyVeilOwn, uSkyVeil.rgb, smoothstep(0.0, 0.7, veilIn)), uPackLight);
+  // Beside a band of pale sky (Bold) its Cyan tint is worked out from the sky here: the light that takes this sky (at
+  // three quarters) to Cyan's pale sky. Worked out from full-strength blue, it turns turquoise over the deeper blue.
+  vec3 bandTint = uSkyVeil.rgb;
+  if (uBandSky > 0.0) {
+    vec3 w = max(uSkyBandPale - 0.75 * sky, vec3(0.0));
+    bandTint = w / max(dot(w, vec3(0.2126, 0.7152, 0.0722)), 1e-5) * dot(uSkyVeil.rgb, vec3(0.2126, 0.7152, 0.0722));
+  }
+  vec3 veilTint = mix(uSkyVeil.rgb, mix(uSkyVeilOwn, bandTint, smoothstep(0.0, 0.7, veilIn)), uPackLight);
   sky += veilTint * (veil * (1.0 - sunBody));
   float T = exp(-ext);
   // What the lead's own haze lets through.

@@ -237,7 +237,9 @@ const CYAN_OPEN_MID: readonly [number, number] = [0.2, 0.4]
 /** Where the deep sky begins in a tall frame (9:16), against its distance in a wide one. */
 const TALL_DEEP_AT = 0.7
 /** The same for Bold, whose band of pale sky beside the light would otherwise fill most of a tall frame. */
-const BOLD_TALL_DEEP_AT = 0.6
+const BOLD_TALL_DEEP_AT = 0.5
+/** Bold's deep blue's share of the way in a tall frame (9:16) against a wide one. */
+const BOLD_TALL_DEEP = 1.25
 /** Bold's light body's share of the way in a tall frame (9:16) against a wide one. */
 const BOLD_TALL_BODY = 0.8
 /** Most a warm lead beside a near-equal second sun of its color is wider than tall (the pair arrangement). */
@@ -657,7 +659,17 @@ function followDrag(
     const warmOnes = keptOut.filter((other) => other !== glow && warm(other.color))
     for (const other of warmOnes) at = apart(at, glow.radius, other)
     const near = Math.min(1, ...warmOnes.map((other) => nearness(at, glow.radius, other)))
-    return { ...glow, at, gain: glow.gain * lerp(DRAG_OVERLAP_GAIN, 1, smoothstep(0.5, 1, near)) }
+    // Beside a broad lead beyond an edge pointing away (Bold's high-above view) a small cyan bloom out on the darker blue of
+    // a wide frame reads as a bubble: as the light goes out it grows larger, softer and fainter, a broad light over the dim
+    // blue. A narrow frame it would fill, and there its light keeps the warm light's dim edge from meeting the blue in khaki.
+    const out = broadLead ? outWide * wide : 0
+    return {
+      ...glow,
+      at,
+      gain: glow.gain * lerp(DRAG_OVERLAP_GAIN, 1, smoothstep(0.5, 1, near)) * lerp(1, OUT_CYAN_GAIN, out),
+      radius: glow.radius * lerp(1, OUT_CYAN_SIZE, out),
+      beta: glow.beta * lerp(1, OUT_CYAN_SOFT, out),
+    }
   })
   // The sky's darkening runs at least SKY_LINE_MIN: under a tiny line it would change fast with every bit of length.
   const skyLength = Math.max(length, SKY_LINE_MIN)
@@ -719,6 +731,10 @@ const DRAG_APART = 0.6
 const DRAG_APART_LEAD = 0.6
 /** A cyan bloom's strength where it still lies on a warm one under a dragged line. */
 const DRAG_OVERLAP_GAIN = 0.45
+/** Beyond an edge pointing away, a cyan bloom beside a broad lead: its size, falloff and strength against its own. */
+const OUT_CYAN_SIZE = 1.25
+const OUT_CYAN_SOFT = 0.8
+const OUT_CYAN_GAIN = 0.6
 /** The broad warm lead's light, against its middle, out to which a cyan bloom moves from it under a dragged line. */
 const DRAG_CYAN_ON_LEAD = 0.4
 /** The same for a white bloom (Ice) beside a white lead. */
@@ -1579,8 +1595,9 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // An orange-red sun takes more of the way and leaves the deep sky and the open sky less.
   const redSun = isRed(colors[lead])
   // A seed's dark style (blending grounds only) or Bold form sets the deep sky's size outright.
+  // In a tall frame Bold's deep blue takes more of the way: its light and band run the narrow frame's whole height.
   const drawnDeep = formDeep
-    ? lerp(formDeep.share[0], formDeep.share[1], uDeepSize)
+    ? lerp(formDeep.share[0], formDeep.share[1], uDeepSize) * lerp(BOLD_TALL_DEEP, 1, smoothstep(0.5, 1, aspect))
     : darkStyle === 'strip'
       ? lerp(DEEP_STRIP[0], DEEP_STRIP[1], uDeepSize)
       : darkStyle === 'third'
@@ -1606,7 +1623,8 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const bodyEnd = spanNear + bodyShare * (spanFar - spanNear)
   const deepEdge = spanNear + (1 - deepShare) * (spanFar - spanNear)
   // The lead falls off slower than the other lights, so its light is a broad gradient across the frame.
-  const leadBroad = broadLead ? LEAD_BROAD : 1
+  // Bold's falls off at the usual rate in a tall frame, whose narrow height its broad light would fill.
+  const leadBroad = broadLead ? (boldForm ? lerp(1, LEAD_BROAD, smoothstep(0.5, 1, aspect)) : LEAD_BROAD) : 1
   const leadBeta = beta * (isRed(colors[lead]) ? RED_SUN_FALLOFF : 1) * leadBroad
   // The lead's body ends there: a smaller one grows to it (a cyan lead stays a medium bloom), a larger one flattens.
   const leadRadius = radius
