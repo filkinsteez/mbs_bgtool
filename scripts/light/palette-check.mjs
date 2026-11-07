@@ -118,6 +118,19 @@ const T = {
   // shows at thumbnail size; Atmospheric's flat Slate fields under the line high above (a lighter top read as 4 to
   // 5% Steel) are one color.
   drag: { visible: 0.02, greySpan: 0.1 },
+  // Sunset at the default light, the 1:10 PM rules (SHARED.md, 2026-11-06), set by eye on
+  // artifacts/compare/rounds/16/rule/swatches/ and pale-bold-fine.jpg. A sky's pale side reads as Cyan up to this
+  // Oklab hue (light blue past it, Meta Blue's pale side), among the blue hues: 232 at L 0.8 down to 227 from L 0.9,
+  // as a paler blue shows less of its hue. In Atmospheric it reads as a grey up to this chroma (light blue past it).
+  paleSide: { cyanHue: { at: [0.8, 0.9], hue: [232, 227] }, blueHues: [175, 275], greyC: 0.045 },
+  // A light pack color under the present share counts as a thin line when the part of it at its own brightness or
+  // paler (at most ownL darker than its hex) is one connected piece spanning this share of the frame, this thick
+  // (share of the short side), `elongation` times longer than thick (a bloom's ring or a blob is no line), and this
+  // far from what lies 3 to 6 px beside it (mean Oklab distance). One line per
+  // frame counts, so a frame still needs two areas (pink-riso: two wide areas and one line). Through the lens a
+  // line's core peaks 0.06 to 0.08 under its hex when it reads as its color (Yellow, Lime at a 12 px core of 180,
+  // Cyan at 8 px); thinner it reads lavender, and an Orange-red or Tan line on Meta Blue reads pink or mauve.
+  line: { ownL: 0.09, length: 0.3, thickness: 0.015, elongation: 8, contrast: 0.06 },
   // --main bright (the 11:30 AM rule of 2026-11-05, withdrawn at 12:50 PM): the main light is the color of the frame's
   // brightest `bright.share`, short of the near-white core (L `bright.whiteL` and up at chroma under `bright.whiteC`),
   // where a pixel is a colored light's when it keeps `bright.onPath` of that color's path chroma. An Ice light whose
@@ -667,14 +680,124 @@ try {
       }
       largest = Math.max(largest, tail)
     }
+    // The 1:10 PM rules (SHARED.md, 2026-11-06), used for Sunset frames at the default light only.
+    // (b) A sky's pale side counts as the tint it reads as at thumbnail size. Bold: a light blue lighter than Cyan's
+    // hex is Cyan up to Oklab hue 227 and Meta Blue's pale side past it. Atmospheric: a blue-grey lighter than Steel's
+    // hex with chroma 0.045 or less is a grey (Steel or Ice by lightness), not Meta Blue. Elemental's cream and pale
+    // lime already count as Tan and Lime.
+    const tinted = Int16Array.from(bucket)
+    const tintCounts = Float64Array.from(shares)
+    const lines = {}
+    if (!contour) {
+      const at = (name) => k.colors.findIndex((c) => c.name === name)
+      const meta = at('Meta Blue')
+      const cyan = at('Cyan')
+      const steel = at('Steel')
+      const blueMixes = new Set(k.pairs.flatMap(([i, j], b) => ((i === meta || j === meta) && (i === cyan || j === cyan || k.neutrals.includes(i === meta ? j : i)) ? [100 + b] : [])))
+      for (let p = 0; p < n; p++) {
+        const b = bucket[p]
+        if (b !== meta && (cyan < 0 || b !== cyan) && !blueMixes.has(b) && b !== BUCKET_PALE) continue
+        const L = Ls[p]
+        const C = Math.hypot(labs[3 * p + 1], labs[3 * p + 2])
+        const h = ((Math.atan2(labs[3 * p + 2], labs[3 * p + 1]) * 180) / Math.PI + 360) % 360
+        let to = b
+        if (cyan >= 0) {
+          const { at: [l0, l1], hue: [h0, h1] } = T.paleSide.cyanHue
+          const edge = h0 + (h1 - h0) * Math.min(1, Math.max(0, (L - l0) / (l1 - l0)))
+          if (L >= k.colors[cyan].path.L0 && C >= 0.025 && h >= T.paleSide.blueHues[0] && h <= T.paleSide.blueHues[1]) to = h <= edge ? cyan : meta
+        } else if (steel >= 0) {
+          const cool = C <= 0.02 || hueDiff(h, k.colors[steel].path.h0) <= 40
+          if (L >= k.colors[steel].path.L0 && C <= T.paleSide.greyC && cool) to = k.neutrals.reduce((best, i) => (Math.abs(k.colors[i].lab[0] - L) < Math.abs(k.colors[best].lab[0] - L) ? i : best), k.neutrals[0])
+        }
+        if (to === b) continue
+        if (b >= 0 && b < 100) tintCounts[b]--
+        tintCounts[to]++
+        tinted[p] = to
+      }
+      // (a) A thin bright line: a light pack color under the present share counts when the part of it at its own
+      // brightness or paler (at most T.line.ownL darker than its hex) is one long connected piece, thick enough and
+      // different enough from what lies beside it to show at thumbnail size.
+      const dilate = (mask, r) => {
+        const rows = new Uint8Array(n)
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+          if (!mask[y * W + x]) continue
+          for (let xx = Math.max(0, x - r); xx <= Math.min(W - 1, x + r); xx++) rows[y * W + xx] = 1
+        }
+        const both = new Uint8Array(n)
+        for (let x = 0; x < W; x++) for (let y = 0; y < H; y++) {
+          if (!rows[y * W + x]) continue
+          for (let yy = Math.max(0, y - r); yy <= Math.min(H - 1, y + r); yy++) both[yy * W + x] = 1
+        }
+        return both
+      }
+      for (const [i, c] of k.colors.entries()) {
+        if (c.lab[0] < T.lightL || tintCounts[i] >= T.present * counted) continue
+        // Bold's Orange-red paler than its hex is peach or cream, which Yellow's deep tones reach too: its line must be
+        // at its own brightness.
+        const warmOverlap = packId === 'bold' && c.name === 'Orange-red'
+        const own = (p) => tinted[p] === i && Ls[p] >= c.path.L0 - T.line.ownL && (!warmOverlap || Ls[p] <= c.path.L0)
+        const seenLine = new Uint8Array(n)
+        let piece = []
+        for (let p = 0; p < n; p++) {
+          if (seenLine[p] || !own(p)) continue
+          const list = [p]
+          seenLine[p] = 1
+          for (let head = 0; head < list.length; head++) {
+            const q = list[head]
+            const x = q % W
+            const y = (q - x) / W
+            for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+              const xx = x + dx
+              const yy = y + dy
+              if (xx < 0 || xx >= W || yy < 0 || yy >= H) continue
+              const s = yy * W + xx
+              if (!seenLine[s] && own(s)) {
+                seenLine[s] = 1
+                list.push(s)
+              }
+            }
+          }
+          if (list.length > piece.length) piece = list
+        }
+        if (!piece.length) continue
+        let [x0, x1, y0, y1] = [W, -1, H, -1]
+        const inPiece = new Uint8Array(n)
+        const mean = [0, 0, 0]
+        for (const p of piece) {
+          const x = p % W
+          const y = (p - x) / W
+          x0 = Math.min(x0, x)
+          x1 = Math.max(x1, x)
+          y0 = Math.min(y0, y)
+          y1 = Math.max(y1, y)
+          inPiece[p] = 1
+          for (let j = 0; j < 3; j++) mean[j] += labs[3 * p + j] / piece.length
+        }
+        const across = x1 - x0 >= y1 - y0
+        const span = across ? x1 - x0 + 1 : y1 - y0 + 1
+        // Beside the line: 3 to 6 px from it (of 320), past the lens's soft shoulder.
+        const near = dilate(inPiece, 2)
+        const far = dilate(inPiece, 6)
+        let ring = 0
+        let diff = 0
+        for (let p = 0; p < n; p++) {
+          if (!far[p] || near[p] || bucket[p] === BUCKET_SKIP) continue
+          ring++
+          diff += Math.hypot(labs[3 * p] - mean[0], labs[3 * p + 1] - mean[1], labs[3 * p + 2] - mean[2])
+        }
+        const peakL = piece.reduce((top, p) => Math.max(top, Ls[p]), 0)
+        lines[c.name] = { share: piece.length / counted, length: span / (across ? W : H), thickness: piece.length / span / Math.min(W, H), elongation: (span * span) / piece.length, contrast: ring ? diff / ring : 0, peakL }
+      }
+    }
     if (mapFile) {
       // What each pixel counted as: its pack color, grey for a clean mix, white, black for the dark base,
-      // red for a wide outside area and orange for a thin one; a reference's masked parts are purple.
+      // red for a wide outside area and orange for a thin one; a reference's masked parts are purple. Sunset maps
+      // show the default light's reading, the sky's pale side named as it reads.
       const px = Buffer.alloc(n * 3)
       const hexRgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))
       const colorRgb = k.colors.map((c) => hexRgb(c.hex))
       for (let p = 0; p < n; p++) {
-        const b = bucket[p]
+        const b = tinted[p]
         const rgb = b >= 100 ? [128, 128, 128] : b >= 0 ? colorRgb[b] : b === BUCKET_WHITE ? [255, 255, 255] : b === BUCKET_PALE ? [210, 210, 210] : b === BUCKET_DARK ? [0, 0, 0] : b === BUCKET_SKIP ? [110, 40, 140] : wide[p] ? [255, 0, 0] : b === BUCKET_EDGE ? [60, 120, 120] : [255, 150, 0]
         px.set(rgb, 3 * p)
       }
@@ -815,6 +938,8 @@ try {
       own: Object.fromEntries(k.colors.map((c, i) => [c.name, frac(own[i])])),
       near: Object.fromEntries(k.colors.map((c, i) => [c.name, frac(near[i])])),
       clearYellow: frac(clearYellow),
+      tintShares: Object.fromEntries(k.colors.map((c, i) => [c.name, frac(tintCounts[i])])),
+      lines,
       // The share of the frame that is a pack color at any lightness (Atmospheric's white is Ice).
       shown: frac(shares.reduce((s, v) => s + v, 0)),
       meanL: frac(Ls.reduce((s, v) => s + v, 0)),
@@ -880,13 +1005,17 @@ try {
     // overlap (orange, peach, cream), so a frame shows two warm colors only when both appear at their own
     // brightness or dimmer.
     const share = sunset && drag ? T.drag.visible : T.present
+    // At the default light a Sunset sky's pale side counts as the tint it reads as, and a thin bright line as its
+    // color (the 1:10 PM rules).
+    const tintRules = sunset && !drag && Boolean(m.tintShares)
+    const shares = tintRules ? m.tintShares : m.shares
     const warmGroup = packId === 'bold' ? WARM.bold : []
     const present = []
     for (const c of k.colors) {
       if (warmGroup.includes(c.name)) continue
-      if (m.shares[c.name] >= share) present.push(c.name)
+      if (shares[c.name] >= share) present.push(c.name)
     }
-    if (warmGroup.length && warmGroup.reduce((s, name) => s + m.shares[name], 0) >= share) {
+    if (warmGroup.length && warmGroup.reduce((s, name) => s + shares[name], 0) >= share) {
       // Under a drag a flat orange field with an amber glow is one color: Yellow counts only where it is clearly
       // lighter than Orange-red.
       if (drag && m.clearYellow >= share && m.own['Orange-red'] >= share) present.push(...warmGroup)
@@ -895,6 +1024,12 @@ try {
         const brightest = warmGroup.reduce((a, b) => (m.saturated[b] > m.saturated[a] ? b : a))
         present.push(m.own[named] >= 0.01 ? named : m.saturated[brightest] >= 0.02 ? `${brightest} (overexposed)` : 'pale warm light')
       }
+    }
+    if (tintRules) {
+      const counted = Object.entries(m.lines ?? {})
+        .filter(([name, l]) => !present.some((x) => x.replace(' (overexposed)', '') === name) && l.length >= T.line.length && l.thickness >= T.line.thickness && l.elongation >= T.line.elongation && l.contrast >= T.line.contrast)
+        .sort((a, b) => b[1].contrast - a[1].contrast)
+      if (counted.length) present.push(`${counted[0][0]} (line)`)
     }
     m.present = present
     if (m.largestPatch >= T.largestPatch || m.wideShare >= T.wideShare) {
@@ -921,7 +1056,7 @@ try {
         const haze = mixShare >= 0.2 ? `, ${pct(mixShare)} is a ${mix} mix` : ''
         fail('under three pack colors', `${present.length} pack color${present.length === 1 ? '' : 's'} (${present.join(', ') || 'none'}${haze})`)
       }
-      const warm = present.filter((name) => WARM[packId].includes(name) || name === 'pale warm light' || name.endsWith('(overexposed)'))
+      const warm = present.filter((name) => WARM[packId].includes(name.replace(' (line)', '')) || name === 'pale warm light' || name.endsWith('(overexposed)'))
       if (WARM[packId].length && warm.length === 0) fail('no warm color', 'no warm color')
       if (packId === 'bold' && WARM.bold.every((name) => m.own[name] >= T.present)) fail('two warm colors', 'two warm colors (Yellow and Orange-red)')
       if (packId === 'elemental' && warm.length > 1) notes.push('Lime and Tan together (open question 7)')
