@@ -461,6 +461,13 @@ const GLINT_RAMP = 0.2
 const SUN_RISE = 0.1
 /** Oklab lightness under which a pack color reads as itself only up to one stop over its own (Forest, Plum, Slate). */
 const DARK_L = 0.5
+/** Under a sideways line, the most an open sky's edges lean and bow as a multiple of their own, and how much their softness changes along them. */
+const SIDE_SHAPE = 3
+const SIDE_SOFT = 0.22
+/** Under a sideways line, an open sky's edges' own S-shaped wave at most, before the room scale (base units at their ends). */
+const SIDE_WAVE = 0.05
+/** Under a sideways line, the most lean, bow and wave all of an open sky's edges share, per short side the frame's height runs past one (base units at their ends). */
+const SIDE_SHARED = [0.2, 0.16, 0.16]
 /** Under a long line, how far Elemental's bridge lifts toward white. */
 const ELEMENTAL_FAR_LIFT = 0.8
 /** Under a long line, the range of a seed's own factor on its sky edges' widths. */
@@ -1166,8 +1173,31 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // Each edge and the glow's line lean and bow a little on their own, so neighbours are never
   // parallel in any direction the sky runs. A stream of its own leaves the other picks as they are.
   const shapePick = seeded(Math.round(seed) * 31 + 7)
-  const edgeShape = Array.from({ length: 2 * RAMP_EDGES }, (_, i) => (shapePick() * 2 - 1) * (i % 2 === 0 ? 0.07 : 0.05))
-  const glowShape = [(shapePick() * 2 - 1) * 0.05, (shapePick() * 2 - 1) * 0.04].map((v) => v * clamp01(glowRise / 0.15))
+  const ownShape = Array.from({ length: 2 * RAMP_EDGES }, (_, i) => (shapePick() * 2 - 1) * (i % 2 === 0 ? 0.07 : 0.05))
+  // Under a line that turns an open sky toward sideways, its edges run across the frame's height,
+  // over which that lean and bow read as straight, parallel stripes. There each edge leans and bows
+  // up to SIDE_SHAPE times as much and takes an S-shaped wave of its own, as far as its neighbours
+  // leave room, so no two edges cross and a bow doesn't put every seed's bend in the same place.
+  // A taller frame's edges run further, so they take as much more, to bend as far round. There
+  // neighbours leave little room for more, so all of them also share one lean, bow and wave of the
+  // seed's own as far as the frame's height runs past a short side, which changes no gap.
+  const sideways = line && !ground ? smoothstep(0.85, 0.98, Math.abs(Math.sin((lineTilt * Math.PI) / 180))) : 0
+  const extent = (Math.abs(half * Math.cos(turn)) + Math.abs(0.5 * tall * Math.sin(turn))) / 0.5
+  const wavePick = seeded(Math.round(seed) * 43 + 11)
+  const ownWave = Array.from({ length: RAMP_EDGES + 1 }, () => (wavePick() * 2 - 1) * SIDE_WAVE * extent * sideways)
+  const sideShared = SIDE_SHARED.map((most) => (wavePick() * 2 - 1) * most * (tall - 1) * sideways)
+  const neighbours = edges.slice(1).map((below, j) => ({
+    room: below[0] - edges[j][0] - 0.25 * (edges[j][1] + below[1]),
+    shape: Math.abs(ownShape[2 * j + 2] - ownShape[2 * j]) + (2 / 3) * Math.abs(ownShape[2 * j + 3] - ownShape[2 * j + 1]),
+    wave: Math.abs(ownWave[j + 1] - ownWave[j]),
+  }))
+  let shapeScale = 1 + (SIDE_SHAPE * extent - 1) * sideways
+  for (const n of neighbours) if (n.shape > 1e-6) shapeScale = Math.min(shapeScale, Math.max(1, n.room / n.shape))
+  let waveScale = shapeScale
+  for (const n of neighbours) if (n.wave > 1e-6) waveScale = Math.min(waveScale, Math.max(0, n.room - shapeScale * n.shape) / n.wave)
+  const edgeShape = ownShape.map((v, i) => v * shapeScale + sideShared[i % 2])
+  const edgeWave = ownWave.map((v) => v * waveScale + sideShared[2])
+  const glowShape = [(shapePick() * 2 - 1) * 0.05, (shapePick() * 2 - 1) * 0.04].map((v, i) => v * clamp01(glowRise / 0.15) * shapeScale + sideShared[i])
 
   // Over land the sun sits just above the crest at its x; over water just under the line.
   const underLine = line ? (line.from[1] + sunBelow * Math.cos(turn)) / tall + 0.5 : horizonY + (arcs ? 0 : 0.03 / tall)
@@ -1195,6 +1225,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     ...stopParams,
     edgeShape,
     glowShape,
+    edgeWave,
     horizonEdge: 0,
     zenithShade,
     zenithFloor: lerp(0.35, NAVY_FLOOR, navyReach),
@@ -1207,7 +1238,8 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     boundaryWander,
     boundaryNoise: [0.35, lattice, 0.25, 2],
     // Wide edges change their softness less (the 0.15 width), or their color climbs higher in columns.
-    boundarySoft: [0.15, 0.5, 0.25, 0.15],
+    // A sideways sky's edges change their softness more along their length.
+    boundarySoft: [lerp(0.15, SIDE_SOFT, sideways), 0.5, 0.25, 0.15],
     sunAt: [sunX, sunY],
     sunlight: sunlight * glowGain * setGlow,
     sunlightWidth: 0.55 * lateral * lerp(0.75, 1.3, widthPick) * Math.sqrt(day) * narrow,
