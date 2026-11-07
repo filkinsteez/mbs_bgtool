@@ -163,6 +163,27 @@ A pair with layout 0.2 or less and colors 0.15 or less looks alike, and the summ
 
 The summary gives, per look and drag, the failing frames counted by reason (one pack color, nearly black, wide outside area and so on; `reasons` in `palette.json`), the seeds that look alike per pack and the packs that look alike.
 
+### Moved copies
+
+```sh
+node scripts/light/palette-check.mjs --look <look> --all-renders --out <dir>
+node scripts/light/moved-copies.mjs --from <dir> [--out <dir>/moved] [--across] [--structure 0.25] [--colors 0.15] [--layout 0.2]
+```
+
+Reports the pairs of a look's frames that are the same picture moved, scaled a little or mirrored (report only, SHARED.md, 2026-11-07: it fails nothing). The palette check's seed measure doesn't call them alike because it compares frames as they sit. It reads a palette-check output folder that has every frame's render (`--all-renders`; about 300 MB a look) and compares every pair of frames in the same look, pack, format and view (the default light or one test drag). `--across` also compares the looks of one mood in the folder (Sunset: Ramp, Bands, Blooms; Contour: Rim, Halo, Beam, Streaks).
+
+A pair is judged by its structure: Oklab L at 80x45 (45x80 for 9:16), blurred by 1 px, with each frame's mean over the overlap taken off; the summed difference over the summed size of both. It is 0 when the light and dark places match, whatever the exposure, and 1 when they are unrelated. It is taken after the best move of the second frame onto the first: shifts up to 40% of the frame each way, sizes 1/1.15, 1 and 1.15, and mirrored left to right. In Contour it also tries top to bottom and both; a Sunset sky stays on top. Only the overlap counts. It must be 60% of the frame and hold 80% of each frame's structure (its L's distance from its own mean, so a dark ground counts as much as a light).
+
+A pair is a moved copy when, after the move, its structure is 0.25 or less (`--structure`) and its seed colors are 0.15 or less (`--colors`), while unmoved its seed layout is over 0.2 (`--layout`), so the palette check doesn't already call it alike. Pairs that are as close without a move are `same unmoved`. Set by eye in compare round 18 (`artifacts/compare/rounds/18/moved/`): up to 0.25 the pairs are the same picture moved (Bands' blue band over haze shifted, Halo's arc moved or turned, Beam's shafts under a drag, the Contour top-edge glow high above); from 0.3 they are mostly not. Rim's thin lines are the weakest case: two lines 15 to 20 degrees apart can match at 0.22. The seed measure's own layout after a move was tried first and dropped: in pale frames it matched a blue band top-left with one on the right edge, and a move could drop a dark ground out of the overlap.
+
+It writes into `<from>/moved/` (or `--out`):
+
+- `moved.md`: per look, the moved copies at the run's first 8 seeds and at all its seeds, by pack, format and view;
+- `moved.json`: every pair with its numbers and its move;
+- `moved-<look>-s1-8.jpg` and `moved-<look>-s1-40.jpg` (`s41-48` and `s41-80` with `--holdout`): each pair as the first frame, the second, and the second moved onto the first. A sheet shows at most 48 pairs: all of them when there are fewer, otherwise an even sample per view.
+
+One look (1,200 frames) takes about 80 s to check with `--all-renders` from a frozen copy on this Mac, then about 10 s for the moved copies. All seven looks with `--across` took 2.5 minutes in compare round 18, most of it reading the renders.
+
 ## Metrics (`metrics.json`)
 
 All ΔE values are plain Euclidean Oklab distances (L on 0..1; about 0.02 is one just-noticeable difference). The roadmap's starting targets are mean under 0.03 and p95 under 0.06. Ignore rects and rounded corners are masked everywhere.
