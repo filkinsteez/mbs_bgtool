@@ -65,9 +65,10 @@ export interface SkySpec {
   /**
    * A dragged line (frame units): the sky darkens from its start, where it is palest, to its end, where it
    * reaches the far sky, and behind the start it deepens slowly with distance, as the sky does all round a
-   * light. Without one the darkening runs across the frame, turned by `turn`.
+   * light, reaching the far sky `behind` short sides away (BEHIND_REACH without it). Without one the darkening runs
+   * across the frame, turned by `turn`.
    */
-  line?: { from: readonly [number, number]; to: readonly [number, number] }
+  line?: { from: readonly [number, number]; to: readonly [number, number]; behind?: number }
   /**
    * The deep part of the far sky: past an edge of its own it sinks `stops` further, toward deep navy. The edge lies
    * `at` short sides ahead of the light at `from` (frame fractions) along `angle` (degrees, y down), never behind it;
@@ -437,8 +438,9 @@ function followDrag(
         radius: reach / Math.sqrt(leadShape),
         vary: glow.vary * leadVary,
         // In a tall frame its fade into the blue runs down the frame's whole height, where its pale outer light and the
-        // blue weigh the same over a wide band, grey: there it falls off faster.
-        beta: glow.beta * lerp(1, lerp(OUT_TALL_BETA, 1, wide), outWide),
+        // blue weigh the same over a wide band, grey: there it falls off faster. A fire sun's band meets the pale sky
+        // behind it instead (`behind` below), so it falls off slower and comes in as deep as in a wide frame.
+        beta: glow.beta * lerp(1, lerp(fireLead ? OUT_TALL_FIRE_BETA : OUT_TALL_BETA, 1, wide), outWide),
       }
     }
     const [x, y] = spots[(i - 1) % spots.length]
@@ -544,6 +546,10 @@ function followDrag(
   })
   // The sky's darkening runs at least SKY_LINE_MIN: under a tiny line it would change fast with every bit of length.
   const skyLength = Math.max(length, SKY_LINE_MIN)
+  // Behind a sun beyond an edge pointing away the frame is its lit side: the sky there stays pale as far as its light
+  // reaches, so its pale light meets a pale sky and not a darker blue, where the two weigh the same in grey and sage.
+  // Not behind a white or grey light (Ice, Steel): there a pale sky is only paler blue.
+  const behind = lerp(BEHIND_REACH, Math.max(BEHIND_REACH, (OUT_BEHIND * reach) / Math.min(frame[0], frame[1])), warm(layout.glows[0].color) ? outWide : 0)
   return {
     ...layout,
     glows,
@@ -551,7 +557,11 @@ function followDrag(
     sky: {
       ...layout.sky,
       turn: rampTurn(layout.sky.tilt, lineAngle, frame),
-      line: { from: [drag.from[0], drag.from[1]], to: fromP([start[0] + Math.cos(skyAngle) * skyLength, start[1] + Math.sin(skyAngle) * skyLength]) },
+      line: {
+        from: [drag.from[0], drag.from[1]],
+        to: fromP([start[0] + Math.cos(skyAngle) * skyLength, start[1] + Math.sin(skyAngle) * skyLength]),
+        behind,
+      },
       deep: layout.sky.deep
         ? { ...layout.sky.deep, at: (deepReach * skyLength) / Math.min(frame[0], frame[1]), from: [drag.from[0], drag.from[1]], angle: (skyAngle * 180) / Math.PI }
         : undefined,
@@ -563,6 +573,10 @@ function followDrag(
 const DRAG_INSIDE = 0.1
 /** Shortest the sky's darkening runs along a dragged line, in frame units. */
 const SKY_LINE_MIN = 0.15
+/** How far behind a dragged line's start the sky reaches the far sky, in short sides (the shader's default). */
+export const BEHIND_REACH = 1
+/** Behind a light beyond an edge pointing away, that reach against the light's own (its long radius). */
+const OUT_BEHIND = 1.15
 /**
  * A dragged light's reach against its distance outside the frame, so its body comes in over the near edge and
  * the edge glows in the light's own color, not only its pale outer light.
@@ -705,15 +719,16 @@ const DRAG_STYLE_HAZE: Readonly<Record<DarkStyle, number>> = { none: 1.6, strip:
  */
 const OUT_ANISO = 0.45
 const OUT_WARM_ANISO: readonly [number, number] = [0.45, 0.8]
-const OUT_WIDE_AT = 0.12
+const OUT_WIDE_AT = 0.2
 /**
  * An orange-red sun there: its reach against another light's (from a seed's own draw, so seeds differ in how deep
  * its band comes in), and its lobe spread against its own (GlowSpec.vary).
  */
 const OUT_FIRE_REACH: readonly [number, number] = [1.2, 1.8]
-const OUT_FIRE_REACH_TALL: readonly [number, number] = [0.95, 1.22]
-/** A lead's falloff there in a tall frame (9:16) against its own. */
+const OUT_FIRE_REACH_TALL: readonly [number, number] = [1.05, 1.55]
+/** A lead's falloff there in a tall frame (9:16) against its own, and an orange-red sun's. */
 const OUT_TALL_BETA = 1.26
+const OUT_TALL_FIRE_BETA = 0.9
 const OUT_VARY = 0.25
 /** Under a dragged line, a second bloom of the lead's color against its own size. */
 const DRAG_PAIR_SCALE = 0.65

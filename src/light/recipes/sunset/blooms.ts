@@ -15,6 +15,7 @@ import type {
 } from '../../scene'
 import { BLOOM_BOUNDARY, BLOOM_MINOR_REF, BLOOM_ROW, bloomBoundaryUniforms } from './blooms-boundary'
 import {
+  BEHIND_REACH,
   composeLayout,
   GLOW_COUNT,
   isCyan,
@@ -91,6 +92,7 @@ const PARAMS: readonly ParamSpec[] = [
   num('skyLine', '1: the sky darkens from skyLineFrom to skyLineTo (a dragged line) instead of across the frame', 0, 1, 1, 0),
   vec('skyLineFrom', 'Start of the line the sky darkens along', -2, 3, 0.001, [0.5, 1]),
   vec('skyLineTo', 'End of the line the sky darkens along', -2, 3, 0.001, [0.5, 0]),
+  num('skyBehind', 'How far behind the line start the sky reaches the far sky, in short sides', 0.5, 4, 0.01, BEHIND_REACH),
   num('skyVary', 'Sky light variation', 0, 0.1, 0.001, 0),
   num('skyDeep', 'Extra stops the far sky sinks by past its deep edge (0: none)', 0, 5, 0.01, 0),
   num('skyDeepAt', 'How far ahead of the light the deep edge lies, short sides', 0, 5, 0.005, 1),
@@ -149,7 +151,10 @@ function readLayout(ctx: RecipeContext): BloomsLayout {
       vary: ctx.num('skyVary'),
       turn: ctx.num('skyTurn'),
       veil: ctx.num('skyVeil'),
-      line: ctx.num('skyLine') > 0.5 ? { from: vec2(ctx.vec('skyLineFrom')), to: vec2(ctx.vec('skyLineTo')) } : undefined,
+      line:
+        ctx.num('skyLine') > 0.5
+          ? { from: vec2(ctx.vec('skyLineFrom')), to: vec2(ctx.vec('skyLineTo')), behind: ctx.num('skyBehind') }
+          : undefined,
       deep:
         ctx.num('skyDeep') > 0
           ? {
@@ -198,6 +203,7 @@ function layoutParams(layout: BloomsLayout): Record<string, ParamValue> {
     skyLine: layout.sky.line ? 1 : 0,
     skyLineFrom: layout.sky.line ? [...layout.sky.line.from] : [0.5, 1],
     skyLineTo: layout.sky.line ? [...layout.sky.line.to] : [0.5, 0],
+    skyBehind: layout.sky.line?.behind ?? BEHIND_REACH,
     skyVary: layout.sky.vary,
     skyDeep: layout.sky.deep?.stops ?? 0,
     skyDeepAt: layout.sky.deep?.at ?? 1,
@@ -468,6 +474,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     uSkyVeil: [...scale(skyPale, luminance(scale(sky, skyGain))), layout.sky.veil],
     uSkyLine: layout.sky.line ? [...layout.sky.line.from, ...layout.sky.line.to] : [0.5, 1, 0.5, 0],
     uSkyLineOn: layout.sky.line ? 1 : 0,
+    uSkyBehind: layout.sky.line?.behind ?? BEHIND_REACH,
     uSkyDeep: layout.sky.deep ? [layout.sky.deep.stops, layout.sky.deep.at, layout.sky.deep.soft, layout.sky.deep.curve] : [0, 1, 0.15, 0.5],
     uSkyDeepAxis: layout.sky.deep
       ? [...layout.sky.deep.from, Math.cos((layout.sky.deep.angle * Math.PI) / 180), Math.sin((layout.sky.deep.angle * Math.PI) / 180)]
@@ -566,7 +573,6 @@ export const sunsetBlooms: RecipeDefinition = {
 #define FIRE_BRIDGE 0.5
 #define DEEP_BEND 0.55
 #define FIRE_SKY_HAZE 1.55
-#define BEHIND_REACH 1.0
 #define BLOOM_MINOR_REF ${BLOOM_MINOR_REF.toFixed(6)}
 #define BLOOM_ROW ${BLOOM_ROW.toFixed(6)}
 uniform float uLens;                  // 1: seen through the scatter lens (pack output); 0: drawn directly (1:1 presets)
@@ -581,6 +587,7 @@ uniform vec2 uSkyTurn;                // cos, sin of the angle the sky ramp is t
 uniform vec4 uSkyVeil;                // pale light in the sky's own hue at the sky's luminance, and how much of it toward the light
 uniform vec4 uSkyLine;                // a dragged line's start and end (frame fractions) the sky darkens along, with uSkyLineOn
 uniform float uSkyLineOn;
+uniform float uSkyBehind;             // how far behind the line's start the sky reaches the far sky (short sides)
 uniform vec4 uSkyDeep;                // extra stops past the deep edge, its distance ahead of the light and half width (short sides), its bend round the light
 uniform vec4 uSkyDeepAxis;            // the light the deep edge bends round (frame fractions), and the way from it toward the far sky
 uniform float uHazeFloor;             // 1: the glows' haze hides at most as much sky light as they add (0: no limit)
@@ -724,15 +731,15 @@ vec3 bloomsScene(vec2 uv) {
   float span = frame.y;
   if (uSkyLineOn > 0.5) {
     // Along a dragged line the sky is palest at its start, where the light is, and reaches the far sky at its
-    // end. Behind the start it deepens slowly with distance, reaching the far sky BEHIND_REACH short sides
+    // end. Behind the start it deepens slowly with distance, reaching the far sky uSkyBehind short sides
     // away, so a light outside the frame pointing away leaves the frame its pale, lit side.
     vec2 F = (uSkyLine.xy - 0.5) * frame;
     vec2 D = (uSkyLine.zw - 0.5) * frame - F;
     float len = max(length(D), 1e-4);
     vec2 dir = D / len;
     float along = dot(P - F, dir);
-    float depth = along >= 0.0 ? along / len : -along * shortUnit / BEHIND_REACH;
-    span = max(len, BEHIND_REACH / shortUnit);
+    float depth = along >= 0.0 ? along / len : -along * shortUnit / uSkyBehind;
+    span = max(len, uSkyBehind / shortUnit);
     vSky = 1.0 - depth + (uSkyRamp.z * dot(P - F, vec2(-dir.y, dir.x)) + warp.y) / span;
   }
   // The line drifts like a glow edge, on the field row after the deep area's, and its lighter and
