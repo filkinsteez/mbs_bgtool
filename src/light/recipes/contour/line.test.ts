@@ -115,13 +115,16 @@ describe('a dragged line on Streaks', () => {
 })
 
 describe('without a line', () => {
-  it('leaves the seed scene unturned', () => {
+  it("leaves the seed scene unturned, but for a Streaks sun above the frame, whose shafts land on a floor", () => {
     for (const pack of PACKS) {
       for (const seed of SEEDS) {
-        expect(compose(contourBeam, pack, seed)).not.toHaveProperty('turn')
-        expect(compose(contourBeam, pack, seed)).not.toHaveProperty('source')
-        expect(compose(contourStreaks, pack, seed)).not.toHaveProperty('turn')
-        expect(compose(contourStreaks, pack, seed)).not.toHaveProperty('reach')
+        const beam = compose(contourBeam, pack, seed)
+        expect(beam).not.toHaveProperty('turn')
+        // A hanging lamp's beam starts inside the frame, out of its mouth's glow.
+        if (beam.source) expect((beam.mouth as number[])[0], `${pack} ${seed}`).toBeGreaterThan(0)
+        const streaks = compose(contourStreaks, pack, seed)
+        if (streaks.turn) expect((streaks.downFloor as number[])[0], `${pack} ${seed}`).toBeGreaterThan(0.5)
+        else expect(streaks).not.toHaveProperty('reach')
       }
     }
   })

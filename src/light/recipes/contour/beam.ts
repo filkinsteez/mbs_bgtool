@@ -95,6 +95,7 @@ uniform vec4 uGlowLine;   // where that light is: its segment on screen (unturne
 uniform float uBeamHaze;  // share of the beam's light its haze scatters, over the seed's own (1)
 uniform vec2 uHalo;       // the beam's light the haze scatters around it: share of the beam's light, how much wider (screen, short-side units)
 uniform float uGlowCore;  // least size of the pool's glow in the haze (screen, short-side units; 0: the beam's own)
+uniform vec4 uMouth;      // a hanging lamp's mouth glowing in the haze around it: level (share of the beam's light; 0: none), core (screen), where it is (screen, unturned)
 ${AIR_GLOW_GLSL}
 const int BEAM_STEPS = 16;
 
@@ -302,6 +303,9 @@ vec3 radiance(vec2 uv, vec2 screen) {
   float below = p.y - contactY;
   float glow = poolGlow(vec2(abs(p.x - beamX), below > 0.0 ? below * uEdge.y : -below), aScreen, core, hazeHere);
   scatter += uBeamLight.x * glow;
+  // A hanging lamp's mouth lights the haze around it, falling off as the view ray's integral of
+  // its light does (1 / distance past a core), so the beam comes out of a soft glow.
+  if (uMouth.x > 0.0) scatter += uBeamLight.x * uMouth.x * hazeHere * uMouth.y / (uMouth.y + length(screen - uMouth.zw));
 
   // Haze just over the floor is lit from below by the floor's spill under it, and over the
   // pit by the spill at the stage's edge, thinning upward over the floor haze's depth. So
@@ -539,8 +543,16 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
   // floor's height and the pool's kind spread over their ranges (seedShares).
   const [onRight, leaning, broad, cone] = seedLayout(pack, seed, 0xbea)
   const [floorShare, poolShare] = seedShares(seed, 0xbea, 2, random)
+  // What else the seed's scene shows, from its own stream so the rest of each seed stays as it
+  // was: the lamp hanging in the frame, so the beam starts inside it; the stage's edge high, so
+  // the pool lands mid-frame with a wide floor in front of it; or neither.
+  const stage = seededRandom(seed, 0xbeb)
+  const [kind] = seedShares(seed, 0xbeb, 1, stage)
+  // A dragged line places the beam itself, on the seed's usual stage.
+  const hanging = !controls.drag && kind < HANGING_SHARE
+  const highEdge = !controls.drag && kind >= HANGING_SHARE && kind < HANGING_SHARE + HIGH_EDGE_SHARE
   const either = (choice: number, lo: [number, number], hi: [number, number]) => (choice ? lerp(hi[0], hi[1], random()) : lerp(lo[0], lo[1], random()))
-  let edgeAt = wide ? lerp(0.52, 0.82, floorShare) : lerp(0.56, 0.84, floorShare)
+  let edgeAt = highEdge ? lerp(0.4, 0.5, floorShare) : wide ? lerp(0.52, 0.82, floorShare) : lerp(0.56, 0.84, floorShare)
   // A broad beam that would land in front of the edge lands on it instead, with the edge moved
   // down to where its oval pool would have been, so the pool's height still spreads over seeds.
   if (broad && poolShare >= 0.5) edgeAt = lerp(edgeAt + 0.05, Math.min(0.9, edgeAt + 0.2), poolShare * 2 - 1)
@@ -643,6 +655,9 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     veilBand: 0,
     veilTint: veiled(light) && darkMatches(light) ? VEIL_TINT : 0,
   }
+  // A hanging lamp's beam starts inside the frame, a fifth to nearly half of the way down; a
+  // dragged line puts the start at the line's start instead.
+  if (hanging) Object.assign(params, beamHanging(params, -halfH + 2 * halfH * lerp(0.2, 0.45, stage()), halfH, lerp(MOUTH_GLOW[0], MOUTH_GLOW[1], stage())))
   if (controls.drag) {
     const line = lineInShorts(controls.drag, aspect)
     // Under a line the seed's layout choices that the line takes over (left or right, upright
@@ -724,7 +739,6 @@ const POOL_GLOW = 0.75
 /** Falloff (short-side units) of the glow past the frame for a broad and a narrow beam. */
 const WIDE_GLOW = 0.27
 const NARROW_GLOW = 0.15
-
 /**
  * How far past its start (screen, short-side units) a dragged line's narrow beam has all its
  * light: a short way, as a lamp's does, so it reads as light along its whole length instead of
@@ -733,6 +747,19 @@ const NARROW_GLOW = 0.15
  */
 const SOURCE_RAMP = 0.25
 const BROAD_RAMP = [0.03, 0.25]
+
+/** Shares of the seeds whose lamp hangs in the frame, and whose stage edge is high (beamHanging). */
+const HANGING_SHARE = 0.3
+const HIGH_EDGE_SHARE = 0.3
+
+/**
+ * A hanging lamp: how far past its mouth its beam has all its light (screen, short-side units),
+ * and how much light its mouth gives the haze around it (least and most, as a share of the beam's
+ * light per unit of haze) within a core (screen, short-side units).
+ */
+const HANGING_RAMP = 0.1
+const MOUTH_GLOW = [0.6, 1]
+const MOUTH_CORE = 0.04
 
 /**
  * The stage for a dragged line: the beam starts at the line's start and lands at its end, with
@@ -755,6 +782,7 @@ function beamOnLine(params: Record<string, ParamValue>, line: ShortLine, halfH: 
   const landingX = (num('beamAt') * landingZ) / focal
   const pool: [number, number] = [num('beamAt'), horizon + (edgeY - horizon) * (1 - k)]
   const tiltZ = (params.tilt as number[])[1]
+  const heightAt = stageHeightAt(params)
   // The line's angle from straight down, positive toward -x, and the beam's direction on the
   // unturned stage (toward the pool) for the lean it takes of it.
   const fromDown = wrapAngle(line.angle - Math.PI / 2)
@@ -765,7 +793,6 @@ function beamOnLine(params: Record<string, ParamValue>, line: ShortLine, halfH: 
   // height on the beam's axis at a screen height.
   const start = pool[1] - line.length * down
   const full = start + ramp * down
-  const heightAt = (e: number) => Math.min(2, Math.max(-50, ((e - horizon) * (landingZ - tiltZ)) / (focal - (e - horizon) * tiltZ)))
   const startHeight = round4(heightAt(start))
   // A beam longer than the frame's short side keeps the haze layers' share of its length, and
   // the room's haze thickens a little with it, so a beam crossing the whole frame still shows
@@ -782,6 +809,42 @@ function beamOnLine(params: Record<string, ParamValue>, line: ShortLine, halfH: 
     haze: round4(num('haze') * Math.sqrt(grow)),
     turn: turnParam(fromDown - lean, line.to, pool),
     source: [startHeight, round4(Math.max(heightAt(full), startHeight + 0.001))],
+  }
+}
+
+/** The world height on the beam's axis that the unturned stage shows at screen height e. */
+function stageHeightAt(params: Record<string, ParamValue>): (e: number) => number {
+  const num = (key: string) => params[key] as number
+  const horizon = num('horizon')
+  const focal = num('focal')
+  const edgeY = Math.max(num('floorY'), horizon + 0.01)
+  const k = Math.min(0.9, (num('landing') * num('beamWidth')) / focal)
+  const landingZ = focal / (edgeY - horizon) / (1 - k)
+  const tiltZ = (params.tilt as number[])[1]
+  return (e: number) => Math.min(2, Math.max(-50, ((e - horizon) * (landingZ - tiltZ)) / (focal - (e - horizon) * tiltZ)))
+}
+
+/**
+ * A lamp hanging in the frame: its beam starts at screen height `start` and has all its light
+ * SOURCE_RAMP past it, under the ceiling haze, which thins out above it.
+ */
+function beamHanging(params: Record<string, ParamValue>, start: number, halfH: number, mouth: number): Record<string, ParamValue> {
+  const num = (key: string) => params[key] as number
+  const heightAt = stageHeightAt(params)
+  const startHeight = round4(heightAt(start))
+  const ceiling = params.ceiling as number[]
+  // Where the beam's axis meets the start's height on screen (beamWorld's stage, leaned by its tilt).
+  const horizon = num('horizon')
+  const focal = num('focal')
+  const edgeY = Math.max(num('floorY'), horizon + 0.01)
+  const landingZ = focal / (edgeY - horizon) / (1 - Math.min(0.9, (num('landing') * num('beamWidth')) / focal))
+  const [tx, tz] = params.tilt as number[]
+  const x = (focal * ((num('beamAt') * landingZ) / focal + tx * (startHeight - 1))) / Math.max(landingZ + tz * (startHeight - 1), 0.05)
+  return {
+    ceiling: [ceiling[0], ceiling[1], round4(Math.min(4, Math.max(-2, start + halfH + ceiling[2])))],
+    ceilingTop: ceiling[1],
+    source: [startHeight, round4(Math.max(heightAt(start + HANGING_RAMP), startHeight + 0.001))],
+    mouth: [round4(mouth), MOUTH_CORE, round4(x), round4(start)],
   }
 }
 
@@ -855,6 +918,7 @@ export const contourBeam: RecipeDefinition = {
     { kind: 'number', key: 'beamHaze', label: 'Beam light in its haze', min: 0, max: 4, step: 0.005, default: 1 },
     { kind: 'vector', key: 'halo', label: 'Light around the beam', min: 0, max: 2, step: 0.0005, default: [0, 0] },
     { kind: 'number', key: 'glowCore', label: 'Least pool glow size', min: 0, max: 1, step: 0.0005, default: 0 },
+    { kind: 'vector', key: 'mouth', label: 'Lamp mouth glow', min: -8, max: 8, step: 0.0005, default: [0, 0.04, 0, 0] },
   ],
   fragment: BEAM_GLSL,
   uniforms: (ctx) => {
@@ -903,6 +967,7 @@ export const contourBeam: RecipeDefinition = {
       uBeamHaze: ctx.num('beamHaze'),
       uHalo: ctx.vec('halo'),
       uGlowCore: ctx.num('glowCore'),
+      uMouth: ctx.vec('mouth'),
     }
   },
   radianceScale: (ctx) => (ctx.num('edgeSoftness') >= HALF_SCALE_EDGE ? 0.5 : 1),
