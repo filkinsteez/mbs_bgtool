@@ -1459,8 +1459,12 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     // as two near-equal pale blooms read as one wide pale mass.
     const nearEqual = plan.balance[0] > 0.5
     const balance = lerp(plan.balance[0], plan.balance[1], r()) * (!nearEqual && linearToOklch(colors[lead])[0] > 0.88 ? 0.45 : 1)
+    // From the upper corners (Atmospheric) the pair's second light is the grey one (Steel): two whites in a narrow frame
+    // add up to a flat white top, and beside a grey lead the white light (Ice) is already its inner bloom.
+    const pairColor = plan === UPPER_PAIR && !isGrey(colors[lead]) ? other : lead
+    const pairGain = pairColor === lead ? leadGain : isGrey(colors[pairColor]) ? 1 : lightGain(colors[pairColor])
     glows.push({
-      color: lead,
+      color: pairColor,
       at: nearEqual
         ? [0.5 - side * lerp(plan.offset[0], plan.offset[1], r()), at[1] + lerp(-0.08, 0.04, r())]
         : [clamp(at[0] - side * lerp(0.4, 0.62, r()), 0.06, 0.94), Math.max(MIN_LEAD_Y, Math.min(at[1], 0.8) - lerp(0.06, 0.22, r()))],
@@ -1468,9 +1472,9 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
       radius: radius * (nearEqual ? lerp(0.6, 0.9, balance) : lerp(0.25, 0.45, balance)) * Math.sqrt(lerp(0.45, 0.9, balance)),
       aniso: lerp(1.2, 1.9, r()),
       angle: -angle * lerp(0.3, 1.0, r()),
-      gain: leadGain,
+      gain: pairGain,
       beta,
-      haze: isWarm(colors[lead]) ? warmHaze(colors[lead], r()) * 0.8 : lerp(0.9, 1.4, r()),
+      haze: isWarm(colors[lead]) ? warmHaze(colors[lead], r()) * 0.8 : lerp(0.9, 1.4, r()) * (isGrey(colors[pairColor]) ? GREY_LEAD_HAZE : 1),
       vary: lerp(0.45, 0.85, r()),
       bend: bend(),
     })

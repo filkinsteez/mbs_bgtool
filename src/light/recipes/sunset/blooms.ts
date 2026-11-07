@@ -289,6 +289,11 @@ const PRESET_CORE_LIFT = 10
 /** A light's core radius against the light's own, and a warm light's (smaller, so its color fills the bloom). */
 const CORE_RADIUS = 0.3
 const WARM_CORE_RADIUS = 0.14
+/**
+ * In pack output a near-white light without color (Ice) reaches flat white at about 1.07 times its hex, so its core
+ * is thin: only its middle goes white.
+ */
+const PALE_CORE_RADIUS = 0.15
 const MAX_CORE = 2
 /** How much more light an orange-red core has: enough for the tone curve to take it through amber to cream. */
 const RED_CORE = 4
@@ -454,7 +459,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     // (as Bands does), so the bloom's middle is a brighter Tan, Yellow or Orange-red that goes pale only where it passes
     // its hex, not a cream spot inside a ring of color. Other cores whiten through the light's own pale tint.
     const warmCore = (pack && isWarm(base)) || red
-    glowCoreRadius.push(pack && isWarm(base) ? WARM_CORE_RADIUS : CORE_RADIUS)
+    glowCoreRadius.push(pack && isWarm(base) ? WARM_CORE_RADIUS : pack && isPaleGrey(base) ? PALE_CORE_RADIUS : CORE_RADIUS)
     glowCoreTint.push(...(warmCore ? scale(light, gain) : scale(tint, luminance(light) * gain)))
     glowShape.push(glow.at[0], glow.at[1], glow.beta, haze)
     glowAxis.push(...axis(glow.radius * reach, glow.aniso, glow.angle))
