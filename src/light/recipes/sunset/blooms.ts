@@ -17,6 +17,8 @@ import { BLOOM_BOUNDARY, BLOOM_MINOR_REF, BLOOM_ROW, bloomBoundaryUniforms } fro
 import {
   composeLayout,
   GLOW_COUNT,
+  isCyan,
+  isGrey,
   isRed,
   isSourceLight,
   isWarm,
@@ -89,6 +91,13 @@ const PARAMS: readonly ParamSpec[] = [
   vec('skyLineFrom', 'Start of the line the sky darkens along', -2, 3, 0.001, [0.5, 1]),
   vec('skyLineTo', 'End of the line the sky darkens along', -2, 3, 0.001, [0.5, 0]),
   num('skyVary', 'Sky light variation', 0, 0.1, 0.001, 0),
+  num('skyDeep', 'Extra stops the far sky sinks by past its deep edge (0: none)', 0, 5, 0.01, 0),
+  num('skyDeepAt', 'How far ahead of the light the deep edge lies, short sides', 0, 5, 0.005, 1),
+  num('skyDeepSoft', 'Half the width of the deep edge, short sides', 0.02, 1, 0.005, 0.15),
+  num('skyDeepCurve', 'How fast the deep edge bends round the light toward its sides', 0, 3, 0.01, 0.5),
+  vec('skyDeepFrom', 'The light the deep edge bends round, frame fractions', -2, 3, 0.001, [0.5, 1]),
+  num('skyDeepAngle', 'Way from the light toward the far sky, degrees (0: right, -90: up)', -360, 360, 0.01, -90),
+  num('glowsDim', '1: light of the sky hue (Cyan) dims with the far sky, its middle too (0: its middle stays bright)', 0, 1, 1, 0),
   num('lensRadius', 'Lens radius, short sides; the scene is seen through it (0: off)', 0, 0.3, 0.0005, 0),
   num('glowCore', 'Glow core: extra light in a narrower core at each source, over its peak', 0, 2, 0.01, 0),
   num('bridgeFloor', 'Lowest Oklab L a bridge aims for (0: the lighter side only)', 0, 1, 0.005, 0),
@@ -139,7 +148,19 @@ function readLayout(ctx: RecipeContext): BloomsLayout {
       turn: ctx.num('skyTurn'),
       veil: ctx.num('skyVeil'),
       line: ctx.num('skyLine') > 0.5 ? { from: vec2(ctx.vec('skyLineFrom')), to: vec2(ctx.vec('skyLineTo')) } : undefined,
+      deep:
+        ctx.num('skyDeep') > 0
+          ? {
+              stops: ctx.num('skyDeep'),
+              at: ctx.num('skyDeepAt'),
+              soft: ctx.num('skyDeepSoft'),
+              curve: ctx.num('skyDeepCurve'),
+              from: vec2(ctx.vec('skyDeepFrom')),
+              angle: ctx.num('skyDeepAngle'),
+            }
+          : undefined,
     },
+    glowsDim: ctx.num('glowsDim'),
     core: ctx.num('glowCore'),
     warp: ctx.num('warp'),
     warpScale: ctx.num('warpScale'),
@@ -175,6 +196,13 @@ function layoutParams(layout: BloomsLayout): Record<string, ParamValue> {
     skyLineFrom: layout.sky.line ? [...layout.sky.line.from] : [0.5, 1],
     skyLineTo: layout.sky.line ? [...layout.sky.line.to] : [0.5, 0],
     skyVary: layout.sky.vary,
+    skyDeep: layout.sky.deep?.stops ?? 0,
+    skyDeepAt: layout.sky.deep?.at ?? 1,
+    skyDeepSoft: layout.sky.deep?.soft ?? 0.15,
+    skyDeepCurve: layout.sky.deep?.curve ?? 0.5,
+    skyDeepFrom: layout.sky.deep ? [...layout.sky.deep.from] : [0.5, 1],
+    skyDeepAngle: layout.sky.deep?.angle ?? -90,
+    glowsDim: layout.glowsDim,
     glowCore: layout.core,
     warp: layout.warp,
     warpScale: layout.warpScale,
@@ -214,6 +242,10 @@ function axis(radius: number, aniso: number, angle: number): number[] {
 const scale = (c: Rgb, k: number): Rgb => [c[0] * k, c[1] * k, c[2] * k]
 const luminance = (c: Rgb) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
+function smoothstep(from: number, to: number, x: number): number {
+  const t = clamp((x - from) / (to - from), 0, 1)
+  return t * t * (3 - 2 * t)
+}
 
 /** 1 for a glow with its own haze (it sits in front), 0 for a glow without (it sits behind the others' haze). */
 function inFront(haze: number): number {
@@ -240,9 +272,15 @@ const CORE_ABOVE_BRIDGE = 0.86
 const CORE_LIFT = 10
 const MAX_CORE = 2
 /** How much more light an orange-red core has: enough for the tone curve to take it through amber to cream. */
-const RED_CORE = 2.5
+const RED_CORE = 4
+/** Share of the core a light near white loses (Yellow, Lime and Ice turn white by 1.4 to 1.85 times their hex). */
+const PALE_CORE_CUT = 0.6
+/** A Steel bloom's core against a light's. */
+const GREY_CORE = 1.2
 /** Share of the way an orange-red light's faint tint raises its green toward its red (bridgeTint). */
-const SUN_TAIL_GREEN = 0.4
+const SUN_TAIL_GREEN = 0.85
+/** How far the pale sky around an orange-red sun turns from Meta Blue's hue toward Cyan's. */
+const SKY_CYAN_SHARE = 1
 
 /**
  * Bridge light for one glow, per unit of its tint, solved at this Intensity's
@@ -284,7 +322,11 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
   const paleLight = 1 - 0.45 * Math.max(0, 2 * intensity - 1)
   const slot = (index: number) => colors[clamp(Math.round(index), 0, SLOT_COUNT - 1)]
   const sky = colors[SLOT.sky]
-  const skyPale = skyPaleTint(sky)
+  // Around an orange-red sun in a pack with Cyan (Bold) the pale sky leans Cyan: light blue toward the light, never
+  // grey-white or sage. Beside Yellow it would turn mint, so a Yellow frame's pale sky keeps Meta Blue's hue.
+  const lights = [colors[SLOT.light1], colors[SLOT.light2]].filter((c) => c !== undefined)
+  const cyanLight = lights.some(isRed) ? lights.find(isCyan) : undefined
+  const skyPale = skyPaleTint(sky, cyanLight, cyanLight ? SKY_CYAN_SHARE : 0)
   const deep = slot(layout.zenith.color)
   const glowColor: number[] = []
   const glowTail: number[] = []
@@ -296,6 +338,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
   const glowAxis: number[] = []
   const glowEdge: number[] = []
   const glowDeepFade: number[] = []
+  const glowSkyLight: number[] = []
   const glowFire: number[] = []
   const glowBridge: number[] = []
   const glowLobes: number[] = []
@@ -318,6 +361,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
       glowAxis.push(1, 0, 1, 1)
       glowEdge.push(0, 1, 0, 0)
       glowDeepFade.push(0)
+      glowSkyLight.push(0)
       glowFire.push(0)
       glowBridge.push(0, 0, 0)
       continue
@@ -365,7 +409,12 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     glowFire.push(fire ? 1 : 0)
     // Only a light has a source to brighten toward; a patch of sky or a pack grey stays soft throughout.
     const short = bridgeGate(sky, light) * Math.max(0, CORE_ABOVE_BRIDGE - linearToOklab(base)[0])
-    const core = isSourceLight(glow.color, base) ? Math.min(MAX_CORE, layout.core * (1 + CORE_LIFT * short)) * (fire ? RED_CORE : 1) : 0
+    // A light already near white (Yellow, Lime, Ice) has little room above its hex: it gets a smaller core, so its
+    // body keeps its color and only its middle goes pale.
+    const roomLeft = 1 - PALE_CORE_CUT * smoothstep(0.82, 0.9, linearToOklab(base)[0])
+    // A Steel bloom beside the lead is a light too: its middle pales toward white.
+    const greyLight = i > 0 && isGrey(base) && (glow.color === SLOT.light1 || glow.color === SLOT.light2)
+    const core = isSourceLight(glow.color, base) ? Math.min(MAX_CORE, layout.core * (1 + CORE_LIFT * short)) * (fire ? RED_CORE : roomLeft) : greyLight ? layout.core * GREY_CORE : 0
     glowCore.push(core)
     // The core whitens through the light's own pale tint; a red-orange core is more of its own light, which the
     // tone curve takes through amber, not salmon (as Bands does).
@@ -374,6 +423,9 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     glowAxis.push(...axis(glow.radius * reach, glow.aniso, glow.angle))
     glowEdge.push(glow.vary, 1.15, 1.7 * i + 0.3, front)
     glowDeepFade.push(deepFade(sky, deep, light))
+    // Light of the sky's own hue (Cyan, a paler patch of blue) is sky: where it reaches into the navy part all of it
+    // dims with the sky, its middle too, and dimmed it is still that color. A light of another hue keeps its middle bright.
+    glowSkyLight.push(clamp(layout.glowsDim, 0, 1) * (1 - otherHue(sky, light)))
     // A dim glow's bridge stays below its own brightest point, so it never gets a pale ring lighter than itself.
     const floor = Math.min(layout.bridgeFloor, linearToOklab(scale(light, gain * (1 + core)))[0] - 0.04)
     const amount = front * layout.bridge * bridgeLight(sky, light, tint, haze, intensity, skyGain, gain, floor)
@@ -389,6 +441,10 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     uSkyVeil: [...scale(skyPale, luminance(scale(sky, skyGain))), layout.sky.veil],
     uSkyLine: layout.sky.line ? [...layout.sky.line.from, ...layout.sky.line.to] : [0.5, 1, 0.5, 0],
     uSkyLineOn: layout.sky.line ? 1 : 0,
+    uSkyDeep: layout.sky.deep ? [layout.sky.deep.stops, layout.sky.deep.at, layout.sky.deep.soft, layout.sky.deep.curve] : [0, 1, 0.15, 0.5],
+    uSkyDeepAxis: layout.sky.deep
+      ? [...layout.sky.deep.from, Math.cos((layout.sky.deep.angle * Math.PI) / 180), Math.sin((layout.sky.deep.angle * Math.PI) / 180)]
+      : [0.5, 1, 0, -1],
     uHazeFloor: clamp(layout.hazeFloor, 0, 1),
     uBridgeSky: clamp(layout.bridgeSky, 0, 1),
     uZenithShape: [z.at[0], z.at[1], clamp(z.amount, 0, 2), z.falloff],
@@ -405,6 +461,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     uGlowCore: glowCore,
     uGlowCoreTint: glowCoreTint,
     uGlowDeepFade: glowDeepFade,
+    uGlowSkyLight: glowSkyLight,
     uGlowFire: glowFire,
     uLeadHides: layout.glows[0] && isRed(slot(layout.glows[0].color)) ? 1 : 0,
     uGlowShape: glowShape,
@@ -474,7 +531,10 @@ export const sunsetBlooms: RecipeDefinition = {
 #define LOBES ${LOBES}
 #define TAIL_END ${TAIL_END.toFixed(2)}
 #define LOW_HAZE 1.5
-#define FIRE_SKY_LIGHT 2.0
+#define FIRE_SKY_LIGHT 0.7
+#define FIRE_TAIL_LIGHT 3.0
+#define FIRE_BRIDGE 0.5
+#define DEEP_BEND 0.55
 #define FIRE_SKY_HAZE 1.55
 #define CORE_RADIUS 0.3
 #define BEHIND_REACH 1.0
@@ -490,6 +550,8 @@ uniform vec2 uSkyTurn;                // cos, sin of the angle the sky ramp is t
 uniform vec4 uSkyVeil;                // pale light in the sky's own hue at the sky's luminance, and how much of it toward the light
 uniform vec4 uSkyLine;                // a dragged line's start and end (frame fractions) the sky darkens along, with uSkyLineOn
 uniform float uSkyLineOn;
+uniform vec4 uSkyDeep;                // extra stops past the deep edge, its distance ahead of the light and half width (short sides), its bend round the light
+uniform vec4 uSkyDeepAxis;            // the light the deep edge bends round (frame fractions), and the way from it toward the far sky
 uniform float uHazeFloor;             // 1: the glows' haze hides at most as much sky light as they add (0: no limit)
 uniform float uBridgeSky;             // 1: on the sky side a bridge is pale light of the sky's hue (0: the lights' tint throughout)
 uniform vec4 uZenithShape;           // center (frame fractions), amount, falloff exponent
@@ -504,6 +566,7 @@ uniform vec3 uGlowTail[GLOW_COUNT];   // color of the faint outer light toward t
 uniform vec3 uGlowLow[GLOW_COUNT];    // the glow's deeper member, for its lower side and over a deep area
 uniform float uGlowWarm[GLOW_COUNT];  // 1 for warm light, whose lower part takes the deeper member
 uniform float uGlowDeepFade[GLOW_COUNT]; // how far the glow's hue is from the deepened sky's, 0..1
+uniform float uGlowSkyLight[GLOW_COUNT]; // 1: the glow is sky light (the sky's own hue), which dims with the far sky, its middle too
 uniform float uLeadHides;             // 1: the lead's haze hides the sky and the other glows behind it whatever the haze floor (an orange-red sun)
 uniform float uGlowFire[GLOW_COUNT];  // 1: the glow burns like fire: deep red where dim toward the horizon, cream toward the sky (Orange-red)
 uniform vec4 uGlowShape[GLOW_COUNT];  // center (frame fractions), falloff exponent, haze
@@ -646,20 +709,6 @@ vec3 bloomsScene(vec2 uv) {
   vSky += boundaryWarp(P.x * shortUnit, fromLine + float(GLOW_COUNT + 1) * BLOOM_ROW) / (shortUnit * span);
   float above = clamp((uSkyRamp.y - vSky) / max(uSkyRamp.y, 0.05), 0.0, 1.0);
   float topLight = exp2(-uSkyRamp.x * pow(above, 1.4));
-  // With uZenithHold the dark color is the pack's ground, not darker sky: it keeps its hex under the darker
-  // top. With uZenithMeet the blue darkens where it comes in, and a dark color of another hue (Plum, Forest)
-  // comes in only once the blue is nearly dark, so the two meet through the dark base: blue and Plum lit
-  // together are indigo, blue and Forest teal, so their blend is at most a thin dark seam, never a wide fade.
-  float other = clamp(uZenithMeet / 0.6, 0.0, 1.0);
-  float meet = 1.0 - mix(uZenithMeet * smoothstep(0.0, 0.6, z), 0.9 * smoothstep(0.0, 0.45, z), other);
-  float deepIn = mix(z, smoothstep(0.3, 0.85, z), other);
-  vec3 sky = mix(uSky * meet, uDeep * mix(1.0, 1.0 / topLight, uZenithHold), deepIn);
-  sky *= topLight * exp(uSkyRamp.w * 3.0 * noise2x2(P * 2.6 + vec2(7.1, 2.3), uSeed + 23).x);
-  // The sky pales toward its light: a veil of pale light in its own hue rises from the line where it is its
-  // exact hex toward the light, so full-strength blue is only a band toward the far edge. Not over the dark
-  // ground.
-  float toLight = clamp((vSky - uSkyRamp.y) / max(1.0 - uSkyRamp.y, 0.05), 0.0, 1.0);
-  sky += uSkyVeil.rgb * (uSkyVeil.a * toLight * toLight * (3.0 - 2.0 * toLight) * (1.0 - z));
 
   float k[GLOW_COUNT];
   float kc[GLOW_COUNT];
@@ -667,8 +716,8 @@ vec3 bloomsScene(vec2 uv) {
   float own[GLOW_COUNT];
   float air[GLOW_COUNT];
   float ext = 0.0;
-  // Low in the frame, toward the horizon, the light crosses the most air (in short sides from the bottom edge).
-  float horizon = 1.0 - smoothstep(0.0, 0.5, (0.5 * frame.y - P.y) * shortUnit);
+  // How much a glow of a hue far from the sky's lights the air here.
+  float lightsAir = 0.0;
   for (int i = 0; i < GLOW_COUNT; i++) {
     k[i] = 0.0;
     kc[i] = 0.0;
@@ -686,14 +735,72 @@ vec3 bloomsScene(vec2 uv) {
       // Low down the light passes through more air, which hides more of the sky behind it. Not where the sky
       // below it is the deep sky (a light above the frame): hiding the deep blue leaves a dim warm light, dark gold.
       // A light that burns like fire (Orange-red) and sits low lights the air along the horizon far out: there
-      // even its dim light hides the sky. One higher up lights no horizon in the frame. Toward the open sky its
-      // haze is thin, so the blue shows through as it dims: its dim light seen alone would be beige.
-      air[i] = uGlowFire[i] * horizon * (1.0 - smoothstep(0.15, 0.4, (0.5 * frame.y - c.y) * shortUnit));
+      // even its dim light hides the sky. One higher up lights no horizon in the frame. The lit band thins away
+      // from the sun, so its far end narrows into the sky instead of fading into it. Toward the open sky its haze is
+      // thin, so the blue shows through as it dims: its dim light seen alone would be beige.
+      float fromSun = abs(dot(P - c, uGlowAxis[i].xy)) * uGlowAxis[i].z * stretch.x;
+      float band = 1.0 - smoothstep(0.0, 0.5 * (1.0 - smoothstep(0.45, 1.5, fromSun)) + 1e-3, (0.5 * frame.y - P.y) * shortUnit);
+      air[i] = uGlowFire[i] * band * (1.0 - smoothstep(0.15, 0.4, (0.5 * frame.y - c.y) * shortUnit));
       float k2 = k[i] * k[i];
       own[i] = uGlowShape[i].w * mix(mix(k2, FIRE_SKY_HAZE * k2 * k2, uGlowFire[i]), k[i], air[i]) * (1.0 + LOW_HAZE * max(low[i], air[i]) * (1.0 - above));
       ext += own[i];
+      lightsAir = max(lightsAir, uGlowDeepFade[i] * smoothstep(0.04, 0.3, k[i]));
     }
   }
+
+  // Far from the light the sky sinks further along its own falloff, toward deep navy, past an edge of its own that lies
+  // a distance ahead of the light, never behind it. The edge bends round the light (at the sides it comes in by at
+  // most DEEP_BEND of that distance), drifts, and softens and hardens along its length, on noise of its own, so it
+  // never runs parallel to the pale side's levels.
+  // Beside a light low in the frame the sky near the bottom edge is the lit air along the horizon, never the deep
+  // sky: there the sky darkens less, so a low sun's light along the bottom meets a lit sky, not the deep blue. Nor is
+  // it deep where a light of another hue (a warm bloom, Ice) lights the air: its faint light over the navy would read
+  // grey, olive or brown.
+  float rampLight = topLight;
+  float deepSky = 0.0;
+  float deepDim = 1.0;
+  if (uSkyDeep.x > 0.0) {
+    vec2 away = uSkyDeepAxis.zw;
+    vec2 light = (uSkyDeepAxis.xy - 0.5) * frame;
+    vec2 d = (P - light) * shortUnit;
+    float ahead = dot(d, away);
+    float across = dot(d, vec2(-away.y, away.x));
+    vec3 drift = noise1x3(across * 1.1 + 4.3, uSeed + 523);
+    vec3 ripple = noise1x3(across * 2.6 + 1.7, uSeed + 541);
+    float bend = 1.0 - exp(-uSkyDeep.w * across * across / max(uSkyDeep.y * uSkyDeep.y, 0.01));
+    float edge = uSkyDeep.y * (1.0 - DEEP_BEND * bend) + 0.11 * drift.x + 0.035 * ripple.x;
+    float soft = uSkyDeep.z * (1.0 + 0.6 * drift.y);
+    deepSky = smoothstep(edge - soft, edge + soft, ahead);
+    float lowLight = 1.0 - smoothstep(0.15, 0.4, (0.5 * frame.y - light.y) * shortUnit);
+    float nearBottom = 1.0 - smoothstep(0.0, 0.45, (0.5 * frame.y - P.y) * shortUnit);
+    float lit = 1.0 - lowLight * nearBottom;
+    deepSky *= lit * (1.0 - lightsAir);
+    deepDim = exp2(-uSkyDeep.x * deepSky);
+    topLight = exp2(log2(topLight) * lit) * deepDim;
+  }
+  // With uZenithHold the dark color is the pack's ground, not darker sky: it keeps its hex under the darker
+  // top. With uZenithMeet the blue darkens where it comes in, and a dark color of another hue (Plum, Forest)
+  // comes in only once the blue is nearly dark, so the two meet through the dark base: blue and Plum lit
+  // together are indigo, blue and Forest teal, so their blend is at most a thin dark seam, never a wide fade.
+  float other = clamp(uZenithMeet / 0.6, 0.0, 1.0);
+  float meet = 1.0 - mix(uZenithMeet * smoothstep(0.0, 0.6, z), 0.9 * smoothstep(0.0, 0.45, z), other);
+  float deepIn = mix(z, smoothstep(0.3, 0.85, z), other);
+  vec3 sky = mix(uSky * meet, uDeep * mix(1.0, 1.0 / topLight, uZenithHold), deepIn);
+  sky *= topLight * exp(uSkyRamp.w * 3.0 * noise2x2(P * 2.6 + vec2(7.1, 2.3), uSeed + 23).x);
+  // The sky pales toward its light: a veil of pale light in its own hue rises from the line where it is its
+  // exact hex toward the light, so full-strength blue is only a band toward the far edge. Not over the dark
+  // ground.
+  float toLight = clamp((vSky - uSkyRamp.y) / max(1.0 - uSkyRamp.y, 0.05), 0.0, 1.0);
+  float veil = uSkyVeil.a * toLight * toLight * (3.0 - 2.0 * toLight) * (1.0 - z);
+
+  // Under a warm light's body its own light is the pale sky near it, so the veil gives way there: through the veil
+  // Yellow's body turns lemon-white. An orange-red sun's haze hides the veil behind its body already, and around it
+  // the veil is the light blue it meets the sky through.
+  float sunBody = 0.0;
+  for (int i = 0; i < GLOW_COUNT; i++) {
+    if (i < uGlowCount) sunBody = max(sunBody, uGlowWarm[i] * (1.0 - uGlowFire[i]) * smoothstep(0.1, 0.5, k[i]));
+  }
+  sky += uSkyVeil.rgb * (veil * (1.0 - sunBody));
   float T = exp(-ext);
   // What the lead's own haze lets through.
   float leadSeen = exp(-own[0]);
@@ -718,9 +825,13 @@ vec3 bloomsScene(vec2 uv) {
     // never dark gold, olive or brown. Farther out its light dims with the sky as before, so the deep sky
     // stays deep and the blue and a dark ground meet where both are dark. The deeper member on the low side
     // belongs to a low sun over the pale horizon sky; over deep sky the light keeps its own color to its edge.
-    float deepLit = mix(1.0, topLight, uGlowDeepFade[i]);
+    float deepLit = mix(1.0, rampLight, uGlowDeepFade[i]);
     float bodyLit = mix(deepLit, 1.0, smoothstep(0.35, 0.7, k[i]));
     float edgeLit = mix(deepLit, 1.0, smoothstep(0.15, 0.3, k[i]) * (1.0 - smoothstep(0.5, 0.8, k[i])));
+    // Light of the sky's own hue (Cyan, a paler patch of blue) is sky: where it reaches into the navy part all of it
+    // dims with the sky there, its middle too, and dimmed it is still that color.
+    bodyLit *= mix(1.0, deepDim, uGlowSkyLight[i]);
+    edgeLit *= mix(1.0, deepDim, uGlowSkyLight[i]);
     // Against a sky much dimmer than the light, its own color keeps to where it is bright.
     float skyRel = dot(sky, vec3(0.2126, 0.7152, 0.0722)) / max(dot(uGlowColor[i], vec3(0.2126, 0.7152, 0.0722)), 1e-4);
     float bodyShare = smoothstep(mix(0.5, 0.15, smoothstep(0.45, 1.0, skyRel) * deepLit), 0.8, k[i]);
@@ -730,12 +841,12 @@ vec3 bloomsScene(vec2 uv) {
     // only where its haze hides the sky: dim red over blue is dusky rose or purple. Toward the open sky it pales as
     // it dims, so it meets the blue through cream.
     float hides = 1.0 - exp(-own[i]);
-    float airSide = air[i] * smoothstep(0.75, 0.97, hides);
+    float airSide = air[i] * smoothstep(0.9, 0.99, hides);
     // Toward the sky its light is scattered by the air: whitish cream near it, where the haze is, and farther out
     // blue, the sky's own color, so the blue only gets brighter toward it (cream over blue is grey). It fades out
     // before the far sky.
     vec3 skyLight = uSky / max(dot(uSky, vec3(0.2126, 0.7152, 0.0722)), 1e-5) * dot(uGlowTail[i], vec3(0.2126, 0.7152, 0.0722));
-    vec3 scattered = mix(skyLight, uGlowTail[i], smoothstep(0.25, 0.55, k[i])) * (FIRE_SKY_LIGHT * smoothstep(0.05, 0.35, k[i]));
+    vec3 scattered = mix(skyLight * FIRE_SKY_LIGHT, uGlowTail[i] * FIRE_TAIL_LIGHT, smoothstep(0.25, 0.55, k[i])) * smoothstep(0.05, 0.35, k[i]);
     vec3 skySide = mix(scattered, uGlowColor[i], smoothstep(0.6, 0.95, k[i]));
     vec3 horizonSide = mix(uGlowLow[i], uGlowColor[i], smoothstep(0.08, 0.4, k[i]));
     body = mix(body, mix(skySide, horizonSide, airSide), uGlowFire[i]);
@@ -757,7 +868,7 @@ vec3 bloomsScene(vec2 uv) {
     float bridgeLit = mix(1.0, deepLit, uZenithHold * smoothstep(0.0, 0.3, z));
     // A fire light's long faint edge reaches across the sky; its pale bridge stays where it is still bright, so the
     // far sky keeps its blue.
-    float near = mix(1.0, smoothstep(0.12, 0.45, k[i]), uGlowFire[i]);
+    float near = mix(1.0, FIRE_BRIDGE * smoothstep(0.2, 0.5, k[i]), uGlowFire[i]);
     bridge += uGlowBridge[i] * (k[i] * near * bridgeLit * ground * (1.0 - deepArea));
   }
   // The glows' haze is lit by their light, so it hides at most as much of the sky's light as they add: no
@@ -781,6 +892,8 @@ vec3 bloomsScene(vec2 uv) {
   // On the sky side the bridge is pale light of the sky's own hue and on the light side the lights' own pale
   // tint, so the blend runs from pale blue through near-white to the light's tint, not through lavender.
   pale = mix(pale, uSkyVeil.rgb / max(dot(uSkyVeil.rgb, vec3(0.2126, 0.7152, 0.0722)), 1e-5) * dot(pale, vec3(0.2126, 0.7152, 0.0722)), uBridgeSky * (1.0 - smoothstep(0.3, 0.6, t)));
+  // Where the glows are faint a pack bridge follows the sky's own darkening, so it lays no grey veil over a deep sky.
+  pale *= mix(1.0, mix(topLight, 1.0, smoothstep(0.15, 0.5, lit)), uBridgeSky);
   front += pale;
   return behind * T + front;
 }
