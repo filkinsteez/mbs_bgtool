@@ -817,9 +817,14 @@ vec3 bloomsScene(vec2 uv) {
   // Under a warm light's body its own light is the pale sky near it, so the veil gives way there: through the veil
   // Yellow's body turns lemon-white. An orange-red sun's haze hides the veil behind its body already, and around it
   // the veil is the light blue it meets the sky through.
+  // In pack output the veil also gives way under an orange-red sun's bright body: seen through a pale sky (a sun beyond
+  // the frame's edge), its thin sky-side haze would leave the veil over it, and its band along the edge would read cream.
   float sunBody = 0.0;
   for (int i = 0; i < GLOW_COUNT; i++) {
-    if (i < uGlowCount) sunBody = max(sunBody, uGlowWarm[i] * (1.0 - uGlowFire[i]) * smoothstep(0.1, 0.5, k[i]));
+    if (i < uGlowCount) {
+      float fireBody = uPackLight * smoothstep(0.45, 0.8, k[i]);
+      sunBody = max(sunBody, uGlowWarm[i] * mix(1.0 - uGlowFire[i], 1.0, uGlowFire[i] * fireBody) * smoothstep(0.1, 0.5, k[i]));
+    }
   }
   sky += uSkyVeil.rgb * (veil * (1.0 - sunBody));
   float T = exp(-ext);
