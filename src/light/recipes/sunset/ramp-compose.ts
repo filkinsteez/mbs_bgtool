@@ -406,6 +406,8 @@ const HAZE_MASS = [0.15, 1, 0.6]
 const ELEMENTAL_ZENITH = 0.77
 /** Under a long line, the widest Elemental's sky edges get, in short sides. */
 const ELEMENTAL_EDGE = 0.3
+/** The line lengths (short sides) over which Elemental's far side comes in. */
+const ELEMENTAL_FAR = [0.5, 1.2] as const
 /** Under a long line, the range of a seed's own factor on its sky edges' widths. */
 const DRAG_SOFT = [0.6, 1.2] as const
 /** The zenith's light where the sky turns toward navy, and at the line's end by depth turn, as shares of Meta Blue. */
@@ -947,9 +949,14 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // turn mint under the warm light and the navy olive under the warm haze.
   const longLine = line ? smoothstep(0.9, 1.6, line.length) : 0
   const navyReach = packId !== 'elemental' ? longLine : 0
+  // Elemental's far side keeps Meta Blue from a shorter line on, as soon as the line runs past
+  // most of the frame.
+  const farLine = line && packId === 'elemental' ? smoothstep(ELEMENTAL_FAR[0], ELEMENTAL_FAR[1], line.length) : 0
   const navyShare = within(NAVY_SHARE[depthTurn], seeded(Math.round(seed) * 53 + 19)()) * navyReach
   let navyVeil: [number, number] | null = null
   let navyEnd = 0
+  // How high above the horizon the low sky's band may reach under a line (Elemental's far side).
+  let zenithCap = Infinity
   if (line) {
     // Under a dragged line the edges stretch or shrink about the glow, widths included, so the
     // highest edge's upper tail ends at the line's end. Water and land can't turn their sky to
@@ -966,14 +973,16 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     if (packId === 'elemental') {
       const target = lerp(Math.max(0, frameLow), frameHigh, ELEMENTAL_ZENITH)
       const highest = glowRise + (-edges[0][0] - glowRise) * stretch
-      if (highest > target && target > glowRise) nearer = lerp(1, Math.max(0.3, (target - glowRise) / (highest - glowRise)), longLine)
+      if (highest > target && target > glowRise) nearer = lerp(1, Math.max(0.15, (target - glowRise) / (highest - glowRise)), farLine)
+      // The low sky's own band above the glow stays under that height too.
+      zenithCap = Math.max(target, glowRise) / Math.max(farLine, 1e-3)
     }
     // Under a long line Bold's and Atmospheric's seeds differ in how softly the low sky turns to
     // the deep sky (Elemental's edge between them stays as narrow as it can).
     const soft = lerp(1, lerp(DRAG_SOFT[0], DRAG_SOFT[1], seeded(Math.round(seed) * 61 + 29)()), navyReach)
     // Elemental's Meta Blue and its warm low sky blend through grey, so under a long line their
     // edge stays narrow: a band of Meta Blue at the far side, not a wide grey field.
-    const widest = packId === 'elemental' ? Math.min(6, ELEMENTAL_EDGE / Math.max(0.05, longLine) ** 2) : 6
+    const widest = packId === 'elemental' ? Math.min(6, ELEMENTAL_EDGE / Math.max(0.05, farLine) ** 2) : 6
     for (const edge of edges) {
       edge[0] = -glowRise + (edge[0] + glowRise) * stretch * nearer
       edge[1] = Math.min(widest, edge[1] * stretch * nearer * soft)
@@ -991,7 +1000,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // under them, as far as the top fifth allows.
   if (look.lowSky !== look.zenith) {
     const low = edges[edges.length - 1]
-    const highest = -(topHeight - zenithRoom - tail * low[1])
+    const highest = -Math.min(topHeight - zenithRoom - tail * low[1], zenithCap)
     const under = Math.max(glowRise, land ? anchorY - crest : 0)
     // Above a broad seed's warm haze, which reaches further up.
     low[0] = Math.max(highest, Math.min(low[0], -(under + 0.3 * skyScale * Math.max(1, warmReach))))
@@ -1117,8 +1126,8 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // holds the frame's far side shows clear instead of greyed.
     veilFar:
       navyVeil ??
-      (line && packId === 'elemental' && longLine > 0
-        ? [lerp(topHeight - 0.3 * tall, -edges[0][0] - 0.5 * edges[0][1], longLine), lerp(topHeight - 0.08 * tall, -edges[0][0] + 0.5 * edges[0][1], longLine)]
+      (line && farLine > 0
+        ? [lerp(topHeight - 0.3 * tall, -edges[0][0] - 0.5 * edges[0][1], farLine), lerp(topHeight - 0.08 * tall, -edges[0][0] + 0.5 * edges[0][1], farLine)]
         : line
           ? [topHeight - 0.3 * tall, topHeight - 0.08 * tall]
           : [topHeight - 0.22 * tall, topHeight - 0.05 * tall]),
