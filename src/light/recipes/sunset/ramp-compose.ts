@@ -468,6 +468,14 @@ const SIDE_SOFT = 0.22
 const SIDE_WAVE = 0.05
 /** How deep the pale tint of the low sky is that the band along the water's far edge takes away from the light (0 white, 1 the color itself). */
 const BAND_DEPTH = 0.35
+/**
+ * Under a field of glints, how far a two-color light's path moves when its core leads the sky (a
+ * paler member of the light's family, toward the core) and when the light itself does (a deeper
+ * one), and how far (short sides) higher past the far strip the water mirrors the sky when the
+ * zenith's Meta Blue leads it rather than the low sky.
+ */
+const LEAD_WARM = [-0.35, 0.25]
+const LEAD_BLUE = 0.5
 /** Under a sideways line, the most lean, bow and wave all of an open sky's edges share, per short side the frame's height runs past one (base units at their ends). */
 const SIDE_SHARED = [0.2, 0.16, 0.16]
 /** Under a long line, how far Elemental's bridge lifts toward white. */
@@ -1210,6 +1218,12 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const ownWater = water && (packId !== 'bold' || !controls.drag)
   const lift = ownWater && packId !== 'bold' ? OWN_WATER.lift[packId][depthTurn] : 0
   const lensRadius = lerp(0.045, 0.12, softness)
+  // Under a field of glints, which of a two-color light's warm colors leads the sky and which blue
+  // leads the water: 0 its core and the low sky, 1 its light and the low sky, 2 its core and the
+  // zenith, 3 its light and the zenith, in turn over the runs. A one-color light keeps its own.
+  const leads = look.coreColor !== look.light ? seedRun(seed) % 4 : -1
+  const warmLead = leads >= 0 ? LEAD_WARM[leads % 2] : 0
+  const blueLead = leads >= 2 ? 1 : 0
   // The seed's sea under a field of glints, from calm (0) to rough (1).
   const sea = thirdPick(seed, seeded(Math.round(seed) * 97 + 53)())
   const lensStrip = 0.05 + 1.5 * lensRadius
@@ -1323,7 +1337,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     reddenEase: 1,
     reddenUp: paler > 0 ? clamp01(paler + (intensity - 0.5) * 0.15) * 0.9 : 0,
     reddenSide: look.sideDeeper,
-    glowPath: path + lerp(look.hue[0], look.hue[1], huePick) - (intensity - 0.5) * 0.25,
+    glowPath: path + lerp(look.hue[0], look.hue[1], huePick) - (intensity - 0.5) * 0.25 + glints * warmLead,
     sunGlow: 0.25 * sunGain * look.sunGlow * (arcs ? look.core : water ? 0.5 : 1) * setGlow,
     sunGlow1Radius: (water ? 0.12 : 0.05) * glowScale,
     sunGlow1Weight: 1,
@@ -1376,7 +1390,8 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // The path's middle reaches the glow's paler top at the bottom edge. Toward its sides it
     // mirrors the band part way from the glow up to the low sky's edge, at the seed's own view the
     // light just above the glow.
-    sunLight: [Math.max(0.3, 0.5 * tall - lineAt), skyBand * (ownWater ? OWN_WATER.band : 1)],
+    // A seed whose water Meta Blue leads mirrors the sky from LEAD_BLUE higher past the far strip.
+    sunLight: [Math.max(0.3, 0.5 * tall - lineAt), skyBand * (ownWater ? OWN_WATER.band : 1) + glints * LEAD_BLUE * blueLead],
     // Past the far bank's image and a strip wider than the lens, so the bank never blurs into the
     // blue, the water mirrors the sky above the glow: the glow's mirror image is a thinner, weaker
     // strip, and the warm reflection gathers in the sun's path.
