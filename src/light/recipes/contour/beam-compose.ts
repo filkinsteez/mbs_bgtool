@@ -234,6 +234,28 @@ export const smoothstep = (a: number, b: number, x: number) => {
   return t * t * (3 - 2 * t)
 }
 
+/**
+ * A glow segment through `at`, spread `across` (short-side units) either way along `dir` (a unit
+ * vector), shortened as needed so all of it stays at least half as far outside the frame as `at`.
+ */
+export function spreadOutside(at: readonly number[], dir: readonly number[], across: number, aspect: number): number[] {
+  const { halfW, halfH } = frameHalf(aspect)
+  const keep = 0.5 * segmentOutside([at[0], at[1], at[0], at[1]], halfW, halfH)
+  const seg = (s: number) => [at[0] - dir[0] * across * s, at[1] - dir[1] * across * s, at[0] + dir[0] * across * s, at[1] + dir[1] * across * s]
+  // The longest spread that keeps that distance: the segment only comes nearer the frame as it
+  // grows, so halving finds it, and it changes smoothly as the light moves.
+  let lo = 0
+  let hi = 1
+  if (segmentOutside(seg(1), halfW, halfH) >= keep) lo = 1
+  else
+    for (let i = 0; i < 24; i++) {
+      const mid = (lo + hi) / 2
+      if (segmentOutside(seg(mid), halfW, halfH) >= keep) lo = mid
+      else hi = mid
+    }
+  return seg(lo).map(round4)
+}
+
 /** How far (short-side units) a segment is outside the frame's rectangle; 0 if it touches it. */
 function segmentOutside(seg: readonly number[], halfW: number, halfH: number): number {
   let least = Infinity

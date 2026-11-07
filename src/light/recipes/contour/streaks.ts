@@ -24,6 +24,7 @@ import {
   seedShares,
   type ShortLine,
   smoothstep,
+  spreadOutside,
   tailEndUniform,
   tailParams,
   tailUniform,
@@ -612,13 +613,28 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
     veilTint: veiled(light) ? VEIL_TINT : 0,
     veilBand: light.band,
   }
-  if (controls.drag) {
-    const line = lineInShorts(controls.drag, aspect)
+  // About a third of the seeds have the sun high above the frame instead of on the horizon: its
+  // shafts come down through the haze onto a floor, as under a line pointing down (its own
+  // stream, so the rest of each seed stays as it was). Light moves it across the frame.
+  const sun = seededRandom(seed, 0x57e7)
+  const [sunShare] = seedShares(seed, 0x57e7, 1, sun)
+  let drag = controls.drag
+  if (!drag && sunShare < FROM_ABOVE_SHARE) {
+    const x = Math.min(0.95, Math.max(0.05, lerp(0.25, 0.75, sun()) + (mood - 0.5) * 0.35))
+    drag = { from: [x, lerp(-0.3, -0.12, sun())], to: [x + lerp(-0.22, 0.22, sun()), lerp(0.55, 0.78, sun())] }
+  }
+  if (drag) {
+    const line = lineInShorts(drag, aspect)
     // Under a line the seed's layout choices that the line takes over (where the point sits, its
     // height, the lit side) become the clouds' thickness, the lit sky's sides and the floor's
     // gloss; a broad fan's light glows wider past the frame, a thick-cloud one fades faster.
     const shade = past ? (light.tail ? THICK_WARM : THICK_CLOUDS) : [1, 1, 1]
-    const glow = airGlowParams(light, [...line.from, ...line.from], aspect, geo(intensity, 0.22, 0.75, 1.4) / 0.75, (params.fall as number[])[0], broadFan ? WIDE_GLOW : NARROW_GLOW, past)
+    // Past the frame the light glows from its point spread across its direction by the seed
+    // (its own stream), from a round spot to a long band where its fan meets the clouds.
+    const across = lerp(GLOW_SPREAD[0], GLOW_SPREAD[1], seededRandom(seed, 0x57e8)())
+    const side = [-(line.to[1] - line.from[1]) / Math.max(line.length, 1e-6), (line.to[0] - line.from[0]) / Math.max(line.length, 1e-6)]
+    const glowSeg = spreadOutside(line.from, side, across, aspect)
+    const glow = airGlowParams(light, glowSeg, aspect, geo(intensity, 0.22, 0.75, 1.4) / 0.75, (params.fall as number[])[0], broadFan ? WIDE_GLOW : NARROW_GLOW, past, [...line.from, ...line.from])
     const seedPool = (params.floor as number[])[1]
     Object.assign(params, streaksOnLine(params, line, skyHeight, shade, low, broadFan), glow)
     // A line pointing down from above lands its shafts on a floor whose far edge is at the line's
@@ -716,6 +732,12 @@ const DOWN_FROM = 0.7 * Math.PI
 const DOWN_TO = 0.92 * Math.PI
 const DOWN_REACH = 0.4
 const DOWN_POOL = 0.5
+
+/** Share of the seeds whose sun is high above the frame at the seed's own view. */
+const FROM_ABOVE_SHARE = 0.3
+
+/** Least and most half-length (short-side units) of the glow past the frame, across the light's direction. */
+const GLOW_SPREAD = [0, 0.45]
 
 /**
  * The scene for a dragged line: the shafts meet at the line's start and fan out toward its
