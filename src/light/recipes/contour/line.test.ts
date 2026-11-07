@@ -3,8 +3,8 @@ import { getPack, type PackId } from '../../color/packs'
 import { compositionProblems } from '../../compose'
 import type { ControlValues, ParamValue } from '../../scene'
 import { contourBeam } from './beam'
-import { airGlowAt } from './beam-compose'
-import { contourStreaks } from './streaks'
+import { airGlowAt, pickContourLight, seededRandom } from './beam-compose'
+import { contourStreaks, whiteLevelOf } from './streaks'
 
 const MIDDLE = { intensity: 0.5, softness: 0.5, mood: 0.5 }
 const ASPECT = 16 / 9
@@ -189,6 +189,34 @@ describe('Streaks seeds under the same line', () => {
             if (frames[a].colors[1] !== frames[b].colors[1]) continue
             const differ = choices[a].filter((v, i) => Math.abs(v - choices[b][i]) > 1e-3).length
             expect(differ, `${pack} s${SEEDS[a]}/s${SEEDS[b]}`).toBeGreaterThanOrEqual(2)
+          }
+        }
+      }
+    }
+  })
+})
+
+describe("Streaks' sky, floor pool and horizon band", () => {
+  it('stay under the level where the light turns flat white, at every seed, format and test line', () => {
+    const lines = [
+      undefined,
+      HIGH_ABOVE,
+      { from: [1.011, 1.224] as [number, number], to: [-0.078, -0.067] as [number, number] },
+      { from: [-0.011, 1.224] as [number, number], to: [1.078, -0.067] as [number, number] },
+      { from: [0.9, 0.5] as [number, number], to: [0.1, 0.5] as [number, number] },
+    ]
+    for (const pack of PACKS) {
+      for (let seed = 1; seed <= 40; seed++) {
+        const light = pickContourLight(getPack(pack), seed, seededRandom(seed, 0x57e4))
+        for (const aspect of [16 / 9, 9 / 16]) {
+          for (const drag of lines) {
+            for (const intensity of [0.5, 1]) {
+              const { params, colors } = contourStreaks.compose!({ pack: getPack(pack), controls: { ...MIDDLE, intensity, ...(drag ? { drag } : {}) }, seed, aspect })
+              expect(colors.slice(0, 2)).toEqual([light.light, light.haze])
+              const white = whiteLevelOf(light, params)
+              const levels = [(params.skyLevel as number[])[0], (params.floor as number[])[1], (params.band as number[])[0]]
+              for (const level of levels) expect(level, `${pack} s${seed} ${aspect} ${drag ? drag.from : 'default'} ${intensity}`).toBeLessThan(white)
+            }
           }
         }
       }

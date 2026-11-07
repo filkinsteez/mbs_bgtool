@@ -229,7 +229,7 @@ export function airGlowParams(
   return { airGlow: [round4(level), round4(falloff), sharpness, round4(1 / Math.max(brightest, 0.01))], glowLine: seg.map(round4) }
 }
 
-const smoothstep = (a: number, b: number, x: number) => {
+export const smoothstep = (a: number, b: number, x: number) => {
   const t = clamp01((x - a) / (b - a))
   return t * t * (3 - 2 * t)
 }

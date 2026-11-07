@@ -1,9 +1,13 @@
+import { linearToOklab, oklabToLinear } from '../../color/oklab'
 import type { ColorPack } from '../../color/packs'
+import { hexToLinear } from '../../color/srgb'
+import { toneCurve } from '../../engine/output'
 import type { ComposeInput, Composition, ParamValue, RecipeDefinition } from '../../scene'
 import {
   AIR_GLOW_GLSL,
   airGlowParams,
   clipLuminanceOf,
+  type ContourLight,
   contourLights,
   darkMeetParam,
   fallParam,
@@ -19,6 +23,7 @@ import {
   seedLayout,
   seedShares,
   type ShortLine,
+  smoothstep,
   tailEndUniform,
   tailParams,
   tailUniform,
@@ -390,7 +395,8 @@ const HAZE_LUMINANCE = 0.12
 /**
  * Pack output's light level over HAZE_LUMINANCE. At the default Intensity the brightest
  * shafts and the floor pool land at 2 to 4 times nominal, so the tone curve takes them
- * toward pale white; Meta Blue gets there, as the pale hazes do.
+ * toward pale white; Meta Blue gets there, as the pale hazes do, and none of them past
+ * SKY_WHITE and POOL_WHITE of where the light turns flat white.
  */
 const LIGHT_GAIN = 4
 
@@ -400,6 +406,71 @@ const DARK_SHARE = 0.04
 /** How much brighter a cool light's sky and floor pool are than a warm light's. */
 const COOL_SKY_GAIN = 2.2
 const COOL_POOL_GAIN = 1.6
+
+/**
+ * Most the sky's bright end, the floor's pool and the horizon's band reach, as shares of the
+ * level where the light's color turns flat white (whiteLevelOf), so only the light's core (its
+ * glow and the line at the point) goes all the way to white. A pale light (Ice, Lime, Tan) turns
+ * white at a lower level than Meta Blue, so at the same level it would show a flat white field.
+ */
+const SKY_WHITE = 0.9
+const POOL_WHITE = 0.6
+const BAND_WHITE = 0.4
+
+/** Linear value of sRGB 253 in a channel: flat white is at least this in every channel. */
+const FLAT_WHITE = ((253 / 255 + 0.055) / 1.055) ** 2.4
+
+/** `x` eased under `cap`: about `x` well below it, and never above it. */
+const softCap = (x: number, cap: number) => x / (1 + (x / cap) ** 6) ** (1 / 6)
+
+/**
+ * The scattered level (units of the haze's luminance) where a light's bright light turns flat
+ * white: combine's color at that level (the path toward the light's pale color, a cool veiled
+ * light's chroma cut to its veil share with more kept in the veil's band of levels, and its least
+ * chroma along the haze's hue), through the camera's tone curve. Bright warm light has its
+ * haze's own color where it isn't pale.
+ */
+export function whiteLevelOf(light: ContourLight, params: Record<string, ParamValue>): number {
+  const [paleShare, paleFrom, paleTo] = params.pale as number[]
+  const paleWhite = params.paleWhite as number
+  const [veilShare, veilLevel, veilOctaves] = params.veil as number[]
+  const veilBand = params.veilBand as number
+  const veilTint = params.veilTint as number
+  const haze = hexToLinear(light.haze)
+  const lit = hexToLinear(light.light)
+  const luminance = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+  const lumHaze = luminance(haze)
+  const clip = lumHaze / Math.max(...haze, 1e-6)
+  const target = paleTarget(lit)
+  const paleColor = [0, 1, 2].map((i) => ((1 - paleWhite) * lit[i]) / luminance(lit) + paleWhite * target[i])
+  const [hazeL, hazeA, hazeB] = linearToOklab(haze)
+  const hazeChroma = Math.max(Math.hypot(hazeA, hazeB), 1e-6)
+  const trace = Math.min(veilTint, (0.5 * hazeChroma) / Math.max(hazeL, 1e-4))
+  const colorAt = (level: number) => {
+    const pale = Math.min(1, paleShare * smoothstep(paleFrom, paleTo, level * lumHaze))
+    let path = [0, 1, 2].map((i) => lerp(haze[i], paleColor[i] * lumHaze, pale))
+    if (!light.tail && veilShare < 1) {
+      const octaves = Math.log2(Math.max(level * lumHaze, 1e-6) / (veilLevel * clip)) / Math.max(veilOctaves, 0.05)
+      const keep = Math.min(1, veilShare * (1 + veilBand * Math.exp(-0.5 * octaves * octaves)))
+      const [L, a, b] = linearToOklab(path)
+      path = oklabToLinear([L, a * keep, b * keep])
+    }
+    const color = path.map((v) => v * level)
+    if (veilTint <= 0) return color
+    const [L, a, b] = linearToOklab(color)
+    const least = trace * L * lerp(1, 0.4, smoothstep(0.8, 1, L))
+    const add = Math.max(0, least - (a * hazeA + b * hazeB) / hazeChroma)
+    return oklabToLinear([L, a + (add * hazeA) / hazeChroma, b + (add * hazeB) / hazeChroma]).map((v) => Math.max(v, 0))
+  }
+  let lo = 0.01
+  let hi = 1000
+  for (let k = 0; k < 40; k++) {
+    const mid = Math.sqrt(lo * hi)
+    if (toneCurve(colorAt(mid), light.toe).every((v) => v >= FLAT_WHITE)) hi = mid
+    else lo = mid
+  }
+  return hi
+}
 
 /** Share of its clipping level one unit of a warm light's scattered light reaches. */
 const WARM_SHARE = 0.45
@@ -527,6 +598,18 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
     const glow = airGlowParams(light, [...line.from, ...line.from], aspect, geo(intensity, 0.22, 0.75, 1.4) / 0.75, (params.fall as number[])[0], broadFan ? WIDE_GLOW : NARROW_GLOW, past)
     Object.assign(params, streaksOnLine(params, line, skyHeight, shade, low, broadFan), glow)
   }
+  // Only the light's core turns flat white (SKY_WHITE). A lifted light (Tan) has more of its lit
+  // area near its peak, so the lift raises its dim and middle light but not its brightest.
+  const white = whiteLevelOf(light, params) / light.lift
+  const skyLevel = params.skyLevel as number[]
+  const skyShare = softCap(skyLevel[0], SKY_WHITE * white) / skyLevel[0]
+  const floor = params.floor as number[]
+  const band = params.band as number[]
+  Object.assign(params, {
+    skyLevel: [round4(skyLevel[0] * skyShare), round4(skyLevel[1] * skyShare), skyLevel[2]],
+    floor: [floor[0], round4(softCap(floor[1], POOL_WHITE * white)), floor[2], floor[3]],
+    band: [round4(softCap(band[0], BAND_WHITE * white)), band[1]],
+  })
 
   return {
     colors: [light.light, light.haze, light.base],
