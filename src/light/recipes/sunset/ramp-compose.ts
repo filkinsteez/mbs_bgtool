@@ -81,6 +81,24 @@ export function rampStructure(seed: number): RampStructure {
 /** Index of the seed's run of three: seeds 1-3 are run 0, 4-6 run 1, and so on. */
 const seedRun = (seed: number) => Math.floor((Math.round(seed) - 1) / 3)
 
+/** How much of a run pick is the seed's own. */
+const RUN_OWN = 0.1
+/**
+ * A pick spread over a structure's repeats, one per run: each run steps 2√2 - 2 of the range on
+ * (about a sixth back), plus a little of the seed's own pick, so neighbouring repeats take picks
+ * about a sixth apart and the repeats of one variant, three runs apart, about half the range apart.
+ */
+const runPick = (seed: number, own: number) => (seedRun(seed) * (2 * Math.SQRT2 - 2) + RUN_OWN * own) % 1
+/**
+ * A pick in thirds over a structure's repeats: the third is the run's variant plus how many times the
+ * variant has come round, so neither neighbouring repeats nor the repeats of one variant share a
+ * third; within it the pick is the seed's own.
+ */
+const thirdPick = (seed: number, own: number) => {
+  const run = seedRun(seed)
+  return (((run % 3) + Math.floor(run / 3)) % 3) / 3 + own / 3
+}
+
 /** The frame in short-side units around its center: half its width and its height. */
 interface Frame {
   half: number
@@ -412,6 +430,34 @@ const ELEMENTAL_FAR = [0.5, 1.2] as const
 const ATMOSPHERIC_ZENITH = 0.6
 /** Under a long line, the least of the way up the frame's own sky that Atmospheric's low sky's edge is brought down to. */
 const ATMOSPHERIC_PALE = 0.35
+/**
+ * Under a glow above the frame, how far (frame heights) above the glow the sky the water mirrors takes
+ * to darken by e, and how fast (per short side of depth) the sky it mirrors climbs past the far strip,
+ * for a light and a deep seed: a deep seed's water turns navy nearer the horizon.
+ */
+const MIRROR_GLINTS = { dark: [1.6, 0.7], climb: [1, 2.4] }
+/**
+ * Under a field of glints, a calm and a rough sea: how wide the glints spread as a share of the
+ * mirrored path's width, the size of their rows, how far the warm reflection along the far edge
+ * reaches as a share of the water's height (under a far bank no less than the lens's strip, so the
+ * bank never blurs into the blue), and how much more of the low sky's light the water takes just
+ * past it. A calm sea's path is a narrow column of fine glints under a long warm reflection and a
+ * pale band of the low sky; a rough sea's a wide field of coarse ones, and its ripples turn toward
+ * the high sky near the horizon.
+ */
+const GLINT_SEA = { spread: [0.3, 0.65], rows: [0.6, 1.5], strip: [0.45, 0.15], sheen: [0.8, 0.1] }
+/**
+ * Under a dragged line, the most (frame heights) that a water seed's horizon stops below the Horizon
+ * control's highest line: a line far above the frame leaves each seed its own share of sky and water.
+ */
+const WATER_HIGHEST = 0.18
+/**
+ * How far (frame heights) a line's start rises above the frame over warm-lit water while the sun's
+ * path there turns into a field of glints: over a shorter rise the water changes in a few steps.
+ */
+const GLINT_RAMP = 0.2
+/** Under a glow above the frame, the most (short sides) the sun stands above the water's horizon, by seed. */
+const SUN_RISE = 0.1
 /** Under a long line, how far Elemental's bridge lifts toward white. */
 const ELEMENTAL_FAR_LIFT = 0.8
 /** Under a long line, the range of a seed's own factor on its sky edges' widths. */
@@ -458,6 +504,11 @@ const OWN_WATER = {
  * height, and how many times shorter than the bank its mirror image is, at every view.
  */
 const BANK = { length: [0.7, 0.9], peak: 2.2, foot: 0.1, mirror: 3.6 }
+/**
+ * Under a field of glints, the range of a far bank's length (some end well short of the sun, some run
+ * past it) and of a seed's factor on its height.
+ */
+const GLINT_BANK = { length: [0.4, 0.95], height: [0.5, 1.6] }
 /**
  * Under a dragged line, the most a warm glow lifted above the land's own glow ends above the land,
  * and how far above an open sky's horizon a warm glow's end lies before the sky under it comes
@@ -693,6 +744,9 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const skyTilt = line ? lineTilt + (ground ? tilt : skyLean) : tilt
   const turn = (skyTilt * Math.PI) / 180
 
+  // How far a dragged line's start lies above the frame's top over warm-lit water, as the sun's path
+  // there turns into a field of glints.
+  const overTop = line && water && packId !== 'atmospheric' ? clamp01((-0.5 * tall - line.from[1]) / (GLINT_RAMP * tall)) : 0
   // The ground's outline. Water is level and nearly still. Land is one ridge climbing toward the
   // light. The ridge grows out of a low bank as the line rises from the bottom edge, and above the
   // middle of the frame it flattens. Each change runs over a wide range of line heights, and the
@@ -718,8 +772,9 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
       lowest = Math.max(lowest, at)
       crest = Math.min(crest, at)
     }
-    // A far bank on the water's line; it lowers as a high line leaves less sky above it.
-    const bankHeight = water ? look.bank * lerp(0.8, 1.3, bankPick) * clamp01((lineAt + 0.5 * tall) / 0.6) : 0
+    // A far bank on the water's line; it lowers as a high line leaves less sky above it. Its height
+    // differs more by seed under a line whose start lies above the frame.
+    const bankHeight = water ? look.bank * lerp(lerp(0.8, 1.3, bankPick), lerp(GLINT_BANK.height[0], GLINT_BANK.height[1], bankPick), overTop) * clamp01((lineAt + 0.5 * tall) / 0.6) : 0
     // The ramp's anchor: on the water's line or near the top of its far bank, or just under the
     // land's lowest point, where the sky behind it meets its own horizon; under a tilted line,
     // lowest along the tilted axis.
@@ -753,12 +808,16 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     }
     let high = placeHorizon(1, seed, aspect).y
     let low = placeHorizon(0, seed, aspect).y
+    // Water's horizon rises no higher than the seed's own highest line. Elemental's keeps the
+    // highest: its far bank grows as the horizon lowers, so lowered its frames are one picture moved
+    // and scaled.
+    const highest = high + (water && packId !== 'elemental' ? WATER_HIGHEST * runPick(seed, seeded(Math.round(seed) * 89 + 41)()) : 0)
     for (let k = 0; k < 24; k++) {
       const mid = 0.5 * (high + low)
       if (aboveGlow(mid) > 0) low = mid
       else high = mid
     }
-    lineY = 0.5 * (high + low)
+    lineY = Math.max(0.5 * (high + low), highest)
   }
   const { flat, ridge, lineAt, outline, lowest, crest, bankHeight, anchor: groundAnchor } = groundAt(lineY)
   const groundKind = water ? 1 : land ? 2 : 0
@@ -825,8 +884,12 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const dragReach = line ? dragRise + lerp(line.length, Math.max(line.length, tall), waterBehind) : 0
   const dragTop = skyTopOf(dragReach, tall)
   const skyHeight = Math.max(0.2, line ? dragTop : horizonY * tall)
+  // Under a line that puts a warm glow above the frame, the sun's path is a field of glints.
+  const glints = line && water && packId !== 'atmospheric' ? clamp01((dragRise - frameHigh) / (GLINT_RAMP * tall)) : 0
   // Under a dragged line the sun sits on the line's axis, just past the horizon below its start.
-  const sunBelow = line ? dragRise + (arcs ? 0 : 0.03) : 0
+  // Under a glow above the frame it stands up to SUN_RISE above the horizon by seed, and no higher
+  // than halfway to the frame's top.
+  const sunBelow = line ? dragRise + (arcs ? 0 : 0.03) - glints * Math.min(SUN_RISE * seeded(Math.round(seed) * 101 + 59)(), 0.5 * (anchorY + 0.5 * tall)) : 0
   const sunX = line ? (line.from[0] + sunBelow * Math.sin(turn)) / frameWidth + 0.5 : sunIs
   // A short sky has no room for a second step: its edges would crowd and the fold guard calm them
   // all. The seed decides whether the sky has the step; it fades out as the sky gets shorter.
@@ -1112,6 +1175,10 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   const ownWater = water && (packId !== 'bold' || !controls.drag)
   const lift = ownWater && packId !== 'bold' ? OWN_WATER.lift[packId][depthTurn] : 0
   const lensRadius = lerp(0.045, 0.12, softness)
+  // The seed's sea under a field of glints, from calm (0) to rough (1).
+  const sea = thirdPick(seed, seeded(Math.round(seed) * 97 + 53)())
+  const lensStrip = 0.05 + 1.5 * lensRadius
+  const strip = lerp(lensStrip, Math.max(lerp(GLINT_SEA.strip[0], GLINT_SEA.strip[1], sea) * (0.5 * tall - lineAt), bankHeight > 0 ? lensStrip : 0.05), glints)
 
   const params: Record<string, ParamValue> = {
     anchor: [anchorX / frameWidth + 0.5, horizonY],
@@ -1250,16 +1317,18 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     shore: [bankHeight, 0.5],
     // A far bank is a headland: thick where it runs off the frame on the side away from the sun and
     // thinning to nothing toward it, its waterline just under the horizon.
-    shoreShape: [-side, lerp(BANK.length[0], BANK.length[1], shorePick) * frameWidth, BANK.peak],
+    shoreShape: [-side, lerp(lerp(BANK.length[0], BANK.length[1], shorePick), lerp(GLINT_BANK.length[0], GLINT_BANK.length[1], shorePick), glints) * frameWidth, BANK.peak],
     shoreFoot: bankHeight > 0 ? [BANK.foot, BANK.mirror] : [0, 1],
     // The path mirrors the glow's line, which sits above most of the far bank.
     // Light water is a near mirror with a faint path, deep water dark with a strong one. A tall,
     // narrow frame's path widens less, so it never fills the water's width.
     sunPath: [water ? look.sunPath * lerp(0.45, 1.25, depth) : 0, 0.02, 0.5 * Math.sqrt(frameWidth / tall), pathGlow],
-    // Under a line that puts a warm glow above the frame, the path fills much of the water: there
-    // it is a narrower field of glints with an edge as sharp as the lens, not a wide blend into the
-    // blue that reads grey or olive. Atmospheric's Ice path meets its water without a third hue.
-    sunPathEdge: line && water && warmLight ? clamp01((dragRise - frameHigh) / (0.1 * tall)) : 0,
+    // Under a line that puts a warm glow above the frame, the path is a field of glints that adds the
+    // sun's light, densest down the middle and thinning to the sides with no outline, not a wide
+    // blend into the blue that reads grey or olive. The seed's sea sets how wide it spreads and the
+    // size of its rows, and its depth how fast the water past the far strip mirrors the sky higher
+    // up. Atmospheric's Ice path meets its water without a third hue.
+    sunGlints: [glints, lerp(GLINT_SEA.spread[0], GLINT_SEA.spread[1], sea), lerp(GLINT_SEA.rows[0], GLINT_SEA.rows[1], sea), lerp(MIRROR_GLINTS.climb[0], MIRROR_GLINTS.climb[1], depth)],
     // The path's middle reaches the glow's paler top at the bottom edge. Toward its sides it
     // mirrors the band part way from the glow up to the low sky's edge, at the seed's own view the
     // light just above the glow.
@@ -1267,7 +1336,13 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // Past the far bank's image and a strip wider than the lens, so the bank never blurs into the
     // blue, the water mirrors the sky above the glow: the glow's mirror image is a thinner, weaker
     // strip, and the warm reflection gathers in the sun's path.
-    waterLift: lift > 0 ? [pathGlow + skyBand * lift + 0.05, 0.05 + 1.5 * lensRadius, OWN_WATER.keep[depthTurn]] : [0, 0.05, 1],
+    // Under a field of glints Bold's water does the same, so the glints lie on its blue and not on
+    // the warm glow's mirror image. There the warm strip reaches further on a calm sea, and just
+    // past it a calm sea takes more of the low sky's light.
+    waterLift: [
+      ...(lift > 0 ? [pathGlow + skyBand * lift + 0.05, strip, OWN_WATER.keep[depthTurn]] : glints > 0 ? [glints * (pathGlow + skyBand + 0.05), strip, 1] : [0, 0.05, 1]),
+      glints * lerp(GLINT_SEA.sheen[0], GLINT_SEA.sheen[1], sea),
+    ],
     // The strip under the line is thin and bright, so it still shows after the lens. Under a high
     // line the ripples draw the short sky's reflection out over more of the water, so the water
     // carries the sky's colors and not only the zenith's.
@@ -1279,7 +1354,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     waterMirror: water ? look.waterMirror : 1,
     // Under a high line the near water mirrors the sky high above the frame, which is darker.
     // Deep water mirrors more of that darker sky.
-    mirrorDeep: water ? lerp(0.25, 1.4, depth) * tall : 0,
+    mirrorDeep: water ? lerp(lerp(0.25, 1.4, depth), lerp(MIRROR_GLINTS.dark[0], MIRROR_GLINTS.dark[1], depth), glints) * tall : 0,
     // Bold's water under its warm glow, and Elemental's where it mirrors the sky higher up; the other
     // packs' water keeps its own Slate or Meta Blue.
     waterTint: water && (packId === 'bold' || (lift > 0 && packId === 'elemental')) ? 0.6 : 0,
