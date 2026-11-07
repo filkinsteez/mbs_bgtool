@@ -122,7 +122,7 @@ uniform float uMirrorDeep;   // height above the frame's top over which the sky 
 uniform float uWaterTint;    // share of the water's own light that takes the hue of the sky it mirrors (0: its own color)
 uniform vec3 uGroundTop;     // land right under its outline
 uniform vec3 uGroundBottom;  // land at the bottom edge
-uniform vec2 uGroundHaze;    // share of the sky's light in far land, and the depth over which it fades
+uniform vec3 uGroundHaze;    // share of the sky's light in far land, the depth over which it fades, and how much deeper that light is (pathColor)
 uniform vec2 uGroundVeil;    // pale haze in front of far land, and the depth over which it fades toward the viewer
 uniform vec3 uGroundVeilTint; // the haze's color: a pale tint of the land's own, at luminance 1
 uniform vec3 uLandLit;       // land's and the water's own light on their side toward the sun: extra light there, the width of that side, and how much land's relief or the water's wind patches change it
@@ -282,6 +282,38 @@ float skyPatch(vec2 p) {
 // How warm a light is: -1 blue, 0 neutral, 1 red.
 float warmth(vec3 c) {
   return (c.r - c.b) / max(c.r + c.b, 1e-4);
+}
+
+// Where two sky colors blend in linear light they can lose most of their color: Meta Blue and Lime
+// or Tan mix grey or teal. The parts of a blend: their luminance, their Oklab chroma per lightness
+// weighted by it, how much of both is warm, and the cool parts' pale tint.
+struct Parts {
+  float y;
+  float sat;
+  float warm;
+  float warmSat;
+  vec3 coolPale;
+};
+
+// How deep the cool side's pale tint is (0 white, 1 its own color), as for the band along the water's far edge.
+const float GREY_DEPTH = 0.35;
+// Where a blend loses all its color, the share of the way to white its light goes.
+const float GREY_LIFT = 0.8;
+// The share of the color lost over which the lighter bridge takes over from the blend.
+const vec2 GREY_PULL = vec2(0.15, 0.5);
+
+void addPart(inout Parts parts, vec3 c) {
+  float y = luminance(c);
+  if (y <= 1e-6) return;
+  vec3 lab = linearToOklab(c);
+  vec2 hue = lab.yz / max(lab.x, 1e-3);
+  parts.y += y;
+  parts.sat += y * length(hue);
+  float warm = smoothstep(-0.25, 0.25, warmth(c));
+  parts.warm += y * warm;
+  parts.warmSat += y * warm * length(hue);
+  // The pale tint keeps the Oklab hue: paled in linear light, Meta Blue turns toward cyan or violet.
+  parts.coolPale += y * (1.0 - warm) * max(oklabToLinear(vec3(1.0, GREY_DEPTH * hue)), vec3(0.0));
 }
 
 // Meta Blue's Oklab hue, in radians (259 degrees).
@@ -475,6 +507,8 @@ vec3 rampSky(vec2 p, out vec3 core) {
   // band, which is in front of it.
   // Near the horizon it takes on the warmth of the light, so the middles go beige and cream; at
   // the edge farthest from the light it fades out, leaving a band of full Meta Blue.
+  float mute = 0.0;
+  vec3 veilLight = vec3(0.0);
   if (uVeil.x > 0.0 || uVeil.y > 0.0) {
     float low = exp(-height / max(uVeil.z, 1e-4));
     float far = uVeilFar.y > uVeilFar.x ? 1.0 - smoothstep(uVeilFar.x, uVeilFar.y, height) : 1.0;
@@ -487,9 +521,11 @@ vec3 rampSky(vec2 p, out vec3 core) {
     // Near the light the sky keeps its own color, and only blue greys: a warm low sky keeps its own.
     if (uVeilMute > 0.0) {
       float blue = clamp(-linearToOklab(max(sky, vec3(0.0))).z / 0.04, 0.0, 1.0);
-      sky = mix(sky, luminance(sky) * uVeilTint, min(1.0, uVeilMute * open * (1.0 - low) * blue));
+      mute = min(1.0, uVeilMute * open * (1.0 - low) * blue);
+      sky = mix(sky, luminance(sky) * uVeilTint, mute);
     }
-    sky += (uVeil.x + uVeil.y * low) * open * mix(uVeilTint, uVeilNear.x > 0.0 ? uVeilNear : bridgeTint, low);
+    veilLight = (uVeil.x + uVeil.y * low) * open * mix(uVeilTint, uVeilNear.x > 0.0 ? uVeilNear : bridgeTint, low);
+    sky += veilLight;
   }
   sky = max(sky, vec3(0.0)) * skyGain;
   // The dusk band is a low bank of the sky's shadowed light in front of the glow and hides the
@@ -497,6 +533,36 @@ vec3 rampSky(vec2 p, out vec3 core) {
   // into a third hue. Dimmed toward the horizon or by the glow's haze too, it goes black or vanishes.
   dusk = max(dusk, vec3(0.0)) * gain;
   float behind = 1.0 - clamp(duskCover, 0.0, 1.0);
+
+  // Where two sky colors' blend is greyer than the greyer of the two (Meta Blue into Lime or Tan
+  // goes grey or teal), the bridge between them is lighter, as the band along the water's far edge
+  // is: the light's pale tint on the warm side, white in the middle and the cool side's clear pale
+  // tint. The parts are the stops, each muted by the veil as the blend is, and the veil's own light.
+  Parts parts = Parts(0.0, 0.0, 0.0, 0.0, vec3(0.0));
+  for (int k = 0; k <= uEdges; k++) {
+    if (k == uDuskStop) continue;
+    float w = (k == 0 ? 1.0 : level[k - 1]) - (k < uEdges ? level[k] : 0.0);
+    vec3 c = max(w * uStop[k] * (k == 0 ? zenithShade : 1.0), vec3(0.0));
+    addPart(parts, mix(c, luminance(c) * uVeilTint, mute) * skyGain);
+  }
+  addPart(parts, veilLight * skyGain);
+  float coolY = parts.y - parts.warm;
+  if (parts.warm > 1e-6 && coolY > 1e-6) {
+    float sides = min(parts.warmSat / parts.warm, (parts.sat - parts.warmSat) / coolY);
+    float both = smoothstep(0.02, 0.15, min(parts.warm, coolY) / parts.y);
+    vec3 blend = linearToOklab(sky);
+    float lost = both * clamp(1.0 - length(blend.yz) / max(blend.x, 1e-3) / max(sides, 1e-4), 0.0, 1.0);
+    if (lost > GREY_PULL.x) {
+      float cool = 1.0 - smoothstep(-0.3, 0.3, warmth(sky));
+      vec3 coolPale = parts.coolPale / max(luminance(parts.coolPale), 1e-6);
+      vec3 tint = mix(mix(uBridgeTint, vec3(1.0), clamp(2.0 * cool, 0.0, 1.0)), coolPale, clamp(2.0 * cool - 1.0, 0.0, 1.0));
+      // The light the glows add in front of the sky counts toward how light the bridge is.
+      float y = luminance(sky);
+      float total = y + luminance(glow + sunGlow) * behind;
+      float lifted = max(total, 1.0 - (1.0 - total) * (1.0 - GREY_LIFT * lost));
+      sky += smoothstep(GREY_PULL.x, GREY_PULL.y, lost) * behind * ((y + lifted - total) * tint - sky);
+    }
+  }
 
   vec3 light = sky + (glow + sunGlow) * behind;
 
@@ -588,7 +654,7 @@ vec3 landLight(vec2 p, float outline, vec3 air, float noise) {
   float room = max(0.1, 0.5 * uFrameAspect.y - outline);
   float relief = max(1.0 + uLandLit.z * noise, 0.2);
   vec3 own = mix(uGroundTop, uGroundBottom, clamp(d / room, 0.0, 1.0)) * litSide(p.x) * relief;
-  vec3 hazed = mix(own, air * uGroundHaze.x, exp(-d / max(uGroundHaze.y, 1e-3)));
+  vec3 hazed = mix(own, pathColor(air, uGroundHaze.z) * uGroundHaze.x, exp(-d / max(uGroundHaze.y, 1e-3)));
   // A pale haze in a tint of the land's own color lies in front of the far land, so it reads as a
   // soft silhouette without turning another hue.
   return hazed + uGroundVeil.x * exp(-d / max(uGroundVeil.y, 1e-3)) * uGroundVeilTint;

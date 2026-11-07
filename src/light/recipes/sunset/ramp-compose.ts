@@ -461,6 +461,8 @@ const GLINT_RAMP = 0.2
 const SUN_RISE = 0.1
 /** Oklab lightness under which a pack color reads as itself only up to one stop over its own (Forest, Plum, Slate). */
 const DARK_L = 0.5
+/** How much deeper the light in the haze over dark land is under a warm light (pathColor's longer path). */
+const LAND_AIR_DEEPER = 1.5
 /** Under a sideways line, the most an open sky's edges lean and bow as a multiple of their own, and how much their softness changes along them. */
 const SIDE_SHAPE = 3
 const SIDE_SOFT = 0.22
@@ -1419,8 +1421,10 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     waterTint: water && (packId === 'bold' || (lift > 0 && packId === 'elemental')) ? 0.6 : 0,
     // A tall land area reaches nearer the viewer: the haze over its far ground reaches further
     // down, and its near ground is darker. A dark land color's haze doesn't: through more air
-    // Forest under Lime light turns olive, and Plum under Tan grey-brown.
-    groundHaze: [look.landHaze, land ? (darkLand ? (line ? 0.1 : 0.1 * tall) : Math.max(0.1 * tall, 0.25 * landRoom)) : 0.05 * tall],
+    // Forest under Lime light turns olive, and Plum under Tan grey-brown. The light in a dark land
+    // color's haze has come a longer way through the air and is deeper, as a warm light's tail is:
+    // Lime goes toward Forest's green, where Lime itself at that low light reads olive.
+    groundHaze: [look.landHaze, land ? (darkLand ? (line ? 0.1 : 0.1 * tall) : Math.max(0.1 * tall, 0.25 * landRoom)) : 0.05 * tall, darkLand ? LAND_AIR_DEEPER : 0],
     groundVeil: [land ? look.groundVeil * groundGain : 0, 0.35 * landRoom],
     // A tall land area carries more of the light, so a high line doesn't leave a dark field. A dark
     // land color takes no more of it than one stop over its own: brighter, Plum turns magenta and
