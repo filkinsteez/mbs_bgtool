@@ -318,8 +318,24 @@ function followDrag(
   warm: (slot: number) => boolean,
   cyan: (slot: number) => boolean,
 ): BloomsLayout {
-  const { sizeDark, seedAngle, leadAniso, leadScale, fireLead, spots, darkTurn, darkSlide, deepReach, kind, draws, companion, companionGain, band, bandGain } =
-    seedDrag
+  const {
+    sizeDark,
+    seedAngle,
+    leadAniso,
+    leadScale,
+    fireLead,
+    spots,
+    darkTurn,
+    darkSlide,
+    deepReach,
+    kind,
+    draws,
+    companion,
+    companionGain,
+    band,
+    bandGain,
+    nearLight,
+  } = seedDrag
   const frame = [Math.sqrt(aspect), 1 / Math.sqrt(aspect)]
   const toP = (p: readonly number[]): [number, number] => [(p[0] - 0.5) * frame[0], (p[1] - 0.5) * frame[1]]
   const fromP = (q: readonly number[]): [number, number] => [q[0] / frame[0] + 0.5, q[1] / frame[1] + 0.5]
@@ -379,7 +395,10 @@ function followDrag(
   // Beside a second light it slides the other way, so the two lie apart.
   const darkWay =
     kind === 'left' ? Math.max(Math.abs(darkTurn), BESIDE_DARK_TURN) : kind === 'right' ? -Math.max(Math.abs(darkTurn), BESIDE_DARK_TURN) : darkTurn
-  const slide = DRAG_DARK_SLIDE * darkSlide * darkWay * Math.min(frame[0], frame[1])
+  // A long line leaves a long far side to slide along; under a short one the dark would come round beside the light,
+  // unless the light is beyond an edge pointing away, where the dark lies at the frame's far side.
+  const slideRoom = Math.max(smoothstep(0.3, 1.2, length), outWide)
+  const slide = DRAG_DARK_SLIDE * darkSlide * darkWay * Math.min(frame[0], frame[1]) * lerp(SLIDE_SHORT, SLIDE_LONG, slideRoom)
   const held = insideFrame(start, frame)
   const middle = [held[0] * (1 - DARK_FROM_IN), held[1] * (1 - DARK_FROM_IN)]
   const darkAt = (angle: number, along: number): ZenithSpec => {
@@ -429,14 +448,17 @@ function followDrag(
     const sameAsLead = glow.color === layout.glows[0].color ? DRAG_PAIR_SCALE : 1
     return { ...glow, at: [lerp(x, target[0], pull), lerp(y, target[1], pull)] as [number, number], angle: glow.angle + degrees, radius: glow.radius * sameAsLead }
   })
-  // The seed's second bloom as a second light beside the line: in the frame's half on the seed's side of it, between
-  // the light and the frame's middle, where the sky is lit (in the deep end a dim light reads olive or grey), and large
-  // enough to show as a light of its own.
+  // The seed's second bloom as a second light beside the line, in the frame's half on the seed's side of it, large
+  // enough to show as a light of its own: a pale, grey or cyan one out in the far half, where its light stands against
+  // the darker sky; a warm or green one between the light and the frame's middle, where the sky is lit (in the deep end
+  // its dim light reads olive).
   const u = [line[0] / length, line[1] / length]
   const besideLine = (glow: GlowSpec, sign: number): GlowSpec => {
     const n = [-u[1] * sign, u[0] * sign]
     const out = toEdge([0, 0], Math.atan2(n[1], n[0]), frame) * lerp(BESIDE_OUT[0], BESIDE_OUT[1], draws[0])
-    const aheadRange = warm(glow.color) ? BESIDE_WARM_AHEAD : BESIDE_AHEAD
+    // A cyan one goes out only in a wide frame: in a narrow one, over the deep sky, it dims to teal.
+    const out01 = nearLight(glow.color) ? 0 : cyan(glow.color) ? wide : 1
+    const aheadRange = [lerp(BESIDE_WARM_AHEAD[0], BESIDE_AHEAD[0], out01), lerp(BESIDE_WARM_AHEAD[1], BESIDE_AHEAD[1], out01)]
     const forward = toEdge([0, 0], Math.atan2(u[1], u[0]), frame) * lerp(aheadRange[0], aheadRange[1], draws[1])
     const size = lerp(BESIDE_SIZE[0], BESIDE_SIZE[1], draws[2]) * besideReach
     return {
@@ -452,12 +474,15 @@ function followDrag(
   // side, its edge drifting along its length.
   const stretch = glowStretch(aspect)
   const levelBand = (glow: GlowSpec): GlowSpec => {
-    const aniso = lerp(BAND_ANISO[0], BAND_ANISO[1], draws[4])
+    // As long as the frame is wide, and as thick in any frame (tied to the width, it is a thread in a tall one).
+    const long = BAND_LONG * frame[0] * stretch[0]
+    const short = lerp(BAND_THICK[0], BAND_THICK[1], draws[4]) * stretch[1]
+    const aniso = Math.max(1, long / short)
     return {
       ...glow,
       at: [lerp(0.5, insideFrame01(drag.from)[0], BAND_TOWARD_LIGHT), lerp(BAND_Y[0], BAND_Y[1], draws[3])],
       aniso,
-      radius: (BAND_LONG * frame[0] * stretch[0]) / Math.sqrt(aniso),
+      radius: Math.sqrt(long * short),
       angle: lerp(-BAND_TILT, BAND_TILT, draws[5]),
       beta: glow.beta * BAND_SOFT,
       vary: Math.max(glow.vary, BAND_VARY),
@@ -517,6 +542,8 @@ function followDrag(
     const near = Math.min(1, ...warmOnes.map((other) => nearness(at, glow.radius, other)))
     return { ...glow, at, gain: glow.gain * lerp(DRAG_OVERLAP_GAIN, 1, smoothstep(0.5, 1, near)) }
   })
+  // The sky's darkening runs at least SKY_LINE_MIN: under a tiny line it would change fast with every bit of length.
+  const skyLength = Math.max(length, SKY_LINE_MIN)
   return {
     ...layout,
     glows,
@@ -524,9 +551,9 @@ function followDrag(
     sky: {
       ...layout.sky,
       turn: rampTurn(layout.sky.tilt, lineAngle, frame),
-      line: { from: [drag.from[0], drag.from[1]], to: fromP([start[0] + Math.cos(skyAngle) * length, start[1] + Math.sin(skyAngle) * length]) },
+      line: { from: [drag.from[0], drag.from[1]], to: fromP([start[0] + Math.cos(skyAngle) * skyLength, start[1] + Math.sin(skyAngle) * skyLength]) },
       deep: layout.sky.deep
-        ? { ...layout.sky.deep, at: (deepReach * length) / Math.min(frame[0], frame[1]), from: [drag.from[0], drag.from[1]], angle: (skyAngle * 180) / Math.PI }
+        ? { ...layout.sky.deep, at: (deepReach * skyLength) / Math.min(frame[0], frame[1]), from: [drag.from[0], drag.from[1]], angle: (skyAngle * 180) / Math.PI }
         : undefined,
     },
   }
@@ -534,6 +561,8 @@ function followDrag(
 
 /** How far inside the frame's edges a bloom's middle stays under a dragged line, in frame fractions. */
 const DRAG_INSIDE = 0.1
+/** Shortest the sky's darkening runs along a dragged line, in frame units. */
+const SKY_LINE_MIN = 0.15
 /**
  * A dragged light's reach against its distance outside the frame, so its body comes in over the near edge and
  * the edge glows in the light's own color, not only its pale outer light.
@@ -603,6 +632,8 @@ interface DragSeed {
    */
   band: number
   bandGain: number
+  /** A light that stays near the lead as the second light (warm or green: in the deep end its dim light reads olive). */
+  nearLight: (slot: number) => boolean
 }
 
 /** A dragged lead's length / width along the line, by kind: alone, a broad wash (a warm one stays round); else round. */
@@ -613,7 +644,7 @@ const DRAG_ANISO: Readonly<Record<DragKind, readonly [number, number]>> = { alon
  * a warm one always), and its radius against the line's reach.
  */
 const BESIDE_OUT: readonly [number, number] = [0.5, 0.8]
-const BESIDE_AHEAD: readonly [number, number] = [-0.35, 0.05]
+const BESIDE_AHEAD: readonly [number, number] = [0, 0.4]
 const BESIDE_WARM_AHEAD: readonly [number, number] = [-0.35, -0.05]
 const BESIDE_SIZE: readonly [number, number] = [0.55, 0.75]
 /** The least line reach a second light's size counts with, and its largest radius (units of sqrt(width * height)). */
@@ -636,12 +667,12 @@ const BAND_GREY_GAIN = 1.5
 const GROUND_CLEAR = 1.4
 const GROUND_CLEAR_MAX = 0.9
 /**
- * A level band of haze: its height (frame heights), width / height, half-length against the frame's width, tilt
- * either way (degrees), its falloff exponent against the bloom's own (lower is softer), how much its edge drifts, and
- * how far its middle leans from the frame's middle toward the light.
+ * A level band of haze: its height (frame heights), half-thickness (units of sqrt(width * height)), half-length against
+ * the frame's width, tilt either way (degrees), its falloff exponent against the bloom's own (lower is softer), how
+ * much its edge drifts, and how far its middle leans from the frame's middle toward the light.
  */
 const BAND_Y: readonly [number, number] = [0.3, 0.7]
-const BAND_ANISO: readonly [number, number] = [3.5, 5]
+const BAND_THICK: readonly [number, number] = [0.1, 0.16]
 const BAND_LONG = 0.45
 const BAND_TILT = 6
 const BAND_SOFT = 0.7
@@ -652,6 +683,8 @@ const BAND_TOWARD_LIGHT = 0.4
  * share of the frame the dark ground covers, and for a strip how long it lies along the edge (width / height).
  */
 const DRAG_STYLE_SHARE: Readonly<Record<DarkStyle, readonly [number, number]>> = { none: [0.06, 0.12], strip: [0.05, 0.09], corner: [0.12, 0.2], third: [0.26, 0.38] }
+/** The same for a dark ground of another hue (Plum, Forest), which stays smaller. */
+const DRAG_OTHER_SHARE: Readonly<Record<DarkStyle, readonly [number, number]>> = { none: [0.04, 0.06], strip: [0.05, 0.08], corner: [0.07, 0.11], third: [0.11, 0.15] }
 const STRIP_ANISO: readonly [number, number] = [3, 4]
 /**
  * Under a dragged line the seed's dark style sets how far and how deep the sky darkens along it: where the deep sky
@@ -690,6 +723,7 @@ const DRAG_WARM_TOWARD_LIGHT = 0.45
 const CYAN_DRAG_REACH = 0.8
 /** How far (degrees) a seed turns its dark area off a dragged line's way, either side, sliding it along the far edge. */
 const DRAG_DARK_TURN = 35
+const DRAG_DARK_TURN_MIN = 15
 /** Most (degrees) the sky's darkening turns with it, so its way still follows the line. */
 const DRAG_SKY_TURN = 25
 /** How far a dark ground of another hue (Plum, Forest) slides, against the full slide: it stays where the sky is dark. */
@@ -700,8 +734,13 @@ const OTHER_HUE_SLIDE = 0.4
  */
 const DRAG_MID: Readonly<Record<Arrangement, number>> = { low: 0.1, diagonal: 0.04, side: 0.06, high: 0, pair: 0 }
 const DRAG_MID_SHIFT: readonly [number, number] = [0.16, -0.05]
-/** How far along the frame's edge the dark area slides for that turn, in short sides per radian. */
+/**
+ * How far along the frame's edge the dark area slides for that turn, in short sides per radian, and that against a
+ * line's length: under a short line (0.3 or less, frame units) and a long one (1.2 or more).
+ */
 const DRAG_DARK_SLIDE = 2
+const SLIDE_SHORT = 0.6
+const SLIDE_LONG = 1.3
 /** How far behind the light (in line lengths) the edge a line runs toward lies when the dark area moves to the far side. */
 const DARK_TURN = -0.05
 /** Over how many line lengths of that edge's distance the dark area fades, so it changes slowly as the line moves. */
@@ -1639,10 +1678,12 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   }
   // Under a dragged line the dark area's share of the frame is the seed's own draw, so seeds differ in it there
   // too; one of another hue stays within a corner's share.
-  // Where the dark colors blend with the blue (Atmospheric), the seed's dark style holds under a line too.
+  // Where the dark colors blend with the blue (Atmospheric), the seed's dark style holds under a line too; one of another
+  // hue (Plum, Forest) takes a share by the style as well, from an accent to a large ground where the sky is deep.
   const dragShare = random(seed * 4421 + 7)()
   const styleShare = groundBlends ? DRAG_STYLE_SHARE[darkStyle] : DRAG_DARK_SHARE
-  const dragTarget = skyFamily ? lerp(styleShare[0], styleShare[1], dragShare) : lerp(OTHER_HUE_CORNER_SHARE[0], OTHER_HUE_CORNER_SHARE[1], dragShare)
+  const otherShare = DRAG_OTHER_SHARE[darkStyleFor(seed)]
+  const dragTarget = skyFamily ? lerp(styleShare[0], styleShare[1], dragShare) : lerp(otherShare[0], otherShare[1], dragShare)
   const sizeDragDark = (z: ZenithSpec) => (darkGround ? sizeCorner(z, aspect, [dragTarget, dragTarget], zenithLobes) : z.radius * lerp(0.7, 1.6, dragShare))
   const kind = dragKindFor(seed)
   const rd = random(seed * 2903 + 5)
@@ -1652,8 +1693,10 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const leadAniso = lerp(anisoRange[0], anisoRange[1], rd())
   // Where the other blooms sit under a dragged line: each seed's own places, spread over the frame.
   const spots = Array.from({ length: GLOW_COUNT - 1 }, (): [number, number] => [lerp(0.18, 0.82, rd()), lerp(0.2, 0.8, rd())])
-  // Where along the far side the dark area sits under a dragged line: the seed turns it off the line's way.
-  const darkTurn = (lerp(-DRAG_DARK_TURN, DRAG_DARK_TURN, rd()) * Math.PI) / 180
+  // Where along the far side the dark area sits under a dragged line: the seed turns it off the line's way, clearly to
+  // one side or the other (near the line's way the far sides of most seeds would be alike).
+  const turnDraw = lerp(-1, 1, rd())
+  const darkTurn = (Math.sign(turnDraw) * lerp(DRAG_DARK_TURN_MIN, DRAG_DARK_TURN, Math.abs(turnDraw)) * Math.PI) / 180
   // How far along a dragged line the deep sky begins, as a share of its length, and how deep and how far the sky
   // darkens: in every pack the seed's dark style sets them, as far as the pack allows. Without a dark ground a deeper
   // sky turns grey, so there the style only lightens it. A dark ground of another hue (Plum, Forest) meets the blue
@@ -1663,7 +1706,8 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const otherHueGround = darkGround && !skyFamily
   const ownSky = otherHueGround || (!darkGround && isWarm(colors[lead]))
   const styleMid = ownSky ? null : DRAG_STYLE_MID[dragStyle]
-  const styleDarkens = groundBlends || (!darkGround && !ownSky && DRAG_STYLE_TOP[dragStyle] < 1)
+  // A large ground of another hue (a third) needs the deeper sky, so the two still meet where both are dark.
+  const styleDarkens = groundBlends || (!darkGround && !ownSky && DRAG_STYLE_TOP[dragStyle] < 1) || (otherHueGround && dragStyle === 'third')
   const deepRange = DRAG_STYLE_DEEP[styleDarkens ? dragStyle : 'corner']
   const deepReach = lerp(deepRange[0], deepRange[1], rd())
   const dragSky: SkySpec = {
@@ -1676,8 +1720,9 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   }
   const rk = random(seed * 5381 + 23)
   const draws = Array.from({ length: 8 }, () => rk())
-  // A strip of dark lies long along the frame's edge.
-  const dragZenith = groundBlends && darkStyle === 'strip' ? { ...zenith, aniso: lerp(STRIP_ANISO[0], STRIP_ANISO[1], rk()) } : zenith
+  // A strip of dark lies long along the frame's edge, a low band.
+  const stripGround = (groundBlends || otherHueGround) && dragStyle === 'strip'
+  const dragZenith = stripGround ? { ...zenith, aniso: lerp(STRIP_ANISO[0], STRIP_ANISO[1], rk()) } : zenith
   const pale = (slot: number) => isPaleGrey(colors[slot])
   // A white or grey lead (Ice, Steel) hides more of the sky behind it where the seed's far side is light and less where
   // it is dark, so seeds differ in how much of the blue shows.
@@ -1725,6 +1770,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
           companionGain: companion < 0 ? 0 : dragGlows[companion].color === SLOT.sky ? Math.max(dragGlows[companion].gain, HAZE_SKY_GAIN) : dragGlows[companion].gain,
           band,
           bandGain: band > 0 ? hazeGain(band) : 0,
+          nearLight: (slot: number) => isWarm(colors[slot]) || isGreen(colors[slot]),
         },
         warmSlot,
         cyanSlot,
