@@ -157,6 +157,9 @@ interface Band {
   veil?: number
   /** Its light falls off away from the light: amount at the far side, and the side (1 its bottom, -1 its top). */
   fall?: [number, number]
+  /** Under a line, how far its top edge bends around the light (1: a stretch of a circle about it), and where across
+   * the line that bend is centred, from the light (short sides). */
+  bend?: [number, number]
 }
 
 interface LightTerm {
@@ -269,6 +272,8 @@ interface Scene {
   skyVeilEnd: [number, number]
   /** How far the sky's own boundaries wander (frame heights, RMS) and their lattice (short sides). */
   skyDrift: [number, number, number, number]
+  /** Under a line, how far the sky's own boundaries bend around the light, and where that bend is centred. */
+  skyBend: [number, number]
   /** The light that veil adds, linear: the pack's own tint. */
   skyTint: number[]
   /** Under a long line: the dark pack color the farthest sky sinks toward, how far, and where (frame heights). */
@@ -1101,6 +1106,15 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   const skyDrift: [number, number, number, number] = [skyWander, skyLattice, (veilLean * frameW) / frameH, (farLean * frameW) / frameH]
   // A wide area's own light falls off away from the light: deeper toward its far side, paler toward the light. Not
   // in Lime or Tan: dimmed, they read olive and khaki.
+  // Under a line each boundary bends around the light by its own amount, from a little less than a circle about it
+  // to twice as much (the shader's `bendAround`), so the bands curve around where the light is and no two
+  // neighbours run parallel.
+  // Each bends about its own point beside the light, up to a quarter of the short side to either side, so it leans
+  // its own way.
+  const bendRnd = random(seed * 4999 + pack.id.length * 11 + 41)
+  const bendOf = (): [number, number] => [bendRnd.between(0.6, 2.4), bendRnd.between(-0.25, 0.25)]
+  bands.forEach((b) => (b.bend = bendOf()))
+  const skyBend = bendOf()
   const fallRnd = random(seed * 5113 + pack.id.length * 3 + 23)
   bands.forEach((b, k) => {
     if (haze.veils[k] > 0) b.veil = haze.veils[k]
@@ -1128,6 +1142,7 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     skyVeilEnd: haze.skyEnd,
     // The sky's own boundaries (where it pales, where its far part turns dark) wander like the band edges.
     skyDrift,
+    skyBend,
     // Where the sky pales fully under a long line (`lineSky.pale`), a grey tint (Atmospheric's Steel) comes down to
     // its own hex's light, so the sky greys into Steel itself rather than into a lighter blue-grey, which reads as
     // Meta Blue's pale side.
@@ -1178,7 +1193,7 @@ const dragAlong = (drag: NonNullable<BandsComposeInput['drag']>, frameW: number,
  * the shader's `stackFrame`: how far the stack is drawn out along the line and the light's scene point.
  */
 function stackMap(scene: Scene, drag: BandsComposeInput['drag'], frameW: number, frameH: number): { map: number[]; frame: number[] } {
-  const identity = { map: [1, 0, 0, 1, 0, 0], frame: [1, 0, 0] }
+  const identity = { map: [1, 0, 0, 1, 0, 0], frame: [1, 0, 0, 0] }
   if (!drag) return identity
   const from = [(drag.from[0] - 0.5) * frameW, (drag.from[1] - 0.5) * frameH]
   const along = dragAlong(drag, frameW, frameH)
@@ -1189,7 +1204,8 @@ function stackMap(scene: Scene, drag: BandsComposeInput['drag'], frameW: number,
   // degree, which shows where a bright edge meets a corner.
   const toward = Math.atan2((drag.to[1] - drag.from[1]) / along, ((drag.to[0] - drag.from[0]) * frameW) / (along * frameH))
   const fromUp = Math.atan2(Math.sin(toward + Math.PI / 2), Math.cos(toward + Math.PI / 2))
-  const turned = -Math.PI / 2 + smoothstep(0, 0.6, along * frameH) * fromUp
+  const turn = smoothstep(0, 0.6, along * frameH)
+  const turned = -Math.PI / 2 + turn * fromUp
   const [ux, uy] = [Math.cos(turned), Math.sin(turned)]
   const zoom = zoomOf(along, scene.seedSpan)
   // Along the line toward `to` is up the stack, toward the sky, drawn out `zoom` times; across it to the line's right
@@ -1199,7 +1215,9 @@ function stackMap(scene: Scene, drag: BandsComposeInput['drag'], frameW: number,
   const light = [(scene.sun[0] - 0.5) * frameW, (scene.lightAt - 0.5) * frameH]
   return {
     map: [a, b, c, d, light[0] - (a * from[0] + b * from[1]), light[1] - (c * from[0] + d * from[1])],
-    frame: [zoom, light[0], light[1]],
+    // Under a line the boundaries bend around the light (the shader's `bendAround`), from lines a quarter of the short
+    // side long and fully from 0.9: a shorter line hardly sets a direction to bend around.
+    frame: [zoom, light[0], light[1], smoothstep(0.25, 0.9, along * frameH)],
   }
 }
 
@@ -1241,6 +1259,7 @@ function writeScene(scene: Scene, R: number, stack: ReturnType<typeof stackMap>)
     params[key('Pale')] = [b.pale ?? 0, Math.max(0.05, (next ?? 1) - b.edge.base), next === undefined ? 1 : 0.5, b.paleOwn ? 1 : 0]
     params[key('Veil')] = [b.veil ?? 0, Math.max(0.05, (next ?? 1) - b.edge.base)]
     params[key('Fall')] = b.fall ?? [0, 1]
+    params[key('Bend')] = b.bend ?? [0, 0]
   })
   while (colors.length < 1 + BAND_MAX) colors.push(scene.sky)
   scene.patches.slice(0, PATCH_MAX).forEach((patch, j) => {
@@ -1274,6 +1293,7 @@ function writeScene(scene: Scene, R: number, stack: ReturnType<typeof stackMap>)
   params.skyVeil = scene.skyVeil
   params.skyVeilEnd = scene.skyVeilEnd
   params.skyDrift = scene.skyDrift
+  params.skyBend = scene.skyBend
   params.skyTint = scene.skyTint
   const far = scene.farSky
   params.farSky = far ? [...hexToLinear(far.hex), far.amount] : [0, 0, 0, 0]

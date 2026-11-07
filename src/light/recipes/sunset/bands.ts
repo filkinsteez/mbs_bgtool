@@ -37,6 +37,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
   const core: number[] = []
   const veil: number[] = []
   const fall: number[] = []
+  const bend: number[] = []
   const bumps: Record<'at' | 'width' | 'top' | 'bottom' | 'cover' | 'light', number[]> = { at: [], width: [], top: [], bottom: [], cover: [], light: [] }
   for (let i = 0; i < BAND_MAX; i++) {
     const key = (name: Parameters<typeof bandKey>[1]) => bandKey(i, name)
@@ -47,6 +48,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     const [veilAmount, veilHeight] = ctx.vec(key('Veil'))
     veil.push(...(veilAmount > 0 ? paleLight(bandColor(i) as Rgb).map((v) => v * veilAmount) : [0, 0, 0]), veilHeight)
     fall.push(...ctx.vec(key('Fall')).slice(0, 2))
+    bend.push(...ctx.vec(key('Bend')).slice(0, 2))
     const [top, bottom] = ctx.vec(key('Edges'))
     const [fadeTop, fadeBottom] = ctx.vec(key('Fade'))
     const [waveTop, waveBottom, wavelength] = ctx.vec(key('Wave'))
@@ -142,6 +144,8 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     uBandCore: core,
     uBandVeil: veil,
     uBandFall: fall,
+    uBandBend: bend,
+    uSkyBend: ctx.vec('skyBend').slice(0, 2),
     uSkyVeilColor: ctx.vec('skyTint').map((v) => v * Math.max(0, ctx.vec('skyVeil')[0])),
     uSkyVeilSpan: ctx.vec('skyVeil').slice(1, 4),
     uSkyVeilEnd: ctx.vec('skyVeilEnd'),
@@ -226,6 +230,8 @@ uniform vec3 uBandPale[BAND_MAX];   // pale light of the band's own hue at its c
 uniform vec2 uBandCore[BAND_MAX];   // the band's height (frame heights) and where its core is (0 its top, 1 its height below)
 uniform vec4 uBandVeil[BAND_MAX];   // pale light of the band's own hue at its lower edge (rgb, 0: none), the band's height
 uniform vec2 uBandFall[BAND_MAX];   // its light's falloff away from the light: amount, side (1 its bottom, -1 its top)
+uniform vec2 uBandBend[BAND_MAX];   // under a line, how far its top edge bends around the light (1: a circle about it), and where across the line that bend is centred, from the light (short sides)
+uniform vec2 uSkyBend;               // the same for the sky's own boundaries
 uniform vec3 uSkyVeilColor;          // light of the pack's own tint where the sky meets the light's side (0: none)
 uniform vec3 uSkyVeilSpan;           // where that veil starts and is full (frame heights), the sky's own light change there
 uniform vec2 uSkyVeilEnd;            // above a dark band, where the veil gives way again to the sky's own color (frame heights)
@@ -264,7 +270,7 @@ uniform float uBaseLum;
 uniform float uLensDisc;             // 1: the disc lens result, 0: the gaussian one
 uniform vec4 uStackMap;              // the stack along a drag: a frame point p shows the scene at (a b; c d) p + shift
 uniform vec2 uStackShift;
-uniform vec3 uStackFrame;            // a drag that draws the stack out k times along the line: k, the light's scene point
+uniform vec4 uStackFrame;            // a drag that draws the stack out k times along the line: k, the light's scene point, how far boundaries bend around the light
 
 // Set by combine() for grainWeight(), which the engine calls right after it for the same point.
 float gGrainWeight = 1.0;
@@ -323,6 +329,24 @@ float lightChange(vec2 p, int k) {
   return clamp(n / (0.3052 * 1.044), -2.5, 2.5);
 }
 
+// Under a dragged line a boundary at scene height at bends around the light: at px across the line (short sides) it
+// lies on a stretch of a circle about a point beside the light (bendAt.y across the line from it), on the frame's
+// scale, times bendAt.x, so each boundary leans its own way, and it never passes the light's own level (at most 0.9
+// of the way there). A boundary close to the light bends no tighter than a circle 0.4 of the short side in radius,
+// so it curves instead of folding around the light. Returns how far it moves, in scene frame heights (toward the
+// light's level); 0 without a line.
+float bendAround(float at, float px, vec2 bendAt) {
+  float bend = bendAt.x;
+  if (uStackFrame.w <= 0.0 || bend <= 0.0) return 0.0;
+  float frameH = uFrameAspect.y;
+  float r = (uStackFrame.z / frameH + 0.5 - at) * frameH * uStackFrame.x;
+  float reach = 0.9 * abs(r);
+  if (reach < 1e-4) return 0.0;
+  float across = px - uStackFrame.y - bendAt.y;
+  float pull = bend * uStackFrame.w * across * across / (2.0 * max(abs(r), 0.4));
+  return sign(r) * reach * (1.0 - exp(-pull / reach)) / (frameH * uStackFrame.x);
+}
+
 // The pack-colored light of everything at frame position (x, v) in front of the lens.
 vec3 scene(float x, float v, vec2 p) {
   float dx = x - 0.5;
@@ -370,9 +394,11 @@ vec3 scene(float x, float v, vec2 p) {
   vec3 c = base * skyGain * giveWay;
   // The sky's own boundaries (where it pales, where its far part turns dark) wander like the band edges, each on
   // its own lattice and with its own lean, so the stretch of full color between them changes width along its length.
+  // Under a line they bend around the light like the band edges (bendAround).
   float skyBend = uSkyDrift.x * inversesqrt(uStackFrame.x);
-  float vVeil = v + skyBend * edgeWave(p.x, uSkyDrift.y, 41.0, uEdgeSeed) + uSkyDrift.z * dx / uStackFrame.x;
-  float vFar = v + skyBend * edgeWave(p.x, 1.37 * uSkyDrift.y, 43.0, uEdgeSeed) + uSkyDrift.w * dx / uStackFrame.x;
+  float skyAround = bendAround(v, p.x, uSkyBend);
+  float vVeil = v - skyAround + skyBend * edgeWave(p.x, uSkyDrift.y, 41.0, uEdgeSeed) + uSkyDrift.z * dx / uStackFrame.x;
+  float vFar = v - skyAround + skyBend * edgeWave(p.x, 1.37 * uSkyDrift.y, 43.0, uEdgeSeed) + uSkyDrift.w * dx / uStackFrame.x;
   if (uSkyVeilColor != vec3(0.0) || uSkyVeilSpan.z != 0.0) {
     // The sky pales toward the light: its full color only at the far edge, then it gives way to a tint of the pack's
     // own colors all the way down to where the bands begin.
@@ -413,6 +439,9 @@ vec3 scene(float x, float v, vec2 p) {
     // with the bands (divided by the square root of k only), so a long line shows curved boundaries, not ruled ones.
     shift = tilt.x * dx / uStackFrame.x + shift * inversesqrt(uStackFrame.x);
     shiftBottom = tilt.y * dx / uStackFrame.x + shiftBottom * inversesqrt(uStackFrame.x);
+    // Under a line each edge bends around the light by its own amount, so the bands curve around where the light
+    // is and no two neighbouring edges run parallel.
+    shift += bendAround(edge.x, p.x, uBandBend[i]);
     float top = edge.x + shift;
     // A bottom at 2 or more is none: the band runs on past the frame, and past the scene's own frame when a drag
     // draws the stack tighter.

@@ -44,6 +44,7 @@ export type BandParamName =
   | 'Pale'
   | 'Veil'
   | 'Fall'
+  | 'Bend'
 
 export type PatchParamName = 'Shape' | 'Look'
 export type LightParamName = 'Shape' | 'Look'
@@ -105,6 +106,9 @@ function bandSpecs(index: number): ParamSpec[] {
     // The band's light falling off away from the light: amount at its far side, and which side is far (1 its
     // bottom, for a band below the light; -1 its top, for a band above it). The height is the veil's.
     { kind: 'vector', key: key('Fall'), label: `Band ${n} light falloff away from the light: amount, side`, min: -1, max: 1, step: 0.005, default: [0, 1] },
+    // Under a dragged line the band's top edge bends around the light: how far (1: a stretch of a circle about the
+    // light) and where across the line the bend is centred, from the light (short sides).
+    { kind: 'vector', key: key('Bend'), label: `Band ${n} bend around the light under a line: amount, centre`, min: -1, max: 3, step: 0.001, default: [0, 0] },
   ]
 }
 
@@ -177,7 +181,10 @@ export const BANDS_PARAMS: readonly ParamSpec[] = [
   { kind: 'vector', key: 'stack', label: 'Stack along the drag: a, b, c, d, e, f', min: -20, max: 20, step: 0.0001, default: [1, 0, 0, 1, 0, 0] },
   // A drag that draws the stack out k times along the line: k, and the light's scene point (short sides). Each
   // edge's wander and the light change inside bands stay frame-sized.
-  { kind: 'vector', key: 'stackFrame', label: 'Drawn-out stack: k, light x, light y', min: -20, max: 20, step: 0.0001, default: [1, 0, 0] },
+  { kind: 'vector', key: 'stackFrame', label: 'Drawn-out stack: k, light x, light y, bend around the light', min: -20, max: 20, step: 0.0001, default: [1, 0, 0, 0] },
+  // Under a dragged line the sky's own boundaries (where it pales, where its far part turns dark) bend around the
+  // light too: 1 is a stretch of a circle about the light.
+  { kind: 'vector', key: 'skyBend', label: 'Sky boundaries bend around the light under a line: amount, centre', min: -1, max: 3, step: 0.001, default: [0, 0] },
   ...Array.from({ length: BAND_MAX }, (_, i) => bandSpecs(i)).flat(),
   ...Array.from({ length: PATCH_MAX }, (_, i) => patchSpecs(i)).flat(),
   ...Array.from({ length: LIGHT_MAX }, (_, i) => lightSpecs(i)).flat(),
