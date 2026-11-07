@@ -700,6 +700,9 @@ const LINE_MARGIN = 0.08
 /** Share of the seed's lit-sky width a dragged line keeps (about 45 to 105 degrees). */
 const FAN_ON_LINE = 0.55
 
+/** That share as a factor under thick clouds. */
+const FAN_THICK = 0.75
+
 /**
  * Thick clouds under a dragged line: the light's level, the clouds' optical depth and the light
  * left in their shadows, each as a factor. Thin-cloud seeds keep their own.
@@ -833,8 +836,9 @@ function streaksOnLine(params: Record<string, ParamValue>, line: ShortLine, skyH
   // dark wedge; the scene's horizon, through the point above the frame, shows no line or band.
   const down = pointsDown(line)
   // The lit sky's width (bright end first), narrower than without a line so a dark side shows
-  // in a frame the line fills, and how far it can turn either way above the horizon.
-  const fanWidth = (sky[1] - sky[0]) * lerp(FAN_ON_LINE, FAN_DOWN, down)
+  // in a frame the line fills, and how far it can turn either way above the horizon. Thick
+  // clouds let the light through a narrower stretch of sky.
+  const fanWidth = (sky[1] - sky[0]) * lerp(FAN_ON_LINE * (shade[1] > 1 ? FAN_THICK : 1), FAN_DOWN, down)
   const width = Math.sign(fanWidth) * Math.min(0.95 * Math.PI, Math.abs(fanWidth))
   const room = Math.max(0, (Math.PI - Math.abs(width)) / 2)
   // The line's angle from straight up, positive toward +x, and the part of it taken without
