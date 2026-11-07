@@ -140,6 +140,8 @@ const AWAY_UP = 0.12
  * units of the sky luminance. The low end keeps more of the blue.
  */
 const SKY_VEIL: readonly [number, number] = [0.8, 2.6]
+/** Its low end where the dark colors blend with the blue (Atmospheric): some seeds keep much more of the blue. */
+const BLEND_SKY_VEIL = 0.35
 /** Around Yellow in a pack with Cyan (Bold) the sky pales less: a wide pale veil turns the frame cream and pastel. */
 const CYAN_VEIL = 0.6
 /**
@@ -153,6 +155,11 @@ const DEEP_SHARE: readonly [number, number] = [0.26, 0.42]
 const DEEP_STRIP: readonly [number, number] = [0.06, 0.14]
 const DEEP_STRIP_SHARE = 0.2
 const BODY_SHARE: readonly [number, number] = [0.4, 0.62]
+/**
+ * Where the dark colors blend with the blue (Atmospheric), the body's share by dark style: light on light keeps a large
+ * light, and the more dark a frame holds the smaller its light can be, so some seeds keep a small light in a wide sky.
+ */
+const BLEND_BODY_SHARE: Readonly<Record<DarkStyle, readonly [number, number]>> = { none: [0.42, 0.62], strip: [0.3, 0.6], corner: [0.24, 0.52], third: [0.24, 0.45] }
 /** An orange-red sun's body is one wide light, a third of the frame or more, with less deep and open sky beside it. */
 const RED_BODY_SHARE: readonly [number, number] = [0.52, 0.68]
 const RED_DEEP_SCALE = 0.7
@@ -1186,6 +1193,9 @@ function planFor(arrangement: Arrangement): Plan {
   }
 }
 
+/** The pair arrangement from the two upper corners, the sky darkening straight down below the stronger light. */
+const UPPER_PAIR: Plan = { offset: [0.4, 0.58], lift: [-0.9, -0.74], pair: 1, balance: [0.6, 0.85], innerBelow: false, toward: 0.6, across: 1, darkScale: 1.5 }
+
 /**
  * The side each arrangement's light comes from in the first run of five seeds; the next run takes the other
  * side, and so on, so a run spreads its lights over both sides and an arrangement that comes back is mirrored.
@@ -1290,7 +1300,11 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // for the slider's sake, so Horizon is read at its default here and moves nothing.
   const rise = controls.drag ? DRAG_RISE : clamp(controls.rise, 0, 1)
   const arrangement = arrangementFor(seed)
-  const plan = planFor(arrangement)
+  // Where the dark colors blend with the blue (Atmospheric), the pair comes from the two upper corners, an overcast sky
+  // lit from above that darkens down to a dark ground along the bottom: from the lower corners it was one more pale
+  // bottom edge under a darker top, like the light from the bottom edge.
+  const groundBlends = [SLOT.deep1, SLOT.deep2].every((d) => luminance(colors[d]) > 1e-4 && blendsWithSky(colors[d], colors[SLOT.sky]))
+  const plan = groundBlends && arrangement === 'pair' ? UPPER_PAIR : planFor(arrangement)
   const { lead, other } = pickLead(colors, r(), arrangement)
   // A cyan light along the bottom edge reads as a horizon (a sea), so it sits higher and comes in level. From
   // an upper corner it is clear of that edge already.
@@ -1321,7 +1335,6 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // In a pack whose dark colors blend with the blue (Atmospheric) every seed would otherwise be one pale side and one
   // dark side split by a diagonal, so the seed also picks how much dark the frame holds, from none (light on light)
   // to a third, and whether the light sits in from its edge, toward the middle.
-  const groundBlends = [SLOT.deep1, SLOT.deep2].every((d) => luminance(colors[d]) > 1e-4 && blendsWithSky(colors[d], colors[SLOT.sky]))
   const darkStyle: DarkStyle = groundBlends ? darkStyleFor(seed) : 'corner'
   const inward = groundBlends && darkStyle !== 'third' && random(seed * 3571 + 13)() < INWARD_SHARE
   const [ux, uy] = [r(), r()]
@@ -1371,7 +1384,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const [uDeepSize, uDeepStops, uDeepSoft, uDeepCurve, uBody, uDeepUp] = [rn(), rn(), rn(), rn(), rn(), rn()]
   // The deep sky lies away from the light and toward the top of the frame, unless the light is itself high.
   const toTop = Math.atan2(Math.sin(-Math.PI / 2 - awayAngle), Math.cos(-Math.PI / 2 - awayAngle))
-  const deepAngle = awayAngle + (arrangement === 'high' ? 0 : lerp(DEEP_UP[0], DEEP_UP[1], uDeepUp) * toTop)
+  const deepAngle = awayAngle + (arrangement === 'high' || plan === UPPER_PAIR ? 0 : lerp(DEEP_UP[0], DEEP_UP[1], uDeepUp) * toTop)
   const deepDir = [Math.cos(deepAngle), Math.sin(deepAngle)]
   const [deepNear, deepFar] = spanAlong(leadP, deepDir, frameP)
   // An orange-red sun takes more of the way and leaves the deep sky and the open sky less.
@@ -1386,7 +1399,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
           ? lerp(DEEP_STRIP[0], DEEP_STRIP[1], uDeepSize / DEEP_STRIP_SHARE)
           : lerp(DEEP_SHARE[0], DEEP_SHARE[1], (uDeepSize - DEEP_STRIP_SHARE) / (1 - DEEP_STRIP_SHARE))
   const deepShare = drawnDeep * (redSun ? RED_DEEP_SCALE : 1)
-  const bodyRange = redSun ? RED_BODY_SHARE : BODY_SHARE
+  const bodyRange = redSun ? RED_BODY_SHARE : groundBlends ? BLEND_BODY_SHARE[darkStyle] : BODY_SHARE
   const bodyShare = Math.min(lerp(bodyRange[0], bodyRange[1], uBody), 1 - deepShare - (redSun ? RED_OPEN_SHARE : MIN_OPEN_SHARE))
   const bodyEnd = spanNear + bodyShare * (spanFar - spanNear)
   const deepEdge = spanNear + (1 - deepShare) * (spanFar - spanNear)
@@ -1643,7 +1656,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     tilt: skew,
     vary: lerp(0.03, 0.05, r()),
     turn: rampTurn(skew, awayAngle, frameP),
-    veil: lerp(SKY_VEIL[0], SKY_VEIL[1], paleReach) * (cyanPack && !redSun ? CYAN_VEIL : 1),
+    veil: lerp(groundBlends ? BLEND_SKY_VEIL : SKY_VEIL[0], SKY_VEIL[1], paleReach) * (cyanPack && !redSun ? CYAN_VEIL : 1),
     deep: {
       stops: darkStyle === 'none' ? 0 : lerp(DEEP_STOPS[0], DEEP_STOPS[1], uDeepStops),
       at: (deepNear + (1 - deepShare) * (deepFar - deepNear)) / Math.min(frameP[0], frameP[1]),
