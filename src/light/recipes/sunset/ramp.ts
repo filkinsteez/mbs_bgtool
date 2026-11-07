@@ -73,7 +73,7 @@ const PARAMS: ParamSpec[] = [
   num('lightTop', 'Sun light fades out by this height (0: no limit)', 0, 8, 0.001, 0),
   num('glow', 'Glow', 0, 8, 0.005, 0.6),
   num('glowOffset', 'Glow line offset', -4, 1, 0.001, -0.04),
-  vec('glowEnd', "Depth below the glow line where its lower side ends (0: never), and the width of that fade", 0, 4, 0.001, [0, 0.1]),
+  vec('glowEnd', "Depth below the glow line where its lower side ends (0: never), the width of that fade, and how fully the sky's dimming under it lifts where the glow's light falls off", 0, 4, 0.001, [0, 0.1, 0]),
   vec('veil', 'White light over the sky: under the far band, more toward the horizon, height over which that extra fades', 0, 4, 0.001, [0, 0, 0.3]),
   vec('veilFar', 'Heights above the horizon between which the veil fades out into the far band of full Meta Blue (0, 0: none)', -8, 8, 0.001, [0, 0]),
   vec('veilTint', "The veil's color away from the light, linear light at luminance 1", 0, 4, 0.001, [1, 1, 1]),

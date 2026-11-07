@@ -120,7 +120,7 @@ function lightLuminance(u: RampUniforms, f: Frame, across: number, s: number): n
   const side = roundFalloff(across - sun.across, glowWidth * widen)
   let far = 1 - lateral
   if (shadowHeight > 0) far *= 1 - Math.exp(-height / shadowHeight)
-  const [glowEnd, glowEndWidth] = list(u, 'uGlowEnd')
+  const [glowEnd, glowEndWidth, glowEndFollow] = list(u, 'uGlowEnd')
   const spread = (far + (1 - far) * side) * lightReach * (glowEnd > 0 ? 1 - smoothstep(glowEnd, glowEnd + glowEndWidth, dh) : 1)
   const reach = 1 + list(u, 'uGlowVary')[2] * side
   const [down, up, sideDeeper, path0] = list(u, 'uRedden')
@@ -141,10 +141,12 @@ function lightLuminance(u: RampUniforms, f: Frame, across: number, s: number): n
     depth += amount
   }
   const [dimAmount, dimHeight] = list(u, 'uHorizonDim')
-  let dim =
-    glowEnd > 0
-      ? dimAmount * Math.exp(-Math.max(0, glowEnd - dh) / Math.max(dimHeight, 1e-4)) * (1 - smoothstep(glowEnd, glowEnd + glowEndWidth, dh))
-      : dimAmount * Math.exp(-height / Math.max(dimHeight, 1e-4))
+  let dim = dimAmount * Math.exp(-height / Math.max(dimHeight, 1e-4))
+  if (glowEnd > 0) {
+    const end = 1 - smoothstep(glowEnd, glowEnd + glowEndWidth, dh)
+    const lift = dh > 0 ? (glowEndFollow ?? 0) * (1 - smoothstep(0.3, 0.7, softExp(dh, tau[1]) * end)) : 0
+    dim = dimAmount * Math.exp(-Math.max(0, glowEnd - dh) / Math.max(dimHeight, 1e-4)) * end * (1 - lift)
+  }
   if (horizonEdge >= 0) dim *= 1 + (num(u, 'uDimBelow') - 1) * level[horizonEdge]
   const stops = list(u, 'uStop')
   const duskStop = num(u, 'uDuskStop')

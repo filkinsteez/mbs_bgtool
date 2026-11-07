@@ -55,7 +55,8 @@ uniform float uLightTop;     // height above the horizon where the sun's added l
 uniform vec3 uGlowColor[GLOW_LAYERS];
 uniform float uGlowWeight[GLOW_LAYERS];
 uniform vec2 uGlowTau[GLOW_LAYERS];   // decay length above and below the glow line
-uniform vec2 uGlowEnd;       // depth below the glow line where its lower side ends (0: never), and the width of that fade
+uniform vec3 uGlowEnd;       // depth below the glow line where its lower side ends (0: never), the width of that fade, and
+                             // how fully the sky's dimming under the glow lifts where the glow's light falls off
 uniform vec3 uVeil;          // white light over the sky: under the far band, more toward the horizon, and the height over which that extra fades
 uniform vec2 uVeilFar;       // heights above the horizon between which the veil fades out into the far band of full Meta Blue (0, 0: none)
 uniform vec3 uVeilTint;      // the veil's color away from the light: a pale tint of one of the pack's colors, at luminance 1
@@ -383,10 +384,17 @@ vec3 rampSky(vec2 p) {
   // Like the sun's added light, the dimming toward the horizon and through the glow fade out
   // below the top fifth, which holds only the sky's own light.
   // Where the glow's lower side ends above the horizon, the sky dims toward that end as if the
-  // horizon lay there, and past it the low sky is not dimmed.
-  float dim = uGlowEnd.x > 0.0
-    ? uHorizonDim.x * exp(-max(0.0, uGlowEnd.x - dh) / max(uHorizonDim.y, 1e-4)) * (1.0 - smoothstep(uGlowEnd.x, uGlowEnd.x + uGlowEnd.y, dh))
-    : uHorizonDim.x * exp(-height / max(uHorizonDim.y, 1e-4));
+  // horizon lay there, and past it the low sky is not dimmed. Under a warm glow lifted off its
+  // horizon the dimming lifts as the glow's light falls from 0.7 to 0.3 of its light at the glow
+  // line, so the glow's tail meets the sky's own light: over a darkened sky it reads red or brown.
+  float dim;
+  if (uGlowEnd.x > 0.0) {
+    float end = 1.0 - smoothstep(uGlowEnd.x, uGlowEnd.x + uGlowEnd.y, dh);
+    float lift = dh > 0.0 ? uGlowEnd.z * (1.0 - smoothstep(0.3, 0.7, softExp(dh, uGlowTau[0].y) * end)) : 0.0;
+    dim = uHorizonDim.x * exp(-max(0.0, uGlowEnd.x - dh) / max(uHorizonDim.y, 1e-4)) * end * (1.0 - lift);
+  } else {
+    dim = uHorizonDim.x * exp(-height / max(uHorizonDim.y, 1e-4));
+  }
   if (uHorizonEdge >= 0) dim *= mix(1.0, uDimBelow, level[uHorizonEdge]);
   vec3 skyGain = gain * exp(-(uExtinction * glowDepth + dim) * lightReach);
   vec3 sky = vec3(0.0);

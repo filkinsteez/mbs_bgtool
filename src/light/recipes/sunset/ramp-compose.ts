@@ -440,6 +440,13 @@ const OWN_WATER = {
 /** How fast a far bank's height changes across the frame, per half the frame's width, and its height at its thick end. */
 const BANK_SLOPE = 1.2
 const BANK_PEAK = 1.4
+/**
+ * Under a dragged line, the most a warm glow lifted above the land's own glow ends above the land,
+ * and how far above an open sky's horizon a warm glow's end lies before the sky under it comes
+ * back fully as the glow fades (short sides).
+ */
+const LAND_LIFT = 0.25
+const END_LIFT = 0.1
 /** The navy band of a Bold open sky behind a glow above the frame, as a share of the low sky's gain. */
 const BEHIND_NAVY = 0.2
 /** How far (short sides) the start goes below the horizon before the sun's own light dims by e. */
@@ -836,7 +843,16 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // there, and the low sky fills the rest. The glow's lower side ends where the seed's own frame
   // ends below it, or at the horizon.
   const glowReach = line && !ground ? Math.min(glowRise, ownRise) : glowRise
-  const glowEnd = line && !ground ? [glowReach, 0.5 * glowReach] : [0, 0.1]
+  // A warm glow that a dragged line lifts above the land's own glow ends that much above the land,
+  // up to LAND_LIFT, so a low sky of its own color shows between the warm light and the ground: at
+  // the land's edge the lens mixes warm light and the dark ground into red and mauve.
+  const warmLight = packId !== 'atmospheric'
+  const ownLandRise = Math.max(glowShare(look, structure, warmShare, risePick, softness, day) * Math.max(0.2, horizonY * tall), aboveCrest)
+  const landLift = line && land && warmLight && look.lowSky !== look.light ? Math.min(LAND_LIFT, Math.max(0, glowRise - ownLandRise)) : 0
+  // Where a warm glow's lower side ends above the horizon, the sky under it comes back as the glow
+  // fades, fully once the end lies END_LIFT above an open sky's horizon or LAND_LIFT above the land.
+  const follow = !line || !warmLight ? 0 : land ? landLift / LAND_LIFT : ground ? 0 : smoothstep(0, END_LIFT, glowRise - glowReach)
+  const glowEnd = line && !ground ? [glowReach, 0.5 * glowReach, follow] : landLift > 0 ? [glowRise - landLift, 0.6 * landLift, follow] : [0, 0.1, 0]
 
   // The least height above the horizon along the top edge: the sky's edges and the sun's light
   // stay below it, so the top of the frame is the pack's Meta Blue. Under a dragged line the sky
