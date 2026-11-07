@@ -73,20 +73,18 @@ const LINE_HUE_SLOTS = [4, 7, 8]
 const DRAG_LOGO_FACING = 0.4
 const FACING_POWER = 1.5
 /**
- * A turning line's glow is this many times wider where its light is full, as the light along the line to this
- * power, so it is a thin line at its dim end and opens toward its bright end (contour-light-line); its haze by less.
+ * A turning line's flame (contour-light-line): its glow beside the core is about as bright as the core and some 70 px
+ * wide at half the peak three quarters of the way down a 9:16 frame 925 px wide, as the reference's (64 to 85 px; it
+ * was 7 to 25). The glow is FLAME_WIDTH wide and grows FLAME_GROW (times, and to the power of the light along the
+ * line) toward the bright end; it fades faster than the core along the line, so at the dim end only the thin line is
+ * left. The haze grows by FLAME_HAZE_GROW. Both sides alike: the color is summed along the line (clSegmentLit), so
+ * the light's own color fades into the next without an edge.
  */
-const FLAME_GROW = [6.5, 2]
+const FLAME_WIDTH = 0.022
+const FLAME_GROW = [0.8, 1]
 const FLAME_HAZE_GROW = [2, 2]
-/**
- * The light's own side of a turning line keeps closer to it: its color turns along the line, and a band of it as wide
- * as the flame ended where the line turned, a patch beside the line (Atmospheric s10's Meta Blue beside Ice). The other
- * side's color holds along the whole line, so it carries the flame's width. The core is brighter, so the line reads as
- * the light's source.
- */
-const FLAME_NEAR_GROW = [3.5, 2]
-const FLAME_NEAR_WEIGHT = 0.66
-const FLAME_CORE_WEIGHT = 2.75
+const FLAME_WEIGHT = 1
+const FLAME_HAZE = 0.18
 /** How far (short sides) the two sides of a turning line's glow reach across it into each other. */
 const FLAME_SIDE_SOFT = 0.02
 const luminance = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
@@ -515,15 +513,15 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     // splits the same way and follows the light along the line, so the dim end is a thin line.
     ...(turns
       ? {
-          n1Weight: FLAME_CORE_WEIGHT,
           n1Pale: 0,
-          n2Weight: FLAME_NEAR_WEIGHT,
+          n2Weight: FLAME_WEIGHT,
+          n2Width: FLAME_WIDTH,
           n2Side: 1,
           n2MaskSoft: FLAME_SIDE_SOFT,
           n2Pale: 0,
-          n2GrowBy: FLAME_NEAR_GROW,
-          n3Weight: round4(0.55 * sideLevel),
-          n3Width: 0.006,
+          n2GrowBy: FLAME_GROW,
+          n3Weight: round4(FLAME_WEIGHT * sideLevel),
+          n3Width: FLAME_WIDTH,
           n3Shape: 3,
           n3Side: 2,
           n3MaskSoft: FLAME_SIDE_SOFT,
@@ -532,6 +530,7 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
           n3Grow: 1,
           n3GrowBy: FLAME_GROW,
           n3Pale: 1,
+          f1Weight: FLAME_HAZE,
           f1Side: 1,
           f1MaskSoft: 2 * FLAME_SIDE_SOFT,
           f1Pale: 0,
@@ -540,7 +539,7 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
           f2MaskSoft: 2 * FLAME_SIDE_SOFT,
           f2Light: 1,
           f2LightGamma: 1,
-          f2Weight: round4(0.12 * sideLevel),
+          f2Weight: round4(FLAME_HAZE * sideLevel),
           f2Width: 0.02,
           f2Grow: 1,
           f2GrowBy: FLAME_HAZE_GROW,

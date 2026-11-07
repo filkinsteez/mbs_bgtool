@@ -89,6 +89,15 @@ export function kernelCoefficients(p: number): number[] {
   return out.map((v) => v / total)
 }
 
+/** Integral of (1 + t^2)^-p over the real line: pi (2p - 3)!! / (2p - 2)!!. */
+export function kernelFullConstant(p: number): number {
+  let num = 1
+  let den = 1
+  for (let k = 1; k <= 2 * p - 3; k += 2) num *= k
+  for (let k = 2; k <= 2 * p - 2; k += 2) den *= k
+  return (Math.PI * num) / den
+}
+
 /** Integral of (1 + t^2)^-(p + 1/2) over the real line: 2 (2p - 2)!! / (2p - 1)!!. */
 export function kernelLineConstant(p: number): number {
   let num = 1
@@ -112,7 +121,14 @@ function polynomialsGlsl(): string {
     for (let k = a.length - 2; k >= 0; k--) horner = `${literal(a[k])} + z2 * (${horner})`
     return `  if (p == ${p}) return z * (${horner});`
   }).join('\n')
+  const full = Array.from({ length: MAX_KERNEL_POWER - 1 }, (_, i) => `  if (p == ${i + 2}) return ${literal(kernelFullConstant(i + 2))};`).join('\n')
   return /* glsl */ `
+// The kernel's integral over a whole line in units of its width: (1 + t^2)^-p over the real line.
+float clFull(int p) {
+${full}
+  return 1.0;
+}
+
 // Normalized antiderivative of the kernel along a line: odd, N_p(+-1) = +-1, z = x / sqrt(x^2 + c^2).
 vec3 clN(vec3 z, int p) {
   if (p <= 1) return z;
@@ -143,7 +159,15 @@ function nearGlsl(layout: CurveLightLayout): string {
   clNearSetup(nb + ${k * NEAR_VEC4}, sd, light1, light2, s2p${k}, offs${k}, amp${k}, lit${k}, cut${k}, p${k}, bp${k});`)
     .join('\n')
   const maxCut = parts.reduce((expr, k) => (expr ? `max(${expr}, cut${k})` : `cut${k}`), '')
-  const segment = parts.map((k) => `        if (dist < cut${k}) acc${k} += em * clSegment(u, h, l, offs${k}, s2p${k}, p${k});`).join('\n')
+  const segment = parts
+    .map(
+      (k) => `        if (dist < cut${k}) {
+          vec3 at${k};
+          vec3 lit${k}s = clSegmentLit(u, h, l, offs${k}, s2p${k}, p${k}, at${k});
+          acc${k} += mix(e0, e1, at${k}) * lit${k}s;
+        }`,
+    )
+    .join('\n')
   const arcs = parts
     .map((k) => `        if (radial < cut${k}) acc${k} += em * clArc(r, psiM, halfSweep, max(vec3(1e-6), g.z - toInside * offs${k}), s2p${k}, p${k}, bp${k});`)
     .join('\n')
@@ -175,7 +199,8 @@ ${declare}
       float dist = length(rel - d * clamp(u, 0.0, l));
       if (dist > maxCut) continue;
       float h = (d.x * rel.y - d.y * rel.x) * m.z;
-      vec3 em = mix(uClPrim[base + 2].rgb, uClPrim[base + 3].rgb, clamp(u / l, 0.0, 1.0));
+      vec3 e0 = uClPrim[base + 2].rgb;
+      vec3 e1 = uClPrim[base + 3].rgb;
 ${segment}
     } else {
       float r = length(rel);
@@ -280,6 +305,26 @@ vec3 clSegment(float u, float h, float l, vec3 offs, vec3 s2p, int p) {
   vec3 z0 = x0 * inversesqrt(x0 * x0 + c2);
   vec3 z1 = x1 * inversesqrt(x1 * x1 + c2);
   return clPow(s2p / c2, p) * 0.5 * (clN(z1, p) - clN(z0, p));
+}
+
+// clSegment, and where along the segment (0 at its start, 1 at its end) the light reaching the pixel comes from on
+// average: the kernel's first moment over its integral. A color that changes along the segment reaches the pixel as
+// the sum of its light, so it blends over a longer stretch the farther the pixel is from the line, instead of
+// taking the color of the nearest point (which drew straight color edges out from the line).
+vec3 clSegmentLit(float u, float h, float l, vec3 offs, vec3 s2p, int p, out vec3 at) {
+  vec3 hc = h - offs;
+  vec3 c2 = hc * hc + s2p;
+  float x0 = -u;
+  float x1 = l - u;
+  vec3 z0 = x0 * inversesqrt(x0 * x0 + c2);
+  vec3 z1 = x1 * inversesqrt(x1 * x1 + c2);
+  vec3 dN = clN(z1, p) - clN(z0, p);
+  at = vec3(clamp(u / l, 0.0, 1.0));
+  if (p >= 2) {
+    vec3 moment = sqrt(c2) * (clPow(1.0 - z0 * z0, p - 1) - clPow(1.0 - z1 * z1, p - 1)) / (float(p - 1) * clFull(p));
+    at = mix(at, clamp((u + moment / max(dN, vec3(1e-6))) / l, 0.0, 1.0), step(vec3(1e-6), dN));
+  }
+  return clPow(s2p / c2, p) * 0.5 * dN;
 }
 
 // Arc piece of radius Rc seen from distance r to its center; psiM is the piece's middle angle relative to the
