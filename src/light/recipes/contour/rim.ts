@@ -1,4 +1,5 @@
 import type { ColorPack } from '../../color/packs'
+import { hexToLinear } from '../../color/srgb'
 import type { ComposeInput, Composition, ParamSpec, ParamValue, RecipeContext, RecipeDefinition } from '../../scene'
 import {
   accentParams,
@@ -9,7 +10,7 @@ import {
   frameSize,
   geo,
   lerp,
-  linePartner,
+  lineHues,
   logoPartsShown,
   longestRun,
   normalNear,
@@ -60,6 +61,20 @@ import { META_LOGO_LANDMARKS, META_LOGO_PARTS, windingNumber, type Vec2 } from '
 
 const COLORS = 8
 const STOPS = 6
+/** How much of a line, from its bright end, keeps the light's own color before it turns (lineHues). */
+const LINE_HUE_HOLD = 0.2
+/** Color slots of a line's colors after the light's own (lineHues). */
+const LINE_HUE_SLOTS = [4, 7, 8]
+/**
+ * Where two of a rim's colors meet, the stretch between has this times the lighter one's luminance, and this share
+ * of it is white light (readStops), so it reads as the pale meeting of the two (contour-light-line passes through a
+ * pale white between its blue and yellow), not as a third color.
+ */
+const BRIDGE_LIFT = 1.1
+const BRIDGE_PALE = 0.6
+/** Where a line that turns through colors starts to dim the way its warm color does (times the light's own level). */
+const LINE_DRIFT_KNEE = 1.3
+const luminance = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 // The whole Meta logo outline (104 pieces, 3 contours) plus a cut at every stop in each contour must fit:
 // pieces past the limit are dropped, and the inside test then flips inside and outside in horizontal bands.
 export const RIM_LAYOUT: CurveLightLayout = { emitters: 1, primitives: 128, near: 3, far: 3 }
@@ -383,7 +398,12 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   const spread = dragged ? offFrameSpread(controls.drag, dragged.hot, aspect) : 0
   const dragT = dragged ? Math.min(1, dragged.lineLength / 0.15) : 0
   const dragWay = dragT * dragT * (3 - 2 * dragT)
-  const drift = warmDrift(light.hex)
+  // A line runs through the pack's colors along its length (lineHues) and dims the way its warm color does, from
+  // just above the light's own level on (knee LINE_DRIFT_KNEE), so a far Yellow stretch warms to amber before it
+  // can read olive.
+  const lineRun = line ? lineHues(pack, light) : { hues: [light], dims: null }
+  const lineDrift = warmDrift((lineRun.dims ?? light).hex)
+  const drift = lineDrift && lineRun.hues.length > 1 ? { ...lineDrift, knee: LINE_DRIFT_KNEE } : lineDrift
   // A line's bright end and its direction out of the frame there, and where its two visible ends sit along the line
   // (0 to 1 from one end of the long segment to the other).
   const brightEnd = path.length > 1 ? (fromStart ? path[0] : path[path.length - 1]) : layout.anchor
@@ -393,10 +413,27 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     const r = (layout.shape.rotate * Math.PI) / 180
     return 0.5 + ((p[0] - layout.anchor[0]) * Math.cos(r) + (p[1] - layout.anchor[1]) * Math.sin(r)) / layout.shape.size
   }
-  const partner = line ? linePartner(pack, light) : null
   const littleRed = (hex: string) => parseInt(hex.slice(1, 3), 16) < 64
-  const lineColor = partner ? { partner, bright: along1(brightEnd), far: along1(farEnd) } : null
+  const turns = lineRun.hues.length > 1
   const warmLine = line && warmTail(light.hex) === 'deep red'
+  // The light's own color holds over the line's first fifth from its bright end, then the others follow evenly to
+  // the far end. Each has its largest channel at the light's, so the hue turns while the brightness follows the
+  // light (a lower one reads as the dim end of that color). Where two colors meet the stretch between is a little
+  // lighter (readStops).
+  const hueStops = ((): Record<string, ParamValue> => {
+    if (!turns) return { stops: 1, stopColor: [2, 2, 2] }
+    const [from, to] = [along1(brightEnd), along1(farEnd)]
+    const rest = lineRun.hues.slice(1)
+    const places = [0, LINE_HUE_HOLD, ...rest.map((_, k) => LINE_HUE_HOLD + ((1 - LINE_HUE_HOLD) * (k + 1)) / rest.length)]
+    const slots = [2, 2, ...rest.map((_, k) => LINE_HUE_SLOTS[k])]
+    const peak = (hex: string) => Math.max(...hexToLinear(hex))
+    const gains = [1, 1, ...rest.map((c) => round4(peak(light.hex) / peak(c.hex)))]
+    const pad = (values: number[], fill: number) => [...values, ...Array<number>(STOPS - values.length).fill(fill)]
+    const at = pad(places.map((f) => round4(from + (to - from) * f)), 1)
+    const color = pad(slots, 2)
+    const gain = pad(gains, 1)
+    return { stops: places.length, stopAt: at.slice(0, 3), stopAt2: at.slice(3), stopColor: color.slice(0, 3), stopColor2: color.slice(3), stopGain: gain.slice(0, 3), stopGain2: gain.slice(3) }
+  })()
   const params: Record<string, ParamValue> = {
     shape: SHAPE_KINDS.indexOf(layout.shape.kind) + 1,
     at: toFrame(layout.anchor, aspect).map(round4),
@@ -405,9 +442,8 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     aspect: 1,
     rotate: round4(layout.shape.rotate),
     flip: layout.shape.flip,
-    // A cool light's line turns toward a second pack color at its far end (the light-line reference runs blue to
-    // white); a warm one changes color along the line by its drift.
-    ...(lineColor ? { stops: 2, stopAt: [round4(lineColor.bright), round4(lineColor.far), 1], stopColor: [2, 4, 4] } : { stops: 1, stopColor: [2, 2, 2] }),
+    // A line turns through the pack's colors from its bright end to its far end (contour-light-line).
+    ...hueStops,
     ...productionParts('', {
       side: layout.oneSided ? 1 : 0,
       soften,
@@ -420,7 +456,7 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
       // A blue line's glow splits its colors to the two sides (the light-line reference: a different hue on each
       // side). The split moves red one way and blue the other, so it stays off where either end has much red: a
       // warm line's blue side turns green, and Ice or Steel gets a peach fringe.
-      spread: lineColor && littleRed(light.hex) && littleRed(lineColor.partner.hex) ? 0.011 : 0,
+      spread: turns && lineRun.hues.every((c) => littleRed(c.hex)) ? 0.011 : 0,
     }),
     // A line's glow widens steadily toward its bright end, following the slow light along it, with a small hot core
     // and little haze, so the end opens as a cone rather than a cloud.
@@ -532,11 +568,11 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     '#000000',
     light.hex,
     base.gain > 0 ? base.hex : '#000000',
-    lineColor?.partner.hex ?? '#000000',
+    lineRun.hues[1]?.hex ?? '#000000',
     accent.pale ?? '#000000',
     accent.second ?? '#000000',
-    '#000000',
-    '#000000',
+    lineRun.hues[2]?.hex ?? '#000000',
+    lineRun.hues[3]?.hex ?? '#000000',
   ]
   return {
     colors,
@@ -551,12 +587,29 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   }
 }
 
+/**
+ * The emission stops in their order along the curve. Where two colors meet, the light of both adds halfway between
+ * them, so the stretch between is lighter than either and never a dark or muddy mix: BRIDGE_LIFT times the lighter
+ * side's luminance, since at their full sum a line's glow swells there, and paler (BRIDGE_PALE).
+ */
 function readStops(ctx: RecipeContext): EmissionStop[] {
   const count = Math.round(ctx.num('stops'))
   const at = [...ctx.vec('stopAt'), ...ctx.vec('stopAt2')]
-  const slots = [...ctx.vec('stopColor'), ...ctx.vec('stopColor2')]
+  const slots = [...ctx.vec('stopColor'), ...ctx.vec('stopColor2')].map(Math.round)
   const gains = [...ctx.vec('stopGain'), ...ctx.vec('stopGain2')]
-  return Array.from({ length: count }, (_, i) => ({ t: at[i], color: slotColor(ctx, slots[i]), gain: gains[i] }))
+  const placed = Array.from({ length: count }, (_, i) => ({ t: at[i], slot: slots[i], color: slotColor(ctx, slots[i]).map((v) => v * gains[i]) }))
+  return placed.flatMap((s, i) => {
+    const prev = placed[i - 1]
+    if (!prev || prev.slot === s.slot) return [{ t: s.t, color: s.color, gain: 1 }]
+    const sum = prev.color.map((v, c) => v + s.color[c])
+    const scale = Math.min(1, (BRIDGE_LIFT * Math.max(luminance(prev.color), luminance(s.color))) / Math.max(1e-9, luminance(sum)))
+    const bridge = sum.map((v) => v * scale)
+    const grey = luminance(bridge)
+    return [
+      { t: (prev.t + s.t) / 2, color: bridge.map((v) => v + (grey - v) * BRIDGE_PALE), gain: 1 },
+      { t: s.t, color: s.color, gain: 1 },
+    ]
+  })
 }
 
 /** The rim's one emitter from its params: the shape, its emission stops and its parts. */
@@ -571,11 +624,14 @@ export function rimEmitters(ctx: RecipeContext): EmitterSettings[] {
     rotate: ctx.num('rotate'),
     flip: ctx.bool('flip'),
   })
+  const stops = readStops(ctx)
   return [
     {
       shape,
       anchor: ctx.vec('at'),
-      stops: readStops(ctx),
+      stops,
+      // The drift measures against the first stop's color, the light's own at a line's bright end.
+      own: stops[0]?.color,
       near: [1, 2, 3].map((i) => readNear(ctx, `n${i}`, soften, gain)),
       far: [1, 2, 3].map((i) => readFar(ctx, `f${i}`, soften, gain)),
       maskShift: ctx.vec('maskShift'),

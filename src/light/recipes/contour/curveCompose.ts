@@ -916,17 +916,61 @@ export function ringHues(pack: ColorPack, light: PackColor): PackColor[] {
   return [light, ...named(next[pack.id][light.name] ?? [])]
 }
 
+/** The most two neighboring colors on a line may differ in Oklab hue (degrees), and the chroma below which a color is a grey (lineHues). */
+const LINE_HUE_STEP = 60
+const LINE_HUE_GREY = 0.05
+
 /**
- * The pack color a cool light's line turns toward at its far end (the light-line reference runs from blue to
- * white): Meta Blue toward Cyan or Ice, Cyan, Ice and Steel toward Meta Blue. Null for Meta Blue in Elemental and
- * for warm lights: their drift toward deep red as they dim would take the blue out of a Meta Blue end.
+ * The pack colors a line of light runs through along its length, the light's own color first at its bright end
+ * (contour-light-line: orange where it is brightest, through yellow and a pale white to blue at its far end): the
+ * pack's light colors in pack order from the light, the way that has more of them. A line dims the way one warm
+ * color in it does, and that fall must keep every color's largest channel (Yellow's takes all the blue out of a Meta
+ * Blue stretch, Orange-red's keeps it), so a run with no such warm color stops short. A line's glow adds the light
+ * of the stretches near it, so two neighbors must mix into a hue between their own: within LINE_HUE_STEP degrees,
+ * or one of them a grey (Yellow and Cyan add to a green, Meta Blue and Lime to a teal, colors neither pack has).
+ * Forest, Plum, Slate and Near-black are too dark to be a line's light; Tan's fall keeps no other color, so a Tan
+ * line stays one color. Returns the colors and the warm color whose fall the line takes (null when none is warm).
  */
-export function linePartner(pack: ColorPack, light: PackColor): PackColor | null {
-  const has = (hex: string) => pack.colors.find((c) => c.hex.toUpperCase() === hex) ?? null
-  const hex = light.hex.toUpperCase()
-  if (hex === '#0064E0') return has('#1FCDF0') ?? has('#F2F4F7')
-  if (hex === '#1FCDF0' || hex === '#F2F4F7' || hex === '#6A7788') return has('#0064E0')
-  return null
+export function lineHues(pack: ColorPack, light: PackColor): { hues: PackColor[]; dims: PackColor | null } {
+  const lit = pack.colors.filter((c) => lightness(c.hex) >= 0.45)
+  const lch = (c: PackColor) => {
+    const [, a, b] = linearToOklab(hexToLinear(c.hex))
+    return { chroma: Math.hypot(a, b), hue: (Math.atan2(b, a) * 180) / Math.PI }
+  }
+  const mixesBetween = (x: PackColor, y: PackColor) => {
+    const [p, q] = [lch(x), lch(y)]
+    const turn = Math.abs(((p.hue - q.hue + 540) % 360) - 180)
+    return turn <= LINE_HUE_STEP || Math.min(p.chroma, q.chroma) < LINE_HUE_GREY
+  }
+  const keeps = (warm: PackColor, run: readonly PackColor[]) => {
+    const ratios = warmDrift(warm.hex)?.ratios ?? [1, 1, 1]
+    return run.every((c) => {
+      const linear = hexToLinear(c.hex)
+      return ratios[linear.indexOf(Math.max(...linear))] >= 1
+    })
+  }
+  // Of the warm colors whose fall fits, the lightest: a light color that dims slowly reads olive (dark yellow).
+  const fall = (run: readonly PackColor[]) => {
+    const warm = run.filter((c) => warmTail(c.hex))
+    if (warm.length === 0) return { fits: true, dims: null }
+    const dims = warm.filter((c) => keeps(c, run)).sort((x, y) => lightness(y.hex) - lightness(x.hex))[0] ?? null
+    return { fits: dims !== null, dims }
+  }
+  const at = lit.findIndex((c) => c.hex === light.hex)
+  if (at < 0) return { hues: [light], dims: warmTail(light.hex) ? light : null }
+  const longest = (ordered: readonly PackColor[]) => {
+    const steps = ordered.findIndex((c, i) => i > 0 && !mixesBetween(ordered[i - 1], c))
+    const reach = steps < 0 ? ordered.length : steps
+    for (let n = reach; n > 1; n--) {
+      const run = ordered.slice(0, n)
+      const { fits, dims } = fall(run)
+      if (fits) return { hues: run, dims }
+    }
+    return { hues: [light], dims: warmTail(light.hex) ? light : null }
+  }
+  const forward = longest(lit.slice(at))
+  const backward = longest(lit.slice(0, at + 1).reverse())
+  return forward.hues.length > backward.hues.length ? forward : backward
 }
 
 /** How flat a Tan light's field is along the curve (the power of its flat-top field). */
