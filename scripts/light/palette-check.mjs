@@ -109,6 +109,14 @@ const T = {
   // high above: L 0.40 over a mean of 0.02) and Beam's empty slate, navy and Forest fields (brightest under L 0.3)
   // fail.
   black: { peakL: 0.5, meanL: 0.06, darkPeakL: 0.35, darkMeanL: 0.25 },
+  // Bright light goes smoothly to white, so a flat white area is clipping (SHARED.md, decided 2026-11-07 1:55 AM): a
+  // frame fails when this share of it is at 253 or more in every channel. Set by eye in compare round 18
+  // (artifacts/compare/rounds/18/clip/): under 2.5% the white reads as a light's bright core (a sun on the horizon, a
+  // bloom's center, a thin white rim), from 3.5% as a flat blown-out area in every look (Streaks' cream floors, Blooms'
+  // and Ramp's white fields, Halo's white tubes), and 3% splits the turn. How thick the clipped area is tells a round
+  // core from a line, not a core from a flat area, and its largest piece is nearly all of it. No moodboard reference
+  // has a clipped pixel.
+  flatWhite: 0.03,
   // A Contour frame shows no pack color when its pack colors, at any lightness (Atmospheric's white is Ice), cover
   // under `noPack` of it.
   noPack: 0.01,
@@ -861,6 +869,9 @@ try {
       }
       await sharp(px, { raw: { width: W, height: H, channels: 3 } }).png().toFile(mapFile)
     }
+    // Clipped white: the share of the frame at 253 or more in every channel.
+    let clipped = 0
+    for (let p = 0; p < n; p++) if (!skip[p] && data[3 * p] >= 253 && data[3 * p + 1] >= 253 && data[3 * p + 2] >= 253) clipped++
     let darkLine = 0
     const darkLineNames = {}
     for (let p = 0; p < n; p++) {
@@ -1020,6 +1031,7 @@ try {
       largestPatch: frac(largest),
       darkLine: frac(darkLine),
       darkLineNames: top(darkLineNames),
+      clipped: frac(clipped),
       base: { share: frac(base), outside: base ? baseOut / base : 0, names: top(baseNames, Math.max(1, base)) },
       lit: {
         share: frac(lit),
@@ -1059,6 +1071,7 @@ try {
     const empty = !sunset && m.peakL < T.black.darkPeakL && m.meanL < T.black.darkMeanL
     m.nearlyBlack = (m.peakL < T.black.peakL && m.meanL < T.black.meanL) || empty
     if (m.nearlyBlack) fail('nearly black', `nearly black (brightest at L ${m.peakL.toFixed(2)}, mean L ${m.meanL.toFixed(2)})`)
+    if (m.clipped >= T.flatWhite) fail('flat white', `flat white ${(100 * m.clipped).toFixed(1)}% (253 or more in every channel)`)
     if (!sunset && m.shown < T.noPack) fail('no pack color', 'no pack color')
     // Bold's two warm colors count as one warm light: Yellow's deeper tones and Orange-red's overexposed ones
     // overlap (orange, peach, cream), so a frame shows two warm colors only when both appear at their own
@@ -1582,7 +1595,7 @@ try {
       : `, no pack color, base or light outside the pack${dragged ? '' : ', a pack light color never used across seeds'}`
     const comp = [
       { input: textSvg([{ text: `${look}: palette check${dragged ? ' at the test drags' : ''}`, color: '#fff' }], width, 22, 16), left: 12, top: 8 },
-      { input: textSvg([sourceLabel, `Rule: ${rule}${rule === 'new' ? ` (lens edges up to ${+T.lensEdge.toFixed(3)} of the short side)` : ''}. Bar: each pack color's share in its hex, then clean mixes (grey), lens edges (teal grey), pale bridges (light grey), white, the dark base (black), and outside colors (red). A red frame fails, an orange one looks like another pack's at that seed. Fail: a wide outside area ${pct(T.largestPatch)}+ (or ${pct(T.wideShare)}+ in all), nearly black${lookFails}.`], width, 34, 11, '#aaa'), left: 12, top: 30 },
+      { input: textSvg([sourceLabel, `Rule: ${rule}${rule === 'new' ? ` (lens edges up to ${+T.lensEdge.toFixed(3)} of the short side)` : ''}. Bar: each pack color's share in its hex, then clean mixes (grey), lens edges (teal grey), pale bridges (light grey), white, the dark base (black), and outside colors (red). A red frame fails, an orange one looks like another pack's at that seed. Fail: a wide outside area ${pct(T.largestPatch)}+ (or ${pct(T.wideShare)}+ in all), nearly black, flat white ${pct(T.flatWhite)}+${lookFails}.`], width, 34, 11, '#aaa'), left: 12, top: 30 },
     ]
     let top = 70
     for (const g of groups) {
