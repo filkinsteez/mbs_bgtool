@@ -36,6 +36,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
   const pale: number[] = []
   const core: number[] = []
   const veil: number[] = []
+  const fall: number[] = []
   const bumps: Record<'at' | 'width' | 'top' | 'bottom' | 'cover' | 'light', number[]> = { at: [], width: [], top: [], bottom: [], cover: [], light: [] }
   for (let i = 0; i < BAND_MAX; i++) {
     const key = (name: Parameters<typeof bandKey>[1]) => bandKey(i, name)
@@ -45,6 +46,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     core.push(coreHeight, corePlace)
     const [veilAmount, veilHeight] = ctx.vec(key('Veil'))
     veil.push(...(veilAmount > 0 ? paleLight(bandColor(i) as Rgb).map((v) => v * veilAmount) : [0, 0, 0]), veilHeight)
+    fall.push(...ctx.vec(key('Fall')).slice(0, 2))
     const [top, bottom] = ctx.vec(key('Edges'))
     const [fadeTop, fadeBottom] = ctx.vec(key('Fade'))
     const [waveTop, waveBottom, wavelength] = ctx.vec(key('Wave'))
@@ -76,11 +78,14 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     return [c[0] * k, c[1] * k, c[2] * k]
   }
   // A spill adds at most the band's own light, so a dark band next to a far lighter one (Near-black under an Ice
-  // line) keeps its own color instead of turning a lighter grey.
+  // line) keeps its own color instead of turning a lighter grey. None passes between a grey and a color (Meta
+  // Blue into Slate): the grey would take the color's hue and read as it.
+  const greyish = (c: readonly number[]) => linearToOklch(c as Rgb)[1] < 0.04
   const spillFrom = (from: number, into: number): number[] => {
     if (spillAmount <= 0 || from >= count || into >= count) return [0, 0, 0]
     const a = lit(from)
     const b = lit(into)
+    if (greyish(a) !== greyish(b)) return [0, 0, 0]
     const t = Math.min(1, Math.max(0, (linearToOklch(a as Rgb)[0] - linearToOklch(b as Rgb)[0] - 0.06) / 0.1))
     const lighter = t * t * (3 - 2 * t)
     const amount = Math.min(spillAmount * lighter, luminance(b) / Math.max(luminance(a), 1e-6))
@@ -136,6 +141,7 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     uBandPale: pale,
     uBandCore: core,
     uBandVeil: veil,
+    uBandFall: fall,
     uSkyVeilColor: ctx.vec('skyTint').map((v) => v * Math.max(0, ctx.vec('skyVeil')[0])),
     uSkyVeilSpan: ctx.vec('skyVeil').slice(1, 4),
     uSkyVeilEnd: ctx.vec('skyVeilEnd'),
@@ -219,10 +225,11 @@ uniform vec3 uBandDrift[BAND_MAX];  // how fast red, green and blue deepen as th
 uniform vec3 uBandPale[BAND_MAX];   // pale light of the band's own hue at its core, near the light's column (0: none)
 uniform vec2 uBandCore[BAND_MAX];   // the band's height (frame heights) and where its core is (0 its top, 1 its height below)
 uniform vec4 uBandVeil[BAND_MAX];   // pale light of the band's own hue at its lower edge (rgb, 0: none), the band's height
+uniform vec2 uBandFall[BAND_MAX];   // its light's falloff away from the light: amount, side (1 its bottom, -1 its top)
 uniform vec3 uSkyVeilColor;          // light of the pack's own tint where the sky meets the light's side (0: none)
 uniform vec3 uSkyVeilSpan;           // where that veil starts and is full (frame heights), the sky's own light change there
 uniform vec2 uSkyVeilEnd;            // above a dark band, where the veil gives way again to the sky's own color (frame heights)
-uniform vec2 uSkyDrift;              // how far the sky's own boundaries wander (frame heights, RMS) and their lattice (short sides)
+uniform vec4 uSkyDrift;              // how far the sky's own boundaries wander (frame heights, RMS), their lattice (short sides), the lean of where it pales and of where its far part turns dark (frame heights per frame width)
 uniform vec4 uFarSky;                // under a long line: the dark pack color the farthest sky sinks toward (linear), how far
 uniform vec2 uFarSpan;               // where the far sky has that color fully and where it is gone (frame heights)
 uniform vec4 uBumpAt[BAND_MAX];
@@ -323,7 +330,7 @@ vec3 scene(float x, float v, vec2 p) {
   float sharpest = 1.5 * uPixel / frameH;
   float sunFall = 1.0 / (1.0 + pow(abs(x - uSun.x) / max(uSun.y, 1e-3), 1.6));
   // The same point at the frame's scale, from the light: a stack drawn out along a line keeps frame-sized light
-  // change, and each edge keeps its own wander on the frame (divided by the same k below).
+  // change (its edges use the same k below).
   vec2 f = uStackFrame.yz + (p - uStackFrame.yz) * vec2(1.0, uStackFrame.x);
 
   // A dim sky keeps its own hue (Meta Blue sinks to deep navy); a warm one deepens like warm light.
@@ -361,15 +368,18 @@ vec3 scene(float x, float v, vec2 p) {
   }
   float giveWay = exp(-uExtinction * glowDepth);
   vec3 c = base * skyGain * giveWay;
-  // The sky's own boundaries (where it pales, where its far part turns dark) wander like the band edges.
-  float vSky = v + uSkyDrift.x * edgeWave(p.x, uSkyDrift.y, 41.0, uEdgeSeed) / uStackFrame.x;
+  // The sky's own boundaries (where it pales, where its far part turns dark) wander like the band edges, each on
+  // its own lattice and with its own lean, so the stretch of full color between them changes width along its length.
+  float skyBend = uSkyDrift.x * inversesqrt(uStackFrame.x);
+  float vVeil = v + skyBend * edgeWave(p.x, uSkyDrift.y, 41.0, uEdgeSeed) + uSkyDrift.z * dx / uStackFrame.x;
+  float vFar = v + skyBend * edgeWave(p.x, 1.37 * uSkyDrift.y, 43.0, uEdgeSeed) + uSkyDrift.w * dx / uStackFrame.x;
   if (uSkyVeilColor != vec3(0.0) || uSkyVeilSpan.z != 0.0) {
     // The sky pales toward the light: its full color only at the far edge, then it gives way to a tint of the pack's
     // own colors all the way down to where the bands begin.
-    float t = smoothstep(uSkyVeilSpan.x, uSkyVeilSpan.y, vSky) * (1.0 - smoothstep(uSkyVeilEnd.x, uSkyVeilEnd.y, v));
+    float t = smoothstep(uSkyVeilSpan.x, uSkyVeilSpan.y, vVeil) * (1.0 - smoothstep(uSkyVeilEnd.x, uSkyVeilEnd.y, v));
     c = c * (1.0 + uSkyVeilSpan.z * t) + toMix(uSkyVeilColor) * t * skyGain * giveWay;
   }
-  if (uFarSky.w > 0.0) c = mix(c, toMix(uFarSky.rgb) * skyGain * giveWay, uFarSky.w * (1.0 - smoothstep(uFarSpan.x, max(uFarSpan.y, uFarSpan.x + 1e-4), vSky)));
+  if (uFarSky.w > 0.0) c = mix(c, toMix(uFarSky.rgb) * skyGain * giveWay, uFarSky.w * (1.0 - smoothstep(uFarSpan.x, max(uFarSpan.y, uFarSpan.x + 1e-4), vFar)));
   // Share of the frame here that no covering band hides; the glow shows through it.
   float open = 1.0;
 
@@ -383,8 +393,8 @@ vec3 scene(float x, float v, vec2 p) {
     vec4 look = uBandLook[i];
     vec4 tilt = uBandTilt[i];
     vec4 sun = uBandSun[i];
-    float shift = tilt.x * dx;
-    float shiftBottom = tilt.y * dx;
+    float shift = 0.0;
+    float shiftBottom = 0.0;
     float cover = 1.0 + tilt.z * dx;
     float light = look.y;
     for (int j = 0; j < 4; j++) {
@@ -397,10 +407,12 @@ vec3 scene(float x, float v, vec2 p) {
       cover *= 1.0 + uBumpCover[i][j] * g;
       light *= 1.0 + uBumpLight[i][j] * g;
     }
-    if (wave.x != 0.0) shift += wave.x * edgeWave(p.x, wave.z, float(2 * i), uEdgeSeed);
-    if (wave.y != 0.0) shiftBottom += wave.y * edgeWave(p.x, wave.z, float(2 * i + 1), uEdgeSeed);
-    shift /= uStackFrame.x;
-    shiftBottom /= uStackFrame.x;
+    if (wave.x != 0.0) shift += wave.x * edgeSwell(p.x, float(2 * i), uEdgeSeed) * edgeWave(p.x, wave.z, float(2 * i), uEdgeSeed);
+    if (wave.y != 0.0) shiftBottom += wave.y * edgeSwell(p.x, float(2 * i + 1), uEdgeSeed) * edgeWave(p.x, wave.z, float(2 * i + 1), uEdgeSeed);
+    // A stack drawn out k times along a line keeps each edge's tilt on the frame (divided by k), and its bends grow
+    // with the bands (divided by the square root of k only), so a long line shows curved boundaries, not ruled ones.
+    shift = tilt.x * dx / uStackFrame.x + shift * inversesqrt(uStackFrame.x);
+    shiftBottom = tilt.y * dx / uStackFrame.x + shiftBottom * inversesqrt(uStackFrame.x);
     float top = edge.x + shift;
     // A bottom at 2 or more is none: the band runs on past the frame, and past the scene's own frame when a drag
     // draws the stack tighter.
@@ -428,6 +440,12 @@ vec3 scene(float x, float v, vec2 p) {
       if (l.z < -0.5 || int(l.y + 0.5) != 2 || int(l.z + 0.5) != i) continue;
       float r = (x - uLightShape[k].x) / max(uLightShape[k].z, 1e-3);
       light *= 1.0 - l.x * exp(-0.5 * r * r);
+    }
+    if (uBandFall[i].x > 0.0) {
+      // A wide area's own light falls off away from the light: deeper toward its far side, paler toward the light.
+      float depth = saturate((v - top) / max(uBandVeil[i].w, 1e-3));
+      float far = uBandFall[i].y > 0.0 ? depth : 1.0 - depth;
+      light *= 1.0 - uBandFall[i].x * far * far * (3.0 - 2.0 * far);
     }
     int mode = int(look.z + 0.5);
     float a = mode == 2 || mode == 3 ? shape * cover : min(1.0, shape * cover * look.x);
@@ -535,8 +553,9 @@ vec3 auxRadiance(vec2 uv, vec2 p) {
   // The scene point this frame point shows: the stack runs along the dragged line (the same point without a drag).
   vec2 q = vec2(dot(uStackMap.xy, p), dot(uStackMap.zw, p)) + uStackShift;
   vec2 s = q / uFrameAspect + 0.5;
-  // Water in front of the frame meets the bank along a shore that wanders, not a ruled line.
-  float line = uWaterAxis >= 0.0 ? uWater.x + 0.035 * edgeWave(q.x, 0.9, 13.0, uEdgeSeed + 61) : uWater.x;
+  // Water in front of the frame meets the bank along a shore that wanders unevenly, not a ruled line or a steady
+  // ripple.
+  float line = uWaterAxis >= 0.0 ? uWater.x + 0.045 * edgeSwell(q.x, 13.0, uEdgeSeed + 61) * edgeWave(q.x, 1.6, 13.0, uEdgeSeed + 61) : uWater.x;
   if (uWater.x < 1.99 && s.y > line) return water(s.x, s.y, q, line);
   return scene(s.x, s.y, q);
 }

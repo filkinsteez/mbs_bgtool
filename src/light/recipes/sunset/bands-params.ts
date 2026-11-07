@@ -43,6 +43,7 @@ export type BandParamName =
   | 'Drift'
   | 'Pale'
   | 'Veil'
+  | 'Fall'
 
 export type PatchParamName = 'Shape' | 'Look'
 export type LightParamName = 'Shape' | 'Look'
@@ -101,6 +102,9 @@ function bandSpecs(index: number): ParamSpec[] {
     // Pale light of the band's own hue rising across the band toward its lower edge (the haze near a light below
     // it): amount at the lower edge, the band's height (frame heights).
     { kind: 'vector', key: key('Veil'), label: `Band ${n} pale veil toward its lower edge: amount, height`, min: 0, max: 2, step: 0.005, default: [0, 1] },
+    // The band's light falling off away from the light: amount at its far side, and which side is far (1 its
+    // bottom, for a band below the light; -1 its top, for a band above it). The height is the veil's.
+    { kind: 'vector', key: key('Fall'), label: `Band ${n} light falloff away from the light: amount, side`, min: -1, max: 1, step: 0.005, default: [0, 1] },
   ]
 }
 
@@ -161,7 +165,7 @@ export const BANDS_PARAMS: readonly ParamSpec[] = [
   { kind: 'vector', key: 'skyVeilEnd', label: 'Sky veil gives way again from, to', min: -1, max: 10, step: 0.0005, default: [9, 10] },
   // The sky's own boundaries (where the veil begins, where the far sky turns dark) wander: how far (frame heights,
   // RMS) and along what lattice (short sides).
-  { kind: 'vector', key: 'skyDrift', label: 'Sky boundaries wander, lattice', min: 0, max: 4, step: 0.0005, default: [0, 1] },
+  { kind: 'vector', key: 'skyDrift', label: 'Sky boundaries wander, lattice, lean where it pales, lean where its far part turns dark', min: -1, max: 4, step: 0.0005, default: [0, 1, 0, 0] },
   // The light that veil adds, in linear light: a tint of the pack's own colors (Cyan, Lime, Steel).
   { kind: 'vector', key: 'skyTint', label: 'Sky veil light, linear red, green, blue', min: 0, max: 4, step: 0.0005, default: [1, 1, 1] },
   // Under a long line the farthest sky sinks toward a dark pack color: its linear light and how far, full above
