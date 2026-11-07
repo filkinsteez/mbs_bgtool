@@ -1229,6 +1229,10 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // Light water is a near mirror with a faint path, deep water dark with a strong one. A tall,
     // narrow frame's path widens less, so it never fills the water's width.
     sunPath: [water ? look.sunPath * lerp(0.45, 1.25, depth) : 0, 0.02, 0.5 * Math.sqrt(frameWidth / tall), pathGlow],
+    // Under a line that puts a warm glow above the frame, the path fills much of the water: there
+    // it is a narrower field of glints with an edge as sharp as the lens, not a wide blend into the
+    // blue that reads grey or olive. Atmospheric's Ice path meets its water without a third hue.
+    sunPathEdge: line && water && warmLight ? clamp01((dragRise - frameHigh) / (0.1 * tall)) : 0,
     // The path's middle reaches the glow's paler top at the bottom edge. Toward its sides it
     // mirrors the band part way from the glow up to the low sky's edge, at the seed's own view the
     // light just above the glow.

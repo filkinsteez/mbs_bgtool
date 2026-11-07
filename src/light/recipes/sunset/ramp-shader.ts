@@ -105,6 +105,7 @@ uniform vec2 uShoreFoot;     // the far bank's waterline below the horizon, as a
 uniform vec3 uWaterLift;     // under the far bank's mirror image and a strip below it the water mirrors the sky this much
                              // higher (short sides, 0: none); the strip's depth; the share of the reflection kept past it
 uniform vec4 uSunPath;       // the sun's path on the water: strength, half width at the line, widening per short side of depth, height of the glow it mirrors
+uniform float uSunPathEdge;  // 0: the path's sides fade softly; 1: its edge is as sharp as the lens
 uniform vec2 uSunLight;      // depth where the path's middle reaches the glow's paler top and its added light is gone, and the height
                              // of the band above the glow that its sides climb through
 uniform vec4 uWater;         // squeeze, degrees below the horizon half a short side under the line, ripple smear per unit of depth, strip strength
@@ -591,6 +592,10 @@ const float AIR_ABOVE = 0.02;
 const float WATER_WIND = 0.25;
 // The sun's path is brighter than the glow it mirrors by up to this share: its glints catch the sun.
 const float PATH_GAIN = 0.35;
+// Half the width of the edge of a path of glints, as a share of the lens radius, and how much
+// narrower such a path is.
+const float PATH_EDGE = 0.5;
+const float PATH_NARROW = 0.55;
 // How much lighter the water is where its warm reflection and its own cool light meet half and half.
 const float WATER_BRIDGE = 0.3;
 // How much less the water near the horizon squeezes the sky it mirrors under the sun, and how much more far to its sides.
@@ -680,18 +685,28 @@ vec3 rampScene(vec2 p) {
           // glow's reflection with no neck where the two meet.
           float flare = max(glowTop / max(uWater.x, 0.1), 0.05);
           spread += 0.75 * flare * exp(-depth / flare);
+          // A path of glints under a glow above the frame is narrower: it doesn't fan over most of the water.
+          spread *= mix(1.0, PATH_NARROW, uSunPathEdge);
           float middle = 0.25 * spread * edgeFbm(along + 9.7, uSeed + 1009, 2);
           float ragged = 0.1 * hazeNoise(vec2(across / 0.15, 4.0 * along), uSeed + 991);
           float a = max(abs(across - middle) / spread + ragged, 0.0);
           float reach = min(1.0, depth / uSunLight.x);
-          onPath = exp(-0.5 * a * a);
+          // Under a glow above the frame the path is a field of glints on the darker water: inside
+          // it the ripples all catch the glow, and its ragged edge is no wider than the lens, so the
+          // warm reflection never blends into the blue water over a wide grey band.
+          float edge = max(PATH_EDGE * uLens / spread, 0.02);
+          float glints = 1.0 - smoothstep(1.0 - edge, 1.0 + edge, a);
+          onPath = mix(exp(-0.5 * a * a), glints, uSunPathEdge);
           brighter = PATH_GAIN * min(1.0, uSunPath.x) * onPath * (1.0 - 0.5 * reach);
           // Down its middle it mirrors the glow, and toward the viewer the band above it; toward
           // its sides the sky higher up, at a rate that does not change with depth, so it widens
           // with the path instead of closing in like a funnel. A faint path is as wide, and paler.
           float glow = max((0.5 + 0.5 * reach) * uSunPath.w, line - top + 0.01);
           float band = max(uSunLight.y, 0.04);
-          up = min(up, glow + band * (reach * reach + 1.5 * (1.0 - min(1.0, uSunPath.x)) + 0.7 * (1.0 + reach) * a * a));
+          float paler = reach * reach + 1.5 * (1.0 - min(1.0, uSunPath.x));
+          float soft = min(up, glow + band * (paler + 0.7 * (1.0 + reach) * a * a));
+          float inside = mix(up, min(up, glow + band * (paler + 0.2 * min(a * a, 1.0))), glints);
+          up = mix(soft, inside, uSunPathEdge);
           r = mix(r, max(r, 0.95), onPath);
         }
         mirrored = vec2(p.x, line - up);
