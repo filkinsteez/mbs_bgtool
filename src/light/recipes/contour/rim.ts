@@ -72,6 +72,12 @@ const LINE_HUE_SLOTS = [4, 7, 8]
  */
 const BRIDGE_LIFT = 1.1
 const BRIDGE_PALE = 0.6
+/**
+ * How strongly a logo crop's edges face a dragged line's way. An edge turned fully away keeps 1 minus this of the
+ * light; at 0.85, crops whose edges all ran along the line went nearly black (SHARED.md, 2026-11-05 11:22 AM).
+ */
+const DRAG_LOGO_FACING = 0.4
+const FACING_POWER = 1.5
 const luminance = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 // The whole Meta logo outline (104 pieces, 3 contours) plus a cut at every stop in each contour must fit:
 // pieces past the limit are dropped, and the inside test then flips inside and outside in horizontal bands.
@@ -396,6 +402,13 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   const spread = dragged ? offFrameSpread(controls.drag, dragged.hot, aspect) : 0
   const dragT = dragged ? Math.min(1, dragged.lineLength / 0.15) : 0
   const dragWay = dragT * dragT * (3 - 2 * dragT)
+  // A Tan corner lights both its edges alike: an edge turned away would sit at a dim Tan along its whole length.
+  // Under a dragged line the edges facing its way catch more of the light, so the direction shows. A logo crop's do
+  // so gently (DRAG_LOGO_FACING): its hot spot's edge often runs along the line, and at the undragged strength kept a
+  // sixth of the light. With Elemental's second light the frame stays lit and a brighter blue edge would add teal to
+  // the Lime glow, so it keeps the undragged strength.
+  const dragFacing = line ? 0 : logo ? (accent.second ? 0.85 : DRAG_LOGO_FACING) : 0.6
+  const facing = dragged ? dragFacing * dragWay : bright ? 0 : logo ? 0.85 : 0
   // A line runs through the pack's colors along its length (lineHues) and dims the way its warm color does.
   const lineRun = line ? lineHues(pack, light) : { hues: [light], dims: null }
   const drift = warmDrift((lineRun.dims ?? light).hex)
@@ -522,13 +535,9 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
             f2Weight: 0.02,
           }
       : {}),
-    // A Tan corner lights both its edges alike: an edge turned away would sit at a dim Tan along its whole length.
-    // Under a dragged line it faces the line's way a little more gently than other lights, so the direction shows.
-    facing: round4(
-      dragged ? (line ? 0 : logo ? (bright ? 0.75 : 0.85) : 0.6) * dragWay : bright ? 0 : logo ? 0.85 : 0,
-    ),
+    facing: round4(facing),
     facingAngle: round4(dragged ? dragged.lineAngle : toward),
-    facingPower: 1.5,
+    facingPower: FACING_POWER,
     farWidth: 0.01,
     // Along a dragged line the light is at the look's far end (10 to 30 times dimmer) where the line ends. A line of
     // light fades slowly from its bright end: full at the frame edge, then e times dimmer every 0.35 of the long side.
