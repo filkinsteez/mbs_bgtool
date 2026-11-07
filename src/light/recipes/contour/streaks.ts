@@ -691,6 +691,9 @@ const THICK_WARM = [1, 2, 0.45]
 /** The lit sky's side softness for a seed with crisp sides under a dragged line, as a factor. */
 const CRISP_SIDES = 0.55
 
+/** How much stronger the faint streaks inside the shafts are under a dragged line. */
+const LINE_STREAKS = 2
+
 /**
  * A glossy floor's reflection of the light under a dragged line, as factors on the seed's
  * floor pool: its level, how far it runs toward the camera, and its width.
@@ -731,6 +734,7 @@ function streaksOnLine(params: Record<string, ParamValue>, line: ShortLine, skyH
   const near = params.near as number[]
   const skyLevel = params.skyLevel as number[]
   const floor = params.floor as number[]
+  const texture = params.texture as number[]
   // The lit sky's width (bright end first), narrower than without a line so a dark side shows
   // in a frame the line fills, and how far it can turn either way above the horizon.
   const width = (sky[1] - sky[0]) * FAN_ON_LINE
@@ -766,6 +770,9 @@ function streaksOnLine(params: Record<string, ParamValue>, line: ShortLine, skyH
     layer: [round4(layer[0] * scale), round4(layer[1] * scale), layer[2], layer[3]],
     rise: [round4(0.25 * rise[0]), round4(rise[1] * scale), round4(rise[2] * scale), rise[3]],
     clouds: [round4(Math.min(64, clouds[0] / scale)), clouds[1], round4(clouds[2] * shade[1]), round4(clouds[3] * shade[2])],
+    // The clouds' gaps spread over the line's reach, so a long line has only a few wide ones;
+    // the faint streaks inside the shafts keep a few soft streaks of light across them.
+    texture: [round4(texture[0] * LINE_STREAKS), texture[1], texture[2]],
     near: [round4(near[0] * scale), round4(near[1] * scale), near[2], near[3]],
     nearShape: [round4((params.nearShape as number[])[0] * scale), (params.nearShape as number[])[1]],
     // A clear-air seed's floor is glossy: the light's reflection runs far toward the camera,
