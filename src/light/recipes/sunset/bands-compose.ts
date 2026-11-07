@@ -807,15 +807,19 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     }
     const sky = now[0]
     const far = farShare > 0 ? farShare : farOwn
-    const farSpan = farShare > 0 ? Math.max(w, fix) : fix
+    // Each comes in from what the line gives without it, in step with `fix`, so it changes evenly as the start
+    // leaves the frame.
+    const farOwnLine = farShare > 0 ? w : 0
+    const farSpan = farOwnLine + (1 - farOwnLine) * fix
+    const blueOwn = w * blueShare * sky
     const deep = Math.max(Math.min(deepLeast, sky - paleLeast), farOwn > 0 ? Math.min(0.8, farOwn + farFade + 0.25) * sky : 0)
     lineSky = {
-      blueTo: Math.max(w * blueShare * sky, fix * deep),
+      blueTo: blueOwn + fix * Math.max(0, deep - blueOwn),
       pale: far > 0 || !tintHex ? 0 : fix * smoothstep(0.5, 0.7, sky / ownSpan),
       tintAt,
       far:
         darkest && far > 0
-          ? { hex: darkest.hex, amount: Math.max(farShare > 0 ? w : 0, smoothstep(0, 1, fix)), full: farSpan * far * sky, gone: farSpan * (far + farFade) * sky }
+          ? { hex: darkest.hex, amount: farOwnLine + (1 - farOwnLine) * smoothstep(0, 1, fix), full: farSpan * far * sky, gone: farSpan * (far + farFade) * sky }
           : undefined,
     }
   }
@@ -984,9 +988,13 @@ function stackMap(scene: Scene, drag: BandsComposeInput['drag'], frameW: number,
   const from = [(drag.from[0] - 0.5) * frameW, (drag.from[1] - 0.5) * frameH]
   const along = dragAlong(drag, frameW, frameH)
   if (along < 1e-6) return identity
-  // The line's direction, short-side units.
-  const ux = ((drag.to[0] - drag.from[0]) * frameW) / (along * frameH)
-  const uy = (drag.to[1] - drag.from[1]) / along
+  // The line's direction, short-side units. A short line turns the stack only part of the way from upright, fully
+  // from 0.3 of the short side: the tool keeps the line's ends to 0.001 of the frame, which turns a line a few lens
+  // radii long by up to 2 degrees from one step to the next.
+  const toward = Math.atan2((drag.to[1] - drag.from[1]) / along, ((drag.to[0] - drag.from[0]) * frameW) / (along * frameH))
+  const fromUp = Math.atan2(Math.sin(toward + Math.PI / 2), Math.cos(toward + Math.PI / 2))
+  const turned = -Math.PI / 2 + smoothstep(0, 0.3, along * frameH) * fromUp
+  const [ux, uy] = [Math.cos(turned), Math.sin(turned)]
   const zoom = zoomOf(along, scene.seedSpan)
   // Along the line toward `to` is up the stack, toward the sky, drawn out `zoom` times; across it to the line's right
   // is the stack's x at the frame's own scale, so each band keeps its own edges (the shader divides their wander and
