@@ -78,7 +78,13 @@ export interface SkySpec {
    * light, reaching the far sky `behind` short sides away (BEHIND_REACH without it). Without one the darkening runs
    * across the frame, turned by `turn`.
    */
-  line?: { from: readonly [number, number]; to: readonly [number, number]; behind?: number }
+  line?: {
+    from: readonly [number, number]
+    to: readonly [number, number]
+    behind?: number
+    /** How much the sky also darkens away from the line's axis, per short side squared (0 by default). */
+    round?: number
+  }
   /**
    * The deep part of the far sky: past an edge of its own it sinks `stops` further, toward deep navy. The edge lies
    * `at` short sides ahead of the light at `from` (frame fractions) along `angle` (degrees, y down), never behind it;
@@ -191,6 +197,16 @@ const SPREAD_RED_BODY: Readonly<Record<Spread, readonly [number, number]>> = { s
  */
 const FORM_DRAG_DEEP: Readonly<Record<DeepForm, readonly [number, number]>> = { band: [1.0, 1.2], corner: [0.75, 0.9], side: [0.45, 0.6] }
 const SPREAD_DRAG_REACH: Readonly<Record<Spread, number>> = { small: 0.72, broad: 1.12 }
+/** Beyond an edge pointing away: how far along the edge the light comes in (short sides), and its lit side's reach by deep form. */
+const EDGE_SHIFT: readonly [number, number] = [0.1, 0.55]
+const FORM_BEHIND: Readonly<Record<DeepForm, number>> = { band: 1.35, corner: 1, side: 0.7 }
+/** The most that shift takes the light from the line's start, against half the frame along the edge. */
+const EDGE_SHIFT_MAX = 0.7
+/**
+ * There, how much the sky also darkens away from the line's axis (per short side squared), by deep form: the lit sky is
+ * level under a band of deep blue, round the light over a corner of it, and between over a whole side.
+ */
+const FORM_LIT_ROUND: Readonly<Record<DeepForm, number>> = { band: 0, corner: 0.9, side: 0.4 }
 
 /**
  * A Bold seed's form. Both step on with the arrangement and with the run of five, so a run's frames differ and an
@@ -406,6 +422,10 @@ function followDrag(
     bank,
     veilPlateau,
     broadLead,
+    edgeShift,
+    behindScale,
+    litRound,
+    paleLight,
   } = seedDrag
   const frame = [Math.sqrt(aspect), 1 / Math.sqrt(aspect)]
   const toP = (p: readonly number[]): [number, number] => [(p[0] - 0.5) * frame[0], (p[1] - 0.5) * frame[1]]
@@ -431,6 +451,12 @@ function followDrag(
   const toLight = toP(drag.from)
   const awayFromFrame = (toLight[0] * line[0] + toLight[1] * line[1]) / (Math.max(Math.hypot(toLight[0], toLight[1]), 1e-6) * length)
   const outWide = smoothstep(0, OUT_WIDE_AT, outside) * smoothstep(-0.2, 0.6, awayFromFrame)
+  // There the light comes in along that edge at the seed's own place (edgeShift, short sides across the line), so seeds
+  // differ in where along the edge it lights the frame.
+  const across = [-line[1] / length, line[0] / length]
+  const halfAcross = 0.5 * (Math.abs(across[0]) * frame[0] + Math.abs(across[1]) * frame[1])
+  const shift = clamp(edgeShift * outWide * Math.min(frame[0], frame[1]), -EDGE_SHIFT_MAX * halfAcross, EDGE_SHIFT_MAX * halfAcross)
+  const lightAt = fromP([start[0] + across[0] * shift, start[1] + across[1] * shift])
   // A sun that burns like fire shows its own color only near its middle, so beyond an edge, pointing away, it reaches
   // further to bring its body in as a band; and as far, as a share of the frame, in a wide frame as in a tall one,
   // which stretches a glow along its axis (glowStretch), so a wide frame's range is longer. Farther in a tall frame,
@@ -503,7 +529,7 @@ function followDrag(
     if (i === 0) {
       return {
         ...glow,
-        at: [drag.from[0], drag.from[1]] as [number, number],
+        at: lightAt,
         angle: (lineAngle * 180) / Math.PI,
         aniso: leadShape,
         radius: reach / Math.sqrt(leadShape),
@@ -607,10 +633,11 @@ function followDrag(
     const lead = placed[0]
     return i > 0 && (warm(lead.color) || (cyanGlow(lead) && warm(glow.color))) ? { ...glow, at: clearOfLead(glow.at, lead) } : glow
   })
-  // A broad warm lead (Bold) lights far out: a cyan bloom moves straight out from its middle to where the lead's light
-  // (its falloff along its axes, as the shader draws it) is down to DRAG_CYAN_ON_LEAD, as on it cyan and yellow light
-  // make mint. It still lies over the lead's dim edge, where its light keeps the warm light from meeting the blue in khaki.
-  const outOfLead = (at: [number, number]): [number, number] => {
+  // A bloom moves straight out from the lead's middle to where the lead's light (its falloff along its axes, as the shader
+  // draws it) is down to `level` of its middle: a cyan bloom beside a broad warm lead (Bold), as on it cyan and yellow
+  // light make mint (it still lies over the lead's dim edge, where its light keeps the warm light from meeting the blue in
+  // khaki), and a white bloom (Ice) beside a white lead, as on it the two add up to flat white.
+  const outOfLead = (at: [number, number], level: number): [number, number] => {
     const light = keptOut[0]
     const a = (light.angle * Math.PI) / 180
     const [c, q] = [toP(light.at), toP(at)]
@@ -618,14 +645,15 @@ function followDrag(
     const long = (light.radius * Math.sqrt(light.aniso)) / stretch[0]
     const short = light.radius / Math.sqrt(light.aniso) / stretch[1]
     const q2 = ((d[0] * Math.cos(a) + d[1] * Math.sin(a)) / long) ** 2 + ((-d[0] * Math.sin(a) + d[1] * Math.cos(a)) / short) ** 2
-    const edge = DRAG_CYAN_ON_LEAD ** (-1 / light.beta) - 1
+    const edge = level ** (-1 / light.beta) - 1
     if (q2 >= edge) return at
     const f = Math.sqrt(edge / Math.max(q2, 1e-6))
     return insideFrame01(fromP([c[0] + d[0] * f, c[1] + d[1] * f]))
   }
   const glows = keptOut.map((glow, i) => {
-    if (i === 0 || !cyanGlow(glow)) return glow
-    let at = broadLead && warm(keptOut[0].color) ? outOfLead(glow.at) : glow.at
+    if (i === 0) return glow
+    if (!cyanGlow(glow)) return paleLight(glow.color) && paleLight(keptOut[0].color) ? { ...glow, at: outOfLead(glow.at, DRAG_PALE_ON_LEAD) } : glow
+    let at = broadLead && warm(keptOut[0].color) ? outOfLead(glow.at, DRAG_CYAN_ON_LEAD) : glow.at
     const warmOnes = keptOut.filter((other) => other !== glow && warm(other.color))
     for (const other of warmOnes) at = apart(at, glow.radius, other)
     const near = Math.min(1, ...warmOnes.map((other) => nearness(at, glow.radius, other)))
@@ -636,7 +664,11 @@ function followDrag(
   // Behind a sun beyond an edge pointing away the frame is its lit side: the sky there stays pale as far as its light
   // reaches, so its pale light meets a pale sky and not a darker blue, where the two weigh the same in grey and sage.
   // Not behind a white or grey light (Ice, Steel): there a pale sky is only paler blue.
-  const behind = lerp(BEHIND_REACH, Math.max(BEHIND_REACH, (OUT_BEHIND * reach) / Math.min(frame[0], frame[1])), warm(layout.glows[0].color) ? outWide : 0)
+  // How far down the frame that lit side reaches also follows the seed (behindScale), never less far for a sun that burns
+  // like fire: its scattered sky-blue light over a darker blue turns teal.
+  const behind =
+    lerp(BEHIND_REACH, Math.max(BEHIND_REACH, (OUT_BEHIND * reach) / Math.min(frame[0], frame[1])), warm(layout.glows[0].color) ? outWide : 0) *
+    lerp(1, fireLead ? Math.max(1, behindScale) : behindScale, outWide)
   // Bold's band of pale sky is full near the end of the lead's body along the line, as at the default view (the sky
   // ramp runs from 1 at the line's start to 0 at its end).
   const bodyEnd = 1 - (bodyReach(glows[0].beta) * supportAlong(glows[0].radius, glows[0].aniso, glows[0].angle, u, stretch)) / skyLength
@@ -650,12 +682,14 @@ function followDrag(
       veilRise,
       turn: rampTurn(layout.sky.tilt, lineAngle, frame),
       line: {
-        from: [drag.from[0], drag.from[1]],
-        to: fromP([start[0] + Math.cos(skyAngle) * skyLength, start[1] + Math.sin(skyAngle) * skyLength]),
+        from: lightAt,
+        to: fromP([toP(lightAt)[0] + Math.cos(skyAngle) * skyLength, toP(lightAt)[1] + Math.sin(skyAngle) * skyLength]),
         behind,
+        // Not round a sun that burns like fire: its scattered cream and sky-blue light over a darker blue turns grey-green.
+        round: fireLead ? 0 : litRound * outWide,
       },
       deep: layout.sky.deep
-        ? { ...layout.sky.deep, at: (deepReach * skyLength) / Math.min(frame[0], frame[1]), from: [drag.from[0], drag.from[1]], angle: (skyAngle * 180) / Math.PI }
+        ? { ...layout.sky.deep, at: (deepReach * skyLength) / Math.min(frame[0], frame[1]), from: lightAt, angle: (skyAngle * 180) / Math.PI }
         : undefined,
     },
   }
@@ -687,6 +721,8 @@ const DRAG_APART_LEAD = 0.6
 const DRAG_OVERLAP_GAIN = 0.45
 /** The broad warm lead's light, against its middle, out to which a cyan bloom moves from it under a dragged line. */
 const DRAG_CYAN_ON_LEAD = 0.4
+/** The same for a white bloom (Ice) beside a white lead. */
+const DRAG_PALE_ON_LEAD = 0.2
 /**
  * What a seed keeps under a dragged line, where the line alone places the lead and the far dark: its second bloom
  * stays a small accent and the lead lights the frame alone (`alone`), comes in as a second light on one side of the
@@ -769,6 +805,13 @@ interface DragSeed {
   veilPlateau: number | null
   /** The lead is one broad light (Bold): a cyan bloom fades where its light is still strong, as on it it turns mint. */
   broadLead: boolean
+  /** Beyond an edge pointing away, how far along the edge the light comes in from the line's start, in short sides. */
+  edgeShift: number
+  /** There, how far down the frame its lit side reaches against the usual (`behind`), and how round the lit sky is. */
+  behindScale: number
+  litRound: number
+  /** A white light without color of its own (Ice). */
+  paleLight: (slot: number) => boolean
 }
 
 /** A dragged lead's length / width along the line, by kind: alone, a broad wash (a warm one stays round); else round. */
@@ -2111,6 +2154,12 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
           bank,
           veilPlateau: cyanPack ? CYAN_BAND_PLATEAU : null,
           broadLead: cyanPack,
+          // Beyond an edge pointing away, Bold's light comes in toward the seed's own side, and its deep form sets how far
+          // its lit side reaches down the frame (a whole side of deep blue leaves it the least).
+          edgeShift: boldForm ? side * lerp(EDGE_SHIFT[0], EDGE_SHIFT[1], random(seed * 9173 + 31)()) : 0,
+          behindScale: boldForm ? FORM_BEHIND[boldForm.deep] : 1,
+          litRound: boldForm ? FORM_LIT_ROUND[boldForm.deep] : 0,
+          paleLight: pale,
         },
         warmSlot,
         cyanSlot,
