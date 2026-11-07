@@ -1,8 +1,8 @@
 // Palette check: does every frame read as its pack? For one look (or all seven) it renders or reads the three packs
-// at seeds 1-8 (16:9) and 1-4 (9:16), at the default light and at four test drags, measures how much of each frame
-// every pack color covers and which colors outside the pack show up, compares the packs at each seed and drag, and
-// writes sheets per look with a share bar under each tile and the failing frames marked. See scripts/light/README.md,
-// "Palette check", for usage and the rules behind the thresholds. With --refs it
+// at seeds 1-40 in both formats (41-80 with --holdout), at the default light and at four test drags, measures how
+// much of each frame every pack color covers and which colors outside the pack show up, compares the packs at each
+// seed and drag, and writes sheets per look with a share bar under each tile and the failing frames marked. See
+// scripts/light/README.md, "Palette check", for usage and the rules behind the thresholds. With --refs it
 // reads the reference library's Sunset and Contour images instead and judges each by its own look's rules in every
 // pack, as if it were one of our frames (the references are measured only; nothing renders from them).
 import { existsSync } from 'node:fs'
@@ -209,8 +209,18 @@ if (!lookArg.length && !refArg.length) {
 }
 const looks = lookArg.includes('all') ? LOOKS : lookArg.map((l) => (l.includes('.') ? l : LOOKS.find((id) => id.endsWith(`.${l}`)) ?? l))
 for (const look of looks) if (!LOOKS.includes(look)) throw new Error(`Unknown look ${look}`)
-const seeds = Number(args.seeds ?? 8)
-const portraitSeeds = Number(args.portrait ?? 4)
+// Seeds 1-40 in both formats by default, as agents check before each commit (SHARED.md, 11:40 PM 2026-11-06);
+// --holdout checks seeds 41-80, which nobody tunes against. --seeds and --portrait set how many.
+const firstSeed = args.holdout ? 41 : 1
+const seeds = Number(args.seeds ?? 40)
+const portraitSeeds = Number(args.portrait ?? 40)
+const seedRange = (count) => Array.from({ length: count }, (_, i) => firstSeed + i)
+const lastSeed = (count) => firstSeed + count - 1
+// The sheets show the first 8 seeds at 16:9 and the first 4 at 9:16, then every failing frame. Seeds alike are
+// counted among the first `--alike-seeds` (8) at 16:9, as the looks' budgets are.
+const SHOWN = { '16x9': Math.min(8, seeds), '9x16': Math.min(4, portraitSeeds) }
+const shownOnSheet = (f) => f.seed < firstSeed + SHOWN[f.format]
+const alikeSeeds = Math.min(seeds, Number(args['alike-seeds'] ?? 8))
 const fromDir = typeof args.from === 'string' ? path.resolve(args.from) : null
 const dev = Boolean(args.dev)
 const devUrl = typeof args.url === 'string' ? args.url : 'http://localhost:3000'
@@ -233,8 +243,10 @@ const mainRule = args.main === 'own' ? 'own' : args.main === 'bright' ? 'bright'
 const dragArg = list(args.drags)
 const drags = !dragArg.length || dragArg.includes('all') ? Object.keys(DRAGS) : dragArg.includes('none') ? [] : dragArg
 for (const d of drags) if (!(d in DRAGS)) throw new Error(`Unknown drag ${d}: give ${Object.keys(DRAGS).join(', ')}, all or none`)
-// --drag-renders: also write the drag frames' renders (by default only the default frames' renders are kept).
+// renders/ keeps the default light's frames the sheets show; --drag-renders keeps those of the drags too, and
+// --all-renders every frame.
 const dragRenders = Boolean(args['drag-renders'])
+const allRenders = Boolean(args['all-renders'])
 // Control values for the render (--at intensity=1,softness=0,horizon=0.3; horizon or light is the mood control).
 const controls = { intensity: 0.5, softness: 0.5, mood: 0.5 }
 for (const pair of list(args.at)) {
@@ -1186,8 +1198,8 @@ try {
     for (const drag of [null, ...drags]) {
       const end = drag ? `-${drag}` : ''
       for (const pack of PACK_ORDER) {
-        for (let s = 1; s <= seeds; s++) frames.push({ id: `${short}-${pack}-s${s}-16x9${end}`, pack, seed: s, format: '16x9', drag })
-        for (let s = 1; s <= portraitSeeds; s++) frames.push({ id: `${short}-${pack}-s${s}-9x16${end}`, pack, seed: s, format: '9x16', drag })
+        for (const s of seedRange(seeds)) frames.push({ id: `${short}-${pack}-s${s}-16x9${end}`, pack, seed: s, format: '16x9', drag })
+        for (const s of seedRange(portraitSeeds)) frames.push({ id: `${short}-${pack}-s${s}-9x16${end}`, pack, seed: s, format: '9x16', drag })
       }
     }
     return frames
@@ -1242,8 +1254,7 @@ try {
     const started = Date.now()
     const frames = frameList(look)
     for (const f of frames) {
-      const keep = !f.drag || dragRenders
-      f.file = fromDir ? path.join(fromDir, `${f.id}.png`) : keep ? path.join(outDir, 'renders', `${f.id}.png`) : null
+      f.file = fromDir ? path.join(fromDir, `${f.id}.png`) : null
       if (fromDir) {
         if (!existsSync(f.file)) f.missing = true
         f.src = f.file
@@ -1256,12 +1267,19 @@ try {
         f.sceneHexes = scene.colors
         f.src = await raw(await harness.render({ scene, ...RENDER[f.format], supersample: 2 })).png().toBuffer()
       }
-      if (f.file) await fs.writeFile(f.file, f.src)
     }
     for (const f of frames) {
       if (f.missing) continue
       f.m = await analyse(f.src, f.pack, f.sceneHexes ?? null, maps ? path.join(outDir, 'maps', `${f.id}.png`) : null, look.startsWith('contour.'))
       Object.assign(f, judge(look, f.pack, f.m, { drag: f.drag }))
+    }
+    // Renders of the frames the sheets show (the first seeds and every failing frame), or of every frame.
+    for (const f of frames) {
+      if (fromDir || f.missing) continue
+      const keep = allRenders || ((!f.drag || dragRenders) && (shownOnSheet(f) || f.fails.length > 0))
+      if (!keep) continue
+      f.file = path.join(outDir, 'renders', `${f.id}.png`)
+      await fs.writeFile(f.file, f.src)
     }
     const contour = look.startsWith('contour.')
     // Per light (the default, then each test drag): the frames, per pack the alike seeds (and at the default light
@@ -1272,7 +1290,7 @@ try {
       const rows = {}
       for (const pack of PACK_ORDER) {
         const packFrames = at.filter((f) => f.pack === pack)
-        const pairs = await seedPairs(packFrames.filter((f) => f.format === '16x9'))
+        const pairs = await seedPairs(packFrames.filter((f) => f.format === '16x9' && f.seed < firstSeed + alikeSeeds))
         rows[pack] = { ...(drag ? {} : mainLights(classifiers[pack], packFrames, contour)), alike: pairs.filter((p) => p.alike), pairs }
       }
       groups.push({ drag, title: drag ? dragText(drag) : null, frames: frames.filter((f) => f.drag === drag), rows, cross: await crossPairs(at) })
@@ -1289,14 +1307,23 @@ try {
       drags: Object.fromEntries(groups.slice(1).map((g) => [g.drag, { rows: g.rows, reasons: reasonCounts(g.frames) }])),
       cross: Object.fromEntries(groups.map((g) => [g.drag ?? 'default', g.cross])),
     }
-    summary.push(`## ${look}`, '', `${frames.length} frames (${frames.filter((f) => !f.drag).length} at the default light) in ${seconds} s.`, '')
+    const failingAll = frames.filter((f) => f.fails?.length)
+    summary.push(`## ${look}`, '', `${frames.length} frames: seeds ${firstSeed}-${lastSeed(seeds)} at 16:9 and ${firstSeed}-${lastSeed(portraitSeeds)} at 9:16, at the default light${drags.length ? ` and ${drags.length} test drags` : ''}, in ${seconds} s.`, '')
+    // Failing frames first, at every light, grouped by their first reason.
+    summary.push(`Failing frames: ${failingAll.length} of ${frames.filter((f) => !f.missing).length}.`)
+    const byReason = {}
+    for (const f of failingAll) (byReason[f.reasons[0]] ??= []).push(f)
+    for (const [reason, list] of Object.entries(byReason).sort((x, y) => y[1].length - x[1].length)) {
+      summary.push(`- ${reason} (${list.length}):`)
+      for (const f of list) summary.push(`  - ${f.id}: ${f.fails.join('; ')}${f.notes.length ? ` (also ${f.notes.join('; ')})` : ''}`)
+    }
+    summary.push('', 'At the default light:', '')
     for (const pack of PACK_ORDER) {
       const packFrames = groups[0].frames.filter((f) => f.pack === pack)
       const failing = packFrames.filter((f) => f.fails?.length)
       const row = rows[pack]
       const sky = look.startsWith('sunset.') ? ` ${skyLine(packFrames.filter((f) => f.m))}` : ''
       summary.push(`- ${pack}: ${failing.length} of ${packFrames.filter((f) => !f.missing).length} frames fail.${contour ? ` ${mainLightLine(row)}` : ''} ${varietyLine(row.alike)}${sky}`)
-      for (const f of failing) summary.push(`  - ${f.id}: ${f.fails.join('; ')}${f.notes.length ? ` (also ${f.notes.join('; ')})` : ''}`)
     }
     summary.push(`- Packs: ${crossLine(groups[0].cross)}`, `- Frames failing, by reason: ${reasonLine(groups[0].frames)}.`, '')
     for (const g of groups.slice(1)) {
@@ -1305,8 +1332,7 @@ try {
         return `${pack} ${packFrames.filter((f) => f.fails?.length).length} of ${packFrames.length}`
       })
       const seedsAlike = PACK_ORDER.map((pack) => `${pack} ${g.rows[pack].alike.map((p) => `s${p.seeds.join('/s')}`).join(', ') || 'none'}`)
-      summary.push(`- Drag ${g.title}: frames failing ${counts.join(', ')}; by reason: ${reasonLine(g.frames)}. Seeds that look alike: ${seedsAlike.join('; ')}. ${crossLine(g.cross)}`)
-      for (const f of g.frames.filter((x) => x.fails?.length)) summary.push(`  - ${f.id}: ${f.fails.join('; ')}${f.notes.length ? ` (also ${f.notes.join('; ')})` : ''}`)
+      summary.push(`- Drag ${g.title}: frames failing ${counts.join(', ')}; by reason: ${reasonLine(g.frames)}. Seeds that look alike (seeds ${firstSeed}-${lastSeed(alikeSeeds)}): ${seedsAlike.join('; ')}. ${crossLine(g.cross)}`)
     }
     if (drags.length) summary.push('')
     // The same frames judged again with their Oklab chroma scaled (--chroma), to find how grey a look's light may go.
@@ -1408,7 +1434,7 @@ try {
   async function crossPairs(list) {
     const pairs = []
     for (const format of ['16x9', '9x16']) {
-      for (let s = 1; s <= (format === '16x9' ? seeds : portraitSeeds); s++) {
+      for (const s of seedRange(format === '16x9' ? seeds : portraitSeeds)) {
         const at = PACK_ORDER.map((pack) => list.find((f) => f.pack === pack && f.seed === s && f.format === format)).filter(Boolean)
         for (let i = 0; i < at.length; i++) {
           for (let j = i + 1; j < at.length; j++) {
@@ -1449,7 +1475,7 @@ try {
     if (!alike.length) return 'No two packs look alike at any seed.'
     return `Packs that look alike (color distance): ${alike.map((p) => `s${p.seed}${p.format === '9x16' ? ' 9:16' : ''} ${p.packs.join('/')} (${p.color})`).join(', ')}: FAIL.`
   }
-  // Contour: across seeds 1-8 at 16:9, does every light color the pack offers light at least one frame?
+  // Contour: across the run's seeds at 16:9, does every light color the pack offers light at least one frame?
   function mainLights(k, packFrames, contour) {
     const offered = offeredLights(k)
     const mains = packFrames.filter((f) => f.format === '16x9').map((f) => f.m.mainLight && asLight(k, f.m.mainLight)).filter(Boolean)
@@ -1457,15 +1483,16 @@ try {
     return { offered, counts, missing: contour ? offered.filter((name) => !counts[name]) : [] }
   }
   function mainLightLine(row) {
-    return `Main light across seeds 1-${seeds}: ${Object.entries(row.counts).map(([nm, c]) => `${nm} ${c}`).join(', ')}${row.missing.length ? `; never ${row.missing.join(', ')}: FAIL` : ''}.`
+    return `Main light across seeds ${firstSeed}-${lastSeed(seeds)}: ${Object.entries(row.counts).map(([nm, c]) => `${nm} ${c}`).join(', ')}${row.missing.length ? `; never ${row.missing.join(', ')}: FAIL` : ''}.`
   }
   function skyLine(packFrames) {
     const over = packFrames.filter((f) => f.m.skyFull > T.sky.share)
     if (!over.length) return `Full-strength Meta Blue under ${pct(T.sky.share)} in every frame.`
-    return `Full-strength Meta Blue over ${pct(T.sky.share)} of the frame: ${over.map((f) => `s${f.seed}${f.format === '9x16' ? ' 9:16' : ''} ${pct(f.m.skyFull)}`).join(', ')}.`
+    const listed = over.slice(0, 12).map((f) => `s${f.seed}${f.format === '9x16' ? ' 9:16' : ''} ${pct(f.m.skyFull)}`)
+    return `Full-strength Meta Blue over ${pct(T.sky.share)} of the frame in ${over.length}: ${listed.join(', ')}${over.length > 12 ? ' and more' : ''}.`
   }
   function varietyLine(alike) {
-    if (!alike.length) return `No two of seeds 1-${seeds} look alike.`
+    if (!alike.length) return `No two of seeds ${firstSeed}-${lastSeed(alikeSeeds)} look alike.`
     return `Seeds that look alike (layout, colors): ${alike.map((p) => `s${p.seeds[0]}/s${p.seeds[1]} (${p.layout}, ${p.colors})`).join(', ')}: FAIL.`
   }
 
@@ -1490,7 +1517,14 @@ try {
     // packs.
     const rowHeight = (g) => 18 + TH + 4 + BAR + TEXT + 4 + (contour && !g.drag ? 2 : 1) * LINE
     const groupHeight = (g) => (g.title ? 24 : 0) + PACK_ORDER.length * rowHeight(g) + LINE + 14
-    const width = LEFT + seeds * (TW + GAP) + portraitSeeds * (PW + GAP) + 16
+    // Each row shows the first seeds, then the pack's failing frames from the other seeds (at most MAX_EXTRA; the
+    // rest are listed in summary.md).
+    const MAX_EXTRA = 16
+    const failingOthers = (g, pack) => g.frames.filter((f) => f.pack === pack && !shownOnSheet(f) && f.fails?.length)
+    const tileWidth = (f) => (f.format === '9x16' ? PW : TW)
+    const shownWidth = SHOWN['16x9'] * (TW + GAP) + SHOWN['9x16'] * (PW + GAP)
+    const extraWidth = Math.max(0, ...groups.flatMap((g) => PACK_ORDER.map((pack) => failingOthers(g, pack).slice(0, MAX_EXTRA).reduce((s, f) => s + tileWidth(f) + GAP, 0) + 130)))
+    const width = LEFT + shownWidth + extraWidth + 40
     const height = 70 + groups.reduce((s, g) => s + groupHeight(g), 0) + 10
     const dragged = Boolean(groups[0].drag)
     const lookFails = look.startsWith('sunset.')
@@ -1510,10 +1544,15 @@ try {
       for (const pack of PACK_ORDER) {
         const k = classifiers[pack]
         comp.push({ input: textSvg([{ text: k.pack.name, color: '#fff' }], LEFT - 8, 20, 13), left: 12, top: top + 18 + Math.round(TH / 2) - 10 })
-        for (const f of g.frames.filter((x) => x.pack === pack)) {
+        const others = failingOthers(g, pack)
+        let otherLeft = LEFT + shownWidth + 24
+        if (others.length > MAX_EXTRA) comp.push({ input: textSvg([`${others.length - MAX_EXTRA} more failing in summary.md`], 200, 16), left: LEFT + shownWidth + 24 + others.slice(0, MAX_EXTRA).reduce((s, f) => s + tileWidth(f) + GAP, 0), top: top + 18 })
+        for (const f of [...g.frames.filter((x) => x.pack === pack && shownOnSheet(x)), ...others.slice(0, MAX_EXTRA)]) {
           const portrait = f.format === '9x16'
-          const left = LEFT + (portrait ? seeds * (TW + GAP) + (f.seed - 1) * (PW + GAP) : (f.seed - 1) * (TW + GAP))
           const w = portrait ? PW : TW
+          let left = otherLeft
+          if (shownOnSheet(f)) left = LEFT + (portrait ? SHOWN['16x9'] * (TW + GAP) + (f.seed - firstSeed) * (PW + GAP) : (f.seed - firstSeed) * (TW + GAP))
+          else otherLeft += w + GAP
           const skyOver = f.m && look.startsWith('sunset.') ? f.m.skyFull > T.sky.share : false
           const skyText = f.m && look.startsWith('sunset.') ? `${portrait ? ' ' : '   full Meta Blue '}${pct(f.m.skyFull)}` : ''
           comp.push({ input: textSvg([{ text: `s${f.seed}${portrait ? ' 9:16' : ''}${skyText}`, color: skyOver ? '#e0a040' : '#bbb' }], w, 16, 11), left, top })
