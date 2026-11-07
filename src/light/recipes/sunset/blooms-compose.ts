@@ -169,6 +169,8 @@ const MIN_OPEN_SHARE = 0.16
 const LEAD_GROW = 1.6
 const OPEN_MID: readonly [number, number] = [0.35, 0.7]
 const CYAN_OPEN_MID: readonly [number, number] = [0.35, 0.55]
+/** Where the deep sky begins in a tall frame (9:16), against its distance in a wide one. */
+const TALL_DEEP_AT = 0.7
 /** Most a warm lead beside a near-equal second sun of its color is wider than tall (the pair arrangement). */
 const PAIR_MAX_ANISO = 1.6
 const DEEP_STOPS: readonly [number, number] = [1.1, 2.0]
@@ -1659,7 +1661,10 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     veil: lerp(groundBlends ? BLEND_SKY_VEIL : SKY_VEIL[0], SKY_VEIL[1], paleReach) * (cyanPack && !redSun ? CYAN_VEIL : 1),
     deep: {
       stops: darkStyle === 'none' ? 0 : lerp(DEEP_STOPS[0], DEEP_STOPS[1], uDeepStops),
-      at: (deepNear + (1 - deepShare) * (deepFar - deepNear)) / Math.min(frameP[0], frameP[1]),
+      // A tall frame shows more sky across the way the light runs, where the sky stays near its exact hex, so there the
+      // deep sky begins nearer: full-strength blue keeps to a band at the far edge. (The blooms keep to the seed's own
+      // deep edge, deepEdge.)
+      at: ((deepNear + (1 - deepShare) * (deepFar - deepNear)) / Math.min(frameP[0], frameP[1])) * lerp(TALL_DEEP_AT, 1, smoothstep(0.5, 1, aspect)),
       soft: lerp(DEEP_SOFT[0], DEEP_SOFT[1], uDeepSoft),
       curve: lerp(DEEP_CURVE[0], DEEP_CURVE[1], uDeepCurve),
       from: [at[0], at[1]],
