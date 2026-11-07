@@ -973,7 +973,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     const soft = lerp(1, lerp(DRAG_SOFT[0], DRAG_SOFT[1], seeded(Math.round(seed) * 61 + 29)()), navyReach)
     // Elemental's Meta Blue and its warm low sky blend through grey, so under a long line their
     // edge stays narrow: a band of Meta Blue at the far side, not a wide grey field.
-    const widest = packId === 'elemental' ? lerp(6, ELEMENTAL_EDGE, longLine) : 6
+    const widest = packId === 'elemental' ? Math.min(6, ELEMENTAL_EDGE / Math.max(0.05, longLine) ** 2) : 6
     for (const edge of edges) {
       edge[0] = -glowRise + (edge[0] + glowRise) * stretch * nearer
       edge[1] = Math.min(widest, edge[1] * stretch * nearer * soft)
