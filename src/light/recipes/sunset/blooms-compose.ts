@@ -95,6 +95,8 @@ export interface BloomsLayout {
   bridgeSky: number
   /** 1: light of the sky's own hue (Cyan, a paler patch of sky) dims with the far sky, its middle too. */
   glowsDim: number
+  /** 1: pack output (a warm light's core is small and of its own color, and a light's color fills its bloom). */
+  packLight: number
 }
 
 /**
@@ -163,6 +165,8 @@ const DEEP_CURVE: readonly [number, number] = [0.25, 0.9]
 const DEEP_UP: readonly [number, number] = [0.15, 0.45]
 /** A light's body: where its falloff (1 + d^2)^-beta is down to this share of its middle. */
 const BODY_LEVEL = 0.35
+/** Most a lead flattened to fit its share may be wider than tall: flatter, it reads as a streak. */
+const MAX_SQUASH_ANISO = 2.6
 
 /** How far (in radii) a falloff with this exponent keeps BODY_LEVEL of its middle. */
 function bodyReach(beta: number): number {
@@ -202,7 +206,7 @@ function squashTo(radius: number, aniso: number, angle: number, u: readonly numb
     long *= f ** (p1 / (p1 + p2))
     short *= f ** (p2 / (p1 + p2))
   }
-  return { radius: Math.sqrt(long * short), aniso: Math.max(1, long / short) }
+  return { radius: Math.sqrt(long * short), aniso: clamp(long / short, 1, MAX_SQUASH_ANISO) }
 }
 
 /**
@@ -230,7 +234,7 @@ function spanAlong(p: readonly number[], u: readonly number[], frame: readonly n
 /**
  * A glow whose body ends before `limit` (a distance from the lead at `leadP` along `away`): it moves back along
  * `away`, but not back past `from` (the end of the lead's body, so it never lands on the lead), and what still
- * reaches past `limit` it gives up by flattening along `away` (squashTo).
+ * reaches past `limit` it gives up by shrinking, keeping its shape (flattened, it would read as a streak).
  */
 function keepBefore(
   glow: GlowSpec,
@@ -250,7 +254,7 @@ function keepBefore(
   const moved: GlowSpec = { ...glow, at: [(p[0] - away[0] * back) / frame[0] + 0.5, (p[1] - away[1] * back) / frame[1] + 0.5] }
   const room = limit - (along - back)
   if (room >= reach) return moved
-  return { ...moved, ...squashTo(glow.radius, glow.aniso, glow.angle, away, stretch, Math.max(room, 0.25 * reach) / toBody) }
+  return { ...moved, radius: (glow.radius * Math.max(room, 0.25 * reach)) / reach }
 }
 
 /**
@@ -339,11 +343,21 @@ function followDrag(
   // deep end, where its dim light reads olive: toward the frame's point nearest the light beside a warm lead,
   // toward the middle beside a cool one (on it, cyan and yellow light make mint).
   const target = warm(layout.glows[0].color) ? insideFrame01(drag.from) : [0.5, 0.5]
+  // Seen from inside the frame, a light beyond its edge whose line points away from the frame shows only the light
+  // behind it: it lights that edge broadly, widest along the edge and fading inward, so the farther outside it is,
+  // the wider it grows across the line than along it (a narrow glow's back would come in as a V). A line pointing
+  // into the frame brings the glow's body in along the line.
+  const toLight = toP(drag.from)
+  const awayFromFrame = (toLight[0] * line[0] + toLight[1] * line[1]) / (Math.max(Math.hypot(toLight[0], toLight[1]), 1e-6) * length)
+  const leadShape = lerp(leadAniso, OUT_ANISO, smoothstep(0, OUT_WIDE_AT, outside) * smoothstep(-0.2, 0.6, awayFromFrame))
   const placed = layout.glows.map((glow, i) => {
-    if (i === 0) return { ...glow, at: [drag.from[0], drag.from[1]] as [number, number], angle: (lineAngle * 180) / Math.PI, aniso: leadAniso, radius: reach / Math.sqrt(leadAniso) }
+    if (i === 0) return { ...glow, at: [drag.from[0], drag.from[1]] as [number, number], angle: (lineAngle * 180) / Math.PI, aniso: leadShape, radius: reach / Math.sqrt(leadShape) }
     const [x, y] = spots[(i - 1) % spots.length]
     const pull = warm(glow.color) ? DRAG_WARM_TOWARD_LIGHT : 0
-    return { ...glow, at: [lerp(x, target[0], pull), lerp(y, target[1], pull)] as [number, number], angle: glow.angle + degrees }
+    // A second bloom of the lead's own color sits in the frame with the lead under a line, where two near-equal lights
+    // merge into one pale mass, so it is the smaller one.
+    const sameAsLead = glow.color === layout.glows[0].color ? DRAG_PAIR_SCALE : 1
+    return { ...glow, at: [lerp(x, target[0], pull), lerp(y, target[1], pull)] as [number, number], angle: glow.angle + degrees, radius: glow.radius * sameAsLead }
   })
   // A bloom moves out of a warm lead's bright body, so the body keeps the light's own color: on it a second bloom
   // or a cyan one adds up to cream or white. A bloom at e (the body's size is 1) moves straight away from the
@@ -429,7 +443,7 @@ const DRAG_INSIDE = 0.1
  * A dragged light's reach against its distance outside the frame, so its body comes in over the near edge and
  * the edge glows in the light's own color, not only its pale outer light.
  */
-const DRAG_OUTSIDE_REACH = 4
+const DRAG_OUTSIDE_REACH = 2.6
 /** How far from a warm dragged lead the other blooms keep, in its reach, and at most in units of sqrt(width * height). */
 const DRAG_BODY_CLEAR = 0.6
 const DRAG_BODY_CLEAR_MAX = 0.45
@@ -438,7 +452,15 @@ const DRAG_APART = 0.6
 /** A cyan bloom's strength where it still lies on a warm one under a dragged line. */
 const DRAG_OVERLAP_GAIN = 0.45
 /** A dragged lead's width / length, from a seed's own draw (narrow beam to round wash). */
-const DRAG_ANISO: readonly [number, number] = [1.2, 2.2]
+const DRAG_ANISO: readonly [number, number] = [1.1, 1.8]
+/**
+ * A dragged lead outside the frame: its length / width along the line once it is OUT_WIDE_AT (units of
+ * sqrt(width * height)) or more past the frame edge (under 1: wider across the line than along it).
+ */
+const OUT_ANISO = 0.45
+const OUT_WIDE_AT = 0.12
+/** Under a dragged line, a second bloom of the lead's color against its own size. */
+const DRAG_PAIR_SCALE = 0.65
 /** How far a dragged line draws a warm bloom toward the frame's point nearest the light. */
 const DRAG_WARM_TOWARD_LIGHT = 0.45
 /** A dragged cyan lead's reach against the line's: a medium bloom, as without a line, so the warm light shows beside it. */
@@ -743,7 +765,7 @@ export function isRed(c: Rgb): boolean {
 }
 
 /** A cyan bloom's size beside an orange-red sun, against its usual size. */
-const RED_CYAN_SCALE = 0.85
+const RED_CYAN_SCALE = 0.65
 /** An orange-red sun's size, strength at its middle (against its hex) and falloff exponent, against a Yellow one's. */
 const RED_SUN_SIZE = 1.6
 const RED_SUN_GAIN = 1.0
@@ -815,6 +837,37 @@ function sideFor(seed: number): -1 | 1 {
   return run % 2 === 0 ? side : side === 1 ? -1 : 1
 }
 
+/**
+ * How much dark a frame holds where the pack's dark colors blend with the blue (Atmospheric): none (light on light:
+ * the far side turns to the mid grey, Steel), a strip along the far edge, a corner, or a third.
+ */
+type DarkStyle = 'none' | 'strip' | 'corner' | 'third'
+const DARK_STYLES: readonly DarkStyle[] = ['none', 'strip', 'corner', 'third']
+/** Share of the frame the dark ground covers in a strip and in a third. */
+const STRIP_GROUND_SHARE: readonly [number, number] = [0.08, 0.12]
+const THIRD_GROUND_SHARE: readonly [number, number] = [0.22, 0.32]
+/** Light on light: how much of its usual darkening the far sky keeps, and how much larger the Steel bloom is. */
+const NONE_TOP = 0.45
+const NONE_STEEL = 1.6
+/** Light on light with a Steel lead: how much larger its Ice bloom is, as the frame's bright light. */
+const NONE_ICE = 1.5
+/** Share of those seeds whose light sits in from its edge, and how far toward the middle it moves (0..1). */
+const INWARD_SHARE = 0.35
+const INWARD = 0.45
+
+/** Seeds come in runs of four for their dark style; each run takes every style once, in a seeded order. */
+function darkStyleFor(seed: number): DarkStyle {
+  const n = Math.round(seed) - 1
+  const count = DARK_STYLES.length
+  const r = random(Math.floor(n / count) * 53 + 7)
+  const order = DARK_STYLES.map((_, i) => i)
+  for (let i = count - 1; i > 0; i--) {
+    const j = Math.floor(r() * (i + 1))
+    ;[order[i], order[j]] = [order[j], order[i]]
+  }
+  return DARK_STYLES[order[((n % count) + count) % count]]
+}
+
 /** Seeds come in runs of five; each run takes every arrangement once, in a seeded order, so neighbours differ. */
 function arrangementFor(seed: number): Arrangement {
   const n = Math.round(seed) - 1
@@ -833,6 +886,8 @@ const MIN_LEAD_Y = 0.22
 /** The inner and far blooms against the lead's radius: small accents beside its large field. */
 const ACCENT_SCALE = 0.5
 const CYAN_ACCENT_SCALE = 0.7
+/** Largest radius of a cyan accent bloom, in units of sqrt(width * height). */
+const CYAN_MAX_RADIUS = 0.65
 /** Nearest a cyan lead's middle comes to a side edge from outside, in frame widths. */
 const CYAN_EDGE = 0.02
 /** How far inside the frame's edges a warm lead's middle stays, in frame fractions. */
@@ -887,8 +942,15 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // (planFor) sets which edge or corner, relative to the shared light height. The Horizon control only
   // moves it: low, it sinks toward the bottom edge as a setting light does. A cyan light stays well clear
   // of the bottom edge, where a warm light may sit.
+  // In a pack whose dark colors blend with the blue (Atmospheric) every seed would otherwise be one pale side and one
+  // dark side split by a diagonal, so the seed also picks how much dark the frame holds, from none (light on light)
+  // to a third, and whether the light sits in from its edge, toward the middle.
+  const groundBlends = [SLOT.deep1, SLOT.deep2].every((d) => luminance(colors[d]) > 1e-4 && blendsWithSky(colors[d], colors[SLOT.sky]))
+  const darkStyle: DarkStyle = groundBlends ? darkStyleFor(seed) : 'corner'
+  const inward = groundBlends && darkStyle !== 'third' && random(seed * 3571 + 13)() < INWARD_SHARE
   const [ux, uy] = [r(), r()]
-  const at: [number, number] = [0.5 + side * lerp(plan.offset[0], plan.offset[1], ux), height + lerp(plan.lift[0], plan.lift[1], uy)]
+  const at: [number, number] = [0.5 + side * lerp(plan.offset[0], plan.offset[1], ux) * (inward ? INWARD : 1), height + lerp(plan.lift[0], plan.lift[1], uy)]
+  if (inward) at[1] = lerp(at[1], 0.5, INWARD)
   // A cyan lead is a medium bloom, so its middle stays on or inside a side edge, where the frame shows it.
   if (cyanLead) at[0] = clamp(at[0], CYAN_EDGE, 1 - CYAN_EDGE)
   // A warm lead is a sun: its middle stays just inside the frame, so its palest part, the core, is in the picture.
@@ -899,10 +961,11 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // The way the light runs: from the lead toward its arrangement's point (Plan.toward). The sky darkens along it.
   const frameP: [number, number] = [Math.sqrt(aspect), 1 / Math.sqrt(aspect)]
   const leadP: [number, number] = [(at[0] - 0.5) * frameP[0], (at[1] - 0.5) * frameP[1]]
-  // Over a dark ground (Plum, Forest, Slate) the pair keeps the corner across from the light, which seeds share
-  // less there; only a sky that just deepens (Bold) darkens above the pair's stronger light.
+  // Over a dark ground of another hue (Plum, Forest) the pair keeps the corner across from the light, which seeds
+  // share less there; a sky that just deepens (Bold) or deepens into a dark of its own family (Slate, Near-black)
+  // darkens above the pair's stronger light, so the frame lies along the horizontal.
   const groundPack = luminance(colors[SLOT.deep1]) > 1e-4
-  const across = arrangement === 'pair' && groundPack ? 0 : plan.across
+  const across = arrangement === 'pair' && groundPack && !groundBlends ? 0 : plan.across
   const awayAngle = Math.atan2(plan.toward - leadP[1], (across - 1) * leadP[0])
   const tilt = lerp(-8, 8, r())
   // How much of the frame the lead takes against the inner bloom: a smaller lead gets a larger cyan or grey
@@ -913,7 +976,8 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // cross the frame and lie under the warm light there (cyan and yellow light together make mint).
   const fieldRadius = lerp(0.5, 0.88, leadShare) * size
   let radius = fieldRadius * (cyanLead ? 0.65 * lerp(0.72, 1, smoothstep(0.5, 1, aspect)) : 1)
-  let aniso = lerp(1.6, 2.8, r())
+  // A wide source lights a broad, rounded field: a long narrow oval reads as a shape.
+  let aniso = lerp(1.2, 2.0, r())
   // The lead stays narrower than the frame, so there is sky beside it for the other blooms.
   radius *= Math.min(1, LEAD_MAX_LONG_RADIUS / (radius * Math.sqrt(aniso)))
   const angle = -side * tilt
@@ -933,10 +997,16 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const [deepNear, deepFar] = spanAlong(leadP, deepDir, frameP)
   // An orange-red sun takes more of the way and leaves the deep sky and the open sky less.
   const redSun = isRed(colors[lead])
-  const deepShare =
-    (uDeepSize < DEEP_STRIP_SHARE
-      ? lerp(DEEP_STRIP[0], DEEP_STRIP[1], uDeepSize / DEEP_STRIP_SHARE)
-      : lerp(DEEP_SHARE[0], DEEP_SHARE[1], (uDeepSize - DEEP_STRIP_SHARE) / (1 - DEEP_STRIP_SHARE))) * (redSun ? RED_DEEP_SCALE : 1)
+  // A seed's dark style (blending grounds only) sets the deep sky's size outright.
+  const drawnDeep =
+    darkStyle === 'strip'
+      ? lerp(DEEP_STRIP[0], DEEP_STRIP[1], uDeepSize)
+      : darkStyle === 'third'
+        ? lerp(DEEP_SHARE[0], DEEP_SHARE[1], uDeepSize)
+        : uDeepSize < DEEP_STRIP_SHARE
+          ? lerp(DEEP_STRIP[0], DEEP_STRIP[1], uDeepSize / DEEP_STRIP_SHARE)
+          : lerp(DEEP_SHARE[0], DEEP_SHARE[1], (uDeepSize - DEEP_STRIP_SHARE) / (1 - DEEP_STRIP_SHARE))
+  const deepShare = drawnDeep * (redSun ? RED_DEEP_SCALE : 1)
   const bodyRange = redSun ? RED_BODY_SHARE : BODY_SHARE
   const bodyShare = Math.min(lerp(bodyRange[0], bodyRange[1], uBody), 1 - deepShare - (redSun ? RED_OPEN_SHARE : MIN_OPEN_SHARE))
   const bodyEnd = spanNear + bodyShare * (spanFar - spanNear)
@@ -992,7 +1062,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
         : [clamp(at[0] - side * lerp(0.4, 0.62, r()), 0.06, 0.94), Math.max(MIN_LEAD_Y, Math.min(at[1], 0.8) - lerp(0.06, 0.22, r()))],
       // A light: at its middle at least its own hex, like the lead, so it is the weaker one by its size alone.
       radius: radius * (nearEqual ? lerp(0.6, 0.9, balance) : lerp(0.25, 0.45, balance)) * Math.sqrt(lerp(0.45, 0.9, balance)),
-      aniso: lerp(1.6, 2.6, r()),
+      aniso: lerp(1.2, 1.9, r()),
       angle: -angle * lerp(0.3, 1.0, r()),
       gain: leadGain,
       beta,
@@ -1035,21 +1105,25 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     clamp((leadP[0] + away[0] * steelAlong - away[1] * steelAcross) / frameP[0] + 0.5, 0.12, 0.88),
     clamp((leadP[1] + away[1] * steelAlong + away[0] * steelAcross) / frameP[1] + 0.5, 0.15, 0.85),
   ]
+  // A cyan bloom stays an accent: larger, its pale light covers the middle of the frame and the deep sky turns teal.
+  const innerCap = innerCyan ? CYAN_MAX_RADIUS : Infinity
   glows.push({
     color: innerColor,
     at: innerGrey
       ? steelAt
       : [0.5 + innerSide * lerp(redApart ? 0.25 : 0.05, 0.3, uInnerX), (plan.innerBelow ? lerp(0.86, 0.72, rise) : lerp(0.42, 0.28, rise)) + lerp(-0.05, 0.05, uInnerY)],
     // A small accent beside the lead's large field; a cyan one a little larger, so the pack's Cyan shows.
-    radius:
+    radius: Math.min(
+      innerCap,
       radius *
-      (innerCyan ? CYAN_ACCENT_SCALE : ACCENT_SCALE) *
-      (innerGrey
-        ? lerp(0.6, 0.8, uSize) * lerp(1.3, 0.8, leadShare)
-        : innerCyan
-          ? lerp(1.0, 1.25, uSize) * lerp(1.45, 0.7, leadShare) * (aspect < 1 ? 0.62 : 1) * (redApart ? RED_CYAN_SCALE : 1)
-          : lerp(1.15, 1.4, uSize)),
-    aniso: innerCyan || innerGrey ? lerp(1.7, 2.5, uAniso) : lerp(2.8, 3.8, uAniso),
+        (innerCyan ? CYAN_ACCENT_SCALE : ACCENT_SCALE) *
+        (innerGrey
+          ? lerp(0.6, 0.8, uSize) * lerp(1.3, 0.8, leadShare) * (darkStyle === 'none' ? NONE_STEEL : 1)
+          : innerCyan
+            ? lerp(1.0, 1.25, uSize) * lerp(1.45, 0.7, leadShare) * (aspect < 1 ? 0.62 : 1) * (redApart ? RED_CYAN_SCALE : 1)
+            : lerp(1.15, 1.4, uSize) * (greyLead && darkStyle === 'none' ? NONE_ICE : 1)),
+    ),
+    aniso: innerCyan || innerGrey ? lerp(1.2, 1.8, uAniso) : lerp(1.8, 2.8, uAniso),
     angle: -side * lerp(-4, 12, r()),
     gain:
       innerColor === SLOT.sky
@@ -1061,7 +1135,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     // Enough haze that a light bloom's middle is its own color, not a blend with the blue behind it; the
     // grey patch is thinner, so blue shows through its edges.
     // Beside a sun a cyan bloom is the frame's Cyan, so its middle hides the pale sky behind it and stays Cyan.
-    haze: innerGrey ? lerp(0.5, 0.8, uHaze) : innerColor === SLOT.sky ? 0 : innerCyan && isWarm(colors[lead]) ? lerp(1.7, 2.2, uHaze) : lerp(0.9, 1.3, uHaze),
+    haze: innerGrey ? lerp(0.8, 1.2, uHaze) : innerColor === SLOT.sky ? 0 : innerCyan && isWarm(colors[lead]) ? lerp(1.7, 2.2, uHaze) : lerp(0.9, 1.3, uHaze),
     vary: lerp(0.4, 0.8, r()),
     bend: bend(),
   })
@@ -1103,7 +1177,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     const farAngle = side * lerp(lerp(-4, 8, ua), lerp(10, 22, ua), corner)
     // From a side edge a very wide shape reads as a streak, so it is rounder there.
     const un = r()
-    const farAniso = lerp(lerp(2.6, 3.4, un), lerp(3.6, 4.6, un), corner)
+    const farAniso = lerp(lerp(1.8, 2.4, un), lerp(2.4, 3.0, un), corner)
     // The warm light under a cool lead keeps enough of the frame to show as the pack's warm color.
     const farRadius = warmUnderCool ? fieldRadius * lerp(0.5, 0.65, r()) : radius * ACCENT_SCALE * lerp(0.55, 0.72, r())
     // A color the inner bloom already shows (cyan) gets no second bloom; two of them make it the sky.
@@ -1113,7 +1187,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
         color: other,
         at: farAt,
         radius: farRadius * (green ? 0.85 : 1),
-        aniso: warmUnderCool ? lerp(2.2, 3.0, r()) : green ? lerp(1.8, 2.4, r()) : farAniso,
+        aniso: warmUnderCool ? lerp(1.2, 1.7, r()) : green ? lerp(1.3, 1.8, r()) : farAniso,
         angle: farAngle,
         // A light never sits below its own hex at its middle, however small: dimmed, Yellow reads dark gold, Tan
         // brown and Lime olive.
@@ -1158,14 +1232,15 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // share of the line from the seed's arrangement.
   const dragMid = lerp(0.52, 0.38, rise) + DRAG_MID[arrangement] + lerp(-0.08, 0.08, uMid) + lerp(DRAG_MID_SHIFT[0], DRAG_MID_SHIFT[1], paleReach)
   const sky: SkySpec = {
-    top: lerp(1.2, 2.3, r()),
+    // Light on light: the far sky only darkens a little, to Meta Blue, and has no deep part.
+    top: lerp(1.2, 2.3, r()) * (darkStyle === 'none' ? NONE_TOP : 1),
     mid: rampAt(midDistance),
     tilt: skew,
     vary: lerp(0.03, 0.05, r()),
     turn: rampTurn(skew, awayAngle, frameP),
     veil: lerp(SKY_VEIL[0], SKY_VEIL[1], paleReach) * (cyanPack && !redSun ? CYAN_VEIL : 1),
     deep: {
-      stops: lerp(DEEP_STOPS[0], DEEP_STOPS[1], uDeepStops),
+      stops: darkStyle === 'none' ? 0 : lerp(DEEP_STOPS[0], DEEP_STOPS[1], uDeepStops),
       at: (deepNear + (1 - deepShare) * (deepFar - deepNear)) / Math.min(frameP[0], frameP[1]),
       soft: lerp(DEEP_SOFT[0], DEEP_SOFT[1], uDeepSoft),
       curve: lerp(DEEP_CURVE[0], DEEP_CURVE[1], uDeepCurve),
@@ -1173,10 +1248,15 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
       angle: (deepAngle * 180) / Math.PI,
     },
   }
-  // No other light's body lies over the deep sky: one that reaches past the deep edge moves back toward the lead. A
-  // dragged line places the blooms anew, so it keeps their own sizes.
+  // No other light's body lies over the deep sky: one that reaches past the deep edge moves back toward the lead. Light
+  // of the sky's own hue (Cyan, a paler patch of sky) only dims there with the sky, so it stays. A dragged line places
+  // the blooms anew, so it keeps their own sizes.
   const seedGlows = glows.slice()
-  for (let i = 1; i < glows.length; i++) glows[i] = keepBefore(glows[i], leadP, away, leadEnd, deepEdge, frameP, stretch)
+  for (let i = 1; i < glows.length; i++) {
+    if (sky.deep && sky.deep.stops > 0 && glows[i].color !== SLOT.sky && !isCyan(colors[glows[i].color])) {
+      glows[i] = keepBefore(glows[i], leadP, away, leadEnd, deepEdge, frameP, stretch)
+    }
+  }
   // With dark colors in the pack (Plum and Forest, Slate and Near-black), the corner away from the
   // light deepens all the way to one of them, so the pack's ground shows as an area of its own. A grey
   // or blue dark color (Slate, Near-black) blends with the blue cleanly at any lightness, so it can
@@ -1186,7 +1266,9 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // run of seeds shows both; Plum and Forest stay a seeded draw.
   const firstDark = r() < 0.5
   const bothBlend = [SLOT.deep1, SLOT.deep2].every((d) => luminance(colors[d]) > 1e-4 && blendsWithSky(colors[d], colors[SLOT.sky]))
-  const deep = (bothBlend ? Math.round(seed) % 2 === 0 : firstDark) ? SLOT.deep1 : SLOT.deep2
+  // Light on light: the far side turns to the pack's mid grey (Steel) instead of a dark ground.
+  const noDark = darkStyle === 'none' && isGrey(colors[SLOT.light2])
+  const deep = noDark ? SLOT.light2 : (bothBlend ? Math.round(seed) % 2 === 0 : firstDark) ? SLOT.deep1 : SLOT.deep2
   const darkGround = luminance(colors[deep]) > 1e-4
   const skyFamily = darkGround && blendsWithSky(colors[deep], colors[SLOT.sky])
   // The dark area sits at the frame edge the sky darkens toward, lying along it, as the frame's anchor; its
@@ -1223,7 +1305,14 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
       }
   const zenithLobes = lobes(ZENITH_VARY, seed, ZENITH_LOBE_INDEX)
   // One of another hue keeps a corner's share along an edge too: wider, its meeting with the blue reads indigo.
-  const darkShare: readonly [number, number] = skyFamily ? [CORNER_SHARE[0] * plan.darkScale, CORNER_SHARE[1] * plan.darkScale] : OTHER_HUE_CORNER_SHARE
+  const cornerShare: readonly [number, number] = [CORNER_SHARE[0] * plan.darkScale, CORNER_SHARE[1] * plan.darkScale]
+  const darkShare: readonly [number, number] = skyFamily
+    ? darkStyle === 'strip'
+      ? STRIP_GROUND_SHARE
+      : darkStyle === 'third'
+        ? THIRD_GROUND_SHARE
+        : cornerShare
+    : OTHER_HUE_CORNER_SHARE
   const sizeDark = (z: ZenithSpec) => (darkGround ? sizeCorner(z, aspect, darkShare, zenithLobes) : z.radius)
   zenith.radius = sizeDark(zenith)
 
@@ -1240,6 +1329,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     hazeFloor: 1,
     bridgeSky: 1,
     glowsDim: 1,
+    packLight: 1,
   }
   // Under a dragged line the dark area's share of the frame is the seed's own draw, so seeds differ in it there
   // too; one of another hue stays within a corner's share.

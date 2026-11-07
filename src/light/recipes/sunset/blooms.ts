@@ -56,7 +56,7 @@ function glowParams(i: number, glow: GlowSpec): ParamSpec[] {
     num(`glow${n}Color`, `Glow ${n} color`, 0, SLOT_COUNT - 1, 1, glow.color),
     vec(`glow${n}At`, `Glow ${n} at`, -1, 2, 0.005, glow.at),
     num(`glow${n}Radius`, `Glow ${n} radius`, 0.05, 2.5, 0.005, glow.radius),
-    num(`glow${n}Aniso`, `Glow ${n} width / height`, 1, 12, 0.05, glow.aniso),
+    num(`glow${n}Aniso`, `Glow ${n} width / height (under 1: wider across its axis)`, 0.3, 12, 0.05, glow.aniso),
     num(`glow${n}Angle`, `Glow ${n} tilt`, -360, 360, 0.01, glow.angle),
     num(`glow${n}Gain`, `Glow ${n} gain`, 0, 4, 0.01, glow.gain),
     num(`glow${n}Beta`, `Glow ${n} falloff`, 1, 5, 0.01, glow.beta),
@@ -103,6 +103,7 @@ const PARAMS: readonly ParamSpec[] = [
   num('bridgeFloor', 'Lowest Oklab L a bridge aims for (0: the lighter side only)', 0, 1, 0.005, 0),
   num('hazeFloor', 'How far the glows haze is kept from hiding more sky light than they add (0: no limit)', 0, 1, 0.01, 0),
   num('bridgeSky', 'How much a bridge takes the sky hue on the sky side (0: the lights tint throughout)', 0, 1, 0.01, 0),
+  num('packLight', '1: pack output: a warm light has a small core of its own color and its color fills the bloom (0: the fitted 1:1 looks)', 0, 1, 1, 0),
 ]
 
 /** The one lens: without it (radius 0, the 1:1 presets) the aux source is unused, so it stays tiny. */
@@ -168,6 +169,7 @@ function readLayout(ctx: RecipeContext): BloomsLayout {
     bridgeFloor: ctx.num('bridgeFloor'),
     hazeFloor: ctx.num('hazeFloor'),
     bridgeSky: ctx.num('bridgeSky'),
+    packLight: ctx.num('packLight'),
   }
 }
 
@@ -210,6 +212,7 @@ function layoutParams(layout: BloomsLayout): Record<string, ParamValue> {
     bridgeFloor: layout.bridgeFloor,
     hazeFloor: layout.hazeFloor,
     bridgeSky: layout.bridgeSky,
+    packLight: layout.packLight,
   }
   layout.glows.forEach((glow, i) => {
     const n = i + 1
@@ -269,7 +272,12 @@ const BRIDGE_MAX_C = 0.06
  * the bridge's lightness.
  */
 const CORE_ABOVE_BRIDGE = 0.86
-const CORE_LIFT = 10
+const CORE_LIFT = 4
+/** The fitted 1:1 looks keep the stronger lift they were fitted with. */
+const PRESET_CORE_LIFT = 10
+/** A light's core radius against the light's own, and a warm light's (smaller, so its color fills the bloom). */
+const CORE_RADIUS = 0.3
+const WARM_CORE_RADIUS = 0.18
 const MAX_CORE = 2
 /** How much more light an orange-red core has: enough for the tone curve to take it through amber to cream. */
 const RED_CORE = 4
@@ -333,6 +341,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
   const glowLow: number[] = []
   const glowWarm: number[] = []
   const glowCore: number[] = []
+  const glowCoreRadius: number[] = []
   const glowCoreTint: number[] = []
   const glowShape: number[] = []
   const glowAxis: number[] = []
@@ -356,6 +365,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
       glowLow.push(0, 0, 0)
       glowWarm.push(0)
       glowCore.push(0)
+      glowCoreRadius.push(CORE_RADIUS)
       glowCoreTint.push(0, 0, 0)
       glowShape.push(0, 0, 2, 0)
       glowAxis.push(1, 0, 1, 1)
@@ -411,14 +421,20 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     const short = bridgeGate(sky, light) * Math.max(0, CORE_ABOVE_BRIDGE - linearToOklab(base)[0])
     // A light already near white (Yellow, Lime, Ice) has little room above its hex: it gets a smaller core, so its
     // body keeps its color and only its middle goes pale.
-    const roomLeft = 1 - PALE_CORE_CUT * smoothstep(0.82, 0.9, linearToOklab(base)[0])
+    // In pack output a near-white light without color (Ice) keeps its whole core: the core is what makes it Ice.
+    const pack = layout.packLight > 0.5
+    const roomLeft = 1 - PALE_CORE_CUT * smoothstep(0.82, 0.9, linearToOklab(base)[0]) * (pack ? smoothstep(0.04, 0.08, Math.hypot(lab[1], lab[2])) : 1)
     // A Steel bloom beside the lead is a light too: its middle pales toward white.
     const greyLight = i > 0 && isGrey(base) && (glow.color === SLOT.light1 || glow.color === SLOT.light2)
-    const core = isSourceLight(glow.color, base) ? Math.min(MAX_CORE, layout.core * (1 + CORE_LIFT * short)) * (fire ? RED_CORE : roomLeft) : greyLight ? layout.core * GREY_CORE : 0
+    const lift = pack ? CORE_LIFT : PRESET_CORE_LIFT
+    const core = isSourceLight(glow.color, base) ? Math.min(MAX_CORE, layout.core * (1 + lift * short)) * (fire ? RED_CORE : roomLeft) : greyLight ? layout.core * GREY_CORE : 0
     glowCore.push(core)
-    // The core whitens through the light's own pale tint; a red-orange core is more of its own light, which the
-    // tone curve takes through amber, not salmon (as Bands does).
-    glowCoreTint.push(...(red ? scale(light, gain) : scale(tint, luminance(light) * gain)))
+    // A warm light's core is small and is more of its own light, which the tone curve takes through amber, not salmon
+    // (as Bands does), so the bloom's middle is a brighter Tan, Yellow or Orange-red that goes pale only where it passes
+    // its hex, not a cream spot inside a ring of color. Other cores whiten through the light's own pale tint.
+    const warmCore = (pack && isWarm(base)) || red
+    glowCoreRadius.push(pack && isWarm(base) ? WARM_CORE_RADIUS : CORE_RADIUS)
+    glowCoreTint.push(...(warmCore ? scale(light, gain) : scale(tint, luminance(light) * gain)))
     glowShape.push(glow.at[0], glow.at[1], glow.beta, haze)
     glowAxis.push(...axis(glow.radius * reach, glow.aniso, glow.angle))
     glowEdge.push(glow.vary, 1.15, 1.7 * i + 0.3, front)
@@ -459,6 +475,8 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     uGlowLow: glowLow,
     uGlowWarm: glowWarm,
     uGlowCore: glowCore,
+    uGlowCoreRadius: glowCoreRadius,
+    uPackLight: clamp(layout.packLight, 0, 1),
     uGlowCoreTint: glowCoreTint,
     uGlowDeepFade: glowDeepFade,
     uGlowSkyLight: glowSkyLight,
@@ -536,12 +554,13 @@ export const sunsetBlooms: RecipeDefinition = {
 #define FIRE_BRIDGE 0.5
 #define DEEP_BEND 0.55
 #define FIRE_SKY_HAZE 1.55
-#define CORE_RADIUS 0.3
 #define BEHIND_REACH 1.0
 #define BLOOM_MINOR_REF ${BLOOM_MINOR_REF.toFixed(6)}
 #define BLOOM_ROW ${BLOOM_ROW.toFixed(6)}
 uniform float uLens;                  // 1: seen through the scatter lens (pack output); 0: drawn directly (1:1 presets)
 uniform float uGlowCore[GLOW_COUNT];  // light in a narrower core at each glow's source, over its peak
+uniform float uGlowCoreRadius[GLOW_COUNT]; // that core's radius against the glow's
+uniform float uPackLight;             // 1: pack output, where a light's own color fills its bloom (0: the fitted 1:1 looks)
 uniform vec3 uGlowCoreTint[GLOW_COUNT]; // color of that core light, the light's pale tint at its body's luminance
 uniform vec3 uSky;
 uniform vec3 uDeep;
@@ -620,7 +639,7 @@ float halfReach(float b) { return sqrt(exp2(1.0 / b) - 1.0); }
 // falloff softens and hardens along the arc around a fixed half-brightness
 // edge, so its edges wander and soften unevenly and its inner and outer
 // edges move apart.
-float bloom(vec2 P, vec2 warp, vec2 center, vec4 axis, vec2 stretch, float beta, vec3 edge, float bend, int index, float shortUnit, vec4 lobe[LOBES], float falloff[LOBES], float core, out float corePart) {
+float bloom(vec2 P, vec2 warp, vec2 center, vec4 axis, vec2 stretch, float beta, vec3 edge, float bend, int index, float shortUnit, vec4 lobe[LOBES], float falloff[LOBES], vec2 core, out float corePart) {
   vec2 scaleAxes = vec2(axis.z * stretch.x, axis.w * stretch.y);
   vec2 d0 = P - center;
   float reach0 = length(vec2(dot(d0, axis.xy), dot(d0, vec2(-axis.y, axis.x))) * scaleAxes);
@@ -657,8 +676,8 @@ float bloom(vec2 P, vec2 warp, vec2 center, vec4 axis, vec2 stretch, float beta,
   }
   // A narrower core where the light comes from: brightness keeps rising toward the source and goes
   // white there, instead of standing flat across the glow, and the color stays in the falloff.
-  float c2 = (along * along + across * across) * (keepHalf / (CORE_RADIUS * CORE_RADIUS));
-  corePart = core * exp2(-2.0 * b * log2(1.0 + c2));
+  float c2 = (along * along + across * across) * (keepHalf / (core.y * core.y));
+  corePart = core.x * exp2(-2.0 * b * log2(1.0 + c2));
   return sum + corePart;
 }
 
@@ -680,7 +699,7 @@ vec3 bloomsScene(vec2 uv) {
   }
   // The deep area's edge drifts like a glow's, on the field row after the glows'.
   float noCore;
-  float z = min(1.0, uZenithShape.z * bloom(P, warp, (uZenithShape.xy - 0.5) * frame, uZenithAxis, vec2(shortUnit), uZenithShape.w, vec3(0.5, 1.1, 2.3), 0.0, 9, shortUnit, lobe, falloff, 0.0, noCore));
+  float z = min(1.0, uZenithShape.z * bloom(P, warp, (uZenithShape.xy - 0.5) * frame, uZenithAxis, vec2(shortUnit), uZenithShape.w, vec3(0.5, 1.1, 2.3), 0.0, 9, shortUnit, lobe, falloff, vec2(0.0, 1.0), noCore));
   // The sky keeps changing up to the top edge: it is its exact hex along a mid-sky line (tilted, and
   // bent by the shared warp) and above it gets darker without changing hue; a dark pack color comes in
   // only where it is already dark, so blue and it meet without a lighter purple or teal band between.
@@ -729,7 +748,7 @@ vec3 bloomsScene(vec2 uv) {
         lobe[j] = uGlowLobe[i * LOBES + j];
         falloff[j] = uGlowLobeFalloff[i * LOBES + j];
       }
-      k[i] = bloom(P, warp, (uGlowShape[i].xy - 0.5) * frame, uGlowAxis[i], stretch, uGlowShape[i].z, uGlowEdge[i].xyz, uGlowBend[i], i, shortUnit, lobe, falloff, uGlowCore[i], kc[i]);
+      k[i] = bloom(P, warp, (uGlowShape[i].xy - 0.5) * frame, uGlowAxis[i], stretch, uGlowShape[i].z, uGlowEdge[i].xyz, uGlowBend[i], i, shortUnit, lobe, falloff, vec2(uGlowCore[i], uGlowCoreRadius[i]), kc[i]);
       vec2 c = (uGlowShape[i].xy - 0.5) * frame;
       low[i] = smoothstep(-0.25, 1.0, (P.y - c.y) * uGlowAxis[i].w * stretch.y);
       // Low down the light passes through more air, which hides more of the sky behind it. Not where the sky
@@ -742,7 +761,9 @@ vec3 bloomsScene(vec2 uv) {
       float band = 1.0 - smoothstep(0.0, 0.5 * (1.0 - smoothstep(0.45, 1.5, fromSun)) + 1e-3, (0.5 * frame.y - P.y) * shortUnit);
       air[i] = uGlowFire[i] * band * (1.0 - smoothstep(0.15, 0.4, (0.5 * frame.y - c.y) * shortUnit));
       float k2 = k[i] * k[i];
-      own[i] = uGlowShape[i].w * mix(mix(k2, FIRE_SKY_HAZE * k2 * k2, uGlowFire[i]), k[i], air[i]) * (1.0 + LOW_HAZE * max(low[i], air[i]) * (1.0 - above));
+      // A sun's lower side only crosses more air along the lit horizon band: below a sun above the frame (all of the
+      // frame), thicker haze would hide the sky behind its dim light, which seen alone reads khaki or grey-brown.
+      own[i] = uGlowShape[i].w * mix(mix(k2, FIRE_SKY_HAZE * k2 * k2, uGlowFire[i]), k[i], air[i]) * (1.0 + LOW_HAZE * max(low[i] * (1.0 - uGlowFire[i]), air[i]) * (1.0 - above));
       ext += own[i];
       lightsAir = max(lightsAir, uGlowDeepFade[i] * smoothstep(0.04, 0.3, k[i]));
     }
@@ -834,7 +855,10 @@ vec3 bloomsScene(vec2 uv) {
     edgeLit *= mix(1.0, deepDim, uGlowSkyLight[i]);
     // Against a sky much dimmer than the light, its own color keeps to where it is bright.
     float skyRel = dot(sky, vec3(0.2126, 0.7152, 0.0722)) / max(dot(uGlowColor[i], vec3(0.2126, 0.7152, 0.0722)), 1e-4);
-    float bodyShare = smoothstep(mix(0.5, 0.15, smoothstep(0.45, 1.0, skyRel) * deepLit), 0.8, k[i]);
+    // In pack output the light's own color fills most of the bloom and fades out slowly; only its faint outer edge is
+    // the pale tail (with a pale tail over much of it, the color reads as a ring round a pale middle).
+    float overPale = smoothstep(0.45, 1.0, skyRel) * deepLit;
+    float bodyShare = smoothstep(mix(mix(0.5, 0.15, overPale), mix(0.4, 0.06, overPale), uPackLight), mix(0.8, 0.55, uPackLight), k[i]);
     vec3 body = mix(uGlowColor[i], uGlowLow[i], low[i] * uGlowWarm[i] * toLight);
     // A light that burns like fire (Orange-red): its bright middle goes through amber to cream by the tone curve.
     // Toward the horizon, through more air, it deepens as it dims, to deep red at the far end of its falloff, but
@@ -846,8 +870,8 @@ vec3 bloomsScene(vec2 uv) {
     // blue, the sky's own color, so the blue only gets brighter toward it (cream over blue is grey). It fades out
     // before the far sky.
     vec3 skyLight = uSky / max(dot(uSky, vec3(0.2126, 0.7152, 0.0722)), 1e-5) * dot(uGlowTail[i], vec3(0.2126, 0.7152, 0.0722));
-    vec3 scattered = mix(skyLight * FIRE_SKY_LIGHT, uGlowTail[i] * FIRE_TAIL_LIGHT, smoothstep(0.25, 0.55, k[i])) * smoothstep(0.05, 0.35, k[i]);
-    vec3 skySide = mix(scattered, uGlowColor[i], smoothstep(0.6, 0.95, k[i]));
+    vec3 scattered = mix(skyLight * FIRE_SKY_LIGHT, uGlowTail[i] * FIRE_TAIL_LIGHT, smoothstep(0.12, 0.35, k[i])) * smoothstep(0.05, 0.3, k[i]);
+    vec3 skySide = mix(scattered, uGlowColor[i], smoothstep(0.55, 0.9, k[i]));
     vec3 horizonSide = mix(uGlowLow[i], uGlowColor[i], smoothstep(0.08, 0.4, k[i]));
     body = mix(body, mix(skySide, horizonSide, airSide), uGlowFire[i]);
     bodyShare = mix(bodyShare, 1.0, uGlowFire[i]);
