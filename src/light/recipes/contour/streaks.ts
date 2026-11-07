@@ -523,6 +523,8 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
   // How many shafts the clouds let through spreads over the seeds (seedShares).
   const [past, low, leftLit, broadFan] = seedLayout(pack, seed, 0x57e4)
   const [rayShare] = seedShares(seed, 0x57e4, 1, random)
+  // Choices added later draw from their own stream, so the rest of each seed stays as it was.
+  const shape = seededRandom(seed, 0x57e6)
   const either = (choice: number, lo: [number, number], hi: [number, number]) => (choice ? lerp(hi[0], hi[1], random()) : lerp(lo[0], lo[1], random()))
   const horizonAt = wide ? either(low, [0.48, 0.62], [0.84, 1.02]) : either(low, [0.52, 0.66], [0.84, 1.02])
   const cy = -halfH + 2 * halfH * horizonAt
@@ -554,8 +556,10 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
     sky: [round4(sky[0]), round4(sky[1]), round4(soft(0.35, 0.6)), round4(lerp(0.8, 1.2, random()))],
     skyLevel: [round4(Math.min(32, 3 * coolGain * power)), round4(0.16 * coolGain * power), round4(lerp(DARK_SHARE, 1.6 * DARK_SHARE, random()))],
     rise: [round4(lerp(4, 7, random())), round4(lerp(0.2, 0.32, random())), round4(lerp(0.9, 1.2, random())), round4(lerp(3.5, 5, random()))],
-    // A few wide gaps with soft sides, and light between them: broad, soft shafts.
-    clouds: [round4(lerp(5, 11, rayShare)), round4(soft(2.2, 1.2)), round4(soft(4, 1.8)), round4(soft(0.25, 0.45))],
+    // A few wide gaps in thin clouds, with light in the haze between them: a few broad, soft
+    // shafts, as in the radial-streaks example, rather than a fan of spokes. The seed spreads how
+    // many gaps there are and how soft their sides are.
+    clouds: [round4(lerp(RAY_GAPS[0], RAY_GAPS[1], rayShare)), round4(soft(1.7, 0.95) * lerp(0.75, 1.35, shape())), round4(soft(2.6, 1.2)), round4(soft(0.35, 0.6))],
     layer: [layerIn, layerOut, round4(lerp(0.25, 0.5, random())), round4(lerp(2.5, 5, random()))],
     horizon: [round4(lerp(0.45, 0.75, random())), round4(lerp(0.03, 0.1, random())), round4(lerp(0.4, 0.8, random())), round4(soft(0.1, 0.25))],
     horizonShape: horizonShape.map(round4),
@@ -579,11 +583,11 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
     base: round4(BASE_GAIN * light.baseLevel),
     vignette: round4(lerp(0.08, 0.15, random())),
     // The sky stays dark through the cloud layer, where the light is thickest around the
-    // point, and has all its light just past it, with no glare at the point; fine streaks run
-    // in the shafts.
+    // point, and has all its light just past it, with no glare at the point; a few faint
+    // streaks run in the shafts and change along their length, as the haze thickens and thins.
     near: [layerOut, round4(1.7 * layerOut), 0.25, 0],
     nearShape: [round4(0.3 * layerIn), 0.35],
-    texture: [0.35, 11, 0.5],
+    texture: [0.28, 4.4, 1.5],
     veil: veilParam(light),
     darkMeet: darkMeetParam(light, BASE_GAIN),
     veilTint: veiled(light) ? VEIL_TINT : 0,
@@ -644,13 +648,13 @@ const FAN_ON_LINE = 0.55
  * Thick clouds under a dragged line: the light's level, the clouds' optical depth and the light
  * left in their shadows, each as a factor. Thin-cloud seeds keep their own.
  */
-const THICK_CLOUDS = [0.55, 2, 0.32]
+const THICK_CLOUDS = [0.55, 2.8, 0.32]
 
 /**
  * Thick clouds for a warm light: its own level, since dim warm haze already falls off fast
  * (dimmer, its shafts end in a sunburst at the point instead of reaching along the line).
  */
-const THICK_WARM = [1, 1.4, 0.5]
+const THICK_WARM = [1, 2, 0.45]
 
 /** The lit sky's side softness for a seed with crisp sides under a dragged line, as a factor. */
 const CRISP_SIDES = 0.55
@@ -664,6 +668,9 @@ const GLOSSY_PATH = [0.25, 3, 0.45]
 /** Falloff (short-side units) of the glow past the frame for a broad and a narrow fan. */
 const WIDE_GLOW = 0.27
 const NARROW_GLOW = 0.16
+
+/** Least and most gaps in the cloud layer per short side, spread over the seeds: a few broad shafts. */
+const RAY_GAPS = [3, 9]
 
 /**
  * The scene for a dragged line: the shafts meet at the line's start and fan out toward its
