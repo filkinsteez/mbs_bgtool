@@ -1,4 +1,5 @@
-import type { ColorPack } from '../../color/packs'
+import type { ColorPack, PackColor } from '../../color/packs'
+import { hexToLinear } from '../../color/srgb'
 import type { ComposeInput, Composition, ParamSpec, ParamValue, RecipeContext, RecipeDefinition } from '../../scene'
 import {
   accentParams,
@@ -15,7 +16,7 @@ import {
   offFrameSpread,
   packAccent,
   packBase,
-  ringPartner,
+  ringHues,
   ringParts,
   suitsRings,
   lerp,
@@ -67,6 +68,50 @@ const FAR = 3
 export const HALO_LAYOUT: CurveLightLayout = { emitters: RINGS, primitives: 64, near: NEAR, far: FAR }
 /** The most of a ring's inside glow that takes a Meta Blue light's pale color (packAccent's `air`). */
 const RING_HAZE_PALE = 0.6
+/** Color slots of a ring's colors along it (ringHues): the light's own, then the next two. */
+const RING_HUE_SLOTS = [2, 4, 7]
+/**
+ * Where a ring's colors sit along its stretch in the frame (0 at the hot spot's end), by how many colors it has:
+ * two hold a quarter at each end and turn in the middle; with three, the middle one sits halfway. Past the first
+ * and last places the ring keeps those colors. Each place cuts the ring into one more piece the shader sums, so
+ * there are no others, and the middle falls where the ring's pieces already meet (ringColors).
+ */
+const RING_HUE_PLACES: Record<number, { places: number[]; colors: number[] }> = {
+  2: { places: [0.25, 0.75], colors: [0, 1] },
+  3: { places: [0.2, 0.5, 0.8], colors: [0, 1, 2] },
+}
+
+const prefixKeys = (prefix: string, values: Record<string, ParamValue>) =>
+  Object.fromEntries(Object.entries(values).map(([key, value]) => [`${prefix}${key}`, value]))
+
+/**
+ * A ring's colors (ringHues) placed along the stretch of it in the frame, so the hue turns where it shows. The ring
+ * is a circle, so its rotation only moves where its length starts: the stretch's middle goes halfway along, where it
+ * never crosses the start and where two of the ring's eighths meet. The light's own color holds over the part
+ * nearest `near` (the hot spot's end, where the light is strongest), then the others follow in order to the far end
+ * (RING_HUE_PLACES), placed evenly about the middle. Each has its largest channel at the light's, so the hue turns
+ * while the brightness follows the light.
+ */
+function ringColors(shape: ShapeSettings, anchor: Vec2, aspect: number, hues: readonly PackColor[], near: Vec2): Record<string, ParamValue> {
+  const run = longestRun(visibleRuns(buildShape(shape), anchor, aspect))
+  const layout = RING_HUE_PLACES[hues.length]
+  if (!layout || run.length < 2) return {}
+  const angle = (p: Vec2) => (Math.atan2(p[1] - anchor[1], p[0] - anchor[0]) * 180) / Math.PI
+  const rotate = angle(pointAlong(run, 0.5) ?? run[0]) - 180
+  const along = (p: Vec2) => ((((angle(p) - rotate) % 360) + 360) % 360) / 360
+  const first = run[0]
+  const last = run[run.length - 1]
+  const [from, to] = Math.hypot(first[0] - near[0], first[1] - near[1]) <= Math.hypot(last[0] - near[0], last[1] - near[1]) ? [first, last] : [last, first]
+  const span = along(to) - along(from)
+  const peak = (hex: string) => Math.max(...hexToLinear(hex))
+  const pad = (values: number[], fill: number) => [...values, ...Array<number>(4 - values.length).fill(fill)]
+  return {
+    Rotate: round4(rotate),
+    StopColor: pad(layout.colors.map((k) => RING_HUE_SLOTS[k]), 0),
+    StopAt: pad(layout.places.map((f) => 0.5 + Math.sign(f - 0.5) * Math.sign(span) * round4(Math.abs((f - 0.5) * span))), 1),
+    StopGain: pad(layout.colors.map((k) => round4(peak(hues[0].hex) / peak(hues[k].hex))), 1),
+  }
+}
 
 function ringParams(i: number): ParamSpec[] {
   const first = i === 1
@@ -86,8 +131,9 @@ function ringParams(i: number): ParamSpec[] {
     { kind: 'number', key: `ring${i}Sweep`, label: `Ring ${i} sweep (360 closed)`, min: 1, max: 360, step: 0.01, default: 360 },
     { kind: 'number', key: `ring${i}Rotate`, label: `Ring ${i} rotation`, min: -360, max: 360, step: 0.01, default: 0 },
     { kind: 'number', key: `ring${i}Color`, label: `Ring ${i} color slot`, min: 1, max: COLORS, step: 1, default: 2 },
-    { kind: 'number', key: `ring${i}Color2`, label: `Ring ${i} second color slot, shifting around the ring (0 none)`, min: 0, max: COLORS, step: 1, default: 0 },
-    { kind: 'number', key: `ring${i}ColorTurns`, label: `Ring ${i} color cycles around the ring`, min: 1, max: 8, step: 1, default: 3 },
+    { kind: 'vector', key: `ring${i}StopColor`, label: `Ring ${i} colors along it, slots (0 unused; one color if the first is 0)`, min: 0, max: COLORS, step: 1, default: [0, 0, 0, 0] },
+    { kind: 'vector', key: `ring${i}StopAt`, label: `Ring ${i} colors' places along it (0..1 from its start)`, min: 0, max: 1, step: 0.0001, default: [0, 1, 1, 1] },
+    { kind: 'vector', key: `ring${i}StopGain`, label: `Ring ${i} colors' gains`, min: 0, max: 20, step: 0.001, default: [1, 1, 1, 1] },
     { kind: 'number', key: `ring${i}Pale`, label: `Ring ${i} pale color slot, for parts with a pale share (0 none)`, min: 0, max: COLORS, step: 1, default: 0 },
     { kind: 'number', key: `ring${i}Gain`, label: `Ring ${i} gain`, min: 0, max: 20, step: 0.001, default: 1 },
     { kind: 'vector', key: `ring${i}MaskShift`, label: `Ring ${i} inside edge shift`, min: -2, max: 2, step: 0.0005, default: [0, 0] },
@@ -284,7 +330,7 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   // A Tan light keeps its bright bands.
   const paleArc = plan.kind === 'ellipse' && warmTail(light.hex) !== 'bright'
   const crossing = rings ? crossingRing(layout, rand, aspect) : null
-  const partner = rings ? ringPartner(pack, light) : null
+  const hues = rings ? ringHues(pack, light) : [light]
   // The hot spot and the falloff follow the longest piece of the curve inside the frame.
   const runs = visibleRuns(buildShape(layout.shape), layout.anchor, aspect)
   const path = longestRun(runs)
@@ -325,7 +371,11 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   // short line's patch is a long thin ellipse whose ends read as points, most of all where the curve leaves the frame.
   // A Tan light's flat top falls too fast here: the patch's end reads as a cut edge.
   const dragPower = 4
-  const drift = warmDrift(light.hex)
+  // A ring with a warm color dims the way that color does; its other colors keep their own hue (clDrift).
+  const drift = warmDrift(hues.find((c) => warmTail(c.hex))?.hex ?? light.hex)
+  // The rings' colors are placed from where the hot spot sits at the default, so the Light control and a drag move
+  // the light along them without moving them.
+  const seedHot = pointAlong(path, along(0.5)) ?? layout.anchor
   const ring1Parts = rings ? ringParts('ring1') : paleArc ? arcParts('ring1', light.hex) : haloParts('ring1', light.hex)
   // The widest haze: a crest's outer fade, a pale arc's or a ring's inside glow. A ring's only dims: brighter, it
   // fills the ring like a sail.
@@ -344,7 +394,7 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     ring1Gain: 1,
     ...ring1Parts,
     ...(hazeGain !== 1 ? { [hazeKey]: round4(Number(ring1Parts[hazeKey] ?? 0) * hazeGain) } : {}),
-    ...(rings && partner ? { ring1Color2: 4 } : {}),
+    ...(rings ? prefixKeys('ring1', ringColors(layout.shape, layout.anchor, aspect, hues, seedHot)) : {}),
     ...(drift ? { ring1Drift: drift.ratios, ring1DriftShape: [drift.knee, drift.sharpness] } : {}),
     ring1Pale: accent.pale ? 5 : 0,
     // A colored band's body is far part 3 (and far part 1 outside a crest); the rest of the far light is haze.
@@ -368,7 +418,7 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
           ring2Gain: 0.85,
           ...ringParts('ring2'),
           ...(accent.haze < 1 ? { ring2f1Weight: round4(Number(ringParts('ring2').ring2f1Weight) * accent.haze) } : {}),
-          ...(partner ? { ring2Color2: 4 } : {}),
+          ...prefixKeys('ring2', ringColors(crossing.shape, crossing.anchor, aspect, hues, seedHot)),
           ...(drift ? { ring2Drift: drift.ratios, ring2DriftShape: [drift.knee, drift.sharpness] } : {}),
         }
       : {}),
@@ -394,7 +444,16 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     soften: round4(soften),
   }
   return {
-    colors: ['#000000', light.hex, base.gain > 0 ? base.hex : '#000000', partner?.hex ?? '#000000', accent.pale ?? '#000000', accent.second ?? '#000000', '#000000', '#000000'],
+    colors: [
+      '#000000',
+      light.hex,
+      base.gain > 0 ? base.hex : '#000000',
+      hues[1]?.hex ?? '#000000',
+      accent.pale ?? '#000000',
+      accent.second ?? '#000000',
+      hues[2]?.hex ?? '#000000',
+      '#000000',
+    ],
     params,
     lens: {
       bloom: 0,
@@ -428,18 +487,27 @@ export function haloEmitters(ctx: RecipeContext): EmitterSettings[] {
           flip: ctx.bool(`ring${i}Flip`),
         })
       : null
-    // With a second color the rim shifts between the two around the ring, like thin glass catching the light.
+    // With more colors the rim's hue turns along it, like a thin film catching the light. Where two colors meet,
+    // the light of both adds, so the stretch between them is lighter than either and never a dark or muddy mix.
     const color = slotColor(ctx, ctx.num(`ring${i}Color`))
-    const second = Math.round(ctx.num(`ring${i}Color2`)) > 0 ? slotColor(ctx, ctx.num(`ring${i}Color2`)) : null
-    const turns = Math.max(1, Math.round(ctx.num(`ring${i}ColorTurns`)))
     const ringGain = ctx.num(`ring${i}Gain`)
-    const stops = second
-      ? Array.from({ length: 2 * turns + 1 }, (_, k) => ({ t: k / (2 * turns), color: k % 2 ? second : color, gain: ringGain }))
-      : [{ t: 0, color, gain: ringGain }]
+    const slots = ctx.vec(`ring${i}StopColor`).map(Math.round)
+    const at = ctx.vec(`ring${i}StopAt`)
+    const gains = ctx.vec(`ring${i}StopGain`)
+    const placed = slots.flatMap((slot, k) => (slot > 0 ? [{ t: at[k], slot, color: slotColor(ctx, slot).map((v) => v * gains[k]) }] : []))
+    const stops =
+      slots[0] > 0
+        ? placed.flatMap((s, k) => {
+            const prev = placed[k - 1]
+            const bridge = prev && prev.slot !== s.slot ? [{ t: (prev.t + s.t) / 2, color: prev.color.map((v, c) => v + s.color[c]), gain: ringGain }] : []
+            return [...bridge, { t: s.t, color: s.color, gain: ringGain }]
+          })
+        : [{ t: 0, color, gain: ringGain }]
     return {
       shape,
       anchor: ctx.vec(`ring${i}At`),
       stops,
+      own: color.map((v) => v * ringGain),
       near: Array.from({ length: NEAR }, (_, k) => readNear(ctx, `ring${i}n${k + 1}`, soften, gain)),
       far: Array.from({ length: FAR }, (_, k) => readFar(ctx, `ring${i}f${k + 1}`, soften, gain)),
       maskShift: ctx.vec(`ring${i}MaskShift`),

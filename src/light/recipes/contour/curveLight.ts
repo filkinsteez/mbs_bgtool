@@ -422,13 +422,16 @@ float clLit(int li, float light1, float light2, float gamma) {
 // An emitter's light as it dims: v is its summed level at the pixel against the emitter's own color (1 is the
 // light at its own hex). The largest channel follows v; the others move from the light's own ratios toward d.rgb
 // times them as s falls from 1, with s = v^a (1 + k^a) / (v^a + k^a) (knee k = d.w, sharpness a). Off when k is 0.
+// Another color on the same emitter (a ring's second color) keeps its own largest channel too.
 vec3 clDrift(vec3 raw, vec3 own, vec4 d, float sharpness) {
   if (d.w <= 0.0) return raw;
-  float v = maxComponent(raw) / max(maxComponent(own), 1e-6);
+  float top = maxComponent(raw);
+  float v = top / max(maxComponent(own), 1e-6);
   float va = pow(max(v, 1e-12), sharpness);
   float ka = pow(d.w, sharpness);
   float s = min(1.0, va * (1.0 + ka) / (va + ka));
-  return raw * mix(d.rgb, vec3(1.0), s);
+  vec3 drifted = raw * mix(d.rgb, vec3(1.0), s);
+  return drifted * (top / max(maxComponent(drifted), 1e-12));
 }
 
 // A part's light moved by share m into the emitter's pale color at the same luminance (a light whose pale side takes
@@ -677,6 +680,8 @@ export interface EmitterSettings {
   maskGrow: number
   facing?: FacingSettings
   drift?: DriftSettings
+  /** The light's own color at its own level, which `drift` measures against (default: the first stop's). */
+  own?: readonly number[]
   /** Linear color that near parts with a `pale` share take on (another pack color for the light's pale side). */
   pale?: readonly number[]
 }
@@ -962,7 +967,7 @@ export function curveLightUniforms(
     const settings = emitters[e]
     if (!settings || !settings.shape) continue
     const sided = [...settings.near, ...settings.far].filter((c) => c.weight > 0 && Math.round(c.side) !== 0)
-    const own = stopAt(settings.stops, 0)
+    const own = settings.own ?? stopAt(settings.stops, 0)
     // Past this distance from the edge every side mask is fully on or off (4 softness widths), so only the inside test matters.
     const maskReach = Math.max(0, ...sided.map((c) => Math.abs(c.maskInset) + 4 * Math.max(c.maskSoft, MIN_MASK_SOFT))) + Math.abs(settings.maskGrow) + 1e-3
     const packed = fitOutlines(packShape(settings.shape, settings.stops, settings.facing), layout.primitives)

@@ -862,20 +862,6 @@ export function arcParts(prefix: string, hex: string): Record<string, number | n
 }
 
 /**
- * The pack color a light's rim shifts toward around a ring: a color its light mixes with cleanly (Meta Blue and
- * Cyan, Orange-red toward Yellow, the Atmospheric greys) or its own dim tail's color (Lime and Forest). Null when
- * there is none: Tan, Meta Blue in Elemental, and Yellow, whose dim rim already runs to Orange-red's hue like fire (an
- * Orange-red stretch on top would leave too little Yellow to read as a Yellow light).
- */
-const RING_PARTNERS: Record<string, string> = {
-  '#1FCDF0': '#0064E0',
-  '#FF4F00': '#FFD61E',
-  '#D6F26C': '#0F3D33',
-  '#F2F4F7': '#6A7788',
-  '#6A7788': '#F2F4F7',
-}
-
-/**
  * Whether a light can be thin rims: not Yellow, whose rim would mostly be its Orange-red dim stretch (the fire rule),
  * leaving too little Yellow to read as a Yellow light; a Yellow halo keeps its broad crest.
  */
@@ -884,13 +870,21 @@ export function suitsRings(light: PackColor): boolean {
   return !(warmTail(light.hex) === 'deep red' && (Math.atan2(b, a) * 180) / Math.PI > 60)
 }
 
-export function ringPartner(pack: ColorPack, light: PackColor): PackColor | null {
-  const has = (hex: string) => pack.colors.find((c) => c.hex.toUpperCase() === hex) ?? null
-  const hex = light.hex.toUpperCase()
-  // Meta Blue's partner is Cyan in Bold and Ice in Atmospheric; in Elemental it has none (toward Plum the rim
-  // passes through indigo).
-  if (hex === '#0064E0') return has('#1FCDF0') ?? has('#F2F4F7')
-  return RING_PARTNERS[hex] ? has(RING_PARTNERS[hex]) : null
+/**
+ * The pack colors a thin ring's light runs through along its length, the light's own color first, as the hue of a
+ * thin film turns with the angle around it (iridescent-rings reference). Each is the next one in pack order, among
+ * the colors light enough to be a rim's light (Forest, Plum, Slate and Near-black are not): Bold's Meta Blue into
+ * Cyan, Elemental's into Lime, Atmospheric's into Ice and Steel greys. A Tan ring stays one color: its neighbors are
+ * dark, and its dim fall (toward copper) and Lime's (toward Forest) can't share a ring.
+ */
+export function ringHues(pack: ColorPack, light: PackColor): PackColor[] {
+  const named = (names: string[]) => names.flatMap((name) => pack.colors.find((c) => c.name === name) ?? [])
+  const next: Record<ColorPack['id'], Record<string, string[]>> = {
+    bold: { 'Meta Blue': ['Cyan'], Cyan: ['Meta Blue'], 'Orange-red': ['Yellow'] },
+    elemental: { 'Meta Blue': ['Lime'], Lime: ['Meta Blue'] },
+    atmospheric: { 'Meta Blue': ['Ice', 'Steel'], Ice: ['Meta Blue'], Steel: ['Ice', 'Meta Blue'] },
+  }
+  return [light, ...named(next[pack.id][light.name] ?? [])]
 }
 
 /**
