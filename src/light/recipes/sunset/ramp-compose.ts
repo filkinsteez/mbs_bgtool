@@ -423,8 +423,8 @@ const ICE_MASSES = [0, 0.2, 0]
 const ICE_GAIN = [1, 1.25, 1]
 /**
  * Water at the seed's own view: how much it squashes the sky it mirrors, the least degrees below the
- * horizon half a short side under the line, how much further the sun's path reaches, and the share of
- * the band above the glow that the water around the path mirrors. Elemental's and Atmospheric's
+ * horizon half a short side under the line, and the share of the band above the glow that the sun's
+ * path mirrors toward its sides. Elemental's and Atmospheric's
  * water past the far bank's image and a strip as deep as the lens is wide mirrors the sky higher up,
  * by a share of that band, and keeps a share of its reflection there, by depth turn (light, dark,
  * between); Bold's keeps mirroring its Cyan.
@@ -432,14 +432,16 @@ const ICE_GAIN = [1, 1.25, 1]
 const OWN_WATER = {
   squeeze: 1.8,
   degrees: 5,
-  pathReach: 2.2,
   band: 0.4,
   lift: { elemental: [0.05, 0.2, 0.15], atmospheric: [0.15, 0.5, 0.3] },
   keep: [0.85, 0.65, 0.75],
 }
-/** How fast a far bank's height changes across the frame, per half the frame's width, and its height at its thick end. */
-const BANK_SLOPE = 1.2
-const BANK_PEAK = 1.4
+/**
+ * A far bank: its length from the frame's edge to its spit, in short sides at a square frame (a wider frame's
+ * bank is longer, by the square root of its width), its height at that edge, its waterline's drop below the
+ * horizon as a share of its height, and how many times shorter its mirror image is than the sky's.
+ */
+const BANK = { length: [0.95, 1.25], peak: 2.2, foot: 0.1, mirror: 2 }
 /**
  * Under a dragged line, the most a warm glow lifted above the land's own glow ends above the land,
  * and how far above an open sky's horizon a warm glow's end lies before the sky under it comes
@@ -1153,15 +1155,18 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     groundWave: outline.wave,
     ridge: [outline.rise, outline.toward, outline.bowl, outline.waveLength],
     shore: [bankHeight, 0.5],
-    // A far bank is a headland: thick on the side away from the sun and thinning to nothing toward it.
-    shoreShape: [-side * BANK_SLOPE, lerp(0, 0.6, shorePick), BANK_PEAK],
+    // A far bank is a headland: thick where it runs off the frame on the side away from the sun and
+    // thinning to nothing toward it, its waterline just under the horizon.
+    shoreShape: [-side, lerp(BANK.length[0], BANK.length[1], shorePick) * Math.sqrt(frameWidth), BANK.peak],
+    shoreFoot: bankHeight > 0 ? [BANK.foot, BANK.mirror] : [0, 1],
     // The path mirrors the glow's line, which sits above most of the far bank.
-    // Light water is a near mirror with a faint path, deep water dark with a strong one.
-    sunPath: [water ? look.sunPath * lerp(0.45, 1.25, depth) : 0, 0.02, 0.6, pathGlow],
-    // A tall water area keeps its path further down. Around it the water mirrors the band part
-    // way from the glow up to the low sky's edge. At the seed's own view the path reaches the
-    // viewer, and the water around it mirrors the light just above the glow.
-    sunLight: [Math.max(0.3, 0.6 * (0.5 * tall - lineAt)) * (ownWater ? OWN_WATER.pathReach : 1), skyBand * (ownWater ? OWN_WATER.band : 1)],
+    // Light water is a near mirror with a faint path, deep water dark with a strong one. A tall,
+    // narrow frame's path widens less, so it never fills the water's width.
+    sunPath: [water ? look.sunPath * lerp(0.45, 1.25, depth) : 0, 0.02, 0.5 * Math.sqrt(frameWidth / tall), pathGlow],
+    // The path's middle reaches the glow's paler top at the bottom edge. Toward its sides it
+    // mirrors the band part way from the glow up to the low sky's edge, at the seed's own view the
+    // light just above the glow.
+    sunLight: [Math.max(0.3, 0.5 * tall - lineAt), skyBand * (ownWater ? OWN_WATER.band : 1)],
     // Past the far bank's image and a strip wider than the lens, so the bank never blurs into the
     // blue, the water mirrors the sky above the glow: the glow's mirror image is a thinner, weaker
     // strip, and the warm reflection gathers in the sun's path.
