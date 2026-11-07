@@ -87,8 +87,10 @@ const T = {
   // (artifacts/compare/rounds/14/check/SEEDS.md): under the owner's line, Bands Bold seeds 1, 5, 7 and 8 (layout up
   // to 0.16, colors up to 0.08), Ramp Atmospheric seeds 1-6 at controls 0.37 (0.09, 0.12) and 12 of 15 pairs of Ramp
   // Bold seeds 1-6 look alike; Bands Bold's orange and yellow seeds 2 and 4 against the rest (colors 0.26 and up)
-  // don't; at the default light Contour seeds stay apart as before.
-  variety: { layout: 0.2, colors: 0.15, baseL: 0.35, litL: 0.1, chroma: [0.035, 0.07] },
+  // don't; at the default light Contour seeds stay apart as before. Since compare round 16
+  // (artifacts/compare/rounds/16/seeds/SEEDS.md) Cyan and Meta Blue are two families: a blue's mass moves from cyan to
+  // blue across `variety.cyanToBlue` (Oklab hue), so a deep Meta Blue sky no longer matches a Cyan one.
+  variety: { layout: 0.2, colors: 0.15, baseL: 0.35, litL: 0.1, chroma: [0.035, 0.07], cyanToBlue: [215, 255] },
   // Packs never look alike (SHARED.md, owner 2026-11-05 10:48 AM): two packs at the same seed and drag look like the
   // same frame when the mean Oklab distance of their 80x45 thumbnails, over the pixels lit in either (L `cross.litL`
   // and up, so shared black does not count), is `cross.color` or less. The layout measure of the seed check is left
@@ -184,7 +186,7 @@ const DRAGS = {
 }
 const dragText = (d) => `${DRAGS[d].name}, from=${DRAGS[d].from.join(',')}&to=${DRAGS[d].to.join(',')}`
 // The hue families the seed check compares (Oklab hue, each up to its degree): red to orange, yellow and tan, green,
-// blue (Cyan to Meta Blue) and purple.
+// blue (Cyan to Meta Blue, shared out between cyan and blue by T.variety.cyanToBlue) and purple.
 const HUE_FAMILIES = [
   [55, 'red'],
   [105, 'yellow'],
@@ -1361,16 +1363,24 @@ try {
     return den ? num / den : 0
   }
   // Colors: how much colored light a frame has in each hue family (HUE_FAMILIES), wherever it sits. A pixel counts
-  // from Oklab chroma `variety.chroma[0]` and fully from `variety.chroma[1]`, so pale greys count for little.
+  // from Oklab chroma `variety.chroma[0]` and fully from `variety.chroma[1]`, so pale greys count for little. A blue
+  // counts toward cyan and blue in proportion across `variety.cyanToBlue`, so two blues near the middle stay alike.
   function colorFamilies(lab) {
-    const mass = { red: 0, yellow: 0, green: 0, blue: 0, purple: 0 }
+    const mass = { red: 0, yellow: 0, green: 0, cyan: 0, blue: 0, purple: 0 }
     const [lo, hi] = T.variety.chroma
+    const [c0, c1] = T.variety.cyanToBlue
     let lit = 0
     for (const [L, a, b] of lab) {
       if (L < T.variety.litL) continue
       lit++
       const h = ((Math.atan2(b, a) * 180) / Math.PI + 360) % 360
-      mass[HUE_FAMILIES.find(([end]) => h < end)[1]] += Math.min(1, Math.max(0, (Math.hypot(a, b) - lo) / (hi - lo)))
+      const weight = Math.min(1, Math.max(0, (Math.hypot(a, b) - lo) / (hi - lo)))
+      const family = HUE_FAMILIES.find(([end]) => h < end)[1]
+      if (family === 'blue') {
+        const toBlue = Math.min(1, Math.max(0, (h - c0) / (c1 - c0)))
+        mass.cyan += weight * (1 - toBlue)
+        mass.blue += weight * toBlue
+      } else mass[family] += weight
     }
     return Object.fromEntries(Object.entries(mass).map(([name, v]) => [name, lit ? v / lit : 0]))
   }
