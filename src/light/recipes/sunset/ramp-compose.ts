@@ -1405,7 +1405,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // A tall land area reaches nearer the viewer: the haze over its far ground reaches further
     // down, and its near ground is darker. A dark land color's haze doesn't: through more air
     // Forest under Lime light turns olive, and Plum under Tan grey-brown.
-    groundHaze: [look.landHaze, land ? (darkLand ? 0.1 * tall : Math.max(0.1 * tall, 0.25 * landRoom)) : 0.05 * tall],
+    groundHaze: [look.landHaze, land ? (darkLand ? (line ? 0.1 : 0.1 * tall) : Math.max(0.1 * tall, 0.25 * landRoom)) : 0.05 * tall],
     groundVeil: [land ? look.groundVeil * groundGain : 0, 0.35 * landRoom],
     // A tall land area carries more of the light, so a high line doesn't leave a dark field. A dark
     // land color takes no more of it than one stop over its own: brighter, Plum turns magenta and
