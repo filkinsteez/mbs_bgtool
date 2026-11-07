@@ -78,6 +78,15 @@ const FACING_POWER = 1.5
  */
 const FLAME_GROW = [6.5, 2]
 const FLAME_HAZE_GROW = [2, 2]
+/**
+ * The light's own side of a turning line keeps closer to it: its color turns along the line, and a band of it as wide
+ * as the flame ended where the line turned, a patch beside the line (Atmospheric s10's Meta Blue beside Ice). The other
+ * side's color holds along the whole line, so it carries the flame's width. The core is brighter, so the line reads as
+ * the light's source.
+ */
+const FLAME_NEAR_GROW = [3.5, 2]
+const FLAME_NEAR_WEIGHT = 0.66
+const FLAME_CORE_WEIGHT = 2.75
 /** How far (short sides) the two sides of a turning line's glow reach across it into each other. */
 const FLAME_SIDE_SOFT = 0.02
 const luminance = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
@@ -506,11 +515,13 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     // splits the same way and follows the light along the line, so the dim end is a thin line.
     ...(turns
       ? {
+          n1Weight: FLAME_CORE_WEIGHT,
           n1Pale: 0,
+          n2Weight: FLAME_NEAR_WEIGHT,
           n2Side: 1,
           n2MaskSoft: FLAME_SIDE_SOFT,
           n2Pale: 0,
-          n2GrowBy: FLAME_GROW,
+          n2GrowBy: FLAME_NEAR_GROW,
           n3Weight: round4(0.55 * sideLevel),
           n3Width: 0.006,
           n3Shape: 3,
