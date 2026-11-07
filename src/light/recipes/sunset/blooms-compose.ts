@@ -711,9 +711,9 @@ const OUT_WIDE_AT = 0.12
  * its band comes in), and its lobe spread against its own (GlowSpec.vary).
  */
 const OUT_FIRE_REACH: readonly [number, number] = [1.2, 1.8]
-const OUT_FIRE_REACH_TALL: readonly [number, number] = [0.95, 1.2]
+const OUT_FIRE_REACH_TALL: readonly [number, number] = [0.95, 1.22]
 /** A lead's falloff there in a tall frame (9:16) against its own. */
-const OUT_TALL_BETA = 1.3
+const OUT_TALL_BETA = 1.26
 const OUT_VARY = 0.25
 /** Under a dragged line, a second bloom of the lead's color against its own size. */
 const DRAG_PAIR_SCALE = 0.65
