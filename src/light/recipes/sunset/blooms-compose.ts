@@ -211,8 +211,12 @@ const SPREAD_RED_BODY: Readonly<Record<Spread, readonly [number, number]>> = { s
  */
 const FORM_DRAG_DEEP: Readonly<Record<DeepForm, readonly [number, number]>> = { band: [1.0, 1.2], corner: [0.75, 0.9], side: [0.45, 0.6] }
 const SPREAD_DRAG_REACH: Readonly<Record<Spread, number>> = { small: 0.72, broad: 1.12 }
-/** Beyond an edge pointing away: how far along the edge the light comes in (short sides), and its lit side's reach by deep form. */
-const EDGE_SHIFT: readonly [number, number] = [0.1, 0.55]
+/**
+ * Beyond an edge pointing away: how far along the edge the light comes in (short sides), clearly to one side of the
+ * line's start, so seeds differ in where the light enters; and its lit side's reach by deep form (the deep blue on the
+ * far side shows the form, FORM_BACK_TURN).
+ */
+const EDGE_SHIFT: readonly [number, number] = [0.25, 0.65]
 const FORM_BEHIND: Readonly<Record<DeepForm, number>> = { band: 1.35, corner: 1, side: 0.7 }
 /** The most that shift takes the light from the line's start, against half the frame along the edge. */
 const EDGE_SHIFT_MAX = 0.7
@@ -221,6 +225,15 @@ const EDGE_SHIFT_MAX = 0.7
  * level under a band of deep blue, round the light over a corner of it, and between over a whole side.
  */
 const FORM_LIT_ROUND: Readonly<Record<DeepForm, number>> = { band: 0, corner: 0.9, side: 0.4 }
+/**
+ * There the deep blue comes into the frame on its far side from the light, as the seed's form puts it: its way turns
+ * from straight back toward the side away from where the light comes in by this much (radians), so a band lies level
+ * across the far side, and a corner or a whole side lies away from the light. It sinks BACK_STOPS times the seed's deep
+ * stops (at the usual depth the warm light's and the cyan bloom's light over it left a dull teal field), never more than
+ * the deepest a default view's sky sinks (DEEP_STOPS): deeper, a whole side of it read near-black.
+ */
+const FORM_BACK_TURN: Readonly<Record<DeepForm, number>> = { band: 0, corner: 0.9, side: 1.4 }
+const BACK_STOPS = 1.6
 
 /**
  * A Bold seed's form. Both step on with the arrangement and with the run of five, so a run's frames differ and an
@@ -441,6 +454,7 @@ function followDrag(
     edgeShift,
     behindScale,
     litRound,
+    backDeep,
     paleLight,
     groundTilt,
   } = seedDrag
@@ -709,6 +723,30 @@ function followDrag(
   // ramp runs from 1 at the line's start to 0 at its end).
   const bodyEnd = 1 - (bodyReach(glows[0].beta) * supportAlong(glows[0].radius, glows[0].aniso, glows[0].angle, u, stretch)) / skyLength
   const veilRise = veilPlateau === null ? layout.sky.veilRise : clamp((veilPlateau * (bodyEnd - layout.sky.mid)) / Math.max(1 - layout.sky.mid, 0.05), 0.03, 1)
+  // Ahead of the light the deep sky begins along the line. Beyond an edge pointing away that lies outside the frame, so
+  // there Bold's deep blue comes into the frame on its far side instead, as the seed's form puts it: straight back from
+  // the light as a level band, or turned away from where the light comes in, to a corner or a whole side. It fades out
+  // ahead of the light before it fades in on the far side, so it never jumps. Not in a narrow frame: there the cyan bloom
+  // keeps its full light (OUT_CYAN_GAIN), and over a navy far side it turned the frame dark teal.
+  const deepAhead = layout.sky.deep
+    ? { ...layout.sky.deep, at: (deepReach * skyLength) / Math.min(frame[0], frame[1]), from: lightAt, angle: (skyAngle * 180) / Math.PI }
+    : undefined
+  let deep = deepAhead
+  if (deepAhead && backDeep && outWide > 0) {
+    if (outWide < 0.5) deep = { ...deepAhead, stops: deepAhead.stops * smoothstep(0.5, 0, outWide) }
+    else {
+      const turnBy = -(Math.sign(edgeShift) || 1) * backDeep.turn
+      const way = [-u[0] * Math.cos(turnBy) + across[0] * Math.sin(turnBy), -u[1] * Math.cos(turnBy) + across[1] * Math.sin(turnBy)]
+      const [near, far] = spanAlong(toP(lightAt), way, frame)
+      deep = {
+        ...deepAhead,
+        stops: Math.min(deepAhead.stops * BACK_STOPS, DEEP_STOPS[1]) * smoothstep(0.5, 1, outWide) * wide,
+        at: (near + (1 - backDeep.share) * (far - near)) / Math.min(frame[0], frame[1]),
+        curve: backDeep.curve,
+        angle: (Math.atan2(way[1], way[0]) * 180) / Math.PI,
+      }
+    }
+  }
   return {
     ...layout,
     glows,
@@ -724,9 +762,7 @@ function followDrag(
         // Not round a sun that burns like fire: its scattered cream and sky-blue light over a darker blue turns grey-green.
         round: fireLead ? 0 : litRound * outWide,
       },
-      deep: layout.sky.deep
-        ? { ...layout.sky.deep, at: (deepReach * skyLength) / Math.min(frame[0], frame[1]), from: lightAt, angle: (skyAngle * 180) / Math.PI }
-        : undefined,
+      deep,
     },
   }
 }
@@ -850,6 +886,8 @@ interface DragSeed {
   /** There, how far down the frame its lit side reaches against the usual (`behind`), and how round the lit sky is. */
   behindScale: number
   litRound: number
+  /** There, Bold's deep blue on the frame's far side: its way's turn (FORM_BACK_TURN), its share of the frame's span that way, its bend. */
+  backDeep: { turn: number; share: number; curve: number } | null
   /** A white light without color of its own (Ice). */
   paleLight: (slot: number) => boolean
   /** How far a dark ground of the sky's family tilts off the edge it lies along (degrees). */
@@ -2239,11 +2277,12 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
           veilPlateau: cyanPack ? CYAN_BAND_PLATEAU : null,
           broadLead: cyanPack,
           // Beyond an edge pointing away, Bold's light comes in toward the seed's own side, and its deep form sets how far
-          // its lit side reaches down the frame (a whole side of deep blue leaves it the least).
+          // its lit side reaches down the frame (a band of deep blue leaves it the most) and where the deep blue lies.
           edgeShift: boldForm ? side * lerp(EDGE_SHIFT[0], EDGE_SHIFT[1], random(seed * 9173 + 31)()) : 0,
           behindScale: boldForm ? FORM_BEHIND[boldForm.deep] : 1,
           groundTilt: lerp(-GROUND_DRAG_TILT, GROUND_DRAG_TILT, uDarkTilt),
           litRound: boldForm ? FORM_LIT_ROUND[boldForm.deep] : 0,
+          backDeep: boldForm && sky.deep ? { turn: FORM_BACK_TURN[boldForm.deep], share: deepShare, curve: sky.deep.curve } : null,
           paleLight: pale,
         },
         warmSlot,
