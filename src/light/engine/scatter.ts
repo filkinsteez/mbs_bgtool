@@ -1,6 +1,6 @@
 import { MAX_SCATTER_BLURS, type RecipeContext, type RecipeProgram, type ScatterBlur, type UniformMap } from '../scene'
 import { LightEngineError, type Gpu, type Target } from './gl'
-import { AREA_RESAMPLE_SHADER, blurLevel, edgeLevels, halve, halvings, LENS_GRID_TEXELS, lensGather, samplingLevels, type Halvings } from './passes'
+import { AREA_RESAMPLE_SHADER, blurLevel, edgeLevels, halve, halvings, LENS_GRID_TEXELS, lensGather, MIX_SHADER, samplingLevels, type Halvings } from './passes'
 import { NO_PROFILE, type Profiler } from './profile'
 import { buildRecipeShader } from './recipeShader'
 
@@ -12,6 +12,28 @@ import { buildRecipeShader } from './recipeShader'
 const MIN_BLUR_PIXELS = 4
 const MIN_SHORT_SIDE = 256
 const MAX_SHORT_SIDE = 1024
+/** The working short sides: MIN_SHORT_SIDE times 2^(k/4), up to MAX_SHORT_SIDE. */
+const SIDE_RUNGS = Array.from({ length: 9 }, (_, k) => Math.round(MIN_SHORT_SIDE * 2 ** (k / 4)))
+/** Past a rung, up to this times its width the source also renders at the rung below, blended in (workingSides). */
+const SIDE_BLEND_SPAN = 1.06
+
+/**
+ * The shared sources' working short side for a smallest blur that needs `ideal` pixels on the short side: the rung
+ * at or above it, or the render's own short side if that is smaller. Between rungs the size stays put; a size that
+ * followed the blur pixel by pixel moved the thin light's samples on its pixels at each step and the picture
+ * jumped. Just past a rung, the rung below renders too and blends in, `lowerShare` of it at the rung itself down
+ * to none at SIDE_BLEND_SPAN times it, so passing a rung doesn't jump either.
+ */
+export function workingSides(ideal: number, renderShort: number): { side: number; lower: number | null; lowerShare: number } {
+  const top = Math.min(MAX_SHORT_SIDE, renderShort)
+  const sides = [...SIDE_RUNGS.filter((rung) => rung < top), top]
+  const found = sides.findIndex((side) => side >= ideal)
+  const at = found < 0 ? sides.length - 1 : found
+  const lower = at > 0 ? sides[at - 1] : null
+  if (lower === null || ideal >= lower * SIDE_BLEND_SPAN) return { side: sides[at], lower: null, lowerShare: 0 }
+  const x = Math.max(0, Math.log(ideal / lower) / Math.log(SIDE_BLEND_SPAN))
+  return { side: sides[at], lower, lowerShare: 1 - x * x * (3 - 2 * x) }
+}
 /** Short sides a recipe may ask for with ScatterBlur.size. */
 const MIN_SIZED_SIDE = 8
 const MAX_SIZED_SIDE = 2048
@@ -32,6 +54,8 @@ interface SourceSpec {
   subsamples: number
   /** For a lens entry: the grid the source is averaged down to before the gather. */
   grid?: { short: number; width: number; height: number }
+  /** At the shared working side (workingSides), which may blend in the rung below. */
+  shared?: boolean
 }
 
 export type EngineUniforms = (width: number, height: number, origin: number[], pixel: number, subsamples: number) => UniformMap
@@ -81,7 +105,8 @@ export function runScatter(
   const shared = radii.filter((radius, i) => sized[i] === null && radius > 0)
   const smallest = shared.length > 0 ? Math.min(...shared) : 1
   const renderShort = Math.min(renderWidth, renderHeight)
-  const sharedShort = Math.min(renderShort, Math.min(MAX_SHORT_SIDE, Math.max(MIN_SHORT_SIDE, Math.ceil(MIN_BLUR_PIXELS / smallest))))
+  const working = workingSides(MIN_BLUR_PIXELS / smallest, renderShort)
+  const sharedShort = working.side
   const spec = (kind: ScatterBlur['source'], short: number, subsamples: number): SourceSpec => ({
     key: `${kind} ${short} ${subsamples}`,
     kind,
@@ -92,22 +117,38 @@ export function runScatter(
   })
   const specs = blurs.map((blur, i): SourceSpec => {
     const size = sized[i]
-    if (size === null) return spec(blur.source, sharedShort, renderShort > sharedShort ? 2 : 1)
+    if (size === null) return { ...spec(blur.source, sharedShort, renderShort > sharedShort ? 2 : 1), shared: true }
     if (!lens[i]) return spec(blur.source, size, 1)
     const grid = spec(blur.source, size, 1)
     const s = LENS_SOURCE_SCALE
     return { key: `${blur.source} lens ${size}`, kind: blur.source, short: s * size, width: s * grid.width, height: s * grid.height, subsamples: 1, grid }
   })
 
-  const sources = new Map<string, Target>()
-  for (const { key, kind, short, width, height, subsamples } of specs) {
-    if (sources.has(key)) continue
+  const render = ({ kind, short, width, height, subsamples }: SourceSpec): Target => {
     const target = gpu.acquire(width, height)
     gpu.draw(gpu.program(buildRecipeShader(program, kind === 'radiance' ? 'source' : 'aux')), target, {
       uniforms: engine(width, height, [0, 0], 1 / (short * subsamples), subsamples),
     })
     profiler.mark('scatter sources', target)
-    sources.set(key, target)
+    return target
+  }
+  const sources = new Map<string, Target>()
+  for (const source of specs) {
+    if (sources.has(source.key)) continue
+    const target = render(source)
+    if (!source.shared || working.lower === null || working.lowerShare <= 0) {
+      sources.set(source.key, target)
+      continue
+    }
+    const lower = render(spec(source.kind, working.lower, renderShort > working.lower ? 2 : 1))
+    const mixed = gpu.acquire(source.width, source.height)
+    gpu.draw(gpu.program(MIX_SHADER), mixed, {
+      textures: { uA: target, uB: lower },
+      uniforms: { uDstSize: [source.width, source.height], uMix: working.lowerShare },
+    })
+    gpu.release(target)
+    gpu.release(lower)
+    sources.set(source.key, mixed)
   }
 
   // Wide blurs run on halvings of the source and keep that size. Past the frame edges each repeats the texels of its

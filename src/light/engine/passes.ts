@@ -105,6 +105,21 @@ void main() {
 }
 `
 
+/** uA at the target's size and uB at any size over the same frame (bilinear), mixed by uMix (0 all uA). */
+export const MIX_SHADER =
+  GLSL_HEADER +
+  /* glsl */ `
+uniform sampler2D uA;
+uniform sampler2D uB;
+uniform vec2 uDstSize;
+uniform float uMix;
+out vec4 fragColor;
+void main() {
+  vec2 uv = gl_FragCoord.xy / uDstSize;
+  fragColor = mix(texture(uA, uv), texture(uB, uv), uMix);
+}
+`
+
 /** Resamples uSrc to the target size with a cubic B-spline (smooth upsampling). */
 export const RESAMPLE_SMOOTH_SHADER =
   GLSL_HEADER +
