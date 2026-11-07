@@ -100,11 +100,11 @@ const int BEAM_STEPS = 16;
 
 float beamSoftDisk(float r, float k) { return exp(-0.5 * pow(max(r, 0.0), k)); }
 
-// Beam light per unit area at radius r (in beam radii) from the axis.
-float beamAperture(float r) {
-  float outer = beamSoftDisk(r, uBeamShape.w);
+// Beam light per unit area at radius r (in beam radii) from the axis, with edge exponent k.
+float beamAperture(float r, float k) {
+  float outer = beamSoftDisk(r, k);
   float hole = uBeamLight.y;
-  float inner = hole > 0.001 ? uBeamLight.z * beamSoftDisk(r / hole, uBeamShape.w) : 0.0;
+  float inner = hole > 0.001 ? uBeamLight.z * beamSoftDisk(r / hole, k) : 0.0;
   return max(outer - inner, 0.0);
 }
 
@@ -174,13 +174,17 @@ float beamInScatter(vec2 s, float zNear, float zFar, float mirror, float widen, 
     float x = s.x * z / F;
     float y = 1.0 + mirror * (ys * z - 1.0);
     // Past its start the beam widens from a fifth of its width while its light comes up, so
-    // it starts in a rounded tip instead of a flat cut across it.
+    // it starts in a rounded tip instead of a flat cut across it. The tip carries the light
+    // per area of the beam's own width there, and its edge is soft until the light is all
+    // there, so it comes out of the haze instead of a bright cap with a hard outline.
     float started = smoothstep(uSource.x, uSource.y, y);
-    float ah = a * max(0.05, 1.0 + uBeamShape.z * (y - 1.0)) * mix(0.2, 1.0, started);
+    float width = a * max(0.05, 1.0 + uBeamShape.z * (y - 1.0));
+    float ah = width * mix(0.2, 1.0, started);
     float aw = sqrt(ah * ah + widen * widen);
+    float flow = width * width + widen * widen;
     vec2 axis = vec2(xb + tx * (y - 1.0), zb + tz * (y - 1.0));
     float r = length(vec2(x, z) - axis) / aw;
-    sum += beamAperture(r) * (a * a) / (aw * aw) * hazeDensity(beamScreenHeight(y)) * started;
+    sum += beamAperture(r, mix(2.0, uBeamShape.w, started * started)) * (a * a) / flow * hazeDensity(beamScreenHeight(y)) * started;
   }
   float e = beamScreenHeight(1.0 + mirror * (ys * zc - 1.0));
   vec3 dir = vec3(s.x, s.y - uCamera.x, F);
@@ -727,7 +731,7 @@ const NARROW_GLOW = 0.15
  * a stroke that brightens toward its pool. A broad beam takes longer the longer the line (its
  * pale core would otherwise start as a flat white end at the frame's edge).
  */
-const SOURCE_RAMP = 0.08
+const SOURCE_RAMP = 0.25
 const BROAD_RAMP = [0.03, 0.25]
 
 /**
