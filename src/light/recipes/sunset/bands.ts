@@ -255,7 +255,7 @@ uniform vec2 uGrainInk;              // how much grain follows ink, grain on bar
 uniform vec3 uLightVary;             // RMS share of the light change inside bands, lattice along and down (short sides)
 uniform float uOverlap;
 uniform float uExtinction;           // how much a glow's light takes the place of the sky's own light
-uniform vec3 uSky;                   // sky light toward the sun, stops less per frame height above the nominal height, that height
+uniform vec4 uSky;                   // sky light toward the sun, stops less per frame height above the nominal height, that height, its own light
 uniform vec4 uWater;                 // horizon (frame heights; 2 is off, above 1 in front of the frame), squeeze, smear, reflection at the bottom edge
 uniform vec4 uWaterLook;             // own light, strip gain, strip width (frame heights), ripple lattice (short sides)
 uniform float uWaterAxis;            // water in front of the frame: the height it mirrors about (frame heights); below 0, water in the frame, mirrored about its own line
@@ -335,7 +335,7 @@ vec3 scene(float x, float v, vec2 p) {
 
   // A dim sky keeps its own hue (Meta Blue sinks to deep navy); a warm one deepens like warm light.
   vec3 base = toMix(deepen(uBase, uIntensity, uBaseDrift));
-  float skyGain = (1.0 + uSky.x * sunFall) * exp2(-uSky.y * max(0.0, uSky.z - v));
+  float skyGain = uSky.w * (1.0 + uSky.x * sunFall) * exp2(-uSky.y * max(0.0, uSky.z - v));
   if (uLightVary.x > 0.0) skyGain *= max(0.0, 1.0 + uLightVary.x * lightChange(f, BAND_MAX));
 
   // Glows, pale glows and domes: light in the sky with no edge of their own. Where a glow is strong the sky's

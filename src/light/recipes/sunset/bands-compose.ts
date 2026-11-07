@@ -255,6 +255,8 @@ interface Scene {
   skyFall: number
   /** Extra sky light at the light's column, as a share of the sky's own. */
   skyLift: number
+  /** The sky's own light: a grey sky's is held under its hex, so its lighter patches still read as that grey. */
+  skyLight: number
   /** The whole scene's light, below 1 at the low end of Intensity. */
   dim: number
   /** The middle of the light's band, frame heights. */
@@ -490,7 +492,8 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     // A sky too short to pale before it gives way again above a dark band keeps more of its own color: paled only
     // near its top, it would read upside down. A sky that carries its tint's color pales all the same.
     const tall = paling.carries ? 1 : smoothstep(0.5, 0.7, skyEnd[0] / Math.max(skyHeight, 1e-6))
-    const sky: [number, number, number, number] = dark(list[0])
+    // A grey sky (Steel's overcast top) doesn't pale: lighter than its hex it reads as Meta Blue's pale side.
+    const sky: [number, number, number, number] = dark(list[0]) || oklch(list[0].hex)[1] < 0.04
       ? [0, 0, 1, 0]
       : [
           skyPale * skyRoom * tall,
@@ -526,20 +529,25 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     return draw(1.2, 2.6) * glow
   }
 
-  // Each run of seeds as long as the list takes every choice once: from a seeded first one, each next choice is
-  // the one whose look is farthest from the last seven, so any eight seeds in a row look different. A seed's
-  // layout is drawn from its run and its choice, so the order sees every seed's layout.
+  // Seeds come in runs of eight: from a seeded first choice, each next one is the choice whose look is farthest
+  // from those before it in the run, so the eight seeds of a run look different. A run that took every choice in
+  // turn ended on the choices left over, which look alike. A seed's layout is drawn from its run and its choice,
+  // so the order sees every seed's layout, and the same choice in another run is another layout.
+  const RUN = 8
   const n0 = seed - 1
-  const run = Math.floor(n0 / choices.length)
+  const run = Math.floor(n0 / RUN)
   const layoutDraws = (index: number) => random(run * 7919 + index * 104729 + pack.id.length * 31 + 5)
   const skyDrawOf = (index: number) => random(run * 6271 + index * 92821 + pack.id.length * 17 + 3).next()
+  const thirdDrawOf = (index: number) => random(run * 5303 + index * 70241 + pack.id.length * 13 + 7).next()
+  // A pack with light colors and no dark one (Bold) builds most frames from a sky and one warm area.
+  const boldish = lights.length > 0 && !darks.length
   // A choice's layout at the middle Softness and Horizon: its colors and every band's height and edge. The wide
   // bands take most of the spare height, so the light sits low, in the middle or high, and the others stay near
   // their least heights. When the bands don't fit, the color added again goes first, then a second dark color, so
   // the pack's colors stay; when even the least heights don't fit, all bands shrink together. Where the seed's
   // horizon has water or land in the frame (`ground`), the last (dark) band is land, a ridge or bank from the line
   // down. (Water is left out: mirrored, a stack reads as stripes, and the mirrored bridges go pink.)
-  const layoutOf = (c: Choice, rnd: Random, ground: boolean, skyDraw: number) => {
+  const layoutOf = (c: Choice, rnd: Random, ground: boolean, skyDraw: number, thirdDraw: number) => {
     const list = build(c.light, c.darks, c.base, c.form)
     const wideEntries = c.wide.map((i) => list[i])
     // Few, unequal parts: the sky and the wide bands are wide areas with long gradients inside them. A part that
@@ -552,7 +560,9 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     const meets = (a: Entry, b: Entry | undefined) => !b || !needsBridge(hexToLinear(a.hex), hexToLinear(b.hex))
     // Some seeds' sky is a sliver along the top. A sliver is too short to pale into the tint, so there the tint's
     // color keeps a part of its own.
-    const sliver = !c.wide.includes(0) && skyDraw < 0.3
+    // A grey top (Steel's overcast) is never a sliver: its color then shows only as a thin strip the lens mixes away.
+    const greyTop = oklch(list[0].hex)[1] < 0.04 && !dark(list[0])
+    const sliver = !c.wide.includes(0) && skyDraw < 0.3 && !greyTop
     // A grey tint (Atmospheric's Steel) reads as its own color only where the sky pales all the way into it, which
     // the lens and a dark band below often cut short, so only a colored tint (Bold's Cyan) counts.
     const tinted = !!tintHex && !dark(list[0]) && !sliver && oklch(tintHex)[1] >= 0.04
@@ -569,19 +579,26 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
         (!warmHex(list[i].hex) || others.some((o) => warmHex(o.hex)))
       )
     }
+    // In about half of Bold's layouts the first part that could go stays as a third area (its deep base, Meta Blue
+    // sunk to navy or Orange-red under less light, else Cyan), so its frames are not all a sky over one warm area.
+    let third = boldish && thirdDraw < 0.55
     for (let i = list.length - 1; i >= 1; i--) {
       const e = list[i]
       if (wideEntries.includes(e) || e.line) continue
       const bright = lightness(e.hex) >= 0.6
-      const lineable = e.under === 1 && lineCount < 2 && i < list.length - 1 && (bright ? meets(e, list[i - 1]) && meets(e, list[i + 1]) : dark(e))
+      // Near-white Ice doesn't become a line here: it is Atmospheric's light, and a light drawn as a line on the sky
+      // leaves a frame under a line through it nothing but sky.
+      const lineable =
+        e.under === 1 && lineCount < 2 && i < list.length - 1 && lightness(e.hex) <= 0.95 && (bright ? meets(e, list[i - 1]) && meets(e, list[i + 1]) : dark(e))
       // A line that doesn't read as one of the frame's colors only takes its color where the frame keeps three
       // without it.
       if (lineable && ((bright && lightness(e.hex) <= 0.95) || enough(i))) {
         list[i] = { ...e, line: true }
         lineCount++
-      } else if (enough(i)) {
+      } else if (enough(i) && !third) {
         list.splice(i, 1)
       } else {
+        if (enough(i)) third = false
         wideEntries.push(e)
       }
     }
@@ -597,7 +614,10 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     const n = list.length
     const kept = wideEntries.map((e) => list.indexOf(e)).filter((i) => i >= 0)
     const wide = kept.length ? kept : [n - 1]
-    const below: 'open' | 'land' = ground && dark(list[n - 1]) ? 'land' : 'open'
+    // Bold's navy base is shaped like land, a ridge rising toward one side (a corner or a side of deep blue) or a
+    // low bank (a band), wherever the seed's horizon is.
+    const navyBase = boldish && list[n - 1].hex === sky && list[n - 1].under < 1
+    const below: 'open' | 'land' = (ground || navyBase) && dark(list[n - 1]) ? 'land' : 'open'
     // A sliver sky takes 8 to 14 % of the spare height; a sky that carries its tint's color at least 30 %, so the
     // tint covers enough of the frame to read.
     const shares = list.map((e, i) => shareOf(e, i, wide, (lo, hi) => rnd.between(lo, hi), c.structure))
@@ -605,6 +625,7 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     const skyShare = (f: number) => (f / (1 - f)) * others
     if (sliver) shares[0] = skyShare(lerp(0.08, 0.14, skyDraw / 0.3))
     else if (carries) shares[0] = Math.max(shares[0], skyShare(0.3))
+    else if (greyTop) shares[0] = Math.max(shares[0], skyShare(0.25))
     const least = leastOf(list, R0)
     const leastSum = least.reduce((s, v) => s + v, 0)
     const shareSum = shares.reduce((s, v) => s + v, 0)
@@ -636,9 +657,11 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
       const kind = rnd.int(0, 2)
       const lobes: Bump[] = []
       if (below === 'land' && i === n - 1) {
-        // Land: one ridge rising toward one side, or a low bank, tilted up to the seed's horizon tilt.
-        const rise = (Math.tan((Math.abs(place.tilt) * Math.PI) / 180) * frameW) / frameH
+        // Land: one ridge rising toward one side, or a low bank, tilted up to the seed's horizon tilt; Bold's navy
+        // base rises further, so its ridge is a corner or a side of the frame.
         const [at, width, sign, shift] = draws[0]
+        const horizonRise = (Math.tan((Math.abs(place.tilt) * Math.PI) / 180) * frameW) / frameH
+        const rise = navyBase ? Math.max(horizonRise, (lerp(0.1, 0.3, shift) * frameW) / frameH) : horizonRise
         if (ridge) {
           tilt = -side * rise
           lobes.push([side > 0 ? lerp(0.7, 1.05, at) : lerp(-0.05, 0.3, at), lerp(0.45, 0.8, width) / frameW, -lerp(0.03, 0.06, shift) / frameH])
@@ -752,7 +775,7 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     const kernelSum = kernel.reduce((s, v) => s + v, 0)
     const half = (kernel.length - 1) / 2
     const look = (c: Choice, index: number) => {
-      const { list, bands, under, paling } = layoutOf(c, layoutDraws(index), false, skyDrawOf(index))
+      const { list, bands, under, paling } = layoutOf(c, layoutDraws(index), false, skyDrawOf(index), thirdDrawOf(index))
       const tops = bands.map((b) => b.edge.base + b.edge.bumps.reduce((s, [at, width, shift]) => s + shift * across(at, width), 0))
       const lights = bands.map((b, i) => baseLight(list, i + 1) * (b.line ? 1 : iceCap(b.color, 1)))
       const emit = bands.map((b, i) => hexToLinear(b.color).map((v) => v * lights[i]))
@@ -826,7 +849,7 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     const runRnd = random(run * 7919 + pack.id.length * 31 + 17)
     const made = [runRnd.int(0, choices.length - 1)]
     const left = new Set(choices.map((_, i) => i).filter((i) => i !== made[0]))
-    while (left.size) {
+    while (left.size && made.length < RUN) {
       let best = -1
       let bestScore = -1
       for (const i of left) {
@@ -842,13 +865,16 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     order = made
     runOrders.set(key, order)
   }
-  const index = order[((n0 % choices.length) + choices.length) % choices.length]
+  const index = order[((n0 % order.length) + order.length) % order.length]
   const choice = choices[index]
-  const { list, bands, under, tops, paling } = layoutOf(choice, layoutDraws(index), place.y < 1 && place.below !== 'open', skyDrawOf(index))
+  const { list, bands, under, tops, paling } = layoutOf(choice, layoutDraws(index), place.y < 1 && place.below !== 'open', skyDrawOf(index), thirdDrawOf(index))
   const n = list.length
   const leastAt = (r: number) => leastOf(list, r)
   // Every other seed's sky darkens toward the top.
-  const zenith = choice.zenith
+  // A grey sky (Atmospheric's Slate or Near-black night top, Steel's overcast top) keeps its own lightness:
+  // greys are told apart by lightness, so darker toward the top it reads as the next grey.
+  const greySky = oklch(list[0].hex)[1] < 0.04
+  const zenith = greySky ? 0 : choice.zenith
   // The image's light: its warm or light color, else the brightest after the sky (Ice).
   const light = choice.light ?? list.slice(1).reduce((a, b) => (lightness(b.hex) > lightness(a.hex) ? b : a)).hex
   keepThick(bands, R0, frameW, frameH, edgeSeed(seed))
@@ -885,14 +911,18 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   const ownSpan = spanOf(now)
   const lastTopOwn = now.slice(0, n - 1).reduce((s, v) => s + v, 0)
   let lineSky: { blueTo: number; pale: number; tintAt: number; far?: { hex: string; amount: number; full: number; gone: number } } = { blueTo: 0, pale: 0, tintAt: 0.6 }
-  if (along !== undefined && along < ownSpan) {
+  if (along !== undefined) {
+    // Near the seed's span the bands give up less and less height while the zoom takes over (`zoomOf`), so the
+    // frame changes at an even pace as the line passes that span.
+    const target = ownSpan * softLimit(along / ownSpan, -Infinity, 1, SPAN_KNEE)
     const room = now.slice(0, lightBand + 1).map((v, j) => Math.max(0, v - leastNow[j]))
     const roomSum = room.reduce((s, v) => s + v, 0)
     if (roomSum > 1e-6) {
-      const keep = softLimit((along - (ownSpan - roomSum)) / roomSum, 0, Infinity, 0.1)
+      const keep = softLimit((target - (ownSpan - roomSum)) / roomSum, 0, Infinity, 0.1)
       room.forEach((r, j) => (now[j] -= r * (1 - keep)))
     }
-  } else if (along !== undefined) {
+  }
+  if (along !== undefined && along >= ownSpan) {
     // A longer line draws the stack out along it, each band keeping its own order and share of the span, and
     // across the line its own edges (`stackMap`). At the far end the sky keeps its full color over a share of its
     // height before it pales (`hazeOf`), and a sky right above the light, with no band between them for a second
@@ -914,16 +944,19 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     // color, or its dark one, over at least 17% of the span, which at the owner's line covers about 4% of a 16:9
     // frame and 6% of a 9:16 one; a sky too short for that and a tenth of the span to pale over grows into the bands
     // between it and the light, down to their least heights. The far dark comes in at full strength, and also over
-    // a sky whose bands down to the light are all dark. A sky with no far dark that takes most of the span pales
+    // a sky with bands between it and the light: near the light they show little of the frame, even a light one
+    // (Lime or Tan, which can leave only Meta Blue in the frame). A sky with no far dark that takes most of the span pales
     // fully into its tint near the light (`hazeOf`; a grey tint, Atmospheric's Steel, at its own light: `skyTint`),
     // as the bands near the light then show little of the frame. The seed's own numbers come from their own
     // draws, so frames under any other line keep theirs.
     const fix = smoothstep(1, 1.6, along / ownSpan) * smoothstep(-0.1, 0.25, startOut)
     const extra = random(seed * 7489 + pack.id.length * 17 + 3)
-    const deepLeast = 0.17 * ownSpan
+    // A grey sky (a night or overcast top) is the frame's only second color there, with no pale side, so it takes
+    // a quarter of the span.
+    const deepLeast = (greySky ? 0.25 : 0.17) * ownSpan
     const tintAt = extra.between(0.4, 0.8)
-    const farOwn = darkest && lightBand > 0 && !dark(list[0]) && list.slice(1, lightBand + 1).every((e) => dark(e)) ? extra.between(0.35, 0.5) : 0
-    const paleLeast = dark(list[0]) ? 0 : 0.1 * ownSpan
+    const farOwn = darkest && lightBand > 0 && !dark(list[0]) ? extra.between(0.35, 0.5) : 0
+    const paleLeast = dark(list[0]) || greySky ? 0 : 0.1 * ownSpan
     const room = now.slice(1, lightBand + 1).map((v, j) => Math.max(0, v - leastNow[j + 1]))
     const roomSum = room.reduce((s, v) => s + v, 0)
     const grow = Math.min(fix * Math.max(0, deepLeast + paleLeast - now[0]), roomSum)
@@ -937,15 +970,20 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     // leaves the frame.
     const farOwnLine = farShare > 0 ? w : 0
     const farSpan = farOwnLine + (1 - farOwnLine) * fix
+    // The far dark covers at least 22% of the span (within 70% of the sky), so that it shows as a second color
+    // however short the sky is.
+    const farLeast = Math.min(0.22 * ownSpan, 0.7 * sky)
+    const farFull = Math.max(farSpan * far * sky, fix * farLeast)
     const blueOwn = w * blueShare * sky
-    const deep = Math.max(Math.min(deepLeast, sky - paleLeast), farOwn > 0 ? Math.min(0.8, farOwn + farFade + 0.25) * sky : 0)
+    const farDeep = Math.min(0.9 * sky, Math.max((farOwn + farFade + 0.25) * sky, farLeast + (farFade + 0.15) * sky))
+    const deep = Math.max(Math.min(deepLeast, sky - paleLeast), farOwn > 0 ? farDeep : 0)
     lineSky = {
       blueTo: blueOwn + fix * Math.max(0, deep - blueOwn),
       pale: far > 0 || !tintHex ? 0 : fix * smoothstep(0.5, 0.7, sky / ownSpan),
       tintAt,
       far:
         darkest && far > 0
-          ? { hex: darkest.hex, amount: farOwnLine + (1 - farOwnLine) * smoothstep(0, 1, fix), full: farSpan * far * sky, gone: farSpan * (far + farFade) * sky }
+          ? { hex: darkest.hex, amount: farOwnLine + (1 - farOwnLine) * smoothstep(0, 1, fix), full: farFull, gone: farFull + farSpan * farFade * sky }
           : undefined,
     }
   }
@@ -1079,8 +1117,10 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     patches,
     sun,
     lightVary,
-    skyFall: zenith + 3 * Math.max(0, 1 - level),
+    skyFall: greySky ? 0 : zenith + 3 * Math.max(0, 1 - level),
     skyLift: 1.2 * Math.max(0, level - 1),
+    // Lighter than its hex, a grey reads as Meta Blue's pale side, and the sky's light change lifts parts of it.
+    skyLight: greySky && !dark(list[0]) ? 0.88 : 1,
     dim,
     lightAt: spanOf(now),
     seedSpan,
@@ -1114,9 +1154,11 @@ function softLimit(x: number, lo: number, hi: number, knee: number): number {
 /**
  * How far a line `along` frame heights long draws out a stack whose own span is `seedSpan`: about 1 for a shorter
  * one. The zoom starts softly around the seed's span, where a shorter line only tightens the bands above the light,
- * so the frame doesn't start changing faster all at once.
+ * so the frame doesn't start changing faster all at once. The tightening eases off over SPAN_KNEE of the seed's own
+ * span below it (`stack`), so `seedSpan` falls behind the line there and the zoom grows from 1 with no kink.
  */
 const ZOOM_ONSET = 0.06
+const SPAN_KNEE = 0.15
 const zoomOf = (along: number, seedSpan: number) => {
   const x = along / seedSpan
   const k = x > 1 + 30 * ZOOM_ONSET ? x : 1 + ZOOM_ONSET * Math.log1p(Math.exp((x - 1) / ZOOM_ONSET))
@@ -1142,11 +1184,12 @@ function stackMap(scene: Scene, drag: BandsComposeInput['drag'], frameW: number,
   const along = dragAlong(drag, frameW, frameH)
   if (along < 1e-6) return identity
   // The line's direction, short-side units. A short line turns the stack only part of the way from upright, fully
-  // from 0.3 of the short side: the tool keeps the line's ends to 0.001 of the frame, which turns a line a few lens
-  // radii long by up to 2 degrees from one step to the next.
+  // from 0.6 of the short side: the tool keeps the line's ends to 0.001 of the frame, which turns a line a few lens
+  // radii long by up to 2 degrees from one step to the next, and a line half the frame tall still by a tenth of a
+  // degree, which shows where a bright edge meets a corner.
   const toward = Math.atan2((drag.to[1] - drag.from[1]) / along, ((drag.to[0] - drag.from[0]) * frameW) / (along * frameH))
   const fromUp = Math.atan2(Math.sin(toward + Math.PI / 2), Math.cos(toward + Math.PI / 2))
-  const turned = -Math.PI / 2 + smoothstep(0, 0.3, along * frameH) * fromUp
+  const turned = -Math.PI / 2 + smoothstep(0, 0.6, along * frameH) * fromUp
   const [ux, uy] = [Math.cos(turned), Math.sin(turned)]
   const zoom = zoomOf(along, scene.seedSpan)
   // Along the line toward `to` is up the stack, toward the sky, drawn out `zoom` times; across it to the line's right
@@ -1227,7 +1270,7 @@ function writeScene(scene: Scene, R: number, stack: ReturnType<typeof stackMap>)
   params.overlap = 0.65
   params.extinction = 0
   params.spill = [0.12, 1.2]
-  params.sky = [scene.skyLift, scene.skyFall, 0.5]
+  params.sky = [scene.skyLift, scene.skyFall, 0.5, scene.skyLight]
   params.skyVeil = scene.skyVeil
   params.skyVeilEnd = scene.skyVeilEnd
   params.skyDrift = scene.skyDrift

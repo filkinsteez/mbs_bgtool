@@ -56,7 +56,8 @@ describe('composeBands with a dragged line', () => {
     for (const packId of PACK_IDS) {
       for (let seed = 1; seed <= 8; seed++) {
         for (const aspect of [16 / 9, 9 / 16]) {
-          for (const [angle, length] of [[-60, 0.6], [30, 0.9], [150, 0.4], [-120, 1.1]]) {
+          // Lines from 0.6 of the short side, which turn the stack all the way to their own direction (`stackMap`).
+          for (const [angle, length] of [[-60, 0.6], [30, 0.9], [150, 0.7], [-120, 1.1]]) {
             const drag = lineAt([0.45, 0.6], angle, length, aspect)
             const composition = composeBands({ pack: getPack(packId), seed, aspect, drag })
             const [x, v] = shown(composition, drag.from, aspect)
