@@ -92,6 +92,7 @@ uniform float uVeilTint;  // a cool light's least chroma along its haze's hue, o
 uniform float uVeilBand;  // how much more chroma the veil keeps in its band of levels (1: twice the share)
 uniform vec4 uAirGlow;    // a light outside the frame: level of its glow in the air (scattered units; 0: off), falloff, sharpness (power), scale (1 at the frame's brightest point)
 uniform vec4 uGlowLine;   // where that light is: its segment on screen (unturned)
+uniform float uBeamHaze;  // share of the beam's light its haze scatters, over the seed's own (1)
 ${AIR_GLOW_GLSL}
 const int BEAM_STEPS = 16;
 
@@ -275,7 +276,7 @@ vec3 radiance(vec2 uv, vec2 screen) {
   // over the whole edge instead of stopping where the floor is fully there.
   float beamSeen = rounded < 1.0 ? beamInScatter(p, 0.01, 1e6, 1.0, 0.0, noise, 10) : 0.0;
   if (rounded > 0.0) beamSeen = mix(beamSeen, beamInScatter(p, 0.01, zFloor, 1.0, 0.0, noise, 10), rounded);
-  float scatter = uBeamLight.x * beamSeen;
+  float scatter = uBeamLight.x * uBeamHaze * beamSeen;
 
   // The pool's light scattered by the haze around it. The pool is a flat emitter as wide as
   // the beam, so the glow is flat across it and falls off above and to the sides. Over the
@@ -416,11 +417,18 @@ const HAZE_LUMINANCE = 0.12
  */
 const WARM_SHARE = 0.65
 
-/**
- * Warm haze dimmer than this share of its clipping level falls toward black faster, and
- * Lime's starts toward Forest's deep green.
- */
+/** Warm haze dimmer than this share of its clipping level falls toward black faster. */
 const TAIL_BELOW = 0.6
+
+/** How the beam's light in its haze grows with a dragged line's length past one short side (a power of it). */
+const BEAM_HAZE_GROWTH = 0.3
+
+/**
+ * Warm haze dimmer than this share of its clipping level starts toward its tail colors (Yellow
+ * toward Orange-red, Lime toward Forest's deep green), so the beam's dimmer haze has turned before
+ * it would read olive (dim Lime at Lime's hue) or dark gold.
+ */
+const TAIL_FROM = 0.85
 
 /** How much faster that dim warm haze falls. */
 const TAIL_FALL = 2.5
@@ -584,7 +592,7 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     laneShape: [0, 0.025],
     pale: paleParam(light, lerp(0.5, 0.7, random())),
     paleWhite: light.light === light.haze ? 0.5 : 0.2,
-    ...tailParams(light, TAIL_BELOW),
+    ...tailParams(light, TAIL_FROM),
     fall: fallParam(light, TAIL_BELOW, TAIL_FALL),
     ambient: [light.baseLevel, 0, light.baseLevel],
     vignette: round4(lerp(0.1, 0.18, random())),
@@ -605,6 +613,11 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     const ownLean = leaning ? Math.sign((params.tilt as number[])[0]) * LEAN_OWN : 0
     const profile = light.tail ? (onRight ? WARM_SOURCE_HAZE : WARM_POOL_HAZE) : onRight ? SOURCE_HAZE : POOL_HAZE
     const onLine = beamOnLine(params, line, halfH, profile, ownLean)
+    // A line longer than the frame's short side spreads the beam's haze layers along its length,
+    // and the light they take out on its way dims the whole beam, so the haze gives back more of
+    // the beam's light: the beam still reaches its own color along its length (dimmer, warm light
+    // reads dark red). A lifted light's haze (Tan) already gets that much more light.
+    onLine.beamHaze = round4(Math.max(1, Math.max(1, line.length) ** BEAM_HAZE_GROWTH / light.lift))
     // A light outside the frame glows from where its haze is lit: the beam's first stretch, or
     // the haze the pool lights in front of the floor, along the floor's normal (the stage's up,
     // (sin, -cos) of its turn), so a turned floor sends that glow in at an angle. A broad beam
@@ -792,6 +805,7 @@ export const contourBeam: RecipeDefinition = {
     { kind: 'number', key: 'veilBand', label: 'More color in the band', min: 0, max: 2, step: 0.005, default: 1 },
     { kind: 'vector', key: 'airGlow', label: 'Glow past the frame', min: 0, max: 100, step: 0.0001, default: [0, 0.18, 2, 1] },
     { kind: 'vector', key: 'glowLine', label: 'Light past the frame', min: -8, max: 8, step: 0.0005, default: [0, 0, 0, 0] },
+    { kind: 'number', key: 'beamHaze', label: 'Beam light in its haze', min: 0, max: 4, step: 0.005, default: 1 },
   ],
   fragment: BEAM_GLSL,
   uniforms: (ctx) => {
@@ -837,6 +851,7 @@ export const contourBeam: RecipeDefinition = {
       uVeilBand: ctx.num('veilBand'),
       uAirGlow: ctx.vec('airGlow'),
       uGlowLine: ctx.vec('glowLine'),
+      uBeamHaze: ctx.num('beamHaze'),
     }
   },
   radianceScale: (ctx) => (ctx.num('edgeSoftness') >= HALF_SCALE_EDGE ? 0.5 : 1),

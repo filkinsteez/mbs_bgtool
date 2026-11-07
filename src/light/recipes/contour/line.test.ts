@@ -237,6 +237,23 @@ describe('the packs that share Meta Blue', () => {
   })
 })
 
+describe("Beam's haze light under a line", () => {
+  it('is the seed own without a line or under a short one, and grows with a long line for an unlifted light', () => {
+    const short = lineAt(0.5, 0.3, 90, 0.6)
+    const owner = { from: [1.011, 1.224] as [number, number], to: [-0.078, -0.067] as [number, number] }
+    for (const pack of PACKS) {
+      for (const seed of SEEDS) {
+        const light = pickContourLight(getPack(pack), seed, seededRandom(seed, 0xbea))
+        expect(compose(contourBeam, pack, seed).beamHaze ?? 1, `${pack} ${seed}`).toBe(1)
+        expect(compose(contourBeam, pack, seed, short).beamHaze, `${pack} ${seed}`).toBe(1)
+        const long = compose(contourBeam, pack, seed, owner).beamHaze as number
+        if (light.lift === 1) expect(long, `${pack} ${seed}`).toBeGreaterThan(1.2)
+        else expect(long, `${pack} ${seed}`).toBeGreaterThanOrEqual(1)
+      }
+    }
+  })
+})
+
 describe("Beam under a line longer than the frame's short side", () => {
   it('thickens its haze layers with the line, so the beam shows along it', () => {
     const owner = { from: [1.011, 1.224] as [number, number], to: [-0.078, -0.067] as [number, number] }
