@@ -422,7 +422,9 @@ float clLit(int li, float light1, float light2, float gamma) {
 // An emitter's light as it dims: v is its summed level at the pixel against the emitter's own color (1 is the
 // light at its own hex). The largest channel follows v; the others move from the light's own ratios toward d.rgb
 // times them as s falls from 1, with s = v^a (1 + k^a) / (v^a + k^a) (knee k = d.w, sharpness a). Off when k is 0.
-// Another color on the same emitter (a ring's second color) keeps its own largest channel too.
+// Another color on the same emitter (a ring's second color) keeps its own largest channel too: where the drift
+// raises a channel above the light's largest, the light is scaled back down. Only down, and only where the light is
+// positive: a dim pixel a little below zero has no largest channel to keep.
 vec3 clDrift(vec3 raw, vec3 own, vec4 d, float sharpness) {
   if (d.w <= 0.0) return raw;
   float top = maxComponent(raw);
@@ -431,7 +433,8 @@ vec3 clDrift(vec3 raw, vec3 own, vec4 d, float sharpness) {
   float ka = pow(d.w, sharpness);
   float s = min(1.0, va * (1.0 + ka) / (va + ka));
   vec3 drifted = raw * mix(d.rgb, vec3(1.0), s);
-  return drifted * (top / max(maxComponent(drifted), 1e-12));
+  float peak = maxComponent(drifted);
+  return top > 0.0 && peak > top ? drifted * (top / peak) : drifted;
 }
 
 // A part's light moved by share m into the emitter's pale color at the same luminance (a light whose pale side takes
