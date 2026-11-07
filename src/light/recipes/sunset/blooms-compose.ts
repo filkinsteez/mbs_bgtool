@@ -839,6 +839,11 @@ function warmHaze(c: Rgb, u: number): number {
   return linearToOklch(c)[2] < 50 ? lerp(4.8, 5.8, u) : lerp(2.8, 3.6, u)
 }
 
+/** A warm light with little chroma (Tan): a little blue over it turns it grey. */
+function isMuted(c: Rgb): boolean {
+  return isWarm(c) && linearToOklch(c)[1] < 0.1
+}
+
 /** Lime-like light: chroma with a hue between yellow and cyan. */
 export function isGreen(c: Rgb): boolean {
   const [, chroma, hue] = linearToOklch(c)
@@ -1200,6 +1205,8 @@ const STEEL_TALL = 1.25
 const ICE_HAZE = 1.5
 /** How far inside the frame's edges a warm lead's middle stays, in frame fractions. */
 const SUN_EDGE = 0.04
+/** The same for a muted warm lead (Tan): its color holds only near its middle, where it outweighs the blue. */
+const MUTED_SUN_EDGE = 0.12
 
 /**
  * The pack composition: one dominant bloom at the shared light height, from
@@ -1265,8 +1272,9 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   if (cyanLead) at[0] = clamp(at[0], cyanEdge, 1 - cyanEdge)
   // A warm lead is a sun: its middle stays just inside the frame, so its palest part, the core, is in the picture.
   if (isWarm(colors[lead])) {
-    at[0] = clamp(at[0], SUN_EDGE, 1 - SUN_EDGE)
-    at[1] = clamp(at[1], SUN_EDGE, 1 - SUN_EDGE)
+    const edge = isMuted(colors[lead]) ? MUTED_SUN_EDGE : SUN_EDGE
+    at[0] = clamp(at[0], edge, 1 - edge)
+    at[1] = clamp(at[1], edge, 1 - edge)
   }
   // The way the light runs: from the lead toward its arrangement's point (Plan.toward). The sky darkens along it.
   const frameP: [number, number] = [Math.sqrt(aspect), 1 / Math.sqrt(aspect)]
@@ -1323,6 +1331,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const deepEdge = spanNear + (1 - deepShare) * (spanFar - spanNear)
   const leadBeta = beta * (isRed(colors[lead]) ? RED_SUN_FALLOFF : 1)
   // The lead's body ends there: a smaller one grows to it (a cyan lead stays a medium bloom), a larger one flattens.
+  const leadRadius = radius
   const leadReach = bodyReach(leadBeta) * supportAlong(radius, aniso, angle, away, stretch)
   if (leadReach < bodyEnd) {
     if (!cyanLead) radius *= Math.max(1, Math.min(LEAD_GROW, bodyEnd / leadReach, LEAD_MAX_LONG_RADIUS / (radius * Math.sqrt(aniso))))
@@ -1426,6 +1435,9 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   ]
   // A cyan bloom stays an accent: larger, its pale light covers the middle of the frame and the deep sky turns teal.
   const innerCap = innerCyan ? CYAN_MAX_RADIUS : Infinity
+  // A cyan bloom is larger beside a smaller lead (leadShare). In a tall frame it follows the lead's size before the lead
+  // grew to its share of the frame: beside a small lead grown large it would fill the narrow frame's sky.
+  const innerBase = innerCyan ? lerp(Math.min(radius, leadRadius), radius, smoothstep(0.5, 1, aspect)) : radius
   glows.push({
     color: innerColor,
     at: innerGrey
@@ -1434,7 +1446,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     // A small accent beside the lead's large field; a cyan one a little larger, so the pack's Cyan shows.
     radius: Math.min(
       innerCap,
-      radius *
+      innerBase *
         (innerCyan ? CYAN_ACCENT_SCALE : ACCENT_SCALE) *
         (innerGrey
           ? lerp(0.6, 0.8, uSize) * lerp(1.3, 0.8, leadShare) * (darkStyle === 'none' ? NONE_STEEL : 1) * lerp(STEEL_TALL, 1, smoothstep(0.5, 1, aspect))

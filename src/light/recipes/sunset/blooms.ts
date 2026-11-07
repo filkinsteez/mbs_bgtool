@@ -346,6 +346,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
   const glowTail: number[] = []
   const glowLow: number[] = []
   const glowWarm: number[] = []
+  const glowSun: number[] = []
   const glowCore: number[] = []
   const glowCoreRadius: number[] = []
   const glowCoreTint: number[] = []
@@ -370,6 +371,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
       glowTail.push(0, 0, 0)
       glowLow.push(0, 0, 0)
       glowWarm.push(0)
+      glowSun.push(0)
       glowCore.push(0)
       glowCoreRadius.push(CORE_RADIUS)
       glowCoreTint.push(0, 0, 0)
@@ -422,6 +424,9 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     const lowLight = isWarm(base) && !fire ? scale(deeper, luminance(light) / Math.max(luminance(deeper), 1e-6)) : deeper
     glowLow.push(...scale(muted ? light : lowLight, gain))
     glowWarm.push(isWarm(base) && !muted ? 1 : 0)
+    // In pack output a muted warm light (Tan) is a sun too: the pale veil gives way under its body, or over it the
+    // light reads white.
+    glowSun.push(isWarm(base) && (!muted || layout.packLight > 0.5) ? 1 : 0)
     glowFire.push(fire ? 1 : 0)
     // Only a light has a source to brighten toward; a patch of sky or a pack grey stays soft throughout.
     const short = bridgeGate(sky, light) * Math.max(0, CORE_ABOVE_BRIDGE - linearToOklab(base)[0])
@@ -480,6 +485,7 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     uGlowTail: glowTail,
     uGlowLow: glowLow,
     uGlowWarm: glowWarm,
+    uGlowSun: glowSun,
     uGlowCore: glowCore,
     uGlowCoreRadius: glowCoreRadius,
     uPackLight: clamp(layout.packLight, 0, 1),
@@ -590,6 +596,7 @@ uniform vec3 uGlowColor[GLOW_COUNT];
 uniform vec3 uGlowTail[GLOW_COUNT];   // color of the faint outer light toward the open sky
 uniform vec3 uGlowLow[GLOW_COUNT];    // the glow's deeper member, for its lower side and over a deep area
 uniform float uGlowWarm[GLOW_COUNT];  // 1 for warm light, whose lower part takes the deeper member
+uniform float uGlowSun[GLOW_COUNT];   // 1 for warm light the pale veil gives way under
 uniform float uGlowDeepFade[GLOW_COUNT]; // how far the glow's hue is from the deepened sky's, 0..1
 uniform float uGlowSkyLight[GLOW_COUNT]; // 1: the glow is sky light (the sky's own hue), which dims with the far sky, its middle too
 uniform float uLeadHides;             // 1: the lead's haze hides the sky and the other glows behind it whatever the haze floor (an orange-red sun)
@@ -829,7 +836,7 @@ vec3 bloomsScene(vec2 uv) {
   for (int i = 0; i < GLOW_COUNT; i++) {
     if (i < uGlowCount) {
       float fireBody = uPackLight * smoothstep(0.45, 0.8, k[i]);
-      sunBody = max(sunBody, uGlowWarm[i] * mix(1.0 - uGlowFire[i], 1.0, uGlowFire[i] * fireBody) * smoothstep(0.1, 0.5, k[i]));
+      sunBody = max(sunBody, uGlowSun[i] * mix(1.0 - uGlowFire[i], 1.0, uGlowFire[i] * fireBody) * smoothstep(0.1, 0.5, k[i]));
     }
   }
   sky += uSkyVeil.rgb * (veil * (1.0 - sunBody));
