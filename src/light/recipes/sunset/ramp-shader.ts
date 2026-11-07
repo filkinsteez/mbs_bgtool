@@ -600,9 +600,10 @@ const float WATER_WIND = 0.25;
 // The sun's path is brighter than the glow it mirrors by up to this share: its glints catch the sun.
 const float PATH_GAIN = 0.35;
 // A field of glints: the light it adds at its middle as a share of the glow's, and how far that light
-// is turned toward white (the glints mirror the sun itself, which is much paler than its glow).
+// is turned toward white (the glints mirror the sun itself, which is much paler than its glow; a
+// warmer white added to the blue water reads lavender).
 const float GLINT_GAIN = 0.8;
-const float GLINT_WHITE = 0.7;
+const float GLINT_WHITE = 0.9;
 // The widest path a field of glints takes its spread from, as a share of the frame's width, and how much its rows change its light.
 const float GLINT_WIDEST = 0.36;
 const float GLINT_ROWS = 0.5;
@@ -610,6 +611,8 @@ const float GLINT_ROWS = 0.5;
 const float SHEEN_DEPTH = 0.18;
 // How much lighter the water is where its warm reflection and its own cool light meet half and half.
 const float WATER_BRIDGE = 0.3;
+// The same where a field of glints' warm strip and the blue water past it meet half and half.
+const float STRIP_BRIDGE = 0.6;
 // How much less the water near the horizon squeezes the sky it mirrors under the sun, and how much more far to its sides.
 const float GATHER = 0.5;
 
@@ -726,8 +729,8 @@ vec3 rampScene(vec2 p) {
           float rows = hazeNoise(vec2(across / (0.3 * uSunGlints.z), 2.0 * along / uSunGlints.z), uSeed + 1013);
           glinting = uSunGlints.x * min(1.0, uSunPath.x) * exp(-0.5 * g * g) * max(0.0, 1.0 + GLINT_ROWS * rows);
         }
-        // Under a glow above the frame the water near its far edge takes the low sky's light, which
-        // fades toward the viewer: the water is paler there and deeper near the viewer.
+        // Under a glow above the frame the water near its far edge takes the light of the low sky's
+        // bridge, which fades toward the viewer: the water is paler there and deeper near the viewer.
         // Its light changes along the edge, so it never runs as an even band.
         float edgeLight = 1.0 + 0.4 * edgeFbm(p.x * 1.3 + 5.3, uSeed + 1021, 2);
         sheen = uWaterLift.w * edgeLight * exp(-max(depth - bankDepth - uWaterLift.y, 0.0) / SHEEN_DEPTH) * smoothstep(bankDepth + 0.5 * uWaterLift.y, bankDepth + uWaterLift.y, depth);
@@ -759,11 +762,18 @@ vec3 rampScene(vec2 p) {
   float mirrorLight = luminance(mirror);
   if (uWaterTint > 0.0 && mirrorLight > 1e-5) own = mix(own, luminance(own) * mirror / mirrorLight, uWaterTint);
   // A rough sea dims the reflection; it does not show more of the water's own light.
-  vec3 water = uWaterMirror * mix(1.0, uWaterLift.z, past * (1.0 - onPath)) * (1.0 + brighter + sheen) * r * mirror + (1.0 - r) * own;
+  vec3 water = uWaterMirror * mix(1.0, uWaterLift.z, past * (1.0 - onPath)) * (1.0 + brighter) * r * mirror + (1.0 - r) * own;
+  // The light the water near its far edge takes is the low sky's pale bridge above the glow, in the
+  // light's own pale tint: brightened in its own color, the blue there reads grey or lavender.
+  water += uWaterMirror * sheen * r * luminance(mirror) * uBridgeTint;
   // Where the water's warm reflection gives way to its own cool light, the bridge between the two
   // is lighter, never khaki or grey-brown.
   float apart = clamp(warmth(mirror) - warmth(own), 0.0, 1.0);
   water += WATER_BRIDGE * 4.0 * r * (1.0 - r) * apart * luminance(water) * uBridgeTint;
+  // Under a field of glints the warm strip along the far edge gives way to the blue water past it
+  // through the light's own pale tint, cream to near-white, as the sky's bridge does: mixed, the
+  // two make lavender or grey.
+  water += STRIP_BRIDGE * uSunGlints.x * 4.0 * past * (1.0 - past) * luminance(water) * uBridgeTint;
   // Light adds: the glints lighten the water under them and never darken it toward grey.
   if (glinting > 1e-3) {
     vec3 sun = luminance(uSunGlowColor[0]) > 1e-4 ? uSunGlowColor[0] : uGlowColor[0];
