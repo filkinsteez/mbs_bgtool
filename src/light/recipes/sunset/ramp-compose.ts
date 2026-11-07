@@ -408,6 +408,8 @@ const ELEMENTAL_ZENITH = 0.77
 const ELEMENTAL_EDGE = 0.3
 /** The line lengths (short sides) over which Elemental's far side comes in. */
 const ELEMENTAL_FAR = [0.5, 1.2] as const
+/** Under a long line, how far Elemental's bridge lifts toward white. */
+const ELEMENTAL_FAR_LIFT = 0.8
 /** Under a long line, the range of a seed's own factor on its sky edges' widths. */
 const DRAG_SOFT = [0.6, 1.2] as const
 /** Under a long line, the most an open sky leans off the line by seed, in degrees. */
@@ -1196,7 +1198,9 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     occludeWidth: 0.04 * glowHaze,
     // The bridge gains no faster than the glow, or high Intensity turns the whole low sky white.
     bridge: look.bridge * stops2(intensity, 0.15),
-    bridgeLift: look.bridgeLift + 0.12 * softness,
+    // Where Elemental's far side brings Meta Blue against its warm low sky, the bridge between the
+    // two is paler, a cream rather than a grey.
+    bridgeLift: lerp(look.bridgeLift + 0.12 * softness, ELEMENTAL_FAR_LIFT, packId === 'elemental' ? longLine : 0),
     bridgeWarmth: look.bridgeWarmth,
     bridgeFloor: look.bridgeFloor,
     // A light whose core is another color (Bold's Orange-red, whose core is Yellow) pales through
