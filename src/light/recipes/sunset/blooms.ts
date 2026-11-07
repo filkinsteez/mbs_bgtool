@@ -272,12 +272,12 @@ const BRIDGE_MAX_C = 0.06
  * the bridge's lightness.
  */
 const CORE_ABOVE_BRIDGE = 0.86
-const CORE_LIFT = 4
+const CORE_LIFT = 2
 /** The fitted 1:1 looks keep the stronger lift they were fitted with. */
 const PRESET_CORE_LIFT = 10
 /** A light's core radius against the light's own, and a warm light's (smaller, so its color fills the bloom). */
 const CORE_RADIUS = 0.3
-const WARM_CORE_RADIUS = 0.18
+const WARM_CORE_RADIUS = 0.14
 const MAX_CORE = 2
 /** How much more light an orange-red core has: enough for the tone curve to take it through amber to cream. */
 const RED_CORE = 4
