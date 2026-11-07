@@ -78,6 +78,14 @@ const BRIDGE_PALE = 0.6
  */
 const DRAG_LOGO_FACING = 0.4
 const FACING_POWER = 1.5
+/**
+ * A turning line's glow is this many times wider where its light is full, as the light along the line to this
+ * power, so it is a thin line at its dim end and opens toward its bright end (contour-light-line); its haze by less.
+ */
+const FLAME_GROW = [6.5, 2]
+const FLAME_HAZE_GROW = [2, 2]
+/** How far (short sides) the two sides of a turning line's glow reach across it into each other. */
+const FLAME_SIDE_SOFT = 0.02
 const luminance = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 // The whole Meta logo outline (104 pieces, 3 contours) plus a cut at every stop in each contour must fit:
 // pieces past the limit are dropped, and the inside test then flips inside and outside in horizontal bands.
@@ -421,9 +429,15 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     const r = (layout.shape.rotate * Math.PI) / 180
     return 0.5 + ((p[0] - layout.anchor[0]) * Math.cos(r) + (p[1] - layout.anchor[1]) * Math.sin(r)) / layout.shape.size
   }
-  const littleRed = (hex: string) => parseInt(hex.slice(1, 3), 16) < 64
   const turns = lineRun.hues.length > 1
-  const warmLine = line && warmTail(light.hex) === 'deep red'
+  const warmLine = line && !turns && warmTail(light.hex) === 'deep red'
+  // The other side of a turning line's glow takes the next color at the light's luminance (the pale share keeps it),
+  // which overexposes a darker color: Meta Blue beside Cyan, Orange-red beside Yellow. Scaled to the next color's
+  // own level with the light's largest channel, as along the line, and never above the light's luminance.
+  const peakOf = (hex: string) => Math.max(...hexToLinear(hex))
+  const sideLevel = turns
+    ? Math.min(1, (luminance(hexToLinear(lineRun.hues[1].hex)) * (peakOf(light.hex) / peakOf(lineRun.hues[1].hex))) / luminance(hexToLinear(light.hex)))
+    : 1
   // The light's own color holds over the line's first fifth from its bright end, then the others follow evenly to
   // the far end. Each has its largest channel at the light's, so the hue turns while the brightness follows the
   // light (a lower one reads as the dim end of that color). Where two colors meet the stretch between is a little
@@ -461,10 +475,6 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
       face: layout.oneSided && !bright ? round4(0.035 * (accent.pale ? accent.faceGain : accent.haze)) : 0,
       glow: line ? 0.006 : 0.005,
       fan: line ? 4 : 1.5,
-      // A blue line's glow splits its colors to the two sides (the light-line reference: a different hue on each
-      // side). The split moves red one way and blue the other, so it stays off where either end has much red: a
-      // warm line's blue side turns green, and Ice or Steel gets a peach fringe.
-      spread: turns && lineRun.hues.every((c) => littleRed(c.hex)) ? 0.011 : 0,
     }),
     // A line's glow widens steadily toward its bright end, following the slow light along it, with a small hot core
     // and little haze, so the end opens as a cone rather than a cloud.
@@ -489,12 +499,50 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
         }
       : {}),
     ...(drift ? { drift: drift.ratios, driftShape: [drift.knee, drift.sharpness] } : {}),
-    pale: accent.pale ? 5 : 0,
+    // A turning line's other side takes its next color (slot 4); a Meta Blue light's pale side its pack's pale color.
+    pale: turns ? 4 : accent.pale ? 5 : 0,
     // The core line leans toward the pale color; the color band beside it only as a band's body does and less, so
     // the edge keeps the light's own color.
     ...(accent.pale ? { n1Pale: accent.line, n2Pale: accent.band, f1Pale: accent.air, f2Pale: accent.air, f3Pale: accent.face } : {}),
     // Where a Meta Blue light is strongest it lights the air about the edge in its pack's pale color (packAccent).
     ...(accent.mist ? { f2Width: accent.mist.width, f2Weight: accent.mist.weight, f2Pale: accent.mist.pale } : {}),
+    // A line that turns through colors opens like a flame toward its bright end, with the light's own color on one
+    // side and the next color (the pale slot) on the other, as contour-light-line is yellow on one side and red on
+    // the other. Where the two meet, the core line adds to both, so the meeting is lighter than either. The haze
+    // splits the same way and follows the light along the line, so the dim end is a thin line.
+    ...(turns
+      ? {
+          n1Pale: 0,
+          n2Side: 1,
+          n2MaskSoft: FLAME_SIDE_SOFT,
+          n2Pale: 0,
+          n2GrowBy: FLAME_GROW,
+          n3Weight: round4(0.55 * sideLevel),
+          n3Width: 0.006,
+          n3Shape: 3,
+          n3Side: 2,
+          n3MaskSoft: FLAME_SIDE_SOFT,
+          n3Light: 1,
+          n3LightGamma: 1.2,
+          n3Grow: 1,
+          n3GrowBy: FLAME_GROW,
+          n3Pale: 1,
+          f1Side: 1,
+          f1MaskSoft: 2 * FLAME_SIDE_SOFT,
+          f1Pale: 0,
+          f1GrowBy: FLAME_HAZE_GROW,
+          f2Side: 2,
+          f2MaskSoft: 2 * FLAME_SIDE_SOFT,
+          f2Light: 1,
+          f2LightGamma: 1,
+          f2Weight: round4(0.12 * sideLevel),
+          f2Width: 0.02,
+          f2Grow: 1,
+          f2GrowBy: FLAME_HAZE_GROW,
+          f2Pale: 1,
+          f3Pale: 0,
+        }
+      : {}),
     ...accent.params,
     ...offFrameGlow(controls.drag, light.hex, aspect, accent.edge),
     // A Tan edge's glow is two bands side by side just inside the edge, a flat stretch a little above Tan's level
