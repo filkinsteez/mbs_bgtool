@@ -684,8 +684,9 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     onLine.beamHaze = round4(Math.max(1, Math.max(1, line.length) ** BEAM_HAZE_GROWTH / light.lift))
     // A light outside the frame glows from where its haze is lit: the beam's first stretch, or
     // the haze the pool lights in front of the floor, along the floor's normal (the stage's up,
-    // (sin, -cos) of its turn), so a turned floor sends that glow in at an angle. A broad beam
-    // glows wider.
+    // (sin, -cos) of its turn), so a turned floor sends that glow in at an angle. Dense haze at
+    // the source keeps its glow close to the frame's edge, fading fast, where the low haze a pool
+    // lights reaches farther into the frame. A broad beam glows wider.
     const [cos, sin] = onLine.turn as number[]
     const { halfW } = frameHalf(aspect)
     const poolOut = Math.hypot(Math.max(0, Math.abs(line.to[0]) - halfW), Math.max(0, Math.abs(line.to[1]) - halfH))
@@ -693,7 +694,8 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     const glowSeg = onRight
       ? [...line.from, line.from[0] + SOURCE_GLOW * (line.to[0] - line.from[0]), line.from[1] + SOURCE_GLOW * (line.to[1] - line.from[1])]
       : [line.to[0] + toward * sin, line.to[1] - toward * cos, line.to[0] + toward * sin, line.to[1] - toward * cos]
-    const glow = airGlowParams(light, glowSeg, aspect, geo(intensity, 0.35, 0.75, 1.6) / 0.75, (params.fall as number[])[0], broad ? WIDE_GLOW : NARROW_GLOW, 0, [...line.from, ...line.to])
+    const reach = (onRight ? SOURCE_GLOW_REACH : 1) * (broad ? WIDE_GLOW : NARROW_GLOW)
+    const glow = airGlowParams(light, glowSeg, aspect, geo(intensity, 0.35, 0.75, 1.6) / 0.75, (params.fall as number[])[0], reach, onRight ? 1 : 0, [...line.from, ...line.to])
     Object.assign(params, onLine, glow)
   }
 
@@ -746,6 +748,12 @@ const SOURCE_GLOW = 0.35
  * share of the pool's distance outside the frame (so it stays outside).
  */
 const POOL_GLOW = 0.75
+
+/**
+ * How far a source-heavy seed's glow past the frame reaches, as a factor on the broad or narrow
+ * beam's falloff; it also fades one power faster.
+ */
+const SOURCE_GLOW_REACH = 0.75
 
 /** Falloff (short-side units) of the glow past the frame for a broad and a narrow beam. */
 const WIDE_GLOW = 0.27
