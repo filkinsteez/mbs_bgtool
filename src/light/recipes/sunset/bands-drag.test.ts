@@ -73,6 +73,44 @@ describe('composeBands with a dragged line', () => {
     }
   })
 
+  it("changes the sky a little for each small step of the line's start out of the frame", () => {
+    const skyOf = (params: BandsComposition['params']) => {
+      const [veilAmount, veilFrom, veilTo, veilGain] = params.skyVeil as number[]
+      const [, , , farAmount] = params.farSky as number[]
+      const [farFull, farGone] = params.farSpan as number[]
+      return {
+        skyHeight: (params.band1Edges as number[])[0],
+        veilAmount,
+        veilFrom,
+        veilTo,
+        veilGain,
+        tint: Math.max(...(params.skyTint as number[])) * veilAmount,
+        farAmount,
+        farFull: farFull * farAmount,
+        farGone: farGone * farAmount,
+      }
+    }
+    const most = { skyHeight: 0.03, veilAmount: 0.05, veilFrom: 0.05, veilTo: 0.05, veilGain: 0.05, tint: 0.05, farAmount: 0.15, farFull: 0.05, farGone: 0.06 }
+    for (const packId of PACK_IDS) {
+      for (let seed = 1; seed <= 6; seed++) {
+        for (const aspect of [16 / 9, 9 / 16]) {
+          let before: ReturnType<typeof skyOf> | null = null
+          for (let k = 0; k <= 60; k++) {
+            // The owner's line moved down, its start from inside the frame to below it.
+            const y = 0.8 + k * 0.01
+            const now = skyOf(composeBands({ pack: getPack(packId), seed, aspect, drag: { from: [1.011, y], to: [-0.078, y - 1.291] } }).params)
+            if (before) {
+              for (const key of Object.keys(most) as (keyof typeof most)[]) {
+                expect(Math.abs(now[key] - before[key]), `${packId} ${seed} ${aspect} start y ${y.toFixed(2)} ${key}`).toBeLessThan(most[key])
+              }
+            }
+            before = now
+          }
+        }
+      }
+    }
+  })
+
   it('moves the image a little for a small change of the line', () => {
     const pack = getPack('elemental')
     for (let seed = 1; seed <= 4; seed++) {

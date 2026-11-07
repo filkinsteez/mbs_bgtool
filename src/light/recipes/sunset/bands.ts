@@ -75,13 +75,16 @@ function bandUniforms(ctx: RecipeContext): UniformMap {
     const k = ctx.num(bandKey(i, 'Light'))
     return [c[0] * k, c[1] * k, c[2] * k]
   }
+  // A spill adds at most the band's own light, so a dark band next to a far lighter one (Near-black under an Ice
+  // line) keeps its own color instead of turning a lighter grey.
   const spillFrom = (from: number, into: number): number[] => {
     if (spillAmount <= 0 || from >= count || into >= count) return [0, 0, 0]
     const a = lit(from)
     const b = lit(into)
     const t = Math.min(1, Math.max(0, (linearToOklch(a as Rgb)[0] - linearToOklch(b as Rgb)[0] - 0.06) / 0.1))
     const lighter = t * t * (3 - 2 * t)
-    return closeHues(a as Rgb, b as Rgb) ? a.map((v) => v * spillAmount * lighter) : [0, 0, 0]
+    const amount = Math.min(spillAmount * lighter, luminance(b) / Math.max(luminance(a), 1e-6))
+    return closeHues(a as Rgb, b as Rgb) ? a.map((v) => v * amount) : [0, 0, 0]
   }
   for (let i = 0; i < BAND_MAX; i++) {
     spillAbove.push(...spillFrom(i - 1, i))
