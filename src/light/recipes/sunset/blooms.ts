@@ -91,6 +91,7 @@ const PARAMS: readonly ParamSpec[] = [
   num('skyTilt', 'Sky darkening tilt', -1, 1, 0.005, 0),
   num('skyTurn', 'Sky darkening turned about the frame middle, degrees', -180, 180, 0.01, 0),
   num('skyVeil', 'Pale light over the sky toward the light, in units of the sky luminance (0: none)', 0, 6, 0.001, 0),
+  num('skyVeilRise', 'Share of the way from the exact hex line toward the light over which the pale light comes in (1: all of it)', 0.02, 1, 0.001, 1),
   num('skyLine', '1: the sky darkens from skyLineFrom to skyLineTo (a dragged line) instead of across the frame', 0, 1, 1, 0),
   vec('skyLineFrom', 'Start of the line the sky darkens along', -2, 3, 0.001, [0.5, 1]),
   vec('skyLineTo', 'End of the line the sky darkens along', -2, 3, 0.001, [0.5, 0]),
@@ -154,6 +155,7 @@ function readLayout(ctx: RecipeContext): BloomsLayout {
       vary: ctx.num('skyVary'),
       turn: ctx.num('skyTurn'),
       veil: ctx.num('skyVeil'),
+      veilRise: ctx.num('skyVeilRise'),
       line:
         ctx.num('skyLine') > 0.5
           ? { from: vec2(ctx.vec('skyLineFrom')), to: vec2(ctx.vec('skyLineTo')), behind: ctx.num('skyBehind') }
@@ -204,6 +206,7 @@ function layoutParams(layout: BloomsLayout): Record<string, ParamValue> {
     skyTilt: layout.sky.tilt,
     skyTurn: layout.sky.turn,
     skyVeil: layout.sky.veil,
+    skyVeilRise: layout.sky.veilRise ?? 1,
     skyLine: layout.sky.line ? 1 : 0,
     skyLineFrom: layout.sky.line ? [...layout.sky.line.from] : [0.5, 1],
     skyLineTo: layout.sky.line ? [...layout.sky.line.to] : [0.5, 0],
@@ -303,9 +306,9 @@ const PALE_CORE_CUT = 0.6
 const GREY_CORE = 1.2
 /** Share of the way an orange-red light's faint tint raises its green toward its red (bridgeTint). */
 const SUN_TAIL_GREEN = 0.85
-/** How far the pale sky around an orange-red sun turns from Meta Blue's hue toward Cyan's. */
+/** How far the pale sky around an orange-red sun, and Bold's band of pale sky, turn from Meta Blue's hue toward Cyan's. */
 const SKY_CYAN_SHARE = 1
-/** The same beside Yellow, whose pale sky is light blue: full Cyan beside it fills the frame with saturated cyan. */
+/** The same around Yellow in pack output: paler blue between its light and the band. */
 const SKY_CYAN_SHARE_YELLOW = 0.5
 /** How much less of the sky's color the pale sky keeps in a pack whose pale light is a grey (Ice). */
 const GREY_SKY_PALE = 0.25
@@ -351,14 +354,18 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
   const slot = (index: number) => colors[clamp(Math.round(index), 0, SLOT_COUNT - 1)]
   const sky = colors[SLOT.sky]
   // Around an orange-red sun in a pack with Cyan (Bold) the pale sky leans Cyan: light blue toward the light, never
-  // grey-white or sage. In pack output it does beside Yellow too, by half as much, where the sun's body hides the veil
-  // (sunBody), so the two meet through cream and the sky's pale side adds to the frame's Cyan.
+  // grey-white or sage. In pack output it does beside Yellow too, by half as much (SKY_CYAN_SHARE_YELLOW): fully, Cyan's
+  // pale light on Yellow's turns mint and Yellow's long tail turns the deep blue teal. The sky's own pale light (the
+  // veil) is all Cyan's hue where it is full, beside Yellow too: the band of Cyan's pale sky between the light and the
+  // blue. Where the veil is weak, toward the line where the sky is its exact hex, it is the sky's own pale tint.
   const lights = [colors[SLOT.light1], colors[SLOT.light2]].filter((c) => c !== undefined)
   const cyanLight = lights.some(layout.packLight > 0.5 ? isWarm : isRed) ? lights.find(isCyan) : undefined
   // In pack output a pack whose pale light is a grey (Atmospheric's Ice) pales its sky toward that grey: a sky that
   // pales to periwinkle shows only Meta Blue.
   const greyPale = layout.packLight > 0.5 && lights.some(isPaleGrey) ? GREY_SKY_PALE : 0
   const skyPale = skyPaleTint(sky, cyanLight, cyanLight ? (lights.some(isRed) ? SKY_CYAN_SHARE : SKY_CYAN_SHARE_YELLOW) : 0, greyPale)
+  const veilPale = cyanLight && layout.packLight > 0.5 ? skyPaleTint(sky, cyanLight, SKY_CYAN_SHARE, greyPale) : skyPale
+  const skyPaleOwn = skyPaleTint(sky, undefined, 0, greyPale)
   const deep = slot(layout.zenith.color)
   const glowColor: number[] = []
   const glowTail: number[] = []
@@ -483,7 +490,10 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     uDeep: scale(slot(z.color), skyGain),
     uSkyRamp: [layout.sky.top, layout.sky.mid, layout.sky.tilt, layout.sky.vary],
     uSkyTurn: [Math.cos((layout.sky.turn * Math.PI) / 180), Math.sin((layout.sky.turn * Math.PI) / 180)],
-    uSkyVeil: [...scale(skyPale, luminance(scale(sky, skyGain))), layout.sky.veil],
+    uSkyVeil: [...scale(veilPale, luminance(scale(sky, skyGain))), layout.sky.veil],
+    uSkyVeilRise: clamp(layout.sky.veilRise ?? 1, 0.02, 1),
+    uSkyVeilOwn: scale(skyPaleOwn, luminance(scale(sky, skyGain))),
+    uSkyPale: scale(skyPale, luminance(scale(sky, skyGain))),
     uSkyLine: layout.sky.line ? [...layout.sky.line.from, ...layout.sky.line.to] : [0.5, 1, 0.5, 0],
     uSkyLineOn: layout.sky.line ? 1 : 0,
     uSkyBehind: layout.sky.line?.behind ?? BEHIND_REACH,
@@ -598,6 +608,9 @@ uniform vec3 uDeep;
 uniform vec4 uSkyRamp;                // stops darker at the top, height of the exact hex, tilt, light variation
 uniform vec2 uSkyTurn;                // cos, sin of the angle the sky ramp is turned by about the frame middle
 uniform vec4 uSkyVeil;                // pale light in the sky's own hue at the sky's luminance, and how much of it toward the light
+uniform float uSkyVeilRise;           // share of the way from the exact hex line toward the light over which it comes in
+uniform vec3 uSkyVeilOwn;             // the sky's own pale light (no pack tint), at the sky's luminance
+uniform vec3 uSkyPale;                // the pale sky around the lights (Cyan's round an orange-red sun), at the sky's luminance
 uniform vec4 uSkyLine;                // a dragged line's start and end (frame fractions) the sky darkens along, with uSkyLineOn
 uniform float uSkyLineOn;
 uniform float uSkyBehind;             // how far behind the line's start the sky reaches the far sky (short sides)
@@ -847,7 +860,9 @@ vec3 bloomsScene(vec2 uv) {
   // exact hex toward the light, so full-strength blue is only a band toward the far edge. Not over the dark
   // ground.
   float toLight = clamp((vSky - uSkyRamp.y) / max(1.0 - uSkyRamp.y, 0.05), 0.0, 1.0);
-  float veil = uSkyVeil.a * toLight * toLight * (3.0 - 2.0 * toLight) * (1.0 - z);
+  // It comes in over uSkyVeilRise of that way and is full beyond, so it can be a band of pale sky beside the light.
+  float veilIn = clamp(toLight / uSkyVeilRise, 0.0, 1.0);
+  float veil = uSkyVeil.a * veilIn * veilIn * (3.0 - 2.0 * veilIn) * (1.0 - z);
 
   // Under a warm light's body its own light is the pale sky near it, so the veil gives way there: through the veil
   // Yellow's body turns lemon-white. An orange-red sun's haze hides the veil behind its body already, and around it
@@ -861,7 +876,10 @@ vec3 bloomsScene(vec2 uv) {
       sunBody = max(sunBody, uGlowSun[i] * mix(1.0 - uGlowFire[i], 1.0, uGlowFire[i] * fireBody) * smoothstep(0.1, 0.5, k[i]));
     }
   }
-  sky += uSkyVeil.rgb * (veil * (1.0 - sunBody));
+  // In pack output it takes the pack's tint (Bold's Cyan) as it comes in: weak, toward the exact hex line, it is the sky's
+  // own pale light, so the blue there stays Meta Blue and only the full band is Cyan.
+  vec3 veilTint = mix(uSkyVeil.rgb, mix(uSkyVeilOwn, uSkyVeil.rgb, smoothstep(0.0, 0.7, veilIn)), uPackLight);
+  sky += veilTint * (veil * (1.0 - sunBody));
   float T = exp(-ext);
   // What the lead's own haze lets through.
   float leadSeen = exp(-own[0]);
@@ -957,8 +975,9 @@ vec3 bloomsScene(vec2 uv) {
   float bell = 4.0 * t * (1.0 - t);
   vec3 pale = bridge / max(lit, 1e-4) * bell * sqrt(bell);
   // On the sky side the bridge is pale light of the sky's own hue and on the light side the lights' own pale
-  // tint, so the blend runs from pale blue through near-white to the light's tint, not through lavender.
-  pale = mix(pale, uSkyVeil.rgb / max(dot(uSkyVeil.rgb, vec3(0.2126, 0.7152, 0.0722)), 1e-5) * dot(pale, vec3(0.2126, 0.7152, 0.0722)), uBridgeSky * (1.0 - smoothstep(0.3, 0.6, t)));
+  // tint, so the blend runs from pale blue through near-white to the light's tint, not through lavender. (Its pale
+  // sky is the one around the light, uSkyPale: Cyan's pale light on Yellow's would be mint.)
+  pale = mix(pale, uSkyPale / max(dot(uSkyPale, vec3(0.2126, 0.7152, 0.0722)), 1e-5) * dot(pale, vec3(0.2126, 0.7152, 0.0722)), uBridgeSky * (1.0 - smoothstep(0.3, 0.6, t)));
   // Where the glows are faint a pack bridge follows the sky's own darkening, so it lays no grey veil over a deep sky.
   pale *= mix(1.0, mix(topLight, 1.0, smoothstep(0.15, 0.5, lit)), uBridgeSky);
   front += pale;
