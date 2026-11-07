@@ -142,8 +142,9 @@ const AWAY_UP = 0.12
 const SKY_VEIL: readonly [number, number] = [0.8, 2.6]
 /** Its low end where the dark colors blend with the blue (Atmospheric): some seeds keep much more of the blue. */
 const BLEND_SKY_VEIL = 0.35
-/** Around Yellow in a pack with Cyan (Bold) the sky pales less: a wide pale veil turns the frame cream and pastel. */
-const CYAN_VEIL = 0.6
+/** In a pack with Cyan (Bold) the sky pales less: a wide pale veil turns the frame cyan, cream and pastel. */
+const CYAN_VEIL = 0.32
+const CYAN_RED_VEIL = 0.6
 /**
  * The frame along the way the light runs, from a seed's own draws, as shares of the span from the lead (or the near
  * edge) to the far edge: the deep sky's share (most seeds a deep third, DEEP_STRIP_SHARE of them only a strip), the
@@ -155,6 +156,9 @@ const DEEP_SHARE: readonly [number, number] = [0.26, 0.42]
 const DEEP_STRIP: readonly [number, number] = [0.06, 0.14]
 const DEEP_STRIP_SHARE = 0.2
 const BODY_SHARE: readonly [number, number] = [0.4, 0.62]
+/** The same in a pack with Cyan (Bold), and for an orange-red sun there: the moodboard's skies keep most of the frame blue. */
+const CYAN_BODY_SHARE: readonly [number, number] = [0.34, 0.52]
+const CYAN_RED_BODY_SHARE: readonly [number, number] = [0.4, 0.56]
 /**
  * Where the dark colors blend with the blue (Atmospheric), the body's share by dark style: light on light keeps a large
  * light, and the more dark a frame holds the smaller its light can be, so some seeds keep a small light in a wide sky.
@@ -168,7 +172,7 @@ const MIN_OPEN_SHARE = 0.16
 /** Most a lead grows to reach its share. */
 const LEAD_GROW = 1.6
 const OPEN_MID: readonly [number, number] = [0.35, 0.7]
-const CYAN_OPEN_MID: readonly [number, number] = [0.35, 0.55]
+const CYAN_OPEN_MID: readonly [number, number] = [0.22, 0.42]
 /** Where the deep sky begins in a tall frame (9:16), against its distance in a wide one. */
 const TALL_DEEP_AT = 0.7
 /** Most a warm lead beside a near-equal second sun of its color is wider than tall (the pair arrangement). */
@@ -1112,7 +1116,9 @@ function pickLead(colors: readonly Rgb[], u: number, arrangement: Arrangement): 
     // Red-orange light (Orange-red) always leads, as a sun: beside a cyan lead it would sit alone on the sky as a
     // small bloom and turn pink.
     if (isRed(colors[warm])) return { lead: warm, other: cool }
-    const coolLeads = isCyan(colors[cool]) ? arrangement === 'side' || arrangement === 'high' : u >= 1 - (isGreen(colors[cool]) ? 0.25 : 0.35)
+    // Beside Cyan the warm light always leads: the frame is one broad warm light into the blue, as the moodboard's skies
+    // are, and Cyan comes in as the sky's pale side and a smaller bloom.
+    const coolLeads = isCyan(colors[cool]) ? false : u >= 1 - (isGreen(colors[cool]) ? 0.25 : 0.35)
     return coolLeads ? { lead: cool, other: warm } : { lead: warm, other: cool }
   }
   const lighter = luminance(colors[a]) >= luminance(colors[b]) ? a : b
@@ -1121,6 +1127,38 @@ function pickLead(colors: readonly Rgb[], u: number, arrangement: Arrangement): 
   // beside it, so seeds differ in how much of each the frame shows.
   if (isGrey(colors[darker]) && u < GREY_LEAD_SHARE) return { lead: darker, other: lighter }
   return { lead: lighter, other: darker }
+}
+
+/** A default layout's glow roles: the lead, the pair arrangement's second light, a second bloom of the lead's color, the
+ * inner and far blooms, and a bloom the frame needs for its pack's colors. */
+type GlowRole = 'lead' | 'pair' | 'second' | 'inner' | 'far' | 'needed'
+/** Which of the other blooms a default layout keeps: none, the inner one only, or all. */
+type Company = 'alone' | 'accent' | 'full'
+const COMPANIES: readonly Company[] = ['alone', 'accent', 'full']
+/** The kept blooms' size against their own: an inner accent alone, the whole company, and a bloom the pack needs. */
+const ACCENT_COMPANY_SCALE = 0.8
+const FULL_COMPANY_SCALE = 0.85
+const NEEDED_SCALE = 0.9
+/** A cyan bloom the frame needs (Bold's Cyan) against its own size, by company: alone, it is a small accent in the sky. */
+const NEEDED_CYAN_SCALE: Readonly<Record<Company, number>> = { alone: 0.75, accent: 0.85, full: 0.9 }
+const PAIR_COMPANY_SCALE: Readonly<Record<Company, number>> = { alone: 0.6, accent: 0.75, full: 0.9 }
+/** The lead's falloff exponent against the other lights' (lower is a longer, broader gradient), and its lobe spread. */
+const LEAD_BROAD = 0.85
+const LEAD_VARY: readonly [number, number] = [0.25, 0.55]
+/** A lead from a corner: its width over height. */
+const CORNER_ANISO: readonly [number, number] = [1.0, 1.35]
+
+/** Seeds come in runs of three for their company, each run taking every company once, in a seeded order. */
+function companyFor(seed: number): Company {
+  const n = Math.round(seed) - 1
+  const count = COMPANIES.length
+  const r = random(Math.floor(n / count) * 89 + 43)
+  const order = COMPANIES.map((_, i) => i)
+  for (let i = count - 1; i > 0; i--) {
+    const j = Math.floor(r() * (i + 1))
+    ;[order[i], order[j]] = [order[j], order[i]]
+  }
+  return COMPANIES[order[((n % count) + count) % count]]
 }
 
 /** Share of seeds a grey light (Steel) leads, where the other light is a paler one (Ice). */
@@ -1263,6 +1301,14 @@ const ACCENT_SCALE = 0.5
 const CYAN_ACCENT_SCALE = 0.7
 /** Largest radius of a cyan accent bloom, in units of sqrt(width * height). */
 const CYAN_MAX_RADIUS = 0.65
+/** Beside a sun a cyan bloom's largest radius against the open sky between the sun's body and the deep sky, plus a floor. */
+const CYAN_OPEN_FIT = 0.45
+const CYAN_OPEN_MIN = 0.26
+/** That share beside an orange-red sun, whose own pale sky shows less Cyan, and in a tall frame (9:16) against a wide one. */
+const CYAN_OPEN_FIT_RED = 0.8
+const CYAN_OPEN_TALL = 0.55
+/** The least radius of a cyan bloom in the open sky beside a sun (units of sqrt(width * height)). */
+const CYAN_OPEN_RADIUS = 0.42
 /** Nearest a cyan lead's middle comes to a side edge from outside, in frame widths, and in a tall frame (9:16). */
 const CYAN_EDGE = 0.02
 const CYAN_EDGE_TALL = 0.16
@@ -1276,8 +1322,8 @@ const TALL_INSET = 0.22
 const STEEL_TALL = 1.25
 /** An Ice bloom's haze against another light accent's. */
 const ICE_HAZE = 1.5
-/** How far inside the frame's edges a warm lead's middle stays, in frame fractions. */
-const SUN_EDGE = 0.04
+/** How far beyond the frame's edges a warm lead's middle may lie, in frame fractions. */
+const SUN_BEYOND = 0.2
 /** The same for a muted warm lead (Tan): its color holds only near its middle, where it outweighs the blue. */
 const MUTED_SUN_EDGE = 0.12
 
@@ -1346,9 +1392,10 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // A tall frame is narrow, so there it stays further in: on the edge half of it would lie outside the frame.
   const cyanEdge = lerp(CYAN_EDGE_TALL, CYAN_EDGE, smoothstep(0.5, 1, aspect))
   if (cyanLead) at[0] = clamp(at[0], cyanEdge, 1 - cyanEdge)
-  // A warm lead is a sun: its middle stays just inside the frame, so its palest part, the core, is in the picture.
+  // A warm lead is a sun, and like the other lights it may lie beyond its edge, so the frame shows the broad light it
+  // throws across the sky and not its disc. A muted one (Tan) stays inside: its color holds only near its middle.
   if (isWarm(colors[lead])) {
-    const edge = isMuted(colors[lead]) ? MUTED_SUN_EDGE : SUN_EDGE
+    const edge = isMuted(colors[lead]) ? MUTED_SUN_EDGE : -SUN_BEYOND
     at[0] = clamp(at[0], edge, 1 - edge)
     at[1] = clamp(at[1], edge, 1 - edge)
   }
@@ -1370,11 +1417,21 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // cross the frame and lie under the warm light there (cyan and yellow light together make mint).
   const fieldRadius = lerp(0.5, 0.88, leadShare) * size
   let radius = fieldRadius * (cyanLead ? 0.65 * lerp(CYAN_TALL_SCALE, 1, smoothstep(0.5, 1, aspect)) : 1)
+  // Over a ground that blends with the sky (Atmospheric) the frame is already one light over a dark of the sky's own
+  // family, so the lead keeps its own shape there and the shapes of its lead and blooms tell the seeds apart.
+  const broadLead = !groundBlends
   // A wide source lights a broad, rounded field: a long narrow oval reads as a shape.
-  let aniso = lerp(1.2, 2.0, r())
+  // From a corner it is rounder: lying across the corner, a long light would lie mostly beyond both edges.
+  const corner = arrangement === 'diagonal' || arrangement === 'high'
+  let aniso = corner && broadLead ? lerp(CORNER_ANISO[0], CORNER_ANISO[1], r()) : lerp(1.2, 2.0, r())
   // The lead stays narrower than the frame, so there is sky beside it for the other blooms.
   radius *= Math.min(1, LEAD_MAX_LONG_RADIUS / (radius * Math.sqrt(aniso)))
-  const angle = -side * tilt
+  // Its long axis lies across the way the light runs, so it lights its whole edge or corner and the frame is one broad
+  // gradient from there to the far sky, not a bloom pushed in from the side. The axis always turns the same way from
+  // the way the light runs: the light's bend and lobes are not the same turned round, so they would flip where Rise
+  // takes the light past level. A cyan lead stays a medium bloom.
+  const acrossAngle = (awayAngle * 180) / Math.PI + 90
+  const angle = cyanLead || !broadLead ? -side * tilt : acrossAngle + tilt
   // Along the way the light runs, the seed sets where the lead's body ends (the sun's size), where the sky is its
   // exact hex and where the deep sky begins, as shares of the frame's span from the lead (or the near edge, for a
   // lead outside the frame) to the far edge. So seeds differ in how much of the frame the light, the open sky and
@@ -1401,11 +1458,14 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
           ? lerp(DEEP_STRIP[0], DEEP_STRIP[1], uDeepSize / DEEP_STRIP_SHARE)
           : lerp(DEEP_SHARE[0], DEEP_SHARE[1], (uDeepSize - DEEP_STRIP_SHARE) / (1 - DEEP_STRIP_SHARE))
   const deepShare = drawnDeep * (redSun ? RED_DEEP_SCALE : 1)
-  const bodyRange = redSun ? RED_BODY_SHARE : groundBlends ? BLEND_BODY_SHARE[darkStyle] : BODY_SHARE
+  // Two suns of a pair share the warm light, so they keep the usual share.
+  const bodyRange = cyanPack && arrangement !== 'pair' ? (redSun ? CYAN_RED_BODY_SHARE : CYAN_BODY_SHARE) : redSun ? RED_BODY_SHARE : groundBlends ? BLEND_BODY_SHARE[darkStyle] : BODY_SHARE
   const bodyShare = Math.min(lerp(bodyRange[0], bodyRange[1], uBody), 1 - deepShare - (redSun ? RED_OPEN_SHARE : MIN_OPEN_SHARE))
   const bodyEnd = spanNear + bodyShare * (spanFar - spanNear)
   const deepEdge = spanNear + (1 - deepShare) * (spanFar - spanNear)
-  const leadBeta = beta * (isRed(colors[lead]) ? RED_SUN_FALLOFF : 1)
+  // The lead falls off slower than the other lights, so its light is a broad gradient across the frame.
+  const leadBroad = broadLead ? LEAD_BROAD : 1
+  const leadBeta = beta * (isRed(colors[lead]) ? RED_SUN_FALLOFF : 1) * leadBroad
   // The lead's body ends there: a smaller one grows to it (a cyan lead stays a medium bloom), a larger one flattens.
   const leadRadius = radius
   const leadReach = bodyReach(leadBeta) * supportAlong(radius, aniso, angle, away, stretch)
@@ -1429,6 +1489,12 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // is well over its own hex at its middle, which the tone curve takes through amber to cream.
   const leadGain = (isGrey(colors[lead]) ? 1 : lightGain(colors[lead]) * (isRed(colors[lead]) ? RED_SUN_GAIN : 1)) * lerp(isWarm(colors[lead]) ? 1 : 0.94, 1.06, r())
 
+  // Each glow's role, for the seed's company (companyFor): the lead, the pair's second light, a second light the frame
+  // needs for its pack's colors, or an accent.
+  const roles: GlowRole[] = ['lead']
+  // The lead's haze and lobe spread draws, in the order its other draws have always been taken.
+  const uLeadHaze = r()
+  const uLeadVary = r()
   const glows: GlowSpec[] = [
     // A warm light hides the sky where it comes from (warmHaze). White or cool light over blue only pales it,
     // so it needs less haze and leaves more of the blue.
@@ -1442,11 +1508,16 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
       // An orange-red sun falls off slowly, so its dim end is a long way out.
       beta: leadBeta,
       // A grey lead (Steel) hides more of the blue behind it, or its light over the blue reads as paler blue, not grey.
-      haze: isWarm(colors[lead]) ? warmHaze(colors[lead], r()) : lerp(1.8, 2.6, r()) * (isGrey(colors[lead]) ? GREY_LEAD_HAZE : 1),
-      vary: lerp(0.45, 0.85, r()),
+      haze: isWarm(colors[lead]) ? warmHaze(colors[lead], uLeadHaze) : lerp(1.8, 2.6, uLeadHaze) * (isGrey(colors[lead]) ? GREY_LEAD_HAZE : 1),
+      // Its lobes spread little, so it is one smooth light.
+      vary: broadLead ? lerp(LEAD_VARY[0], LEAD_VARY[1], uLeadVary) : lerp(0.45, 0.85, uLeadVary),
       bend: bend(),
     },
   ]
+  // The seed's company: whether the other blooms are left out, only the inner one comes in as a smaller accent, or all
+  // of them come in, each a little smaller, so most frames are one light. A bloom the frame needs for its pack's colors
+  // always comes in. Over a ground that blends with the sky every bloom comes in at its own size (broadLead).
+  const company = broadLead ? companyFor(seed) : null
 
   // Some seeds get a second bloom of the same light across the frame and higher, with sky between the two
   // (near each other they would merge into one wide pale mass or a band), from much smaller and weaker than
@@ -1463,6 +1534,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     // add up to a flat white top, and beside a grey lead the white light (Ice) is already its inner bloom.
     const pairColor = plan === UPPER_PAIR && !isGrey(colors[lead]) ? other : lead
     const pairGain = pairColor === lead ? leadGain : isGrey(colors[pairColor]) ? 1 : lightGain(colors[pairColor])
+    roles.push(nearEqual ? 'pair' : 'second')
     glows.push({
       color: pairColor,
       at: nearEqual
@@ -1513,27 +1585,45 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     clamp((leadP[0] + away[0] * steelAlong - away[1] * steelAcross) / frameP[0] + 0.5, 0.12, 0.88),
     clamp((leadP[1] + away[1] * steelAlong + away[0] * steelAcross) / frameP[1] + 0.5, 0.15, 0.85),
   ]
+  // Beside a sun a cyan bloom sits in the open sky between the sun's body and the deep sky, off the light's way, as part of
+  // the one gradient from the sun to the deep blue, and fits there: placed by the sun's side it was pulled back onto
+  // the sun (keepBefore).
+  const openSky = Math.max(deepEdge - leadEnd, 0)
+  const cyanAlong = leadEnd + lerp(0.3, 0.6, uInnerY) * openSky
+  const cyanAcross = lerp(-0.45, 0.45, uInnerX)
+  const cyanOpen = innerCyan && isWarm(colors[lead])
+  const cyanAt: [number, number] = [
+    clamp((leadP[0] + away[0] * cyanAlong - away[1] * cyanAcross) / frameP[0] + 0.5, 0.12, 0.88),
+    clamp((leadP[1] + away[1] * cyanAlong + away[0] * cyanAcross) / frameP[1] + 0.5, 0.15, 0.85),
+  ]
   // A cyan bloom stays an accent: larger, its pale light covers the middle of the frame and the deep sky turns teal.
-  const innerCap = innerCyan ? CYAN_MAX_RADIUS : Infinity
+  const openFit = (redApart ? CYAN_OPEN_FIT_RED : CYAN_OPEN_FIT) * lerp(CYAN_OPEN_TALL, 1, smoothstep(0.5, 1, aspect))
+  const innerCap = innerCyan ? Math.min(CYAN_MAX_RADIUS, cyanOpen ? openFit * openSky + CYAN_OPEN_MIN * lerp(CYAN_OPEN_TALL, 1, smoothstep(0.5, 1, aspect)) : Infinity) : Infinity
   // A cyan bloom is larger beside a smaller lead (leadShare). In a tall frame it follows the lead's size before the lead
   // grew to its share of the frame: beside a small lead grown large it would fill the narrow frame's sky.
   const innerBase = innerCyan ? lerp(Math.min(radius, leadRadius), radius, smoothstep(0.5, 1, aspect)) : radius
+  // A cyan bloom beside a sun is the frame's Cyan, and a Steel or Ice bloom beside the other (Atmospheric) shows the pack's
+  // greys, Steel's middle paling to Ice: they always come in.
+  roles.push(innerCyan || innerGrey || (greyLead && innerColor === other) ? 'needed' : 'inner')
+  // A small accent beside the lead's large field; a cyan one a little larger, so the pack's Cyan shows (in the open sky at
+  // least CYAN_OPEN_RADIUS, or beside a small sun it barely shows).
+  const innerSize =
+    innerBase *
+    (innerCyan ? CYAN_ACCENT_SCALE : ACCENT_SCALE) *
+    (innerGrey
+      ? lerp(0.6, 0.8, uSize) * lerp(1.3, 0.8, leadShare) * (darkStyle === 'none' ? NONE_STEEL : 1) * lerp(STEEL_TALL, 1, smoothstep(0.5, 1, aspect))
+      : innerCyan
+        ? lerp(1.0, 1.25, uSize) * lerp(1.45, 0.7, leadShare) * (cyanOpen ? 1 : (aspect < 1 ? 0.62 : 1) * (redApart ? RED_CYAN_SCALE : 1))
+        : lerp(1.15, 1.4, uSize) * (greyLead && darkStyle === 'none' ? NONE_ICE : 1))
+  const openCyanFloor = cyanOpen ? CYAN_OPEN_RADIUS * lerp(CYAN_OPEN_TALL, 1, smoothstep(0.5, 1, aspect)) : 0
   glows.push({
     color: innerColor,
     at: innerGrey
       ? steelAt
-      : [0.5 + innerSide * lerp(redApart ? 0.25 : 0.05, 0.3, uInnerX), (plan.innerBelow ? lerp(0.86, 0.72, rise) : lerp(0.42, 0.28, rise)) + lerp(-0.05, 0.05, uInnerY)],
-    // A small accent beside the lead's large field; a cyan one a little larger, so the pack's Cyan shows.
-    radius: Math.min(
-      innerCap,
-      innerBase *
-        (innerCyan ? CYAN_ACCENT_SCALE : ACCENT_SCALE) *
-        (innerGrey
-          ? lerp(0.6, 0.8, uSize) * lerp(1.3, 0.8, leadShare) * (darkStyle === 'none' ? NONE_STEEL : 1) * lerp(STEEL_TALL, 1, smoothstep(0.5, 1, aspect))
-          : innerCyan
-            ? lerp(1.0, 1.25, uSize) * lerp(1.45, 0.7, leadShare) * (aspect < 1 ? 0.62 : 1) * (redApart ? RED_CYAN_SCALE : 1)
-            : lerp(1.15, 1.4, uSize) * (greyLead && darkStyle === 'none' ? NONE_ICE : 1)),
-    ),
+      : cyanOpen
+        ? cyanAt
+        : [0.5 + innerSide * lerp(redApart ? 0.25 : 0.05, 0.3, uInnerX), (plan.innerBelow ? lerp(0.86, 0.72, rise) : lerp(0.42, 0.28, rise)) + lerp(-0.05, 0.05, uInnerY)],
+    radius: Math.min(innerCap, Math.max(innerSize, openCyanFloor)),
     aniso: innerCyan || innerGrey ? lerp(1.2, 1.8, uAniso) : lerp(1.8, 2.8, uAniso),
     angle: -side * lerp(-4, 12, r()),
     gain:
@@ -1603,6 +1693,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     // A color the inner bloom already shows (cyan) gets no second bloom; two of them make it the sky.
     const green = isGreen(colors[other])
     if (far === 'other' && innerColor !== other) {
+      roles.push(warmUnderCool ? 'needed' : 'far')
       glows.push({
         color: other,
         at: farAt,
@@ -1620,6 +1711,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
         bend: bend(),
       })
     } else {
+      roles.push('far')
       glows.push({
         color: SLOT.sky,
         at: farAt,
@@ -1662,7 +1754,10 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     tilt: skew,
     vary: lerp(0.03, 0.05, r()),
     turn: rampTurn(skew, awayAngle, frameP),
-    veil: lerp(groundBlends ? BLEND_SKY_VEIL : SKY_VEIL[0], SKY_VEIL[1], paleReach) * (cyanPack && !redSun ? CYAN_VEIL : 1),
+    // In a pack with Cyan (Bold) the sky pales less toward the light: the moodboard's skies keep most of the frame a deep
+    // blue, and a wide pale veil turns the frame cyan and pastel.
+    // Round an orange-red sun the pale sky is the frame's Cyan, so there it pales a little more.
+    veil: lerp(groundBlends ? BLEND_SKY_VEIL : SKY_VEIL[0], SKY_VEIL[1], paleReach) * (cyanPack ? (redSun ? CYAN_RED_VEIL : CYAN_VEIL) : 1),
     deep: {
       stops: darkStyle === 'none' ? 0 : lerp(DEEP_STOPS[0], DEEP_STOPS[1], uDeepStops),
       // A tall frame shows more sky across the way the light runs, where the sky stays near its exact hex, so there the
@@ -1756,8 +1851,18 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
     glows[i] = { ...glows[i], at: [clamp(at[0], tallInset, 1 - tallInset), at[1]] }
   }
 
+  const companyGlows = glows.slice(0, GLOW_COUNT).flatMap((g, i): GlowSpec[] => {
+    const role = roles[i]
+    if (role === 'lead' || company === null) return [g]
+    // The pair arrangement keeps its second light, clearly the smaller of the two unless the seed keeps all its company.
+    if (role === 'pair') return [{ ...g, radius: g.radius * PAIR_COMPANY_SCALE[company] }]
+    // Beside an orange-red sun the cyan bloom keeps its floor: that sun's haze hides what lies on its light (uLeadHides).
+    if (role === 'needed') return [{ ...g, radius: isCyan(colors[g.color]) ? Math.max(g.radius * NEEDED_CYAN_SCALE[company], redApart ? openCyanFloor : 0) : g.radius * NEEDED_SCALE }]
+    if (company === 'alone' || (company === 'accent' && role !== 'inner')) return []
+    return [{ ...g, radius: g.radius * (company === 'accent' ? ACCENT_COMPANY_SCALE : FULL_COMPANY_SCALE) }]
+  })
   const layout: BloomsLayout = {
-    glows: glows.slice(0, GLOW_COUNT),
+    glows: companyGlows,
     zenith,
     sky,
     // More daylight is more exposure at the source: the core takes more of the light as Intensity rises.
@@ -1827,7 +1932,10 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const pale = (slot: number) => isPaleGrey(colors[slot])
   // Where the ground is of another hue (Elemental), the seed also picks which light sits at the line's start: its own
   // lead, or its other light, the lead taking the other light's place.
-  const dragLead = otherHueGround ? dragLeadFor(seed) : 'own'
+  // In a pack with Cyan the warm light leads at the default view, but under a line Cyan leads the seeds lit from a side
+  // edge or from above, so the drags have two families of frames.
+  const cyanDragLead = isCyan(colors[other]) && isWarm(colors[lead]) && !isRed(colors[lead]) && (arrangement === 'side' || arrangement === 'high')
+  const dragLead = otherHueGround ? dragLeadFor(seed) : cyanDragLead ? 'other' : 'own'
   const recolor = (g: GlowSpec, i: number): GlowSpec => {
     const color = dragLead === 'other' ? (g.color === lead ? other : g.color === other ? lead : g.color) : g.color
     if (color === g.color) return g
@@ -1837,7 +1945,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
       ...g,
       color,
       gain: lightGain(c) * (asLead ? 1.03 : 1),
-      haze: isWarm(c) ? warmHaze(c, 0.5) * (asLead ? 1 : 0.8) : isGreen(c) ? (asLead ? lerp(1.8, 2.6, 0.5) : lerp(1.2, 1.6, 0.5)) : g.haze,
+      haze: isWarm(c) ? warmHaze(c, 0.5) * (asLead ? 1 : 0.8) : isGreen(c) ? (asLead ? lerp(1.8, 2.6, 0.5) : lerp(1.2, 1.6, 0.5)) : asLead ? lerp(1.8, 2.6, 0.5) : g.haze,
     }
   }
   const leadSlot = recolor(seedGlows[0], 0).color
@@ -1848,7 +1956,10 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // A white or grey lead (Ice, Steel) hides more of the sky behind it where the seed's far side is light and less where
   // it is dark, so seeds differ in how much of the blue shows.
   const leadHaze = pale(leadSlot) || isGrey(colors[leadSlot]) ? DRAG_STYLE_HAZE[dragStyle] : 1
-  const dragGlows = seedGlows.slice(0, GLOW_COUNT).map(recolor).map((g, i) => (i === 0 ? { ...g, haze: g.haze * leadHaze } : g))
+  // Under a line the lead falls off like the other lights and its lobes spread wider: a broad, smooth lead under every
+  // line makes the seeds' frames alike.
+  const dragLeadSpec = { ...seedGlows[0], beta: seedGlows[0].beta / leadBroad, vary: lerp(0.45, 0.85, uLeadVary) }
+  const dragGlows = [dragLeadSpec, ...seedGlows.slice(1, GLOW_COUNT)].map(recolor).map((g, i) => (i === 0 ? { ...g, haze: g.haze * leadHaze } : g))
   // The second light is the seed's other light: a pale one (Ice) or Cyan, then a light of another color, then one of
   // the lead's color (two suns of one color flood the frame with it), then a patch of sky; never a grey (Steel), whose
   // light over the blue barely shows.
@@ -1879,7 +1990,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
           sizeDark: sizeDragDark,
           seedAngle: awayAngle,
           leadAniso,
-          leadScale: cyanLead ? CYAN_DRAG_REACH : 1,
+          leadScale: isCyan(colors[leadSlot]) ? CYAN_DRAG_REACH : 1,
           fireLead: redSun,
           spots,
           darkTurn,

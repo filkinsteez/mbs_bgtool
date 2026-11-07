@@ -305,6 +305,8 @@ const GREY_CORE = 1.2
 const SUN_TAIL_GREEN = 0.85
 /** How far the pale sky around an orange-red sun turns from Meta Blue's hue toward Cyan's. */
 const SKY_CYAN_SHARE = 1
+/** The same beside Yellow, whose pale sky is light blue: full Cyan beside it fills the frame with saturated cyan. */
+const SKY_CYAN_SHARE_YELLOW = 0.5
 /** How much less of the sky's color the pale sky keeps in a pack whose pale light is a grey (Ice). */
 const GREY_SKY_PALE = 0.25
 
@@ -349,13 +351,14 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
   const slot = (index: number) => colors[clamp(Math.round(index), 0, SLOT_COUNT - 1)]
   const sky = colors[SLOT.sky]
   // Around an orange-red sun in a pack with Cyan (Bold) the pale sky leans Cyan: light blue toward the light, never
-  // grey-white or sage. Beside Yellow it would turn mint, so a Yellow frame's pale sky keeps Meta Blue's hue.
+  // grey-white or sage. In pack output it does beside Yellow too, by half as much, where the sun's body hides the veil
+  // (sunBody), so the two meet through cream and the sky's pale side adds to the frame's Cyan.
   const lights = [colors[SLOT.light1], colors[SLOT.light2]].filter((c) => c !== undefined)
-  const cyanLight = lights.some(isRed) ? lights.find(isCyan) : undefined
+  const cyanLight = lights.some(layout.packLight > 0.5 ? isWarm : isRed) ? lights.find(isCyan) : undefined
   // In pack output a pack whose pale light is a grey (Atmospheric's Ice) pales its sky toward that grey: a sky that
   // pales to periwinkle shows only Meta Blue.
   const greyPale = layout.packLight > 0.5 && lights.some(isPaleGrey) ? GREY_SKY_PALE : 0
-  const skyPale = skyPaleTint(sky, cyanLight, cyanLight ? SKY_CYAN_SHARE : 0, greyPale)
+  const skyPale = skyPaleTint(sky, cyanLight, cyanLight ? (lights.some(isRed) ? SKY_CYAN_SHARE : SKY_CYAN_SHARE_YELLOW) : 0, greyPale)
   const deep = slot(layout.zenith.color)
   const glowColor: number[] = []
   const glowTail: number[] = []
@@ -906,7 +909,10 @@ vec3 bloomsScene(vec2 uv) {
     // Toward the sky its light is scattered by the air: whitish cream near it, where the haze is, and farther out
     // blue, the sky's own color, so the blue only gets brighter toward it (cream over blue is grey). It fades out
     // before the far sky.
-    vec3 skyLight = uSky / max(dot(uSky, vec3(0.2126, 0.7152, 0.0722)), 1e-5) * dot(uGlowTail[i], vec3(0.2126, 0.7152, 0.0722));
+    // In pack output that blue is the sky's pale tint (uSkyVeil), which in Bold leans Cyan, so the band between the cream
+    // and the deep blue is the frame's Cyan.
+    vec3 skyHue = mix(uSky / max(dot(uSky, vec3(0.2126, 0.7152, 0.0722)), 1e-5), uSkyVeil.rgb / max(dot(uSkyVeil.rgb, vec3(0.2126, 0.7152, 0.0722)), 1e-5), uPackLight);
+    vec3 skyLight = skyHue * dot(uGlowTail[i], vec3(0.2126, 0.7152, 0.0722));
     vec3 scattered = mix(skyLight * FIRE_SKY_LIGHT, uGlowTail[i] * FIRE_TAIL_LIGHT, smoothstep(0.12, 0.35, k[i])) * smoothstep(0.05, 0.3, k[i]);
     vec3 skySide = mix(scattered, uGlowColor[i], smoothstep(0.55, 0.9, k[i]));
     vec3 horizonSide = mix(uGlowLow[i], uGlowColor[i], smoothstep(0.08, 0.4, k[i]));
