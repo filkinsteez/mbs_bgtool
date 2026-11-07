@@ -408,6 +408,10 @@ const ELEMENTAL_ZENITH = 0.77
 const ELEMENTAL_EDGE = 0.3
 /** The line lengths (short sides) over which Elemental's far side comes in. */
 const ELEMENTAL_FAR = [0.5, 1.2] as const
+/** Under a long line, the most of the way up the frame's own sky that Atmospheric's highest sky edge lies. */
+const ATMOSPHERIC_ZENITH = 0.6
+/** Under a long line, the least of the way up the frame's own sky that Atmospheric's low sky's edge is brought down to. */
+const ATMOSPHERIC_PALE = 0.35
 /** Under a long line, how far Elemental's bridge lifts toward white. */
 const ELEMENTAL_FAR_LIFT = 0.8
 /** Under a long line, the range of a seed's own factor on its sky edges' widths. */
@@ -985,6 +989,10 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
       if (highest > target && target > glowRise) nearer = lerp(1, Math.max(0.15, (target - glowRise) / (highest - glowRise)), farLine)
       // The low sky's own band above the glow stays under that height too.
       zenithCap = Math.max(target, glowRise) / Math.max(farLine, 1e-3)
+    } else if (navyReach > 0) {
+      // So does Bold's and Atmospheric's, under the deep sky's edge that the navy share pulled in,
+      // or over water and land it pushes the deep sky back out of the frame.
+      zenithCap = (glowRise + (-edges[0][0] - glowRise) * stretch * nearer) / navyReach
     }
     // Under a long line Bold's and Atmospheric's seeds differ in how softly the low sky turns to
     // the deep sky (Elemental's edge between them stays as narrow as it can).
@@ -1013,6 +1021,25 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     const under = Math.max(glowRise, land ? anchorY - crest : 0)
     // Above a broad seed's warm haze, which reaches further up.
     low[0] = Math.max(highest, Math.min(low[0], -(under + 0.3 * skyScale * Math.max(1, warmReach))))
+  }
+  // Under a long line Atmospheric's light seeds sink too little to give an all-sky frame a deep
+  // side, so its sky's edges come down about the glow until the highest lies at most
+  // ATMOSPHERIC_ZENITH of the way up the frame's own sky, as long as the low sky's edge stays at
+  // least ATMOSPHERIC_PALE of the way up.
+  if (packId === 'atmospheric' && navyReach > 0) {
+    const target = lerp(Math.max(0, frameLow), frameHigh, ATMOSPHERIC_ZENITH)
+    const pale = lerp(Math.max(0, frameLow), frameHigh, ATMOSPHERIC_PALE)
+    const highest = -Math.min(...edges.map((edge) => edge[0]))
+    const lowest = -edges[edges.length - 1][0]
+    if (highest > target && target > glowRise && lowest > pale) {
+      // The pull fades out as the glow nears the target or the low sky's edge nears the pale height.
+      const down = Math.max((target - glowRise) / (highest - glowRise), pale > glowRise ? (pale - glowRise) / (lowest - glowRise) : 0)
+      const k = lerp(1, Math.max(0.15, down), navyReach * smoothstep(0, 0.2, target - glowRise) * smoothstep(0, 0.1, lowest - pale))
+      for (const edge of edges) {
+        edge[0] = -glowRise + (edge[0] + glowRise) * k
+        edge[1] *= k
+      }
+    }
   }
   const gains = midSky ? [zenithGain, midGain, lowGain] : [zenithGain, lowGain]
   const lowSkyEdge = edges[edges.length - 1][0]
