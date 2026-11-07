@@ -1,5 +1,4 @@
 import type { ColorPack, PackColor } from '../../color/packs'
-import { hexToLinear } from '../../color/srgb'
 import type { ComposeInput, Composition, ParamSpec, ParamValue, RecipeContext, RecipeDefinition } from '../../scene'
 import {
   accentParams,
@@ -17,7 +16,9 @@ import {
   packAccent,
   packBase,
   paleBridge,
+  ringDrift,
   ringHues,
+  ringLevel,
   ringParts,
   suitsRings,
   lerp,
@@ -67,8 +68,15 @@ const RINGS = 3
 const NEAR = 3
 const FAR = 3
 export const HALO_LAYOUT: CurveLightLayout = { emitters: RINGS, primitives: 64, near: NEAR, far: FAR }
-/** The most of a ring's inside glow that takes a Meta Blue light's pale color (packAccent's `air`). */
-const RING_HAZE_PALE = 0.6
+/**
+ * A ring is lit evenly all round, as contour-iridescent-rings' rims are (their brightest pixel across the rim is
+ * 170-180 of 255 wherever it was measured; ours faded along the ring to a third, and the crossing ring, lit from the
+ * first one's hot spot, faded out). Its hot spot is a gentle pale stretch RING_HOT wide (short sides), which a drag
+ * moves. RING_WHITE, one past the color slots, is the white that makes a rim pastel (ringParts): white is not a pack
+ * color, so it has no slot.
+ */
+const RING_HOT = 0.18
+const RING_WHITE = COLORS + 1
 /** Color slots of a ring's colors along it (ringHues): the light's own, then the next two. */
 const RING_HUE_SLOTS = [2, 4, 7]
 /**
@@ -90,8 +98,9 @@ const prefixKeys = (prefix: string, values: Record<string, ParamValue>) =>
  * is a circle, so its rotation only moves where its length starts: the stretch's middle goes halfway along, where it
  * never crosses the start and where two of the ring's eighths meet. The light's own color holds over the part
  * nearest `near` (the hot spot's end, where the light is strongest), then the others follow in order to the far end
- * (RING_HUE_PLACES), placed evenly about the middle. Each has its largest channel at the light's, so the hue turns
- * while the brightness follows the light.
+ * (RING_HUE_PLACES), placed evenly about the middle. Each is at its own rim level (ringLevel), so the hue turns while
+ * the rim stays as light all round: with its largest channel at Ice's, an Ice ring's Meta Blue stretch was a deep blue
+ * at two thirds of Ice's lightness.
  */
 function ringColors(shape: ShapeSettings, anchor: Vec2, aspect: number, hues: readonly PackColor[], near: Vec2): Record<string, ParamValue> {
   const run = longestRun(visibleRuns(buildShape(shape), anchor, aspect))
@@ -104,13 +113,12 @@ function ringColors(shape: ShapeSettings, anchor: Vec2, aspect: number, hues: re
   const last = run[run.length - 1]
   const [from, to] = Math.hypot(first[0] - near[0], first[1] - near[1]) <= Math.hypot(last[0] - near[0], last[1] - near[1]) ? [first, last] : [last, first]
   const span = along(to) - along(from)
-  const peak = (hex: string) => Math.max(...hexToLinear(hex))
   const pad = (values: number[], fill: number) => [...values, ...Array<number>(4 - values.length).fill(fill)]
   return {
     Rotate: round4(rotate),
     StopColor: pad(layout.colors.map((k) => RING_HUE_SLOTS[k]), 0),
     StopAt: pad(layout.places.map((f) => 0.5 + Math.sign(f - 0.5) * Math.sign(span) * round4(Math.abs((f - 0.5) * span))), 1),
-    StopGain: pad(layout.colors.map((k) => round4(peak(hues[0].hex) / peak(hues[k].hex))), 1),
+    StopGain: pad(layout.colors.map((k) => round4(ringLevel(hues[k].hex) / ringLevel(hues[0].hex))), 1),
   }
 }
 
@@ -135,7 +143,7 @@ function ringParams(i: number): ParamSpec[] {
     { kind: 'vector', key: `ring${i}StopColor`, label: `Ring ${i} colors along it, slots (0 unused; one color if the first is 0)`, min: 0, max: COLORS, step: 1, default: [0, 0, 0, 0] },
     { kind: 'vector', key: `ring${i}StopAt`, label: `Ring ${i} colors' places along it (0..1 from its start)`, min: 0, max: 1, step: 0.0001, default: [0, 1, 1, 1] },
     { kind: 'vector', key: `ring${i}StopGain`, label: `Ring ${i} colors' gains`, min: 0, max: 20, step: 0.001, default: [1, 1, 1, 1] },
-    { kind: 'number', key: `ring${i}Pale`, label: `Ring ${i} pale color slot, for parts with a pale share (0 none)`, min: 0, max: COLORS, step: 1, default: 0 },
+    { kind: 'number', key: `ring${i}Pale`, label: `Ring ${i} pale color slot, for parts with a pale share (0 none, ${RING_WHITE} white)`, min: 0, max: RING_WHITE, step: 1, default: 0 },
     { kind: 'number', key: `ring${i}Gain`, label: `Ring ${i} gain`, min: 0, max: 20, step: 0.001, default: 1 },
     { kind: 'vector', key: `ring${i}MaskShift`, label: `Ring ${i} inside edge shift`, min: -2, max: 2, step: 0.0005, default: [0, 0] },
     { kind: 'number', key: `ring${i}MaskGrow`, label: `Ring ${i} inside edge grow`, min: -2, max: 2, step: 0.0001, default: 0 },
@@ -373,7 +381,8 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   // A Tan light's flat top falls too fast here: the patch's end reads as a cut edge.
   const dragPower = 4
   // A ring with a warm color dims the way that color does; its other colors keep their own hue (clDrift).
-  const drift = warmDrift(hues.find((c) => warmTail(c.hex))?.hex ?? light.hex)
+  const warm = warmDrift(hues.find((c) => warmTail(c.hex))?.hex ?? light.hex)
+  const drift = warm && rings ? ringDrift(warm) : warm
   // The rings' colors are placed from where the hot spot sits at the default, so the Light control and a drag move
   // the light along them without moving them.
   const seedHot = pointAlong(path, along(0.5)) ?? layout.anchor
@@ -397,13 +406,12 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     ...(hazeGain !== 1 ? { [hazeKey]: round4(Number(ring1Parts[hazeKey] ?? 0) * hazeGain) } : {}),
     ...(rings ? prefixKeys('ring1', ringColors(layout.shape, layout.anchor, aspect, hues, seedHot)) : {}),
     ...(drift ? { ring1Drift: drift.ratios, ring1DriftShape: [drift.knee, drift.sharpness] } : {}),
-    ring1Pale: accent.pale ? 5 : 0,
+    // A ring's pale color is white, so its rim reads pastel (ringParts); other halos take the pack's pale color.
+    ring1Pale: rings ? RING_WHITE : accent.pale ? 5 : 0,
     // A colored band's body is far part 3 (and far part 1 outside a crest); the rest of the far light is haze.
     ...Object.fromEntries((rings ? [] : paleArc ? ['f3'] : ['f1', 'f3']).map((k) => [`ring1${k}Pale`, accent.body])),
-    // A ring's insides keep some of the light's color: fully grey, Meta Blue rings look like Ice ones.
-    ...Object.fromEntries(
-      (rings || paleArc ? ['f1', 'f2'] : ['f2']).map((k) => [`ring1${k}Pale`, rings ? Math.min(accent.air, RING_HAZE_PALE) : accent.air]),
-    ),
+    // A ring keeps its own shares in white (ringParts).
+    ...Object.fromEntries((rings ? [] : paleArc ? ['f1', 'f2'] : ['f2']).map((k) => [`ring1${k}Pale`, accent.air])),
     ...accent.params,
     ...offFrameGlow(controls.drag, light.hex, aspect, accent.edge),
     ring2On: Boolean(crossing),
@@ -417,6 +425,7 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
           ring2Rotate: round4(crossing.shape.rotate),
           ring2Color: 2,
           ring2Gain: 0.85,
+          ring2Pale: RING_WHITE,
           ...ringParts('ring2', light.hex),
           ...(accent.haze < 1 ? { ring2f1Weight: round4(Number(ringParts('ring2', light.hex).ring2f1Weight) * accent.haze) } : {}),
           ...prefixKeys('ring2', ringColors(crossing.shape, crossing.anchor, aspect, hues, seedHot)),
@@ -429,7 +438,8 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     // Along a dragged line the light is 20 to 60 times dimmer where the line ends, and only 1.5 times longer across,
     // with a longer least reach than the Rim's: a short line's patch then fades along the curve, instead of a round
     // patch whose edge meets the crisp side at a corner. A light outside the frame reaches farther along the curve.
-    light1Kind: dragged ? 6 : bright ? 5 : 3,
+    // Rings are lit evenly (light field 1 uniform); their hot spot is light field 2, which a drag moves.
+    light1Kind: rings ? 0 : dragged ? 6 : bright ? 5 : 3,
     light1At: at.map(round4),
     light1Radius: round4(
       dragged ? Math.hypot(Math.hypot(dragged.length, 0.4) / Math.log(dragFactor) ** (1 / dragPower), offFrameSpread(controls.drag, dragged.hot, aspect)) : radius,
@@ -438,7 +448,8 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     light1Stretch: dragged ? 1.5 : 6,
     light1Angle: round4(dragged ? dragged.angle : (Math.atan2(across[1], across[0]) * 180) / Math.PI),
     ...(dragged ? { light1Length: dragged.back } : {}),
-    light2Kind: 0,
+    // A ring's hot spot: where its light is strongest the rim's band brightens toward white (ringParts), over RING_HOT.
+    ...(rings ? { light2Kind: 1, light2At: at.map(round4), light2Radius: RING_HOT, light2Stretch: 1 } : { light2Kind: 0 }),
     base: base.gain > 0 ? 3 : 0,
     baseGain: base.gain,
     gain: round4(gain),
@@ -475,6 +486,7 @@ export function haloEmitters(ctx: RecipeContext): EmitterSettings[] {
   return Array.from({ length: RINGS }, (_, index) => {
     const i = index + 1
     const sweep = ctx.num(`ring${i}Sweep`)
+    const pale = Math.round(ctx.num(`ring${i}Pale`))
     // A halo has room for the logo's outer outline only (64 pieces per ring; the whole logo has 104).
     const asked = shapeKindAt(ctx.num(`ring${i}Shape`))
     const picked = asked === 'logo' ? 'logoEdge' : asked
@@ -515,7 +527,7 @@ export function haloEmitters(ctx: RecipeContext): EmitterSettings[] {
       maskGrow: ctx.num(`ring${i}MaskGrow`),
       facing: { strength: ctx.num(`ring${i}Facing`), angle: ctx.num(`ring${i}FacingAngle`), power: ctx.num(`ring${i}FacingPower`) },
       drift: readDrift(ctx, `ring${i}Drift`),
-      ...(Math.round(ctx.num(`ring${i}Pale`)) > 0 ? { pale: slotColor(ctx, ctx.num(`ring${i}Pale`)) } : {}),
+      ...(pale > 0 ? { pale: pale === RING_WHITE ? [1, 1, 1] : slotColor(ctx, pale) } : {}),
     }
   })
 }

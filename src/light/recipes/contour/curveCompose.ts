@@ -911,29 +911,133 @@ export function paleBridge(a: readonly number[], b: readonly number[]): number[]
   return bridge.map((v) => v + (grey - v) * BRIDGE_PALE)
 }
 
-/**
- * A ring's rim line: thin and bright enough that the tone curve takes its core toward white (the iridescent-rings
- * reference's rim is a pale line at Oklab L about 0.72 around a tinted inside).
- */
-const RING_RIM = { weight: 2.5, width: 0.0028 }
+const lightnessLevels = new Map<string, number>()
 
 /**
- * A thin glass rim under a key prefix (the iridescent-rings reference): a fine bright line on the curve with a soft
- * glow on its inside only, so the outside edge stays crisp, the inside faintly lit like a translucent body for
- * about a twelfth of the short side, and a faint glow outside. Where the light is strongest the rim goes pale, as
- * the reference's does: a narrow core (near part 3) tops it up to the light's near-white level there and falls
- * away fast along the rim (the light to the third power), so the rest keeps its tint. All parts follow light field 1.
+ * The level (times the light's own) at which the tone curve gives a light Oklab lightness `L`, at most `cap`, with a
+ * share `pale` of the light moved to grey at the same luminance (a part's share in a white pale color, clPale).
+ */
+export function levelForLightness(hex: string, L: number, pale = 0, cap = 40): number {
+  const key = `${hex}:${L}:${pale}:${cap}`
+  const known = lightnessLevels.get(key)
+  if (known !== undefined) return known
+  const light = hexToLinear(hex)
+  const grey = linearLuminance(light)
+  const color = light.map((v) => v + (grey - v) * pale)
+  const at = (level: number) => linearToOklab(toneCurve(color.map((v) => v * level)))[0]
+  let lo = 0
+  let hi = cap
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2
+    if (at(mid) < L) lo = mid
+    else hi = mid
+  }
+  lightnessLevels.set(key, hi)
+  return hi
+}
+
+/**
+ * A ring's rim all round is this Oklab lightness, whatever the light: contour-iridescent-rings' rims are 0.72 to 0.74
+ * (170 to 190 of 255) wherever measured, nearly white, the bright edge of a band of the ring's color on its inside.
+ * RING_LINE of the rim's light is a line RING_LINE_WIDTH wide, the rest that band. On the reference's large ring
+ * (radius 0.65 short sides, the size of the recipe's smallest) the band holds its level to about 0.035 in, is half of
+ * it at 0.06 and gone by 0.13: a near gaussian RING_BAND_WIDTH wide, RING_BAND_OFFSET inside the curve. Wider on a
+ * larger ring, its inside glowed for a tenth of the frame. Outside, line and band stop within about RING_EDGE of the
+ * curve. A light color (Cyan, Yellow, Lime, Ice) has its rim at its own lightness up to RING_LIGHT_RIM_L: under its
+ * own lightness a paler tint of it reads as that color only from L 0.78 up, and lower down as olive or grey.
+ */
+const RING_RIM_L = 0.74
+const RING_LIGHT_RIM_L = 0.84
+const RING_LINE = 0.25
+const RING_LINE_WIDTH = 0.003
+const RING_BAND_WIDTH = 0.035
+const RING_BAND_OFFSET = 0.015
+const RING_EDGE = { MaskInset: -0.002, MaskSoft: 0.001 }
+/**
+ * Shares of the line and the band in white (the ring's pale color), so the rim reads pastel. A band keeps
+ * RING_KEEP_CHROMA of its color's chroma on the rim (a Cyan band moved further to grey reads as Atmospheric's Ice), and
+ * a warm light's band all of it: as the band fades inside, a warm color moved to grey reads olive, brown or mauve, and
+ * a red one turns pink while its own light turns orange toward white.
+ */
+const RING_PALE = { line: 0.6, band: 0.5 }
+const RING_WARM_PALE = { line: 0.2, band: 0 }
+const RING_KEEP_CHROMA = 2 / 3
+const ringPales = new Map<string, { line: number; band: number }>()
+
+function ringRimL(hex: string): number {
+  return Math.min(RING_LIGHT_RIM_L, Math.max(RING_RIM_L, linearToOklab(hexToLinear(hex))[0]))
+}
+
+function ringPale(hex: string): { line: number; band: number } {
+  if (warmTail(hex)) return RING_WARM_PALE
+  const known = ringPales.get(hex)
+  if (known) return known
+  const L = ringRimL(hex)
+  const light = hexToLinear(hex)
+  const grey = linearLuminance(light)
+  const chroma = (pale: number) => {
+    const color = light.map((v) => v + (grey - v) * pale)
+    const [, a, b] = linearToOklab(toneCurve(color.map((v) => v * levelForLightness(hex, L, pale))))
+    return Math.hypot(a, b)
+  }
+  const keep = RING_KEEP_CHROMA * chroma(0)
+  let band = RING_PALE.band
+  if (chroma(band) < keep) {
+    let lo = 0
+    for (let i = 0; i < 20; i++) {
+      const mid = (lo + band) / 2
+      if (chroma(mid) >= keep) lo = mid
+      else band = mid
+    }
+    band = lo
+  }
+  const pale = { line: RING_PALE.line, band: round4(band) }
+  ringPales.set(hex, pale)
+  return pale
+}
+/**
+ * The band's Oklab lightness at the center of the hot spot (light field 2), the rest of the rim about four fifths of
+ * it. The extra light goes pale the way the light's own color does toward white, with no share in white: Meta Blue
+ * moved to grey turns violet, while its own light turns toward cyan.
+ */
+const RING_HOT_L = 0.9
+/** Faint glows inside and outside, times the rim's level. Wider or brighter, two rings' insides fill their overlap like a sail. */
+const RING_INSIDE = 0.04
+const RING_OUTSIDE = 0.015
+
+/** A ring's level on its rim, times its light's own (ringParts). */
+export function ringLevel(hex: string): number {
+  const pale = ringPale(hex)
+  return levelForLightness(hex, ringRimL(hex), RING_LINE * pale.line + (1 - RING_LINE) * pale.band)
+}
+
+/**
+ * A warm light's drift (warmDrift) on a ring of that light, which raises no channel: Lime's drift to Forest's ratios
+ * multiplies blue by about 4, which turned the rim's white share deep blue.
+ */
+export function ringDrift(drift: { ratios: number[]; knee: number; sharpness: number }): { ratios: number[]; knee: number; sharpness: number } {
+  return { ...drift, ratios: drift.ratios.map((r) => Math.min(1, r)) }
+}
+
+/**
+ * A lit glass rim under a key prefix (the iridescent-rings reference): a thin pale line on the curve, the bright edge
+ * of a band of the ring's color on its inside, crisp outside, at the same lightness all round (the recipe lights a ring
+ * evenly). Where two rings cross, their bands add to a soft, pale lens. Where the light is strongest the band brightens
+ * toward white: a second band (near part 3) on light field 2, which fades out around the hot spot, so the Light control
+ * and a drag move a bright stretch along the ring. The other parts follow light field 1.
  */
 export function ringParts(prefix: string, hex: string): Record<string, number | number[]> {
-  const core = round4(Math.min(8, Math.max(0, nearWhiteLevel(hex) - RING_RIM.weight)))
-  // The inside glow fades across the line instead of stopping at it: where two rings cross, their inside glows add,
-  // and with a crisp edge the overlap read as a filled sail between the arcs, most of all under a drag.
+  const rim = ringLevel(hex)
+  const pale = ringPale(hex)
+  const hot = Math.max(0, levelForLightness(hex, RING_HOT_L) - (1 - RING_LINE) * rim)
+  const line = { Width: RING_LINE_WIDTH, Shape: 8, Side: 1, ...RING_EDGE, Offset: 0, Grow: 0 }
+  const band = { Width: RING_BAND_WIDTH, Shape: 8, Side: 1, ...RING_EDGE, Offset: RING_BAND_OFFSET, LightGamma: 1, Grow: 0 }
   const parts: Record<string, number | number[]> = {
-    ...prefixed('n1', { Weight: RING_RIM.weight, Width: RING_RIM.width, Shape: 8, Side: 0, Offset: 0, Light: 1, LightGamma: 1, Grow: 0 }),
-    ...prefixed('n2', { Weight: 0.45, Width: 0.024, Shape: 4, Side: 1, Offset: 0, Light: 1, LightGamma: 1, Grow: 0, MaskSoft: 0.003 }),
-    ...prefixed('n3', { Weight: core, Width: RING_RIM.width, Shape: 8, Side: 0, Offset: 0, Light: 1, LightGamma: 3, Grow: 0, Pale: 0 }),
-    ...prefixed('f1', { Weight: 0.2, Width: 0.08, Side: 1, Light: 1, LightGamma: 1, MaskSoft: 0.14 }),
-    ...prefixed('f2', { Weight: 0.025, Width: 0.06, Side: 2, Light: 1, LightGamma: 1, MaskSoft: 0.01 }),
+    ...prefixed('n1', { ...line, Weight: round4(RING_LINE * rim), Light: 1, LightGamma: 1, Pale: pale.line }),
+    ...prefixed('n2', { ...band, Weight: round4((1 - RING_LINE) * rim), Light: 1, Pale: pale.band }),
+    ...prefixed('n3', { ...band, Weight: round4(hot), Light: 2, Pale: 0 }),
+    ...prefixed('f1', { Weight: round4(RING_INSIDE * rim), Width: 0.05, Side: 1, Light: 1, LightGamma: 1, MaskSoft: 0.01, Pale: pale.band }),
+    ...prefixed('f2', { Weight: round4(RING_OUTSIDE * rim), Width: 0.04, Side: 2, Light: 1, LightGamma: 1, MaskSoft: 0.01, Pale: pale.band }),
     f3Weight: 0,
   }
   return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
