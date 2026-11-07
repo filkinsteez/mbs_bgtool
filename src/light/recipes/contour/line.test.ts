@@ -158,6 +158,7 @@ describe('every dragged composition', () => {
       { from: [0.9, 0.5] as [number, number], to: [0.1, 0.5] as [number, number] },
       { from: [1.5, 1.5] as [number, number], to: [1.45, 1.4] as [number, number] },
       { from: [-0.5, 0.5] as [number, number], to: [-0.5, 0.4] as [number, number] },
+      { from: [0.5, -0.3] as [number, number], to: [0.5, 0.5] as [number, number] },
     ]
     for (const recipe of [contourBeam, contourStreaks]) {
       for (const pack of PACKS) {
@@ -204,6 +205,7 @@ describe("Streaks' sky, floor pool and horizon band", () => {
       { from: [1.011, 1.224] as [number, number], to: [-0.078, -0.067] as [number, number] },
       { from: [-0.011, 1.224] as [number, number], to: [1.078, -0.067] as [number, number] },
       { from: [0.9, 0.5] as [number, number], to: [0.1, 0.5] as [number, number] },
+      { from: [0.5, -0.3] as [number, number], to: [0.5, 0.5] as [number, number] },
     ]
     for (const pack of PACKS) {
       for (let seed = 1; seed <= 40; seed++) {
@@ -214,7 +216,7 @@ describe("Streaks' sky, floor pool and horizon band", () => {
               const { params, colors } = contourStreaks.compose!({ pack: getPack(pack), controls: { ...MIDDLE, intensity, ...(drag ? { drag } : {}) }, seed, aspect })
               expect(colors.slice(0, 2)).toEqual([light.light, light.haze])
               const white = whiteLevelOf(light, params)
-              const levels = [(params.skyLevel as number[])[0], (params.floor as number[])[1], (params.band as number[])[0]]
+              const levels = [(params.skyLevel as number[])[0], (params.floor as number[])[1], (params.band as number[])[0], ((params.downPool as number[] | undefined) ?? [0, 0, 0, 0])[3]]
               for (const level of levels) expect(level, `${pack} s${seed} ${aspect} ${drag ? drag.from : 'default'} ${intensity}`).toBeLessThan(white)
             }
           }

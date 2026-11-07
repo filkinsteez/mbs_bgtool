@@ -94,6 +94,9 @@ uniform vec4 uAirGlow;     // a point outside the frame: level of its glow in th
 uniform vec4 uGlowLine;    // where that point is (screen, unturned), twice
 uniform float uVeilBand;   // how much more chroma the veil keeps in its band of levels (1: twice the share)
 uniform vec2 uCloudAnchor; // where the cloud layer's pattern is fixed (scene): the frame's center, or a dragged line's start, so the clouds move with it
+uniform vec4 uDownFloor;   // a line pointing down from above: share of the floor its shafts land on (0: none), the floor's far edge (screen height, unturned), its softness, how far the edge wanders
+uniform vec4 uDownPool;    // the pool on that floor: screen x, half width, depth toward the camera, level
+uniform float uDownTilt;   // that floor's far edge: height change per unit of screen x
 ${AIR_GLOW_GLSL}
 const int SHADOW_TAPS = 20;
 const int SHORT_TAPS = 8;
@@ -271,6 +274,21 @@ float horizonGlow(vec2 q, float streak) {
   return glow + band + pool;
 }
 
+// A light above the frame pointing down: its shafts come down through the haze and end on a
+// floor across the frame, whose far edge is at the line's end and wanders slowly. On the floor
+// each shaft shows where it lands, the haze in front of it is shallower, and a pool lies under
+// the line's end, brightest a little in front of the far edge and fading toward the camera.
+float downFloor(vec2 screen, float sky) {
+  float edge = uDownFloor.y + uDownTilt * (screen.x - uDownPool.x) + uDownFloor.w * valueNoise(vec2(screen.x * 2.1 + 4.1, 7.7), uSeed + 509);
+  float onFloor = smoothstep(edge - uDownFloor.z, edge + uDownFloor.z, screen.y);
+  float t = max(screen.y - edge, 0.0) / max(uDownPool.z, 1e-3);
+  float across = abs(screen.x - uDownPool.x) / max(uDownPool.y * (1.0 + 0.5 * t), 1e-3);
+  float streak = max(0.0, 1.0 + 0.6 * uFloorB.x * floorStreaks(screen));
+  float pool = uDownPool.w * t * exp(1.0 - t) / cosh(min(across, 20.0)) * streak;
+  float lit = sky * (1.0 - 0.5 * onFloor) + onFloor * (0.35 * sky * streak + pool);
+  return mix(sky, lit, uDownFloor.x);
+}
+
 // The smooth, costly part, rendered once at the scatter pass's working size: the sky's
 // shafts (mirrored on the floor), the soft horizon light after a short radial integral,
 // and how the floor's streaks change the sky's reflection.
@@ -280,6 +298,7 @@ vec3 auxRadiance(vec2 uv, vec2 screen) {
   bool floorSide = p.y > hy;
   vec2 skyPoint = floorSide ? vec2(p.x, 2.0 * hy - p.y) : p;
   float sky = skyShafts(skyPoint);
+  if (uDownFloor.x > 0.0) sky = downFloor(screen, sky);
   float streak = floorStreaks(p);
   vec2 d = p - uCenter;
   float span = -log(max(1.0 - uHorizon.w, 1e-3));
@@ -600,7 +619,18 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
     // gloss; a broad fan's light glows wider past the frame, a thick-cloud one fades faster.
     const shade = past ? (light.tail ? THICK_WARM : THICK_CLOUDS) : [1, 1, 1]
     const glow = airGlowParams(light, [...line.from, ...line.from], aspect, geo(intensity, 0.22, 0.75, 1.4) / 0.75, (params.fall as number[])[0], broadFan ? WIDE_GLOW : NARROW_GLOW, past)
+    const seedPool = (params.floor as number[])[1]
     Object.assign(params, streaksOnLine(params, line, skyHeight, shade, low, broadFan), glow)
+    // A line pointing down from above lands its shafts on a floor whose far edge is at the line's
+    // end, with a pool under it, and the shafts reach that floor. The floor comes in as the line
+    // turns from sideways to straight down.
+    const down = smoothstep(DOWN_FROM, DOWN_TO, Math.abs(wrapAngle(line.angle + Math.PI / 2)))
+    Object.assign(params, {
+      reach: round4((params.reach as number) * (1 + DOWN_REACH * down)),
+      downFloor: [round4(down), round4(line.to[1]), round4(soft(0.03, 0.06)), round4(lerp(0.03, 0.07, shape()))],
+      downPool: [round4(line.to[0]), round4(lerp(0.15, 0.3, shape())), round4(lerp(0.05, 0.1, shape())), round4(DOWN_POOL * seedPool)],
+      downTilt: round4((shape() < 0.5 ? -1 : 1) * lerp(0.03, 0.09, shape())),
+    })
   }
   // Only the light's core turns flat white (SKY_WHITE). A lifted light (Tan) has more of its lit
   // area near its peak, so the lift raises its dim and middle light but not its brightest.
@@ -614,6 +644,8 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
     floor: [floor[0], round4(softCap(floor[1], POOL_WHITE * white)), floor[2], floor[3]],
     band: [round4(softCap(band[0], BAND_WHITE * white)), band[1]],
   })
+  const downPool = params.downPool as number[] | undefined
+  if (downPool) params.downPool = [downPool[0], downPool[1], downPool[2], round4(softCap(downPool[3], POOL_WHITE * white))]
 
   return {
     colors: [light.light, light.haze, light.base],
@@ -671,6 +703,16 @@ const NARROW_GLOW = 0.16
 
 /** Least and most gaps in the cloud layer per short side, spread over the seeds: a few broad shafts. */
 const RAY_GAPS = [3, 9]
+
+/**
+ * A dragged line pointing down from above: between these angles from straight up (radians) the
+ * floor its shafts land on comes in; how much farther the shafts reach once it is there (a share
+ * of their reach); and the pool under the line's end, as a share of the seed's floor pool.
+ */
+const DOWN_FROM = 0.7 * Math.PI
+const DOWN_TO = 0.92 * Math.PI
+const DOWN_REACH = 0.4
+const DOWN_POOL = 0.5
 
 /**
  * The scene for a dragged line: the shafts meet at the line's start and fan out toward its
@@ -781,6 +823,9 @@ export const contourStreaks: RecipeDefinition = {
     { kind: 'vector', key: 'glowLine', label: 'Point past the frame', min: -8, max: 8, step: 0.0005, default: [0, 0, 0, 0] },
     { kind: 'number', key: 'veilBand', label: 'More color in the band', min: 0, max: 2, step: 0.005, default: 1 },
     { kind: 'vector', key: 'cloudAnchor', label: 'Clouds fixed at', min: -4, max: 4, step: 0.0005, default: [0, 0] },
+    { kind: 'vector', key: 'downFloor', label: 'Floor under a light pointing down', min: -8, max: 8, step: 0.0005, default: [0, 0, 0.05, 0] },
+    { kind: 'vector', key: 'downPool', label: 'Pool under a light pointing down', min: -8, max: 32, step: 0.0005, default: [0, 0.3, 0.1, 0] },
+    { kind: 'number', key: 'downTilt', label: 'Tilt of that floor', min: -1, max: 1, step: 0.0005, default: 0 },
   ],
   fragment: STREAKS_GLSL,
   uniforms: (ctx) => ({
@@ -821,6 +866,9 @@ export const contourStreaks: RecipeDefinition = {
     uGlowLine: ctx.vec('glowLine'),
     uVeilBand: ctx.num('veilBand'),
     uCloudAnchor: ctx.vec('cloudAnchor'),
+    uDownFloor: ctx.vec('downFloor'),
+    uDownPool: ctx.vec('downPool'),
+    uDownTilt: ctx.num('downTilt'),
   }),
   scatter: [{ source: 'aux', radius: () => SKY_CACHE_BLUR, size: () => SKY_CACHE_SIZE }],
   lens: { bloom: 0.04, bloomLevels: [1, 0.5, 0.25, 0.1, 0, 0, 0, 0], halation: 0 },
