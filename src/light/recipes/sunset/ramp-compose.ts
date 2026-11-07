@@ -4,7 +4,7 @@ import type { Composition, ControlValues, ParamValue } from '../../scene'
 import { horizonRise, horizonScene, placeHorizon } from './horizon'
 import { limitTilt, rampLine } from './ramp-drag'
 import { edgeFbm } from './ramp-noise'
-import { RAMP_EDGES } from './ramp-shader'
+import { RAMP_EDGES, SKY_GREY_KNEE } from './ramp-shader'
 
 const clamp01 = (t: number) => Math.min(1, Math.max(0, t))
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
@@ -1013,6 +1013,14 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     zenithShade[1] = lerp(zenithShade[1], turnAt + (1 - NAVY_TURN) / slope, navyReach)
     navyVeil = [lerp(topHeight - 0.3 * tall, -turnAt - 0.5 * edges[0][1], navyReach), lerp(topHeight - 0.08 * tall, -turnAt + 0.5 * edges[0][1], navyReach)]
   }
+  // A pale stop stays below the shader's grey hold (SKY_GREY_KNEE), so a bright low sky reaches
+  // about Ice, a pale grey, only under the sun's light and keeps its masses elsewhere.
+  slotColors({ ...look, dusk }, midSky)
+    .slice(0, gains.length)
+    .forEach((hex, k) => {
+      const grey = Math.min(...srgbToLinearRgb(hexToSrgb(hex)))
+      if (grey > 0) gains[k] = Math.min(gains[k], SKY_GREY_KNEE / grey)
+    })
   const stopParams: Record<string, number> = {}
   edges.forEach(([at, width], j) => {
     stopParams[`at${j + 1}`] = at

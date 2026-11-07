@@ -4,6 +4,9 @@ export const RAMP_COLORS = 8
 export const RAMP_EDGES = RAMP_COLORS - 1
 export const GLOW_LAYERS = 2
 export const SUN_LAYERS = 2
+/** Linear light where the grey part of the sky's light (its lowest channel) starts to ease off, and where it ends. */
+export const SKY_GREY_KNEE = 0.84
+const SKY_GREY_TOP = 0.9
 
 /**
  * Sunset ramp radiance. Positions are frame fractions; lengths are in
@@ -289,8 +292,22 @@ vec3 keepBlueHue(vec3 c) {
   return max(oklabToLinear(lab), vec3(0.0));
 }
 
+// Past SKY_GREY_KNEE the grey part of the sky's light, the share all three channels have, eases off
+// toward SKY_GREY_TOP, about Ice's own level (#F2F4F7 is 0.89 in its lowest channel), so the
+// brightest overcast is a pale grey and never a flat white.
+const float SKY_GREY_KNEE = ${SKY_GREY_KNEE.toFixed(3)};
+const float SKY_GREY_TOP = ${SKY_GREY_TOP.toFixed(3)};
+
+vec3 holdGrey(vec3 c) {
+  float grey = min(c.r, min(c.g, c.b));
+  if (grey <= SKY_GREY_KNEE) return c;
+  float room = SKY_GREY_TOP - SKY_GREY_KNEE;
+  return c - (grey - SKY_GREY_KNEE - room * (1.0 - exp(-(grey - SKY_GREY_KNEE) / room)));
+}
+
 // The sky at a point: the stop ramp, the glow, the sun glow and the bridge, without anything in front.
-vec3 rampSky(vec2 p) {
+// core is the sun's own light in it.
+vec3 rampSky(vec2 p, out vec3 core) {
   float halfWidth = 0.5 * uFrameAspect.x;
   vec2 anchor = (uAnchor - 0.5) * uFrameAspect;
   vec2 d = p - anchor;
@@ -462,6 +479,7 @@ vec3 rampSky(vec2 p) {
   }
   // The bridge leaves the dusk band alone: lifted where the glow meets it, the band would draw a
   // pale line between the two.
+  core = sunGlow * behind * hazeLight;
   vec3 seen = (light + dusk) * hazeLight;
   return uBlueHue > 0.5 ? keepBlueHue(seen) : seen;
 }
@@ -665,7 +683,11 @@ vec3 rampScene(vec2 p) {
       }
     }
   }
-  vec3 seen = rampSky(q) * skyPatch(p);
+  vec3 core;
+  float massLight = skyPatch(p);
+  // Only the sun's core goes past the grey hold, where its own light is brighter than the held sky.
+  vec3 seen = rampSky(q, core) * massLight;
+  seen = max(holdGrey(seen), core * massLight);
   if (kind == 0) return seen;
   // The sky high above the frame, which near water mirrors under a high line, is darker than the
   // sky in it.
@@ -689,13 +711,14 @@ vec3 rampScene(vec2 p) {
     float along = 0.7 + 0.3 * edgeFbm(p.x * 1.1 + 1.3, uSeed + 953, 2);
     water += uWater.w * along * exp(-0.5 * (depth / 0.008) * (depth / 0.008)) * mirror;
   }
-  return water;
+  return holdGrey(water);
 }
 
 // With the lens on, the scene is drawn into the aux source, blurred there by one lens (the
 // scatter blur) and read back in combine; radiance itself then has nothing to draw.
 vec3 radiance(vec2 uv, vec2 p) {
-  return uLens > 0.0 ? vec3(0.0) : presetLand(p, rampSky(p) * skyPatch(p));
+  vec3 core;
+  return uLens > 0.0 ? vec3(0.0) : presetLand(p, rampSky(p, core) * skyPatch(p));
 }
 
 vec3 auxRadiance(vec2 uv, vec2 p) {
