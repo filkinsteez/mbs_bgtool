@@ -402,6 +402,8 @@ const DEPTH = [0, 1, 0.5]
 const NAVY_SHARE = [[0.04, 0.14], [0.38, 0.56], [0.2, 0.34]] as const
 /** Under a long line, how much Bold's and Atmospheric's haze thickens and thins in the sky's masses, by warm turn (compact, broad, between). */
 const HAZE_MASS = [0.15, 1, 0.6]
+/** Under a dragged line, how far up the frame's own sky Elemental's highest sky edge lies at most. */
+const ELEMENTAL_ZENITH = 0.77
 /** The zenith's light where the sky turns toward navy, and at the line's end by depth turn, as shares of Meta Blue. */
 const NAVY_TURN = 0.5
 const NAVY_END = [0.24, 0.12, 0.17]
@@ -777,9 +779,13 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   }
   const horizonY = anchorY / tall + 0.5
   const axis: RampAxis = { anchorX, anchorY, turn, drop }
-  // The frame's highest point above the horizon, along the sky's axis.
+  // The frame's highest and lowest points above the horizon, along the sky's axis.
   let frameHigh = -Infinity
-  for (const [x, y] of [[-half, -tall / 2], [half, -tall / 2], [-half, tall / 2], [half, tall / 2]]) frameHigh = Math.max(frameHigh, -rampAt(frame, axis, x, y))
+  let frameLow = Infinity
+  for (const [x, y] of [[-half, -tall / 2], [half, -tall / 2], [-half, tall / 2], [half, tall / 2]]) {
+    frameHigh = Math.max(frameHigh, -rampAt(frame, axis, x, y))
+    frameLow = Math.min(frameLow, -rampAt(frame, axis, x, y))
+  }
   // Under a dragged line the glow sits at its start, and the sky reaches the zenith's color at its
   // end: that height above the horizon is the sky's reach, and the top of the sky lies the zenith's
   // own room above it.
@@ -935,7 +941,8 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // darkens away from the sun, over the seed's own share of the line's far end. A short line's
   // far end stays near the light and doesn't sink; pulled down onto the glow, the low sky would
   // turn mint under the warm light and the navy olive under the warm haze.
-  const navyReach = line && packId !== 'elemental' ? smoothstep(0.9, 1.6, line.length) : 0
+  const longLine = line ? smoothstep(0.9, 1.6, line.length) : 0
+  const navyReach = packId !== 'elemental' ? longLine : 0
   const navyShare = within(NAVY_SHARE[depthTurn], seeded(Math.round(seed) * 53 + 19)()) * navyReach
   let navyVeil: [number, number] | null = null
   let navyEnd = 0
@@ -945,10 +952,18 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // follow a steep line, so there the edges stretch over how far the line climbs the sky's own
     // axis. The seed's navy share then pulls the edges toward the light: a deep seed's sky turns
     // toward navy early, a light seed's stays its low sky's color nearly to the end.
-    const climb = ground ? navyReach * clamp01((toHeight - lineRise) / Math.max(0.05, line.length)) : 0
+    const climb = ground ? longLine * clamp01((toHeight - lineRise) / Math.max(0.05, line.length)) : 0
     const edgeTop = lerp(topHeight, Math.min(topHeight, toHeight + zenithRoom), climb)
     const stretch = Math.max(0.1, (edgeTop - zenithRoom - glowRise) / Math.max(0.05, Math.abs(topAt) + tail * topWidth - glowRise))
-    const nearer = 1 - navyShare
+    // Elemental's far sky has no navy: under a long line its highest edge comes down instead until
+    // it lies at most ELEMENTAL_ZENITH of the way up the frame's own sky, so Meta Blue holds the
+    // frame's far side.
+    let nearer = 1 - navyShare
+    if (packId === 'elemental') {
+      const target = lerp(Math.max(0, frameLow), frameHigh, ELEMENTAL_ZENITH)
+      const highest = glowRise + (-edges[0][0] - glowRise) * stretch
+      if (highest > target && target > glowRise) nearer = lerp(1, Math.max(0.3, (target - glowRise) / (highest - glowRise)), longLine)
+    }
     for (const edge of edges) {
       edge[0] = -glowRise + (edge[0] + glowRise) * stretch * nearer
       edge[1] = Math.min(6, edge[1] * stretch * nearer)
