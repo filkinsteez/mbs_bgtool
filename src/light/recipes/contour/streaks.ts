@@ -653,9 +653,14 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
   // Only the light's core turns flat white (SKY_WHITE). A lifted light (Tan) has more of its lit
   // area near its peak, so the lift raises its dim and middle light but not its brightest. A sun
   // above spreads its fan over most of a tall frame, so its bright end stays further from white.
+  // Where the sun's own light covers most of the frame (a tall frame under a wide fan), the haze
+  // in front of it is thinner, so its shafts and the shadows between them show instead of one
+  // flat bright field. A lifted light (Tan) keeps its haze: thinner, most of its lit area would
+  // fall below its own lightness, as brown.
   const white = whiteLevelOf(light, params) / light.lift
   const skyLevel = params.skyLevel as number[]
-  const skyShare = softCap(skyLevel[0], SKY_WHITE * lerp(1, SKY_WHITE_DOWN, down) * white) / skyLevel[0]
+  const thin = light.lift <= 1 ? lerp(1, THIN_HAZE, smoothstep(FAN_COVER[0], FAN_COVER[1], fanCover(params, aspect))) : 1
+  const skyShare = (thin * softCap(skyLevel[0], SKY_WHITE * lerp(1, SKY_WHITE_DOWN, down) * white)) / skyLevel[0]
   const floor = params.floor as number[]
   const band = params.band as number[]
   Object.assign(params, {
@@ -735,6 +740,50 @@ const DOWN_FROM = 0.7 * Math.PI
 const DOWN_TO = 0.92 * Math.PI
 const DOWN_REACH = 0.4
 const DOWN_POOL = 0.5
+
+/**
+ * The share of the frame the sun's own light covers (fanCover) from which the haze in front of
+ * it starts to thin and by which it is thinnest, and its light there as a factor.
+ */
+const FAN_COVER = [0.45, 0.75]
+const THIN_HAZE = 0.35
+
+/**
+ * How much of the frame the sun's own light covers: the share of the frame where its fan's
+ * light (its window with the soft sides, its light by direction, brightening away from the
+ * point and fading by a line's end, before the clouds) is at least that of its bright end at
+ * the point. Matches the shader's skyShafts on the turned scene; the floor side counts as unlit.
+ */
+function fanCover(params: Record<string, ParamValue>, aspect: number): number {
+  const [cos, sin, offX, offY] = (params.turn as number[] | undefined) ?? [1, 0, 0, 0]
+  const [cx, cy] = params.center as number[]
+  const [from, to, soft, curve] = params.sky as number[]
+  const [bright, dim] = params.skyLevel as number[]
+  const [riseBy, riseFrom, riseTo, riseCurve] = params.rise as number[]
+  const reach = (params.reach as number | undefined) ?? 0
+  const peak = (params.skyPeak as number | undefined) ?? 0
+  const [lo, hi] = [Math.min(from, to), Math.max(from, to)]
+  const [width, height] = aspect >= 1 ? [aspect, 1] : [1, 1 / aspect]
+  const N = 24
+  let sum = 0
+  for (let i = 0; i < N; i++) {
+    for (let j = 0; j < N; j++) {
+      const sx = ((i + 0.5) / N - 0.5) * width
+      const sy = ((j + 0.5) / N - 0.5) * height
+      const [dx, dy] = [sx * cos + sy * sin + offX - cx, -sx * sin + sy * cos + offY - cy]
+      const theta = Math.atan2(dy, dx)
+      const r = Math.hypot(dx, dy)
+      const window = smoothstep(lo - soft, lo + soft, theta) * (1 - smoothstep(hi - soft, hi + soft, theta))
+      const across = (theta - from) / (to - from)
+      const t = Math.min(1, Math.max(0, peak > 0 ? Math.abs(across - peak) / Math.max(peak, 1 - peak) : across))
+      const byDirection = Math.pow(Math.max(dim, 1e-4) / Math.max(bright, 1e-4), Math.pow(t, curve))
+      const rise = 1 + riseBy * Math.pow(Math.abs(Math.sin(theta)), riseCurve) * smoothstep(riseFrom, riseTo, r)
+      const fade = reach > 0 ? 1 / (1 + Math.pow(r / (0.75 * reach), 3)) : 1
+      sum += Math.min(1, window * byDirection * rise * fade)
+    }
+  }
+  return sum / (N * N)
+}
 
 /** How far a line points down from above, from 0 (sideways or up) to 1 (straight down or nearly). */
 function pointsDown(line: ShortLine): number {
