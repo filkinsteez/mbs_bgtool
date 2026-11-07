@@ -928,6 +928,9 @@ const LINE_HUE_GREY = 0.05
  * Blue stretch, Orange-red's keeps it), so a run with no such warm color stops short. A line's glow adds the light
  * of the stretches near it, so two neighbors must mix into a hue between their own: within LINE_HUE_STEP degrees,
  * or one of them a grey (Yellow and Cyan add to a green, Meta Blue and Lime to a teal, colors neither pack has).
+ * A warm color lighter than the light ends the run: with the light's largest channel it outshines the light, and
+ * bright warm light whitens toward lemon (the tone curve), so an Orange-red line's Yellow end was a lemon-green
+ * glow brighter than its bright end; a Yellow line still turns to Orange-red.
  * Forest, Plum, Slate and Near-black are too dark to be a line's light; Tan's fall keeps no other color, so a Tan
  * line stays one color. Returns the colors and the warm color whose fall the line takes (null when none is warm).
  */
@@ -956,10 +959,11 @@ export function lineHues(pack: ColorPack, light: PackColor): { hues: PackColor[]
     const dims = warm.filter((c) => keeps(c, run)).sort((x, y) => lightness(y.hex) - lightness(x.hex))[0] ?? null
     return { fits: dims !== null, dims }
   }
+  const outshines = (c: PackColor) => warmTail(c.hex) !== null && lightness(c.hex) > lightness(light.hex)
   const at = lit.findIndex((c) => c.hex === light.hex)
   if (at < 0) return { hues: [light], dims: warmTail(light.hex) ? light : null }
   const longest = (ordered: readonly PackColor[]) => {
-    const steps = ordered.findIndex((c, i) => i > 0 && !mixesBetween(ordered[i - 1], c))
+    const steps = ordered.findIndex((c, i) => i > 0 && (!mixesBetween(ordered[i - 1], c) || outshines(c)))
     const reach = steps < 0 ? ordered.length : steps
     for (let n = reach; n > 1; n--) {
       const run = ordered.slice(0, n)

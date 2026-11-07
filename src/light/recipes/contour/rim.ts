@@ -72,8 +72,6 @@ const LINE_HUE_SLOTS = [4, 7, 8]
  */
 const BRIDGE_LIFT = 1.1
 const BRIDGE_PALE = 0.6
-/** Where a line that turns through colors starts to dim the way its warm color does (times the light's own level). */
-const LINE_DRIFT_KNEE = 1.3
 const luminance = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 // The whole Meta logo outline (104 pieces, 3 contours) plus a cut at every stop in each contour must fit:
 // pieces past the limit are dropped, and the inside test then flips inside and outside in horizontal bands.
@@ -398,12 +396,9 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   const spread = dragged ? offFrameSpread(controls.drag, dragged.hot, aspect) : 0
   const dragT = dragged ? Math.min(1, dragged.lineLength / 0.15) : 0
   const dragWay = dragT * dragT * (3 - 2 * dragT)
-  // A line runs through the pack's colors along its length (lineHues) and dims the way its warm color does, from
-  // just above the light's own level on (knee LINE_DRIFT_KNEE), so a far Yellow stretch warms to amber before it
-  // can read olive.
+  // A line runs through the pack's colors along its length (lineHues) and dims the way its warm color does.
   const lineRun = line ? lineHues(pack, light) : { hues: [light], dims: null }
-  const lineDrift = warmDrift((lineRun.dims ?? light).hex)
-  const drift = lineDrift && lineRun.hues.length > 1 ? { ...lineDrift, knee: LINE_DRIFT_KNEE } : lineDrift
+  const drift = warmDrift((lineRun.dims ?? light).hex)
   // A line's bright end and its direction out of the frame there, and where its two visible ends sit along the line
   // (0 to 1 from one end of the long segment to the other).
   const brightEnd = path.length > 1 ? (fromStart ? path[0] : path[path.length - 1]) : layout.anchor
