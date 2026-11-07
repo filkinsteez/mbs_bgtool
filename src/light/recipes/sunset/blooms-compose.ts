@@ -527,7 +527,7 @@ function followDrag(
       at: fromP(at),
       angle: bank ? edgeAngle(at, frame) : asGround ? edgeAngle(at, frame) + groundTilt : (lineAngle * 180) / Math.PI + 90,
     }
-    z.radius = sizeDark(z)
+    z.radius = sizeDark(z, asGround)
     return z
   }
   // The sky darkens along the line, leaning a little toward where the seed puts the dark area.
@@ -805,8 +805,8 @@ function dragLeadFor(seed: number): DragLead {
 
 /** The seed's own choices for a dragged line (composeLayout draws them, followDrag places the scene with them). */
 interface DragSeed {
-  /** The dark area's radius that covers the seed's share of the frame. */
-  sizeDark: (zenith: ZenithSpec) => number
+  /** The dark area's radius that covers the seed's share of the frame; `exact` for a ground the line slides along an edge. */
+  sizeDark: (zenith: ZenithSpec, exact: boolean) => number
   /** The way the seed's light runs without a line (radians); the other blooms' places turn by its angle to the line. */
   seedAngle: number
   /** The lead's length / width along the line. */
@@ -1236,16 +1236,39 @@ function cornerCoverage(z: ZenithSpec, aspect: number, radius: number, lobe: Lob
   return inside / (cols * rows)
 }
 
-/** The corner's radius scaled so its coverage falls within `share`. */
-function sizeCorner(z: ZenithSpec, aspect: number, share: readonly [number, number], lobe: Lobes): number {
-  let radius = z.radius
-  for (let step = 0; step < 5; step++) {
-    const now = cornerCoverage(z, aspect, radius, lobe)
-    const goal = clamp(now, share[0], share[1])
-    radius *= now <= 1e-4 ? 1.5 : clamp(Math.sqrt(goal / now), 0.7, 1.5)
+/**
+ * The corner's radius scaled so its coverage falls within `share`, stepped toward it from the seed's own radius, which
+ * leaves seeds their different sizes. With `exact` (a ground under a dragged line, ahead of the light and lying long along
+ * the edge it meets) it is solved by halving instead (coverage grows with the radius), so its size moves smoothly as the
+ * line slides it along the edge: stepping, it fell short of its share by more or less as it moved, and its size jumped.
+ * The coverage aimed for there keeps SIZE_KEEP of the way back toward the one the seed's own radius gives, so seeds keep
+ * part of their different sizes.
+ */
+function sizeCorner(z: ZenithSpec, aspect: number, share: readonly [number, number], lobe: Lobes, exact = false): number {
+  const cover = (radius: number) => cornerCoverage(z, aspect, radius, lobe)
+  if (!exact) {
+    let radius = z.radius
+    for (let step = 0; step < 5; step++) {
+      const now = cover(radius)
+      const goal = clamp(now, share[0], share[1])
+      radius *= now <= 1e-4 ? 1.5 : clamp(Math.sqrt(goal / now), 0.7, 1.5)
+    }
+    return radius
   }
-  return radius
+  const target = 0.5 * (share[0] + share[1])
+  const goal = Math.max(target + SIZE_KEEP * (cover(z.radius) - target), 0.005)
+  let lo = Math.log(z.radius * SIZE_RANGE[0])
+  let hi = Math.log(z.radius * SIZE_RANGE[1])
+  for (let step = 0; step < 32; step++) {
+    const mid = 0.5 * (lo + hi)
+    if (cover(Math.exp(mid)) < goal) lo = mid
+    else hi = mid
+  }
+  return Math.exp(0.5 * (lo + hi))
 }
+/** How far that radius may go from where it started, down and up, and the share of the seed's own coverage kept. */
+const SIZE_RANGE: readonly [number, number] = [0.15, 8]
+const SIZE_KEEP = 0.35
 
 /**
  * Height of the lead light, in frame heights from the top, for the shared
@@ -2079,7 +2102,8 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const styleShare = groundBlends ? DRAG_STYLE_SHARE[darkStyle] : DRAG_DARK_SHARE
   const otherShare = DRAG_OTHER_SHARE[darkStyleFor(seed)]
   const dragTarget = skyFamily ? lerp(styleShare[0], styleShare[1], dragShare) : lerp(otherShare[0], otherShare[1], dragShare)
-  const sizeDragDark = (z: ZenithSpec) => (darkGround ? sizeCorner(z, aspect, [dragTarget, dragTarget], zenithLobes) : z.radius * lerp(0.7, 1.6, dragShare))
+  const sizeDragDark = (z: ZenithSpec, exact: boolean) =>
+    darkGround ? sizeCorner(z, aspect, [dragTarget, dragTarget], zenithLobes, exact) : z.radius * lerp(0.7, 1.6, dragShare)
   const kind = dragKindFor(seed)
   const rd = random(seed * 2903 + 5)
   const uLeadAniso = rd()
