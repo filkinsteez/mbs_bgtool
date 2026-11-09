@@ -87,7 +87,6 @@ const CANT_DRAW_STYLE: CSSProperties = {
   pointerEvents: 'none',
 }
 
-/** Shown on the image on every page load until the first drag (owner, 2026-11-06). */
 const DRAG_HINT = 'Drag to reposition the gradient'
 
 const sizeKey = (size: Box) => `${size.width}x${size.height}`
@@ -96,6 +95,8 @@ export interface PreviewProps {
   scene: Scene
   aspect: ExportAspect
   paused: boolean
+  /** Shows the drag hint on the image once the image is drawn. */
+  hint: boolean
   /**
    * The line being dragged, from the press point to the pointer, in frame units measured from the image: at most
    * once per animation frame. A drag can start anywhere in the stage around the image.
@@ -107,7 +108,7 @@ export interface PreviewProps {
   onReset: () => void
 }
 
-export function Preview({ scene, aspect, paused, onDrag, onDragging, onReset }: PreviewProps) {
+export function Preview({ scene, aspect, paused, hint, onDrag, onDragging, onReset }: PreviewProps) {
   const stageRef = useRef<HTMLDivElement>(null)
   const frameRef = useRef<HTMLDivElement>(null)
   const lineRefs = useRef<(SVGLineElement | null)[]>([])
@@ -126,8 +127,7 @@ export function Preview({ scene, aspect, paused, onDrag, onDragging, onReset }: 
   const [dragging, setDragging] = useState(false)
   const [shownBox, setShownBox] = useState<Box | null>(null)
   const [cantDraw, setCantDraw] = useState(false)
-  const [dragHintDone, setDragHintDone] = useState(false)
-  const showDragHint = !dragHintDone && !cantDraw && shownBox !== null
+  const showDragHint = hint && !cantDraw && shownBox !== null
   const target = stage ? fitBox(stage, aspect) : null
   const boxWidth = target?.width ?? 0
   const boxHeight = target?.height ?? 0
@@ -267,7 +267,6 @@ export function Preview({ scene, aspect, paused, onDrag, onDragging, onReset }: 
       press.dragging = true
       drawLine(line)
       setDragging(true)
-      setDragHintDone(true)
       handlersRef.current.onDragging(true)
     }
     queueLine(line)

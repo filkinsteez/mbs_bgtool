@@ -55,6 +55,8 @@ const frameAspect = (format: ExportAspect) => EXPORT_SIZES[format].width / EXPOR
 const isTextField = (target: EventTarget | null) =>
   target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select') !== null)
 
+const inSlider = (target: EventTarget | null) => target instanceof Element && target.closest('.dialkit-slider-wrapper') !== null
+
 export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const [start] = useState(() => parseQuery(searchParams))
   const panelMood = useSyncExternalStore(subscribePanel, readPanelMood, readNoMood)
@@ -65,6 +67,9 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const [seedHistory, setSeedHistory] = useState(EMPTY_SEED_HISTORY)
   const [drag, setDrag] = useState(start.drag)
   const [dragging, setDragging] = useState(false)
+  // The drag hint shows on every page load until the first drag or the first press or key move of a slider
+  // (owner, 2026-11-06 and 2026-11-09).
+  const [dragHint, setDragHint] = useState(true)
   const exportingRef = useRef(false)
   const panelRef = useRef<HTMLElement>(null)
   // The line, the mood control and the seed as this component last set or saw them. The panel store calls back
@@ -145,7 +150,8 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   }
 
   function handleDragging(isDragging: boolean) {
-    if (!isDragging) dragEndedRef.current = true
+    if (isDragging) setDragHint(false)
+    else dragEndedRef.current = true
     setDragging(isDragging)
   }
 
@@ -269,11 +275,22 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
         scene={scene}
         aspect={format}
         paused={exportStatus === 'busy'}
+        hint={dragHint}
         onDrag={dragLine}
         onDragging={handleDragging}
         onReset={resetLight}
       />
-      <aside ref={panelRef} className="tool-panel dial-column">
+      <aside
+        ref={panelRef}
+        className="tool-panel dial-column"
+        onPointerDownCapture={(event) => {
+          if (inSlider(event.target)) setDragHint(false)
+        }}
+        onKeyDown={(event) => {
+          // The panel's key handler (usePanelAccess) runs first and prevents the default for the keys that move a slider.
+          if (event.defaultPrevented && inSlider(event.target)) setDragHint(false)
+        }}
+      >
         <ToolPanel
           panelId={PANEL_ID}
           slots={[
