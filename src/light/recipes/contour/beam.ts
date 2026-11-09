@@ -711,9 +711,6 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     const fade = lerp(GLOW_DENSITY[0], GLOW_DENSITY[1], densityShare) + (onRight ? 0.5 : 0)
     const glow = airGlowParams(light, glowSeg, aspect, geo(intensity, 0.35, 0.75, 1.6) / 0.75, (params.fall as number[])[0], reach, fade, [...line.from, ...line.to])
     Object.assign(params, onLine, glow)
-    // A pool-heavy seed's narrow beam crosses dense haze near its pool, which scatters its light
-    // wider there, so it widens toward the pool where a source-heavy seed's stays a narrow ray.
-    if (!onRight && !broad) params.spread = round4((params.spread as number) + POOL_HAZE_SPREAD)
   }
 
   return {
@@ -779,9 +776,6 @@ const SOURCE_GLOW_REACH = 0.75
  */
 const GLOW_LAYER = 0.8
 const GLOW_DENSITY = [-0.5, 1]
-
-/** How much more a pool-heavy seed's narrow beam widens under a line (added to its spread). */
-const POOL_HAZE_SPREAD = 0.15
 
 /** How far (short-side units) the lit haze is outside the frame when that band has all its spread. */
 const GLOW_LAYER_FROM = 0.3
