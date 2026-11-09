@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_STATE, parseDrag, parsePoint, parseQuery, randomSeed, readSeed, SEED_MAX, SEED_MIN, toQuery, type ToolState } from './state'
+import { DEFAULT_STATE, parseDrag, parsePoint, parseQuery, randomSeed, readSeed, SEED_MAX, SEED_MIN, shownLook, toQuery, type ToolState } from './state'
 
 describe('tool state in the URL', () => {
   it('uses the defaults for an empty query', () => {
@@ -47,6 +47,33 @@ describe('tool state in the URL', () => {
     expect(state.seed).toBe(1)
     expect(state.format).toBe('16:9')
     expect(state.pack).toBe('bold')
+  })
+})
+
+describe('the look in the URL', () => {
+  it('is the look the seed picks when the link has none, or one from another mood', () => {
+    expect(parseQuery({ mood: 'sunset', seed: '2' }).look).toBe('sunset.ramp')
+    expect(parseQuery({ mood: 'sunset', seed: '6' }).look).toBe('sunset.blooms')
+    expect(parseQuery({ mood: 'contour', seed: '6' }).look).toBe('contour.rim')
+    expect(parseQuery({ mood: 'contour', look: 'bands', seed: '3' }).look).toBe('contour.beam')
+    expect(parseQuery({ mood: 'sunset', look: 'rim', seed: '2' }).look).toBe('sunset.ramp')
+  })
+
+  it("keeps an old link's own look, and writes the look it shows", () => {
+    const old = parseQuery(new URLSearchParams('mood=sunset&look=ramp&seed=7'))
+    expect(old.look).toBe('sunset.ramp')
+    expect(toQuery(old)).toContain('look=ramp')
+    expect(toQuery({ ...DEFAULT_STATE, seed: 3, look: 'sunset.blooms' })).toContain('look=blooms')
+  })
+
+  it("shows the link's look at the link's mood and seed, and the seed's look anywhere else", () => {
+    const link = { mood: 'sunset', seed: 7, look: 'sunset.ramp' } as const
+    expect(shownLook('sunset', 7, link)).toBe('sunset.ramp')
+    expect(shownLook('sunset', 8, link)).toBe('sunset.ramp')
+    expect(shownLook('sunset', 9, link)).toBe('sunset.blooms')
+    expect(shownLook('sunset', 10, link)).toBe('sunset.bands')
+    expect(shownLook('contour', 7, link)).toBe('contour.beam')
+    expect(shownLook('sunset', 7)).toBe('sunset.bands')
   })
 })
 

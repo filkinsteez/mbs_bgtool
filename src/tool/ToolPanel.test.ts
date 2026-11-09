@@ -2,51 +2,57 @@ import { DialStore } from 'dialkit'
 import { describe, expect, it } from 'vitest'
 import { buildDialConfig, PANEL_LABELS } from './dialConfig'
 import { DEFAULT_STATE } from './state'
-import { panelLayout, withLabels, type PanelBlock } from './ToolPanel'
+import { panelLayout, panelSteps, withLabels, type PanelBlock, type PanelStep } from './ToolPanel'
 
 /** The tool's slots in panel order, as `Tool` lays them out. */
 const SLOTS = [
-  { paths: ['mood'], replace: true },
-  { paths: ['look'], replace: true },
-  { paths: ['colors'], replace: true, card: 'colors' },
+  { paths: ['colors'], replace: true, card: 'colors', step: '1. Pick a color pack' },
   { paths: ['seed'], replace: true, card: 'colors' },
-  { paths: ['filter'], replace: true, card: 'filter' },
-  { paths: ['format'], replace: true },
+  { paths: ['mood'], replace: true, step: '2. Pick a mood' },
+  { paths: ['filter'], replace: true, card: 'filter', step: '3. Apply a filter' },
+  { paths: ['format'], replace: true, step: '4. Export' },
 ]
 
-/** What each block shows, in order: a slot as its first path, a run of DialKit controls as their paths. */
-const shows = (paths: readonly string[], blocks: readonly PanelBlock[]) =>
-  blocks
-    .map((block) => ({ card: block.card, shows: block.parts.flatMap((part) => ('slot' in part ? [SLOTS[part.slot].paths[0]] : paths.slice(part.from, part.to))) }))
-    .filter((block) => block.shows.length > 0)
+/** What a block shows: a slot as its first path, a run of DialKit controls as their paths. */
+const blockShows = (paths: readonly string[], block: PanelBlock) =>
+  block.parts.flatMap((part) => ('slot' in part ? [SLOTS[part.slot].paths[0]] : paths.slice(part.from, part.to)))
 
-/** The tree the blocks make: block keys and cards, and the keys of the parts in each. */
-const tree = (blocks: readonly PanelBlock[]) => blocks.map((block) => [block.key, block.card, block.parts.map((part) => part.key)])
+/** What each block shows, in order, leaving out blocks that show nothing. */
+const shows = (paths: readonly string[], blocks: readonly PanelBlock[]) =>
+  blocks.map((block) => ({ card: block.card, shows: blockShows(paths, block) })).filter((block) => block.shows.length > 0)
+
+/** What each step shows: its title and the controls of its blocks in order. */
+const stepShows = (paths: readonly string[], steps: readonly PanelStep[]) =>
+  steps.map((step) => ({ title: step.title, shows: step.blocks.flatMap((block) => blockShows(paths, block)) })).filter((step) => step.shows.length > 0)
+
+/** The tree the steps make: step keys, block keys and cards, and the keys of the parts in each. */
+const tree = (steps: readonly PanelStep[]) => steps.map((step) => [step.key, step.blocks.map((block) => [block.key, block.card, block.parts.map((part) => part.key)])])
 
 describe('tool panel layout', () => {
-  it('puts Colors, the sliders and Shuffle in one card and Filter with Density in another, and keeps the tree as controls change', () => {
+  it('lays the panel out in four numbered steps, and keeps the tree as controls come and go', () => {
     const id = 'layout-check'
     const paths = () => DialStore.getPanel(id)!.controls.map((control) => control.path)
-    DialStore.registerPanel(id, 'Check', buildDialConfig('sunset', DEFAULT_STATE, 'Export', 'none'))
-    const off = panelLayout(paths(), SLOTS)
-    expect(shows(paths(), off)).toEqual([
-      { card: undefined, shows: ['mood'] },
-      { card: undefined, shows: ['look'] },
+    DialStore.registerPanel(id, 'Check', buildDialConfig(DEFAULT_STATE, 'Export', 'none'))
+    const offBlocks = panelLayout(paths(), SLOTS)
+    expect(shows(paths(), offBlocks)).toEqual([
       { card: 'colors', shows: ['colors', 'intensity', 'seed'] },
+      { card: undefined, shows: ['mood'] },
       { card: 'filter', shows: ['filter'] },
       { card: undefined, shows: ['format'] },
       { card: undefined, shows: ['export'] },
     ])
+    const off = panelSteps(offBlocks, SLOTS)
+    expect(stepShows(paths(), off)).toEqual([
+      { title: '1. Pick a color pack', shows: ['colors', 'intensity', 'seed'] },
+      { title: '2. Pick a mood', shows: ['mood'] },
+      { title: '3. Apply a filter', shows: ['filter'] },
+      { title: '4. Export', shows: ['format', 'export'] },
+    ])
 
-    DialStore.updatePanel(id, 'Check', buildDialConfig('sunset', DEFAULT_STATE, 'Export', 'grain'))
-    const grain = panelLayout(paths(), SLOTS)
-    expect(shows(paths(), grain).find((block) => block.card === 'filter')).toEqual({ card: 'filter', shows: ['filter', 'density'] })
+    DialStore.updatePanel(id, 'Check', buildDialConfig(DEFAULT_STATE, 'Export', 'grain'))
+    const grain = panelSteps(panelLayout(paths(), SLOTS), SLOTS)
+    expect(stepShows(paths(), grain)[2]).toEqual({ title: '3. Apply a filter', shows: ['filter', 'density'] })
     expect(tree(grain)).toEqual(tree(off))
-
-    DialStore.updatePanel(id, 'Check', buildDialConfig('contour', DEFAULT_STATE, 'Export', 'grain'))
-    const contour = panelLayout(paths(), SLOTS)
-    expect(shows(paths(), contour).find((block) => block.card === 'colors')).toEqual({ card: 'colors', shows: ['colors', 'intensity', 'seed'] })
-    expect(tree(contour)).toEqual(tree(off))
     DialStore.unregisterPanel(id)
   })
 
@@ -67,9 +73,18 @@ describe('tool panel layout', () => {
     ])
   })
 
+  it('puts blocks before the first step in no step, and each later block in the step before it', () => {
+    const slots = [{ paths: ['b'], card: 'x', step: 'One' }, { paths: ['d'], replace: true }]
+    const steps = panelSteps(panelLayout(['a', 'b', 'c', 'd'], slots), slots)
+    expect(steps.map((step) => [step.key, step.title, step.blocks.map((block) => block.key)])).toEqual([
+      ['step-none', undefined, ['controls-0']],
+      ['step-0', 'One', ['card-slot-0', 'slot-1', 'controls-last']],
+    ])
+  })
+
   it('shows the light and filter sliders as Strength with their keys kept, and every other label as DialKit makes it', () => {
     const id = 'labels-check'
-    DialStore.registerPanel(id, 'Check', buildDialConfig('sunset', DEFAULT_STATE, 'Export', 'grain'))
+    DialStore.registerPanel(id, 'Check', buildDialConfig(DEFAULT_STATE, 'Export', 'grain'))
     const controls = withLabels(DialStore.getPanel(id)!.controls, PANEL_LABELS)
     expect(controls.filter((control) => control.type === 'slider').map((control) => [control.path, control.label])).toEqual([
       ['intensity', 'Strength'],

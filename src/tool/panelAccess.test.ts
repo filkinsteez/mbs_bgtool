@@ -4,7 +4,7 @@ import { matchByPlace, panelAccessFor } from './panelAccess'
 import { DEFAULT_STATE } from './state'
 
 const toolAccess = (filter: 'none' | 'grain') =>
-  panelAccessFor(PANEL_ID, PANEL_NAME, buildDialConfig('sunset', DEFAULT_STATE, 'Export', filter), { labels: PANEL_LABELS })
+  panelAccessFor(PANEL_ID, PANEL_NAME, buildDialConfig(DEFAULT_STATE, 'Export', filter), { labels: PANEL_LABELS })
 
 describe('panel access', () => {
   it('names sliders by the label the panel shows', () => {

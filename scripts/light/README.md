@@ -101,7 +101,7 @@ Whether switching looks freezes the tool's page. Loads the tool from the dev ser
 node scripts/light/panel-pictures.mjs [--out public/panel] [--seed n] [--sheet file.jpg]
 ```
 
-Renders the fixed pictures on the tool panel's Mood and Look tiles into `public/panel/` (WebP): every look in the Atmospheric pack (`PACK_ID`) at 384x216 with the seed in `SEEDS`. The panel shows the same pictures whichever pack is picked. They are not live; run it again after a look changes a lot. `--seed` renders every look at one seed, to compare seeds; `--sheet` also writes a contact sheet. `src/tool/TilePicker.test.ts` fails when a picture is missing.
+Renders the fixed pictures on the tool panel's Mood tiles into `public/panel/` (WebP): each mood's first look (the one seed 1 opens on) in the Atmospheric pack (`PACK_ID`) at 384x216 with the seed in `SEEDS`. The panel has no Look tiles since 2026-11-09 (owner). The panel shows the same pictures whichever pack is picked. They are not live; run it again after a look changes a lot. `--seed` renders every picture at one seed, to compare seeds; `--sheet` also writes a contact sheet. `src/tool/TilePicker.test.ts` fails when a picture is missing.
 
 ### Palette check
 

@@ -1,7 +1,7 @@
 import type { DialConfig } from 'dialkit'
-import { EXPORT_ASPECTS, isPackId, PACKS, recipesForMood, type MoodId } from '@/light'
+import { EXPORT_ASPECTS, isPackId, PACKS, type MoodId } from '@/light'
 import { filterDials, readFilter, STRENGTH_DIAL_KEYS, type FilterChoice } from './filterControl'
-import { clampUnit, DEFAULT_STATE, fixLook, isExportAspect, readSeed, SEED_MAX, SEED_MIN, type ToolState } from './state'
+import { clampUnit, DEFAULT_STATE, isExportAspect, readSeed, SEED_MAX, SEED_MIN, shownLook, type LinkLook, type ToolState } from './state'
 
 export const PANEL_ID = 'tool'
 export const PANEL_NAME = 'Background'
@@ -19,8 +19,9 @@ export const PANEL_LABELS: Readonly<Record<string, string>> = Object.fromEntries
   ...Object.values(STRENGTH_DIAL_KEYS).map((key) => [key, 'Strength']),
 ])
 
+/** The moods the panel offers, by the names the user sees; the code ids stay (`sunset` is Sunrise). */
 export const MOOD_OPTIONS = [
-  { value: 'sunset', label: 'Sunset' },
+  { value: 'sunset', label: 'Sunrise' },
   { value: 'contour', label: 'Contour' },
 ] satisfies { value: MoodId; label: string }[]
 
@@ -28,40 +29,38 @@ export const PACK_OPTIONS = PACKS.map((pack) => ({ value: pack.id, label: pack.n
 
 export const FORMAT_OPTIONS = EXPORT_ASPECTS.map((aspect) => ({ value: aspect, label: aspect }))
 
-export const lookOptions = (mood: MoodId) => recipesForMood(mood).map((recipe) => ({ value: recipe.id, label: recipe.label }))
-
 /**
- * The panel config for the current mood. Defaults come from the state the page
- * loaded with (the URL), so DialKit's first values already match the link.
- * The look options change with the mood, and the Density slider under Filter
- * with the filter chosen in the panel, none while no filter is; DialKit keeps
+ * The panel config, in panel order: the pack, Intensity and the seed (Shuffle), the mood, the filter, the format and
+ * Export. Defaults come from the state the page loaded with (the URL), so DialKit's first values already match the
+ * link. The Density slider under Filter follows the filter chosen in the panel, none while no filter is; DialKit keeps
  * the other values and resets controls whose old value no longer fits.
  */
-export function buildDialConfig(mood: MoodId, initial: ToolState, exportLabel: string, filter: FilterChoice): DialConfig {
-  const looks = recipesForMood(mood)
-  const sameMood = mood === initial.mood
+export function buildDialConfig(initial: ToolState, exportLabel: string, filter: FilterChoice): DialConfig {
   return {
-    mood: { type: 'select', options: MOOD_OPTIONS, default: initial.mood },
-    look: { type: 'select', options: lookOptions(mood), default: sameMood ? initial.look : looks[0].id },
     [PACK_DIAL_KEY]: { type: 'select', options: PACK_OPTIONS, default: initial.pack },
     intensity: [initial.intensity, 0, 1, 0.01],
     [SEED_DIAL_KEY]: [initial.seed, SEED_MIN, SEED_MAX, 1],
+    mood: { type: 'select', options: MOOD_OPTIONS, default: initial.mood },
     ...filterDials(initial, filter),
     format: { type: 'select', options: FORMAT_OPTIONS, default: initial.format },
     export: { type: 'action', label: exportLabel },
   }
 }
 
-/** Tool state from the panel's live values; anything missing or out of place falls back to a valid value. */
-export function readToolState(values: Readonly<Record<string, unknown>>, mood: MoodId): ToolState {
+/**
+ * Tool state from the panel's live values; anything missing or out of place falls back to a valid value. The look is
+ * the link's own look at the link's mood and seed, else the look the seed picks (`shownLook`).
+ */
+export function readToolState(values: Readonly<Record<string, unknown>>, mood: MoodId, link?: LinkLook): ToolState {
   const pack = values[PACK_DIAL_KEY]
   const format = values.format
+  const seed = readSeed(values[SEED_DIAL_KEY], DEFAULT_STATE.seed)
   return {
     mood,
-    look: fixLook(mood, values.look),
+    look: shownLook(mood, seed, link),
     pack: typeof pack === 'string' && isPackId(pack) ? pack : DEFAULT_STATE.pack,
     intensity: clampUnit(values.intensity, DEFAULT_STATE.intensity),
-    seed: readSeed(values[SEED_DIAL_KEY], DEFAULT_STATE.seed),
+    seed,
     format: isExportAspect(format) ? format : DEFAULT_STATE.format,
     ...readFilter(values),
   }

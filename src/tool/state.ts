@@ -1,16 +1,7 @@
-import {
-  EXPORT_ASPECTS,
-  getRecipe,
-  isPackId,
-  isRecipeId,
-  recipesForMood,
-  type ExportAspect,
-  type MoodId,
-  type PackId,
-  type RecipeId,
-} from '@/light'
+import { EXPORT_ASPECTS, getRecipe, isPackId, isRecipeId, type ExportAspect, type MoodId, type PackId, type RecipeId } from '@/light'
 import { clampDrag, clampPoint, DEFAULT_CONTROLS, type LightDrag, type LightPoint } from './controls'
 import { DEFAULT_FILTER, filterQuery, parseFilterQuery, type FilterChoice } from './filterControl'
+import { lookForSeed } from './seedLook'
 
 /** What the panel and the URL set. Softness and the mood control are fixed per mood (`FIXED_CONTROLS`). */
 export interface ToolState {
@@ -49,10 +40,21 @@ export function isExportAspect(value: unknown): value is ExportAspect {
   return typeof value === 'string' && (EXPORT_ASPECTS as readonly string[]).includes(value)
 }
 
-/** The look if it belongs to the mood, else the mood's first recipe. */
-export function fixLook(mood: MoodId, look: unknown): RecipeId {
+/** The look if it belongs to the mood, else the look the seed picks for the mood. */
+export function fixLook(mood: MoodId, look: unknown, seed: number): RecipeId {
   if (typeof look === 'string' && isRecipeId(look) && getRecipe(look).mood === mood) return look
-  return recipesForMood(mood)[0].id
+  return lookForSeed(mood, seed)
+}
+
+/** The mood, seed and look a page opened with. */
+export type LinkLook = Pick<ToolState, 'mood' | 'seed' | 'look'>
+
+/**
+ * The look the tool shows: the link's own look while the mood and seed are the link's, so a link keeps opening the
+ * same picture when the seed's looks change; else the look the seed picks for the mood.
+ */
+export function shownLook(mood: MoodId, seed: number, link?: LinkLook): RecipeId {
+  return link && link.mood === mood && link.seed === seed ? link.look : lookForSeed(mood, seed)
 }
 
 export function clampUnit(value: unknown, fallback: number): number {
@@ -111,22 +113,24 @@ const formatToQuery = (format: ExportAspect) => format.replace(':', 'x')
 const unitToQuery = (value: number) => String(Math.round(value * 100) / 100)
 
 /**
- * Reads the tool state from a URL query; missing or invalid values take the defaults. Old links' `softness`, `horizon`
- * and `light` are ignored, as the panel no longer sets them.
+ * Reads the tool state from a URL query; missing or invalid values take the defaults. A missing look, or one from
+ * another mood, is the look the seed picks. Old links' `softness`, `horizon` and `light` are ignored, as the panel no
+ * longer sets them.
  */
 export function parseQuery(query: QueryInput): ToolState {
   const moodParam = readParam(query, 'mood')
   const mood = isMoodId(moodParam) ? moodParam : DEFAULT_STATE.mood
   const lookParam = readParam(query, 'look')
   const pack = readParam(query, 'pack')
+  const seed = readSeed(readParam(query, 'seed'), DEFAULT_STATE.seed)
   const format = readParam(query, 'format')?.replace('x', ':')
   const drag = parseDrag(readParam(query, 'from'), readParam(query, 'to'))
   return {
     mood,
-    look: fixLook(mood, lookParam && !lookParam.includes('.') ? `${mood}.${lookParam}` : lookParam),
+    look: fixLook(mood, lookParam && !lookParam.includes('.') ? `${mood}.${lookParam}` : lookParam, seed),
     pack: pack && isPackId(pack) ? pack : DEFAULT_STATE.pack,
     intensity: clampUnit(readParam(query, 'intensity'), DEFAULT_STATE.intensity),
-    seed: readSeed(readParam(query, 'seed'), DEFAULT_STATE.seed),
+    seed,
     format: isExportAspect(format) ? format : DEFAULT_STATE.format,
     ...(drag ? { drag } : {}),
     ...parseFilterQuery(query),

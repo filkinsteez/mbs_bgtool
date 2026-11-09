@@ -73,6 +73,9 @@
 }
 
 .tool-panel {
+  --step-gap: 20px;
+  --block-gap: 12px;
+  --title-gap: 8px;
   flex: none;
   width: 300px;
   height: 100%;
@@ -80,9 +83,26 @@
   border-left: 1px solid var(--chrome-2);
 }
 
-/* Between the panel's cards: more than between the controls inside a card. */
+/* Between the numbered steps: more than between the cards of one step, which sit apart more than the controls inside
+   a card. */
 .tool-panel .dialkit-folder-inner {
-  gap: 12px;
+  gap: var(--step-gap);
+}
+
+/* A numbered step (ToolPanel's `step`): its title, then its cards. */
+.tool-step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--block-gap);
+}
+
+.tool-step-title {
+  margin: 0 0 calc(var(--title-gap) - var(--block-gap));
+  padding-inline: 12px;
+  color: var(--dial-text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 16px;
 }
 
 /* A card of the panel (ToolPanel's `card`): one surface with its sliders and buttons inside, inset like the tiles. */
@@ -276,8 +296,10 @@
 
 /* The full-size panel is about 870px tall with a filter on. */
 @media (max-height: 870px) {
-  .tool-panel .dialkit-folder-inner {
-    gap: 8px;
+  .tool-panel {
+    --step-gap: 14px;
+    --block-gap: 8px;
+    --title-gap: 6px;
   }
 
   .tool-card {
@@ -315,8 +337,13 @@
     padding-top: 8px;
   }
 
+  .tool-panel {
+    --step-gap: 10px;
+    --block-gap: 6px;
+    --title-gap: 4px;
+  }
+
   .tool-panel .dialkit-folder-inner {
-    gap: 6px;
     padding-bottom: 8px;
   }
 
@@ -368,9 +395,19 @@
     padding-top: 6px;
   }
 
+  .tool-panel {
+    --step-gap: 8px;
+    --block-gap: 4px;
+    --title-gap: 3px;
+  }
+
   .tool-panel .dialkit-folder-inner {
-    gap: 4px;
     padding-bottom: 6px;
+  }
+
+  .tool-step-title {
+    font-size: 12px;
+    line-height: 14px;
   }
 
   .tool-panel .dialkit-button {

@@ -11,10 +11,10 @@ import { buildDialConfig, PACK_DIAL_KEY, PANEL_ID, PANEL_LABELS, PANEL_NAME, rea
 import { exportImage } from './exportImage'
 import { FILTER_DIAL_KEY, readChoice, withFilter } from './filterControl'
 import { panelAccessFor, usePanelAccess } from './panelAccess'
-import { FilterPicker, FormatPicker, LookPicker, MoodPicker, PackPicker } from './panelPickers'
+import { FilterPicker, FormatPicker, MoodPicker, PackPicker } from './panelPickers'
 import { Preview } from './Preview'
 import { EMPTY_SEED_HISTORY, recordSeedChange, stepBack, stepForward, type SeedStep } from './seedHistory'
-import { fixLook, isMoodId, parseQuery, randomSeed, readSeed, toQuery, type SearchParams } from './state'
+import { isMoodId, parseQuery, randomSeed, readSeed, toQuery, type SearchParams } from './state'
 import { ToolPanel } from './ToolPanel'
 
 const EXPORT_LABEL = 'Export'
@@ -22,7 +22,6 @@ const EXPORTING_LABEL = 'Exporting…'
 const EXPORT_FAILED_LABEL = 'Export failed'
 /** The tiles take the place of DialKit's selects, and Shuffle the place of the Seed slider. */
 const MOOD_PATHS = ['mood']
-const LOOK_PATHS = ['look']
 const PACK_PATHS = [PACK_DIAL_KEY]
 const SEED_PATHS = [SEED_DIAL_KEY]
 const FILTER_PATHS = [FILTER_DIAL_KEY]
@@ -72,10 +71,11 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const dragEndedRef = useRef(false)
 
   const exportLabel = exportStatus === 'busy' ? EXPORTING_LABEL : exportStatus === 'failed' ? EXPORT_FAILED_LABEL : EXPORT_LABEL
-  const config = useMemo(() => buildDialConfig(mood, start, exportLabel, chosenFilter), [mood, start, exportLabel, chosenFilter])
+  const config = useMemo(() => buildDialConfig(start, exportLabel, chosenFilter), [start, exportLabel, chosenFilter])
   const dial = useDialKitController(PANEL_NAME, config, { id: PANEL_ID, onAction: (action) => handleAction(action) })
-  const { getValues, setValue } = dial
-  const state = { ...readToolState(dial.values, mood), drag }
+  const { setValue } = dial
+  // The seed picks the look; the link's own look holds at the link's mood and seed.
+  const state = { ...readToolState(dial.values, mood, start), drag }
   const query = toQuery(state)
   const { look, pack, seed, intensity, format, filter, strength } = state
   const scene = useMemo(() => {
@@ -89,12 +89,6 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     [config, exportStatus],
   )
   usePanelAccess(panelRef, access)
-
-  useEffect(() => {
-    const current = getValues().look
-    const fixed = fixLook(mood, current)
-    if (current !== fixed) setValue('look', fixed)
-  }, [mood, getValues, setValue])
 
   // The URL changes when a drag ends, not while it runs.
   useEffect(() => {
@@ -251,12 +245,23 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
         <ToolPanel
           panelId={PANEL_ID}
           slots={[
-            { paths: MOOD_PATHS, node: <MoodPicker value={mood} onChange={(next) => setValue('mood', next)} />, replace: true },
-            { paths: LOOK_PATHS, node: <LookPicker mood={mood} value={look} onChange={(next) => setValue('look', next)} />, replace: true },
-            { paths: PACK_PATHS, node: <PackPicker value={pack} onChange={(next) => setValue(PACK_DIAL_KEY, next)} />, replace: true, card: 'colors' },
+            {
+              paths: PACK_PATHS,
+              node: <PackPicker value={pack} onChange={(next) => setValue(PACK_DIAL_KEY, next)} />,
+              replace: true,
+              card: 'colors',
+              step: '1. Pick a color pack',
+            },
             { paths: SEED_PATHS, node: shuffleButton, replace: true, card: 'colors' },
-            { paths: FILTER_PATHS, node: <FilterPicker value={filter} onChange={(next) => setValue(FILTER_DIAL_KEY, next)} />, replace: true, card: 'filter' },
-            { paths: FORMAT_PATHS, node: <FormatPicker value={format} onChange={(next) => setValue('format', next)} />, replace: true },
+            { paths: MOOD_PATHS, node: <MoodPicker value={mood} onChange={(next) => setValue('mood', next)} />, replace: true, step: '2. Pick a mood' },
+            {
+              paths: FILTER_PATHS,
+              node: <FilterPicker value={filter} onChange={(next) => setValue(FILTER_DIAL_KEY, next)} />,
+              replace: true,
+              card: 'filter',
+              step: '3. Apply a filter',
+            },
+            { paths: FORMAT_PATHS, node: <FormatPicker value={format} onChange={(next) => setValue('format', next)} />, replace: true, step: '4. Export' },
           ]}
           labels={PANEL_LABELS}
         />

@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react'
-import { EXPORT_SIZES, getPack, type ExportAspect, type MoodId, type PackId, type RecipeId } from '@/light'
-import { FORMAT_OPTIONS, lookOptions, MOOD_OPTIONS, PACK_DIAL_KEY, PACK_OPTIONS } from './dialConfig'
+import { EXPORT_SIZES, getPack, type ExportAspect, type MoodId, type PackId } from '@/light'
+import { FORMAT_OPTIONS, MOOD_OPTIONS, PACK_DIAL_KEY, PACK_OPTIONS } from './dialConfig'
 import { FILTER_DIAL_KEY, FILTER_OPTIONS, type FilterChoice } from './filterControl'
-import { lookPicture, moodPicture } from './panelPictures'
+import { moodPicture } from './panelPictures'
 import { TilePicker } from './TilePicker'
 
 /** A fixed picture of the option. */
@@ -30,20 +30,6 @@ export function MoodPicker({ value, onChange }: { value: MoodId; onChange: (mood
       value={value}
       onChange={onChange}
       tile={(option) => <Picture src={moodPicture(option.value)} />}
-    />
-  )
-}
-
-export function LookPicker({ mood, value, onChange }: { mood: MoodId; value: RecipeId; onChange: (look: RecipeId) => void }) {
-  return (
-    <TilePicker
-      label="Look"
-      path="look"
-      kind="picture"
-      options={lookOptions(mood)}
-      value={value}
-      onChange={onChange}
-      tile={(option) => <Picture src={lookPicture(option.value)} />}
     />
   )
 }

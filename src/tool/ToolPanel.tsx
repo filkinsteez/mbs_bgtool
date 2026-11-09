@@ -1,5 +1,5 @@
 import { ControlRenderer, DialStore, type ControlMeta, type DialValue } from 'dialkit'
-import { Fragment, useCallback, useSyncExternalStore, type ReactNode } from 'react'
+import { Fragment, useCallback, useId, useSyncExternalStore, type ReactNode } from 'react'
 
 const NO_VALUES: Record<string, DialValue> = {}
 const subscribePanels = (onChange: () => void) => DialStore.subscribeGlobal(onChange)
@@ -20,6 +20,11 @@ export interface PanelSlot {
    * it, and the DialKit controls after a slot, up to the next slot, sit in the slot's card too.
    */
   card?: string
+  /**
+   * The title of the numbered step the slot starts ("1. Pick a color pack"), shown above the slot's card. The cards
+   * and controls after it, up to the next slot with a step, are in the step.
+   */
+  step?: string
 }
 
 /** DialKit's controls from index `from` up to `to`, or a slot with its control when the slot doesn't replace it. */
@@ -57,6 +62,29 @@ export function panelLayout(paths: readonly string[], slots: readonly Omit<Panel
   return blocks
 }
 
+/** A numbered step and its blocks, or the blocks before the first step (no title). */
+export interface PanelStep {
+  key: string
+  title?: string
+  blocks: PanelBlock[]
+}
+
+/**
+ * The blocks in their steps: a block holding a slot with a step starts that step, and the blocks after it, up to the
+ * next such block, are in it. Keys follow from the slots, so the steps keep their place in the tree as controls come
+ * and go.
+ */
+export function panelSteps(blocks: readonly PanelBlock[], slots: readonly Omit<PanelSlot, 'node'>[]): PanelStep[] {
+  const steps: PanelStep[] = []
+  for (const block of blocks) {
+    const starts = block.parts.find((part) => 'slot' in part && slots[part.slot].step !== undefined)
+    if (starts && 'slot' in starts) steps.push({ key: `step-${starts.slot}`, title: slots[starts.slot].step, blocks: [block] })
+    else if (steps.length > 0) steps[steps.length - 1].blocks.push(block)
+    else steps.push({ key: 'step-none', blocks: [block] })
+  }
+  return steps
+}
+
 /** The controls with the label `labels` gives for their path, where it gives one, instead of DialKit's label from the key. */
 export function withLabels(controls: readonly ControlMeta[], labels: Readonly<Record<string, string>>): ControlMeta[] {
   return controls.map((control) => (Object.hasOwn(labels, control.path) ? { ...control, label: labels[control.path] } : control))
@@ -81,6 +109,7 @@ export function ToolPanel({
   const panel = useSyncExternalStore(subscribePanels, () => DialStore.getPanel(panelId), noPanel)
   const subscribeValues = useCallback((onChange: () => void) => DialStore.subscribe(panelId, onChange), [panelId])
   const values = useSyncExternalStore(subscribeValues, () => DialStore.getValues(panelId), () => NO_VALUES)
+  const titleId = useId()
   if (!panel) return null
   const controls = (from: number, to: number) => withLabels(panel.controls.slice(from, to), labels)
   const renderPart = (part: PanelPart) =>
@@ -92,7 +121,15 @@ export function ToolPanel({
     ) : (
       <ControlRenderer key={part.key} panelId={panelId} controls={controls(part.from, part.to)} values={values} />
     )
-  const blocks = panelLayout(panel.controls.map((control) => control.path), slots)
+  const renderBlock = (block: PanelBlock) =>
+    block.card === undefined ? (
+      <Fragment key={block.key}>{block.parts.map(renderPart)}</Fragment>
+    ) : (
+      <div key={block.key} className="tool-card">
+        {block.parts.map(renderPart)}
+      </div>
+    )
+  const steps = panelSteps(panelLayout(panel.controls.map((control) => control.path), slots), slots)
   return (
     <div className="dialkit-root" data-mode="inline" data-theme="dark">
       <div className="dialkit-panel" data-mode="inline">
@@ -101,12 +138,15 @@ export function ToolPanel({
             <div className="dialkit-folder dialkit-folder-root">
               <div className="dialkit-folder-content">
                 <div className="dialkit-folder-inner">
-                  {blocks.map((block) =>
-                    block.card === undefined ? (
-                      <Fragment key={block.key}>{block.parts.map(renderPart)}</Fragment>
+                  {steps.map((step) =>
+                    step.title === undefined ? (
+                      <Fragment key={step.key}>{step.blocks.map(renderBlock)}</Fragment>
                     ) : (
-                      <div key={block.key} className="tool-card">
-                        {block.parts.map(renderPart)}
+                      <div key={step.key} className="tool-step" role="group" aria-labelledby={`${titleId}-${step.key}`}>
+                        <h2 id={`${titleId}-${step.key}`} className="tool-step-title">
+                          {step.title}
+                        </h2>
+                        {step.blocks.map(renderBlock)}
                       </div>
                     ),
                   )}

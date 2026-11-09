@@ -1,8 +1,8 @@
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { RECIPE_IDS } from '@/light'
-import { lookPicture } from './panelPictures'
+import { moodPicture } from './panelPictures'
+import { MOOD_IDS } from './state'
 import { optionForKey } from './TilePicker'
 
 describe('panel tiles', () => {
@@ -16,8 +16,9 @@ describe('panel tiles', () => {
     expect(optionForKey('Enter', 1, 4)).toBeNull()
   })
 
-  it('have a picture for every look', () => {
-    const pictures = RECIPE_IDS.map((look) => lookPicture(look))
+  it('have a picture for every mood', () => {
+    const pictures = MOOD_IDS.map((mood) => moodPicture(mood))
+    expect(pictures).toEqual(['/panel/sunset-bands.webp', '/panel/contour-halo.webp'])
     expect(pictures.filter((src) => !existsSync(path.join(process.cwd(), 'public', src)))).toEqual([])
   })
 })
