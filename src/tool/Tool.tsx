@@ -256,8 +256,14 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
               card: 'colors',
               step: '1. Pick a color pack',
             },
-            { paths: SEED_PATHS, node: shuffleButton, replace: true, card: 'colors' },
-            { paths: MOOD_PATHS, node: <MoodPicker value={mood} onChange={(next) => setValue('mood', next)} />, replace: true, step: '2. Pick a mood' },
+            {
+              paths: MOOD_PATHS,
+              node: <MoodPicker value={mood} onChange={(next) => setValue('mood', next)} />,
+              replace: true,
+              card: 'mood',
+              step: '2. Pick a mood',
+            },
+            { paths: SEED_PATHS, node: shuffleButton, replace: true, card: 'mood' },
             {
               paths: FILTER_PATHS,
               node: <FilterPicker value={filter} onChange={(next) => setValue(FILTER_DIAL_KEY, next)} />,

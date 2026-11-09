@@ -33,17 +33,17 @@ export const FORMAT_OPTIONS = EXPORT_ASPECTS.map((aspect) => ({ value: aspect, l
 export const HEADLINE_DIAL_KEY = 'headline'
 
 /**
- * The panel config, in panel order: the pack, Intensity and the seed (Shuffle), the mood, the filter, the format, the
- * sample headline and Export. Defaults come from the state the page loaded with (the URL), so DialKit's first values
- * already match the link. The Density slider under Filter follows the filter chosen in the panel, none while no filter
- * is; DialKit keeps the other values and resets controls whose old value no longer fits.
+ * The panel config, in panel order: the pack and Intensity, the mood and the seed (Shuffle), the filter, the format,
+ * the sample headline and Export. Defaults come from the state the page loaded with (the URL), so DialKit's first
+ * values already match the link. The Density slider under Filter follows the filter chosen in the panel, none while
+ * no filter is; DialKit keeps the other values and resets controls whose old value no longer fits.
  */
 export function buildDialConfig(initial: ToolState, exportLabel: string, filter: FilterChoice): DialConfig {
   return {
     [PACK_DIAL_KEY]: { type: 'select', options: PACK_OPTIONS, default: initial.pack },
     intensity: [initial.intensity, 0, 1, 0.01],
-    [SEED_DIAL_KEY]: [initial.seed, SEED_MIN, SEED_MAX, 1],
     mood: { type: 'select', options: MOOD_OPTIONS, default: initial.mood },
+    [SEED_DIAL_KEY]: [initial.seed, SEED_MIN, SEED_MAX, 1],
     ...filterDials(initial, filter),
     format: { type: 'select', options: FORMAT_OPTIONS, default: initial.format },
     [HEADLINE_DIAL_KEY]: initial.headline,

@@ -7,8 +7,8 @@ import { panelLayout, panelSteps, withLabels, type PanelBlock, type PanelStep } 
 /** The tool's slots in panel order, as `Tool` lays them out. */
 const SLOTS = [
   { paths: ['colors'], replace: true, card: 'colors', step: '1. Pick a color pack' },
-  { paths: ['seed'], replace: true, card: 'colors' },
-  { paths: ['mood'], replace: true, step: '2. Pick a mood' },
+  { paths: ['mood'], replace: true, card: 'mood', step: '2. Pick a mood' },
+  { paths: ['seed'], replace: true, card: 'mood' },
   { paths: ['filter'], replace: true, card: 'filter', step: '3. Apply a filter' },
   { paths: ['format'], replace: true, card: 'format', step: '4. Export' },
   { paths: ['export'] },
@@ -36,16 +36,16 @@ describe('tool panel layout', () => {
     DialStore.registerPanel(id, 'Check', buildDialConfig(DEFAULT_STATE, 'Export', 'none'))
     const offBlocks = panelLayout(paths(), SLOTS)
     expect(shows(paths(), offBlocks)).toEqual([
-      { card: 'colors', shows: ['colors', 'intensity', 'seed'] },
-      { card: undefined, shows: ['mood'] },
+      { card: 'colors', shows: ['colors', 'intensity'] },
+      { card: 'mood', shows: ['mood', 'seed'] },
       { card: 'filter', shows: ['filter'] },
       { card: 'format', shows: ['format', 'headline'] },
       { card: undefined, shows: ['export'] },
     ])
     const off = panelSteps(offBlocks, SLOTS)
     expect(stepShows(paths(), off)).toEqual([
-      { title: '1. Pick a color pack', shows: ['colors', 'intensity', 'seed'] },
-      { title: '2. Pick a mood', shows: ['mood'] },
+      { title: '1. Pick a color pack', shows: ['colors', 'intensity'] },
+      { title: '2. Pick a mood', shows: ['mood', 'seed'] },
       { title: '3. Apply a filter', shows: ['filter'] },
       { title: '4. Export', shows: ['format', 'headline', 'export'] },
     ])

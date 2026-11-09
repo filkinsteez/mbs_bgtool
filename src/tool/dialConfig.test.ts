@@ -4,13 +4,13 @@ import { buildDialConfig, HEADLINE_DIAL_KEY, MOOD_OPTIONS, readToolState, SEED_D
 import { DEFAULT_STATE, parseQuery } from './state'
 
 describe('seed slider in the panel', () => {
-  it('sits right after Intensity, runs 1 to 100 in steps of 1, and keeps its value when the mood changes', () => {
+  it('sits right after the mood, runs 1 to 100 in steps of 1, and keeps its value when the mood changes', () => {
     const id = 'seed-check'
     const start = parseQuery({ mood: 'sunset', seed: '7976' })
     DialStore.registerPanel(id, 'Check', buildDialConfig(start, 'Export', 'none'))
     const controls = () => DialStore.getPanel(id)!.controls
     const after = (path: string) => controls()[controls().findIndex((control) => control.path === path) + 1]
-    expect(after('intensity')).toMatchObject({ type: 'slider', path: SEED_DIAL_KEY, label: 'Seed', min: 1, max: 100, step: 1 })
+    expect(after('mood')).toMatchObject({ type: 'slider', path: SEED_DIAL_KEY, label: 'Seed', min: 1, max: 100, step: 1 })
     expect(DialStore.getValue(id, SEED_DIAL_KEY)).toBe(76)
     expect(readToolState(DialStore.getValues(id), 'sunset').seed).toBe(76)
 
@@ -25,13 +25,13 @@ describe('seed slider in the panel', () => {
 })
 
 describe('panel controls', () => {
-  it('run in step order: the pack, Strength and Shuffle, the mood, the filter, the format, Headline and Export, with no Look', () => {
+  it('run in step order: the pack and Strength, the mood and Shuffle, the filter, the format, Headline and Export, with no Look', () => {
     const id = 'order-check'
     const paths = () => DialStore.getPanel(id)!.controls.map((control) => control.path)
     DialStore.registerPanel(id, 'Check', buildDialConfig(DEFAULT_STATE, 'Export', 'grain'))
-    expect(paths()).toEqual(['colors', 'intensity', 'seed', 'mood', 'filter', 'density', 'format', 'headline', 'export'])
+    expect(paths()).toEqual(['colors', 'intensity', 'mood', 'seed', 'filter', 'density', 'format', 'headline', 'export'])
     DialStore.updatePanel(id, 'Check', buildDialConfig(DEFAULT_STATE, 'Export', 'none'))
-    expect(paths()).toEqual(['colors', 'intensity', 'seed', 'mood', 'filter', 'format', 'headline', 'export'])
+    expect(paths()).toEqual(['colors', 'intensity', 'mood', 'seed', 'filter', 'format', 'headline', 'export'])
     DialStore.unregisterPanel(id)
   })
 
