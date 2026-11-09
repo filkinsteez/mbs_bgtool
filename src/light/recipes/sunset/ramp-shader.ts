@@ -683,6 +683,8 @@ const float WATER_BRIDGE = 0.3;
 const float STRIP_BRIDGE = 0.6;
 // How fully the band along the water's far edge under a field of glints takes the reflected sky's own tint.
 const float BAND_TINT = 0.85;
+// Where the band is white, the share of the way to white its light goes.
+const float BAND_LIFT = 0.6;
 // How much less the water near the horizon squeezes the sky it mirrors under the sun, and how much more far to its sides.
 const float GATHER = 0.5;
 
@@ -714,6 +716,7 @@ vec3 rampScene(vec2 p) {
   float sheen = 0.0;
   float band = 0.0;
   float bandSide = 0.0;
+  float bandWhite = 0.0;
   vec2 mirrored = p;
   if (uGround != 0) {
     line = groundLine(p.x);
@@ -811,6 +814,8 @@ vec3 rampScene(vec2 p) {
         // and how far it lies off to the sun's sides.
         band = uSunGlints.x * max(4.0 * past * (1.0 - past), sheenShape);
         bandSide = smoothstep(0.3, 1.0, abs(across) / max(uGlowSpread.y, 1e-3));
+        // How much of the band is the strip's end rather than the sheen past it.
+        bandWhite = 4.0 * past * (1.0 - past) / max(4.0 * past * (1.0 - past) + sheenShape, 1e-4);
         mirrored = vec2(p.x, line - up);
         q = mirrored;
         if (uShore.x > 0.0 && mirrored.y > top) {
@@ -854,9 +859,17 @@ vec3 rampScene(vec2 p) {
   // The band takes the reflected sky's own color at its own lightness: the light's pale tint near
   // the light, going over through white to the low sky's clear pale tint toward the sides, never
   // the grey, lavender or mint of the two mixed.
+  // Under a deep warm light with a paler core (Bold's Orange-red) it passes through white along its
+  // depth too: at the sides the strip's end takes the light's pale tint going over to white, so
+  // the low sky's tint never meets the strip in the lens as salmon or grey. There it is lighter,
+  // or at the water's own lightness the white reads grey.
   if (band > 1e-3) {
-    vec3 tint = mix(mix(uBridgeTint, vec3(1.0), clamp(2.0 * bandSide, 0.0, 1.0)), uBandTint, clamp(2.0 * bandSide - 1.0, 0.0, 1.0));
-    water = mix(water, luminance(water) * tint, BAND_TINT * band);
+    float white = bandWhite * uBridgeSky;
+    float side = bandSide * (1.0 - 0.75 * white);
+    vec3 tint = mix(mix(uBridgeTint, vec3(1.0), clamp(2.0 * side, 0.0, 1.0)), uBandTint, clamp(2.0 * side - 1.0, 0.0, 1.0));
+    float y = luminance(water);
+    float lifted = max(y, 1.0 - (1.0 - y) * (1.0 - BAND_LIFT * white * (1.0 - abs(2.0 * side - 1.0))));
+    water = mix(water, lifted * tint, BAND_TINT * band);
   }
   // Light adds: the glints lighten the water under them and never darken it toward grey.
   if (glinting > 1e-3) {
