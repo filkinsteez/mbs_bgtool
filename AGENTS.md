@@ -60,8 +60,9 @@ Later on 2026-11-02 the owner asked for crops of the Meta logo outline as Contou
   - A history of recent backgrounds is wanted: build a first version and
     change it with the owner's feedback. It replaces the 2026-11-06 "no
     Back button" rule.
-  - Type: a toggle shows a sample headline over the preview, to check
-    where type would sit. It is never exported.
+  - Type: a toggle that showed a sample headline over the preview was
+    tried and removed by the owner on 2026-11-09. Don't bring it back
+    unless the owner asks.
 - Still in force from 2026-11-06 (owner): the panel's two Strength
   sliders keep the keys `intensity` and `density`. Mood is picked from
   small pictures, Filter from icons and Format from shapes, each with its
