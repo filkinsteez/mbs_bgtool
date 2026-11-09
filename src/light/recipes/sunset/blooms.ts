@@ -294,6 +294,7 @@ const PRESET_CORE_LIFT = 10
 /** A light's core radius against the light's own, and a warm light's (smaller, so its color fills the bloom). */
 const CORE_RADIUS = 0.3
 const WARM_CORE_RADIUS = 0.14
+const FIRE_CORE_RADIUS = 0.2
 /**
  * In pack output a near-white light without color (Ice) reaches flat white at about 1.07 times its hex, so its core
  * is thin: only its middle goes white.
@@ -482,9 +483,12 @@ function layoutUniforms(layout: BloomsLayout, colors: readonly Rgb[], intensity:
     // A warm light's core is small and is more of its own light, which the tone curve takes through amber, not salmon
     // (as Bands does), so the bloom's middle is a brighter Tan, Yellow or Orange-red that goes pale only where it passes
     // its hex, not a cream spot inside a ring of color. Other cores whiten through the light's own pale tint.
+    // In pack output an orange-red sun's core is broad and its pale peach-cream instead: a small core of its own light was
+    // a hot spot inside rings of orange and red, a bullseye.
+    const fireCore = pack && fire
     const warmCore = (pack && isWarm(base)) || red
-    glowCoreRadius.push(pack && isWarm(base) ? WARM_CORE_RADIUS : pack && isPaleGrey(base) ? PALE_CORE_RADIUS : CORE_RADIUS)
-    glowCoreTint.push(...(warmCore ? scale(light, gain) : scale(tint, luminance(light) * gain)))
+    glowCoreRadius.push(fireCore ? FIRE_CORE_RADIUS : pack && isWarm(base) ? WARM_CORE_RADIUS : pack && isPaleGrey(base) ? PALE_CORE_RADIUS : CORE_RADIUS)
+    glowCoreTint.push(...(fireCore ? scale(bridgeTint(light, SUN_TAIL_GREEN), luminance(light) * gain) : warmCore ? scale(light, gain) : scale(tint, luminance(light) * gain)))
     glowShape.push(glow.at[0], glow.at[1], glow.beta, haze)
     glowAxis.push(...axis(glow.radius * reach, glow.aniso, glow.angle))
     glowEdge.push(glow.vary, 1.15, 1.7 * i + 0.3, front)

@@ -459,6 +459,9 @@ function followDrag(
     backDeep,
     paleLight,
     groundTilt,
+    leadTilt,
+    leadShift,
+    broadBand,
   } = seedDrag
   const frame = [Math.sqrt(aspect), 1 / Math.sqrt(aspect)]
   const toP = (p: readonly number[]): [number, number] => [(p[0] - 0.5) * frame[0], (p[1] - 0.5) * frame[1]]
@@ -488,7 +491,7 @@ function followDrag(
   // differ in where along the edge it lights the frame.
   const across = [-line[1] / length, line[0] / length]
   const halfAcross = 0.5 * (Math.abs(across[0]) * frame[0] + Math.abs(across[1]) * frame[1])
-  const shift = clamp(edgeShift * outWide * Math.min(frame[0], frame[1]), -EDGE_SHIFT_MAX * halfAcross, EDGE_SHIFT_MAX * halfAcross)
+  const shift = clamp((edgeShift * outWide + leadShift * (1 - outWide)) * Math.min(frame[0], frame[1]), -EDGE_SHIFT_MAX * halfAcross, EDGE_SHIFT_MAX * halfAcross)
   const lightAt = fromP([start[0] + across[0] * shift, start[1] + across[1] * shift])
   // A sun that burns like fire shows its own color only near its middle, so beyond an edge, pointing away, it reaches
   // further to bring its body in as a band; and as far, as a share of the frame, in a wide frame as in a tall one,
@@ -587,9 +590,9 @@ function followDrag(
       return {
         ...glow,
         at: lightAt,
-        angle: (lineAngle * 180) / Math.PI,
+        angle: (lineAngle * 180) / Math.PI + leadTilt * (1 - outWide),
         aniso: leadShape,
-        radius: reach / Math.sqrt(leadShape),
+        radius: (reach / Math.sqrt(leadShape)) * lerp(1, Math.sqrt(leadShape), broadBand ? 1 - outWide : 0),
         vary: glow.vary * leadVary,
         // In a tall frame its fade into the blue runs down the frame's whole height, where its pale outer light and the
         // blue weigh the same over a wide band, grey: there it falls off faster. A fire sun's band meets the pale sky
@@ -912,10 +915,26 @@ interface DragSeed {
   paleLight: (slot: number) => boolean
   /** How far a dark ground of the sky's family tilts off the edge it lies along (degrees). */
   groundTilt: number
+  /** How far an orange-red lead beside Cyan (Bold) turns off a line into the frame (degrees), so seeds' bands lie differently. */
+  leadTilt: number
+  /** There, how far its band lies off the line's start across the line, in short sides, so seeds' bands lie in different places. */
+  leadShift: number
+  /** The lead lies as a band across the line (Bold's orange-red sun), as large as a round light of its reach. */
+  broadBand: boolean
 }
 
 /** A dragged lead's length / width along the line, by kind: alone, a broad wash (a warm one stays round); else round. */
 const DRAG_ANISO: Readonly<Record<DragKind, readonly [number, number]>> = { alone: [0.75, 0.95], band: [1.1, 1.5], left: [1.05, 1.3], right: [1.05, 1.3] }
+/**
+ * An orange-red sun beside Cyan (Bold) under a line into the frame instead: wider across the line than along it, a band
+ * at the edge it comes in at, as large as a round light of its reach; its outline uneven by this much (GlowSpec.vary);
+ * turned off the line by up to this many degrees and lying up to this many short sides off the line's start across it,
+ * by seed. Round, with its small hot core, it read as a bullseye or a sun.
+ */
+const BROAD_DRAG_ANISO: readonly [number, number] = [0.4, 0.9]
+const BROAD_DRAG_VARY: readonly [number, number] = [0.75, 1]
+const BROAD_DRAG_TILT = 25
+const BROAD_DRAG_SHIFT = 0.2
 /**
  * A second light beside the line: how far out toward the frame's edge on its side it sits (a share of the distance
  * from the frame's middle to that edge), how far along the line from the middle (the same; negative toward the light,
@@ -2254,7 +2273,12 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const leadSlot = recolor(seedGlows[0], 0).color
   // A warm or green lead stays round: as a broad wash its pale outer light lies over the blue and the cyan, grey and
   // green, and over a dark ground of another hue, mauve.
-  const anisoRange = kind === 'alone' && (isWarm(colors[leadSlot]) || isGreen(colors[leadSlot])) ? DRAG_ANISO.band : DRAG_ANISO[kind]
+  const fireBand = cyanPack && redSun
+  const anisoRange = fireBand
+    ? BROAD_DRAG_ANISO
+    : kind === 'alone' && (isWarm(colors[leadSlot]) || isGreen(colors[leadSlot]))
+      ? DRAG_ANISO.band
+      : DRAG_ANISO[kind]
   const leadAniso = lerp(anisoRange[0], anisoRange[1], uLeadAniso)
   // A white or grey lead (Ice, Steel) hides more of the sky behind it where the seed's far side is light and less where
   // it is dark, so seeds differ in how much of the blue shows.
@@ -2263,7 +2287,11 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   // line makes the seeds' frames alike. Bold's lead stays the one broad light it is at the default view, and its band of
   // pale sky stays the frame's Cyan, so a cyan bloom comes in only as a second light beside the line (kind left or right);
   // a second sun of the lead's color stays out, as the line would leave it a small oval.
-  const dragLeadSpec = cyanPack ? seedGlows[0] : { ...seedGlows[0], beta: seedGlows[0].beta / leadBroad, vary: lerp(0.45, 0.85, uLeadVary) }
+  const dragLeadSpec = cyanPack
+    ? fireBand
+      ? { ...seedGlows[0], vary: Math.max(seedGlows[0].vary, lerp(BROAD_DRAG_VARY[0], BROAD_DRAG_VARY[1], uLeadVary)) }
+      : seedGlows[0]
+    : { ...seedGlows[0], beta: seedGlows[0].beta / leadBroad, vary: lerp(0.45, 0.85, uLeadVary) }
   const dragKept = (g: GlowSpec, i: number) => !cyanPack || i === 0 || (g.color !== leadSlot && (!isCyan(colors[g.color]) || kind === 'left' || kind === 'right'))
   const dragGlows = [dragLeadSpec, ...seedGlows.slice(1, GLOW_COUNT)]
     .map(recolor)
@@ -2326,6 +2354,9 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
           edgeShift: boldForm ? side * lerp(EDGE_SHIFT[0], EDGE_SHIFT[1], random(seed * 9173 + 31)()) : 0,
           behindScale: boldForm ? FORM_BEHIND[boldForm.deep] : groundBlends && dragStyle === 'third' ? lerp(THIRD_BEHIND, 1, smoothstep(0.5, 1, aspect)) : 1,
           groundTilt: lerp(-GROUND_DRAG_TILT, GROUND_DRAG_TILT, uDarkTilt),
+          leadTilt: fireBand ? lerp(-BROAD_DRAG_TILT, BROAD_DRAG_TILT, random(seed * 6217 + 41)()) : 0,
+          leadShift: fireBand ? lerp(-BROAD_DRAG_SHIFT, BROAD_DRAG_SHIFT, random(seed * 7019 + 43)()) : 0,
+          broadBand: fireBand,
           litRound: boldForm ? FORM_LIT_ROUND[boldForm.deep] : 0,
           backDeep: boldForm && sky.deep ? { turn: FORM_BACK_TURN[boldForm.deep], share: deepShare, curve: sky.deep.curve } : null,
           paleLight: pale,
