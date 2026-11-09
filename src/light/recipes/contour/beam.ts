@@ -21,6 +21,8 @@ import {
   seedLayout,
   seedShares,
   type ShortLine,
+  smoothstep,
+  spreadOutside,
   tailEndUniform,
   tailParams,
   tailUniform,
@@ -691,11 +693,23 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
     const { halfW } = frameHalf(aspect)
     const poolOut = Math.hypot(Math.max(0, Math.abs(line.to[0]) - halfW), Math.max(0, Math.abs(line.to[1]) - halfH))
     const toward = POOL_GLOW * poolOut
-    const glowSeg = onRight
+    const litSeg = onRight
       ? [...line.from, line.from[0] + SOURCE_GLOW * (line.to[0] - line.from[0]), line.from[1] + SOURCE_GLOW * (line.to[1] - line.from[1])]
       : [line.to[0] + toward * sin, line.to[1] - toward * cos, line.to[0] + toward * sin, line.to[1] - toward * cos]
+    // That haze lies in a layer (the stage's ceiling or floor haze), so its glow spreads along
+    // the floor ((cos, sin)) by the seed's own share, from a spot to a long band, and the denser
+    // the seed's haze, the more of the glow's light it takes out on the way into the frame, so
+    // the faster the glow fades (its own stream).
+    // The band grows in as the lit haze moves away from the frame, so it doesn't sweep in at
+    // once when the light leaves the frame.
+    const [layerShare, densityShare] = seedShares(seed, 0xbee, 2, seededRandom(seed, 0xbee))
+    const lit = [(litSeg[0] + litSeg[2]) / 2, (litSeg[1] + litSeg[3]) / 2]
+    const litOut = Math.hypot(Math.max(0, Math.abs(lit[0]) - halfW), Math.max(0, Math.abs(lit[1]) - halfH))
+    const spread = GLOW_LAYER * layerShare * layerShare * smoothstep(0, GLOW_LAYER_FROM, litOut)
+    const glowSeg = spreadOutside(lit, [cos, sin], spread, aspect)
     const reach = (onRight ? SOURCE_GLOW_REACH : 1) * (broad ? WIDE_GLOW : NARROW_GLOW)
-    const glow = airGlowParams(light, glowSeg, aspect, geo(intensity, 0.35, 0.75, 1.6) / 0.75, (params.fall as number[])[0], reach, onRight ? 1 : 0, [...line.from, ...line.to])
+    const fade = lerp(GLOW_DENSITY[0], GLOW_DENSITY[1], densityShare) + (onRight ? 0.5 : 0)
+    const glow = airGlowParams(light, glowSeg, aspect, geo(intensity, 0.35, 0.75, 1.6) / 0.75, (params.fall as number[])[0], reach, fade, [...line.from, ...line.to])
     Object.assign(params, onLine, glow)
   }
 
@@ -754,6 +768,17 @@ const POOL_GLOW = 0.75
  * beam's falloff; it also fades one power faster.
  */
 const SOURCE_GLOW_REACH = 0.75
+
+/**
+ * The haze layer that glow comes from: how far (short-side units) either way along the floor it
+ * spreads at most, and how much faster the glow fades (added to its power) in the thinnest and
+ * the densest haze over the seeds.
+ */
+const GLOW_LAYER = 0.8
+const GLOW_DENSITY = [-0.5, 1]
+
+/** How far (short-side units) the lit haze is outside the frame when that band has all its spread. */
+const GLOW_LAYER_FROM = 0.3
 
 /** Falloff (short-side units) of the glow past the frame for a broad and a narrow beam. */
 const WIDE_GLOW = 0.27
