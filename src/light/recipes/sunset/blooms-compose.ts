@@ -812,7 +812,7 @@ const DRAG_APART_LEAD = 0.6
 /** A cyan bloom's strength where it still lies on a warm one under a dragged line. */
 const DRAG_OVERLAP_GAIN = 0.45
 /** Beyond an edge pointing away, a cyan bloom beside a broad lead: its falloff against its own. */
-const OUT_CYAN_SOFT = 0.8
+const OUT_CYAN_SOFT = 0.65
 /** The broad warm lead's light, against its middle, out to which a cyan bloom moves from it under a dragged line. */
 const DRAG_CYAN_ON_LEAD = 0.4
 /** The same for a white bloom (Ice) beside a white lead. */
