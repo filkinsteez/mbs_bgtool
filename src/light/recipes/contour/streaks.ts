@@ -89,6 +89,9 @@ uniform vec3 uTexture;     // fine streaks inside the shafts: contrast, streaks 
 uniform vec4 uVeil;        // a cool light's haze: veil color share (1: full color), level of the full color (share of the clipping luminance), band width (octaves), dark haze luminance
 uniform float uSkyPeak;    // where across the lit sky it is brightest (0: at its first end)
 uniform vec4 uDarkMeet;    // over a dark of another hue: light level its faint tail falls off below (from, to), level the dark is gone by (from, to); 0: off
+uniform vec4 uDarkLightA;  // over a dark of another hue: where that dark's dim light comes from beyond the frame on one side of the lit sky (scene), how far it reaches, and how wide that side's dark is
+uniform vec4 uDarkLightB;  // the same on the lit sky's other side; both widths 0: the dark shows everywhere
+uniform float uDarkLightMix; // how much that dark follows its dim light (1) instead of showing wherever the light is dim (0)
 uniform float uVeilTint;   // a cool light's least chroma along its haze's hue, over Oklab lightness (0: off)
 uniform vec2 uNearShape;   // the darker sky near the point: distance it starts at, its depth toward the lit sky's bright end (share of the full depth)
 uniform vec4 uAirGlow;     // a point outside the frame: level of its glow in the air (scattered units; 0: off), falloff, sharpness (power), scale (1 at the frame's brightest point)
@@ -344,6 +347,21 @@ float warmFall(float scatter) {
   return exp((uFall.y - 1.0) * log(max(x, 1e-6)) * (1.0 - smoothstep(0.25, 1.0, x)));
 }
 
+// Over a dark of another hue, that dark is dim light in the haze: a soft glow from beyond the
+// frame on each side of the lit sky that is dark, as strong as that side is wide, fading into the
+// frame toward the light, so it has no edges of its own. The floor shows it as it shows the sky.
+float darkLight(vec2 p) {
+  float widest = max(uDarkLightA.w, uDarkLightB.w);
+  if (widest <= 0.0 || uDarkLightMix <= 0.0) return 1.0;
+  float hy = horizonY(p.x);
+  vec2 q = p.y > hy ? vec2(p.x, 2.0 * hy - p.y) : p;
+  vec2 a = q - uDarkLightA.xy;
+  vec2 b = q - uDarkLightB.xy;
+  float glowA = uDarkLightA.w * exp(-0.5 * dot(a, a) / max(uDarkLightA.z * uDarkLightA.z, 1e-6));
+  float glowB = uDarkLightB.w * exp(-0.5 * dot(b, b) / max(uDarkLightB.z * uDarkLightB.z, 1e-6));
+  return mix(1.0, min(1.0, (glowA + glowB) / widest), uDarkLightMix);
+}
+
 vec3 combine(vec2 uv, vec2 screen, vec3 line, vec3 cached) {
   vec2 p = turned(screen);
   // The far floor is seen through the haze at the horizon, so its reflection fades into
@@ -376,7 +394,7 @@ vec3 combine(vec2 uv, vec2 screen, vec3 line, vec3 cached) {
   float darkShows = 1.0;
   if (uDarkMeet.y > 0.0) {
     meet = smoothstep(uDarkMeet.x, uDarkMeet.y, scatter);
-    darkShows = 1.0 - smoothstep(uDarkMeet.z, uDarkMeet.w, scatter);
+    darkShows = (1.0 - smoothstep(uDarkMeet.z, uDarkMeet.w, scatter)) * darkLight(p);
   }
   vec3 color = uBaseColor * uLook.x * darkShows + scatter * meet * warmFall(scatter) * path + uVeil.w * veil / lumHaze;
   // A cool light's pale light keeps its haze's hue, as the moodboard's white pool does: most
@@ -510,6 +528,14 @@ const TAIL_FALL = 2.5
  * shadows between shafts, so a light shared by two packs still reads as its own pack.
  */
 const BASE_GAIN = 4
+
+/**
+ * A dark of another hue (Plum) as dim light from beyond the frame on the dark side: how far
+ * (short-side units) its glow reaches, and how far beyond the frame's edge it comes from.
+ */
+const DARK_LIGHT_REACH = 0.35
+const DARK_LIGHT_OUT = 0.15
+const DARK_LIGHT_LEAVE = 0.3
 
 /**
  * Pack output. Light (the mood control) moves the point where the shafts meet along the
@@ -670,6 +696,7 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
   })
   const downPool = params.downPool as number[] | undefined
   if (downPool) params.downPool = [downPool[0], downPool[1], downPool[2], round4(softCap(downPool[3], POOL_WHITE * white))]
+  Object.assign(params, darkLightParams(params, aspect))
 
   return {
     colors: [light.light, light.haze, light.base],
@@ -786,6 +813,40 @@ function fanCover(params: Record<string, ParamValue>, aspect: number): number {
     }
   }
   return sum / (N * N)
+}
+
+/**
+ * The `darkLightA` and `darkLightB` params: over a dark of another hue, where its dim light comes
+ * from on each side of the lit sky that is dark (above the scene's horizon, from the lit sky's side
+ * to the horizon): DARK_LIGHT_OUT beyond where that side's middle direction from the point leaves
+ * the frame, its reach, and how wide (radians) that side is. With the point outside the frame
+ * those directions miss it, so `darkLightMix` hands the dark back to the light's level as the
+ * point leaves the frame (over DARK_LIGHT_LEAVE).
+ */
+function darkLightParams(params: Record<string, ParamValue>, aspect: number): Record<string, ParamValue> {
+  const [cos, sin, offX, offY] = (params.turn as number[] | undefined) ?? [1, 0, 0, 0]
+  const [cx, cy] = params.center as number[]
+  const [from, to] = params.sky as number[]
+  const [lo, hi] = [Math.min(from, to), Math.max(from, to)]
+  const { halfW, halfH } = frameHalf(aspect)
+  // The point and a direction on screen (the scene turned back), and where that ray leaves the frame.
+  const [px, py] = [cos * (cx - offX) - sin * (cy - offY), sin * (cx - offX) + cos * (cy - offY)]
+  const glowFrom = (theta: number, width: number): number[] => {
+    if (width <= 0) return [0, 0, 0, 0]
+    const [dx, dy] = [cos * Math.cos(theta) - sin * Math.sin(theta), sin * Math.cos(theta) + cos * Math.sin(theta)]
+    const exitX = dx > 0 ? (halfW - px) / dx : dx < 0 ? (-halfW - px) / dx : Infinity
+    const exitY = dy > 0 ? (halfH - py) / dy : dy < 0 ? (-halfH - py) / dy : Infinity
+    const t = Math.max(0, Math.min(exitX, exitY)) + DARK_LIGHT_OUT
+    return [round4(cx + t * Math.cos(theta)), round4(cy + t * Math.sin(theta)), DARK_LIGHT_REACH, round4(width)]
+  }
+  const left = Math.max(0, lo + Math.PI)
+  const right = Math.max(0, -hi)
+  const outside = Math.hypot(Math.max(0, Math.abs(px) - halfW), Math.max(0, Math.abs(py) - halfH))
+  return {
+    darkLightA: glowFrom((-Math.PI + lo) / 2, left),
+    darkLightB: glowFrom(hi / 2, right),
+    darkLightMix: round4(1 - smoothstep(0, DARK_LIGHT_LEAVE, outside)),
+  }
 }
 
 /** How far a line points down from above, from 0 (sideways or up) to 1 (straight down or nearly). */
@@ -939,6 +1000,9 @@ export const contourStreaks: RecipeDefinition = {
     { kind: 'vector', key: 'veil', label: 'Haze veil', min: 0, max: 4, step: 0.0005, default: [1, 1, 1, 0] },
     { kind: 'number', key: 'skyPeak', label: 'Brightest direction', min: 0, max: 1, step: 0.005, default: 0 },
     { kind: 'vector', key: 'darkMeet', label: 'Meeting another dark', min: 0, max: 4, step: 0.0005, default: [0, 0, 0, 0] },
+    { kind: 'vector', key: 'darkLightA', label: 'Light of another dark, one side', min: -8, max: 8, step: 0.0005, default: [0, 0, 0, 0] },
+    { kind: 'vector', key: 'darkLightB', label: 'Light of another dark, other side', min: -8, max: 8, step: 0.0005, default: [0, 0, 0, 0] },
+    { kind: 'number', key: 'darkLightMix', label: 'Another dark follows its light', min: 0, max: 1, step: 0.0005, default: 0 },
     { kind: 'number', key: 'veilTint', label: 'Trace of the haze hue', min: 0, max: 0.2, step: 0.0005, default: 0 },
     { kind: 'vector', key: 'nearShape', label: 'Sky near the point, shape', min: 0, max: 4, step: 0.0005, default: [0, 1] },
     { kind: 'vector', key: 'airGlow', label: 'Glow past the frame', min: 0, max: 100, step: 0.0001, default: [0, 0.18, 2, 1] },
@@ -982,6 +1046,9 @@ export const contourStreaks: RecipeDefinition = {
     uVeil: ctx.vec('veil'),
     uSkyPeak: ctx.num('skyPeak'),
     uDarkMeet: ctx.vec('darkMeet'),
+    uDarkLightA: ctx.vec('darkLightA'),
+    uDarkLightB: ctx.vec('darkLightB'),
+    uDarkLightMix: ctx.num('darkLightMix'),
     uVeilTint: ctx.num('veilTint'),
     uNearShape: ctx.vec('nearShape'),
     uAirGlow: ctx.vec('airGlow'),
