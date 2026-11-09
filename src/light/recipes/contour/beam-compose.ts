@@ -467,11 +467,13 @@ const OVERCAST_BAND = 0.5
 const DEEP_RED = '#FF1A00'
 
 /**
- * Tan's dim haze: amber, then a deeper orange, warmer and purer than dim Tan (which reads
- * grey-brown). The paper toe turns dim warm light redder, so these sit on the yellow side
- * of where they show.
+ * Tan's dim haze: a deep amber, then an orange, warmer and purer than dim Tan (which reads
+ * grey-brown). The paper toe turns dim warm light a few degrees redder. Between half and all of
+ * Tan's level the haze mixes Tan's own hue (Oklab 75 degrees) with the first, so that sits well
+ * on the orange side (61 degrees) and the mix shows as warm light, not brown; the faint end
+ * (65 degrees) stays on the yellow side, as it turns deep red-brown if it starts any redder.
  */
-const TAN_DIM = '#FFB000'
+const TAN_DIM = '#FF9200'
 const TAN_FAINT = '#FF9A00'
 
 /** A hex's linear color scaled so its brightest channel is 1. */
