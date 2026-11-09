@@ -157,9 +157,9 @@ interface Band {
   veil?: number
   /** Its light falls off away from the light: amount at the far side, and the side (1 its bottom, -1 its top). */
   fall?: [number, number]
-  /** Under a line, how far its top edge bends around the light (1: a stretch of a circle about it), and where across
-   * the line that bend is centred, from the light (short sides). */
-  bend?: [number, number]
+  /** Under a line, how far its top edge bends around the light (1: a stretch of a circle about it), where across the
+   * line that bend is centred, from the light (short sides), and how far it leans across the frame. */
+  bend?: [number, number, number]
 }
 
 interface LightTerm {
@@ -272,8 +272,8 @@ interface Scene {
   skyVeilEnd: [number, number]
   /** How far the sky's own boundaries wander (frame heights, RMS) and their lattice (short sides). */
   skyDrift: [number, number, number, number]
-  /** Under a line, how far the sky's own boundaries bend around the light, and where that bend is centred. */
-  skyBend: [number, number]
+  /** Under a line, how far the sky's own boundaries bend around the light, where that bend is centred, and their lean. */
+  skyBend: [number, number, number]
   /** The light that veil adds, linear: the pack's own tint. */
   skyTint: number[]
   /** Under a long line: the dark pack color the farthest sky sinks toward, how far, and where (frame heights). */
@@ -1106,15 +1106,27 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   const skyDrift: [number, number, number, number] = [skyWander, skyLattice, (veilLean * frameW) / frameH, (farLean * frameW) / frameH]
   // A wide area's own light falls off away from the light: deeper toward its far side, paler toward the light. Not
   // in Lime or Tan: dimmed, they read olive and khaki.
-  // Under a line each boundary bends around the light by its own amount, from a little less than a circle about it
-  // to twice as much (the shader's `bendAround`), so the bands curve around where the light is and no two
-  // neighbours run parallel.
-  // Each bends about its own point beside the light, up to a quarter of the short side to either side, so it leans
-  // its own way.
+  // Under a line each boundary bends around the light by its own amount (the shader's `bendAround`), so the bands
+  // curve around where the light is. Each bends about its own point beside the light and leans its own way across
+  // the frame (6 to 17 degrees): going down from the sky's boundaries, neighbours alternate between a strong and a
+  // weak bend on opposite sides of the light and lean opposite ways, so they never nest or run parallel.
   const bendRnd = random(seed * 4999 + pack.id.length * 11 + 41)
-  const bendOf = (): [number, number] => [bendRnd.between(0.6, 2.4), bendRnd.between(-0.25, 0.25)]
-  bands.forEach((b) => (b.bend = bendOf()))
+  let strong = bendRnd.chance(0.5)
+  let side = bendRnd.sign()
+  let lean = bendRnd.sign()
+  const bendOf = (): [number, number, number] => {
+    const bend: [number, number, number] = [
+      strong ? bendRnd.between(1.6, 2.6) : bendRnd.between(0.6, 1.1),
+      side * bendRnd.between(0, 0.3),
+      lean * bendRnd.between(0.1, 0.3),
+    ]
+    strong = !strong
+    side = -side
+    lean = -lean
+    return bend
+  }
   const skyBend = bendOf()
+  bands.forEach((b) => (b.bend = bendOf()))
   const fallRnd = random(seed * 5113 + pack.id.length * 3 + 23)
   bands.forEach((b, k) => {
     if (haze.veils[k] > 0) b.veil = haze.veils[k]
@@ -1259,7 +1271,7 @@ function writeScene(scene: Scene, R: number, stack: ReturnType<typeof stackMap>)
     params[key('Pale')] = [b.pale ?? 0, Math.max(0.05, (next ?? 1) - b.edge.base), next === undefined ? 1 : 0.5, b.paleOwn ? 1 : 0]
     params[key('Veil')] = [b.veil ?? 0, Math.max(0.05, (next ?? 1) - b.edge.base)]
     params[key('Fall')] = b.fall ?? [0, 1]
-    params[key('Bend')] = b.bend ?? [0, 0]
+    params[key('Bend')] = b.bend ?? [0, 0, 0]
   })
   while (colors.length < 1 + BAND_MAX) colors.push(scene.sky)
   scene.patches.slice(0, PATCH_MAX).forEach((patch, j) => {
