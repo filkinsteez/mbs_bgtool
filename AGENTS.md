@@ -24,6 +24,11 @@ Later on 2026-11-02 the owner asked for crops of the Meta logo outline as Contou
     Tan `#B8996E`, Plum `#4A0A3C`
   - Atmospheric: Meta Blue `#0064E0`, Ice `#F2F4F7`, Steel `#6A7788`,
     Slate `#384753`, Near-black `#1C2B33`
+- Changing the color pack keeps the design (owner, 2026-11-09): the same
+  mood, seed, drag and format give the same shapes, light positions and
+  light and dark layout in every pack, and only the colors change. Shuffle
+  gives a new design. The Meta Blue toggle and the mix control, once
+  built, also change only the colors.
 - Build systems, not copies. Shapes, light and packs combine with the
   seed into endless backgrounds. The moodboard references test whether
   the system reaches the needed quality; matching them is not the goal,
