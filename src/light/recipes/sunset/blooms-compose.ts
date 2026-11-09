@@ -535,8 +535,8 @@ function followDrag(
   // toward, already dark: along the edge it reaches the light under the line, olive and grey. On the frame's far side
   // behind a light pointing away it stays a rounder area: lying along that edge in every seed, the frames are one picture.
   const ground = layout.zenith.hold >= 0.5 && layout.zenith.meet < 0.3
-  const darkAt = (angle: number, along: number, asGround: boolean, from: readonly number[] = middle): ZenithSpec => {
-    const at = alongEdge(toP(farEdge(from, angle, frame, asGround ? GROUND_DRAG_PAST : DARK_PAST_EDGE)), along, frame)
+  const darkAt = (angle: number, along: number, asGround: boolean): ZenithSpec => {
+    const at = alongEdge(toP(farEdge(middle, angle, frame, asGround ? GROUND_DRAG_PAST : DARK_PAST_EDGE)), along, frame)
     const z: ZenithSpec = {
       ...layout.zenith,
       at: fromP(at),
@@ -558,9 +558,18 @@ function followDrag(
   // A third of ground of the sky's family (Atmospheric) lies along the frame's side beside the line instead, on the side
   // the seed turns its dark area to, from wherever the light is: across the far side, with the deeper sky there, half the
   // frame or more was dark, and the seeds' far sides were alike.
+  const sideGround = (): ZenithSpec => {
+    const from = [-SIDE_AWAY * outWide * toLight[0], -SIDE_AWAY * outWide * toLight[1]]
+    const at = alongEdge(toP(farEdge(from, lineAngle + (darkSide * Math.PI) / 2, frame, lerp(GROUND_DRAG_PAST, GROUND_PAST, outWide))), SIDE_SLIDE * slide, frame)
+    const z: ZenithSpec = { ...layout.zenith, at: fromP(at), aniso: layout.zenith.aniso * lerp(1, SIDE_LONGER, outWide), angle: edgeAngle(at, frame) + groundTilt }
+    const toLead = Math.hypot(at[0] - toP(lightAt)[0], at[1] - toP(lightAt)[1])
+    const share = lerp(1, SIDE_OUT_SHARE * lerp(lerp(SIDE_NEAR_SHARE, 1, wide), 1, smoothstep(SIDE_NEAR[0], SIDE_NEAR[1], toLead)), outWide)
+    z.radius = Math.min(sizeDark(z, true, SIZE_KEEP, share), SIDE_MOST * sizeDark(z, true, 0, share))
+    return z
+  }
   const zenith: ZenithSpec =
     darkSide !== 0 && ground
-      ? darkAt(lineAngle + (darkSide * Math.PI) / 2, SIDE_SLIDE * slide, true, [0, 0])
+      ? sideGround()
       : back
         ? { ...back, amount: back.amount * smoothstep(DARK_TURN, DARK_TURN - DARK_FADE, ahead) }
         : { ...front, amount: front.amount * smoothstep(DARK_TURN, DARK_TURN + DARK_FADE, ahead) }
@@ -848,8 +857,11 @@ function dragLeadFor(seed: number): DragLead {
 
 /** The seed's own choices for a dragged line (composeLayout draws them, followDrag places the scene with them). */
 interface DragSeed {
-  /** The dark area's radius that covers the seed's share of the frame; `exact` for a ground the line slides along an edge. */
-  sizeDark: (zenith: ZenithSpec, exact: boolean) => number
+  /**
+   * The dark area's radius that covers the seed's share of the frame, times `share`; `exact` for a ground the line slides
+   * along an edge, keeping `keep` of the seed's own size (sizeCorner).
+   */
+  sizeDark: (zenith: ZenithSpec, exact: boolean, keep?: number, share?: number) => number
   /** The way the seed's light runs without a line (radians); the other blooms' places turn by its angle to the line. */
   seedAngle: number
   /** The lead's length / width along the line. */
@@ -1018,6 +1030,25 @@ const DARK_TURN = -0.05
 const DARK_FADE = 0.85
 /** How far a third of ground along the frame's side beside the line slides, against the far side's slide: it stays on its side. */
 const SIDE_SLIDE = 0.35
+/**
+ * The side it lies along is found from a point this share of the way from the frame's middle away from the light, so it
+ * lies on that side's part away from the light, and it covers its share alone, keeping nothing of the seed's own size
+ * (that comes from a ground at another edge): found from the middle and with the seed's size, under a light high above
+ * it grew over a tall frame and hid the light.
+ */
+const SIDE_AWAY = 0
+/**
+ * As far as the light lies beyond an edge pointing away (outWide), it lies up to this much longer along its side, as far
+ * past the edge as at the default view (GROUND_PAST), and covers down to this share of its share: a band, so along a
+ * tall frame's long side the light still takes the frame. Under a line into the frame it keeps its shape: as a band
+ * there, seeds under the mirror line came out alike.
+ */
+const SIDE_LONGER = 1.75
+const SIDE_OUT_SHARE = 0.7
+const SIDE_MOST = 1.1
+const SIDE_NEAR: readonly [number, number] = [0.7, 1.3]
+const SIDE_NEAR_SHARE = 0.4
+const THIRD_BEHIND = 2.4
 /** How far in from the light toward the frame's middle the edge the line runs toward is looked for, 0..1. */
 const DARK_FROM_IN = 0.5
 
@@ -1290,10 +1321,10 @@ function cornerCoverage(z: ZenithSpec, aspect: number, radius: number, lobe: Lob
  * leaves seeds their different sizes. With `exact` (a ground under a dragged line, ahead of the light and lying long along
  * the edge it meets) it is solved by halving instead (coverage grows with the radius), so its size moves smoothly as the
  * line slides it along the edge: stepping, it fell short of its share by more or less as it moved, and its size jumped.
- * The coverage aimed for there keeps SIZE_KEEP of the way back toward the one the seed's own radius gives, so seeds keep
- * part of their different sizes.
+ * The coverage aimed for there keeps `keep` (SIZE_KEEP unless given) of the way back toward the one the seed's own radius
+ * gives, so seeds keep part of their different sizes.
  */
-function sizeCorner(z: ZenithSpec, aspect: number, share: readonly [number, number], lobe: Lobes, exact = false): number {
+function sizeCorner(z: ZenithSpec, aspect: number, share: readonly [number, number], lobe: Lobes, exact = false, keep = SIZE_KEEP): number {
   const cover = (radius: number) => cornerCoverage(z, aspect, radius, lobe)
   if (!exact) {
     let radius = z.radius
@@ -1305,7 +1336,7 @@ function sizeCorner(z: ZenithSpec, aspect: number, share: readonly [number, numb
     return radius
   }
   const target = 0.5 * (share[0] + share[1])
-  const goal = Math.max(target + SIZE_KEEP * (cover(z.radius) - target), 0.005)
+  const goal = Math.max(target + keep * (cover(z.radius) - target), 0.005)
   let lo = Math.log(z.radius * SIZE_RANGE[0])
   let hi = Math.log(z.radius * SIZE_RANGE[1])
   for (let step = 0; step < 32; step++) {
@@ -2151,8 +2182,8 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
   const styleShare = groundBlends ? DRAG_STYLE_SHARE[darkStyle] : DRAG_DARK_SHARE
   const otherShare = DRAG_OTHER_SHARE[darkStyleFor(seed)]
   const dragTarget = skyFamily ? lerp(styleShare[0], styleShare[1], dragShare) : lerp(otherShare[0], otherShare[1], dragShare)
-  const sizeDragDark = (z: ZenithSpec, exact: boolean) =>
-    darkGround ? sizeCorner(z, aspect, [dragTarget, dragTarget], zenithLobes, exact) : z.radius * lerp(0.7, 1.6, dragShare)
+  const sizeDragDark = (z: ZenithSpec, exact: boolean, keep = SIZE_KEEP, share = 1) =>
+    darkGround ? sizeCorner(z, aspect, [dragTarget * share, dragTarget * share], zenithLobes, exact, keep) : z.radius * lerp(0.7, 1.6, dragShare)
   const kind = dragKindFor(seed)
   const rd = random(seed * 2903 + 5)
   const uLeadAniso = rd()
@@ -2294,7 +2325,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
           // Beyond an edge pointing away, Bold's light comes in toward the seed's own side, and its deep form sets how far
           // its lit side reaches down the frame (a band of deep blue leaves it the most) and where the deep blue lies.
           edgeShift: boldForm ? side * lerp(EDGE_SHIFT[0], EDGE_SHIFT[1], random(seed * 9173 + 31)()) : 0,
-          behindScale: boldForm ? FORM_BEHIND[boldForm.deep] : 1,
+          behindScale: boldForm ? FORM_BEHIND[boldForm.deep] : groundBlends && dragStyle === 'third' ? lerp(THIRD_BEHIND, 1, smoothstep(0.5, 1, aspect)) : 1,
           groundTilt: lerp(-GROUND_DRAG_TILT, GROUND_DRAG_TILT, uDarkTilt),
           litRound: boldForm ? FORM_LIT_ROUND[boldForm.deep] : 0,
           backDeep: boldForm && sky.deep ? { turn: FORM_BACK_TURN[boldForm.deep], share: deepShare, curve: sky.deep.curve } : null,
