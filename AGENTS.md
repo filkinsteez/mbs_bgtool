@@ -36,23 +36,42 @@ Later on 2026-11-02 the owner asked for crops of the Meta logo outline as Contou
   to the renderer.
 - Every visual change gets a visual audit: render it, put it next to the
   target, and look at the images. Code checks are not enough.
-- Sunset and Contour first. Warp Speed later. Filters (Grain, ASCII,
-  Pixel) after the gradients are locked down.
-- Controls stay minimal for non-designers: Intensity, Softness, one
- control per mood, and Shuffle (no Seed slider and no Back button; owner,
- 2026-11-06). The panel labels Intensity and the filter's slider both
- "Strength" (owner, 2026-11-06); their keys stay `intensity` and
- `density`. Mood and Look are picked from small pictures, Filter from
- icons and Format from shapes, each with its name, not dropdowns; the
- pictures are fixed renders from `scripts/light/panel-pictures.mjs`, not
- live, in the Atmospheric pack whichever pack is picked (owner,
- 2026-11-06). Each mood's first look is the one on its Mood picture and the one
- picking the mood switches to (Sunset: Bands, Contour: Halo). No free color pickers:
- Colors shows each pack as a strip of its exact hexes, and you pick a
- pack. Filter sits near Format at the bottom of the panel. Every option's
- name shows under its picture or strip, and inside the Filter and Format
- squares; a card's title has no value beside it, since the ring marks
- the pick (owner, 2026-11-06).
+- Sunrise (the old Sunset) and Contour first, then Rush (the old Warp
+  Speed; its moodboard is node 4:439 of the concept file; the owner
+  started it on 2026-11-09). Filters: Grain and Pixel. The owner removed
+  ASCII on 2026-11-09.
+- Owner feedback of 2026-11-09 (concept file node 86:380) changes the
+  panel:
+  - Three moods, each one option with no Look picker: Sunrise, Contour
+    and Rush. Each mood's looks merge into one look that keeps some
+    variety, with fewer variations so the results look branded. Code ids
+    such as `sunset.bands` stay.
+  - Controls stay minimal for non-designers: Strength and Shuffle.
+    Softness and the mood controls (Light position, Horizon) are gone,
+    and looks are softer in general. No Seed slider (owner, 2026-11-06).
+  - The panel is four numbered steps, top to bottom: "1. Pick a color
+    pack" (the pack strips, Strength, Shuffle), "2. Pick a mood",
+    "3. Apply a filter" (None, Grain, Pixel and the filter's Strength),
+    "4. Export" (Format and the Export button).
+  - Color: more control over the mix inside the picked pack (a Meta Blue
+    on/off toggle is asked for; a lead color or percentages are being
+    designed). Contour shows more of the pack's colors, where light
+    would naturally put them.
+  - A history of recent backgrounds is wanted: build a first version and
+    change it with the owner's feedback. It replaces the 2026-11-06 "no
+    Back button" rule.
+  - Type: a toggle shows a sample headline over the preview, to check
+    where type would sit. It is never exported.
+- Still in force from 2026-11-06 (owner): the panel's two Strength
+  sliders keep the keys `intensity` and `density`. Mood is picked from
+  small pictures, Filter from icons and Format from shapes, each with its
+  name, not dropdowns; the pictures are fixed renders from
+  `scripts/light/panel-pictures.mjs`, not live, in the Atmospheric pack
+  whichever pack is picked. No free color pickers: Colors shows each pack
+  as a strip of its exact hexes, and you pick a pack. Every option's name
+  shows under its picture or strip, and inside the Filter and Format
+  squares; a card's title has no value beside it, since the ring marks
+  the pick.
 - Brief: `docs/light/BRIEF.md`. Roadmap: `docs/light/ROADMAP.md`.
 
 ## This is a RASTER tool (owner directive)
@@ -81,3 +100,5 @@ Later on 2026-11-02 the owner asked for crops of the Meta logo outline as Contou
   2026-11-06 it shows on every page load, not once per browser (owner).
   Since 2026-11-09 using any control in the panel (pressing or clicking
   it, or a key that changes it) also hides it (owner).
+- A second exception, asked for by the owner on 2026-11-09: the numbered
+  step titles in the panel ("1. Pick a color pack" and the others).
