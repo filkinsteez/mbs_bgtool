@@ -17,10 +17,19 @@ describe('tool state in the URL', () => {
       format: '4:5',
       filter: 'none',
       strength: 0.5,
+      headline: false,
     }
     const query = toQuery(state)
     expect(query).toBe('mood=contour&look=beam&pack=atmospheric&intensity=0.8&seed=43&format=4x5')
     expect(parseQuery(new URLSearchParams(query))).toEqual(state)
+  })
+
+  it('writes the sample headline after the format only while it is on, and reads anything else as off', () => {
+    const on: ToolState = { ...DEFAULT_STATE, headline: true, filter: 'grain', strength: 0.4 }
+    expect(toQuery(on)).toBe('mood=sunset&look=bands&pack=bold&intensity=0.5&seed=1&format=16x9&headline=1&filter=grain&strength=0.4')
+    expect(parseQuery(new URLSearchParams(toQuery(on)))).toEqual(on)
+    expect(toQuery(DEFAULT_STATE)).not.toContain('headline')
+    for (const value of ['0', 'on', 'true', '']) expect(parseQuery({ headline: value }).headline, value).toBe(false)
   })
 
   it('writes the filter last, only when one is on', () => {
@@ -142,6 +151,7 @@ describe('dragged line in the URL', () => {
     drag: { from: [0.312, 0.681], to: [0.75, 0.2] },
     filter: 'none',
     strength: 0.5,
+    headline: false,
   }
 
   it('round-trips a line, written after Intensity with its commas as they are', () => {

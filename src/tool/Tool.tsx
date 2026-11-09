@@ -16,6 +16,7 @@ import { Preview } from './Preview'
 import { EMPTY_SEED_HISTORY, recordSeedChange, stepBack, stepForward, type SeedStep } from './seedHistory'
 import { isMoodId, parseQuery, randomSeed, readSeed, toQuery, type SearchParams } from './state'
 import { ToolPanel } from './ToolPanel'
+import { TypePreview } from './TypePreview'
 
 const EXPORT_LABEL = 'Export'
 const EXPORTING_LABEL = 'Exporting…'
@@ -26,6 +27,8 @@ const PACK_PATHS = [PACK_DIAL_KEY]
 const SEED_PATHS = [SEED_DIAL_KEY]
 const FILTER_PATHS = [FILTER_DIAL_KEY]
 const FORMAT_PATHS = ['format']
+/** Export keeps DialKit's button; its slot ends the Format card, which holds the Headline control. */
+const EXPORT_PATHS = ['export']
 const URL_DELAY_MS = 200
 
 type ExportStatus = 'idle' | 'busy' | 'failed'
@@ -227,6 +230,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
         onDragging={handleDragging}
         onReset={resetLight}
       />
+      <TypePreview shown={state.headline} />
       <aside
         ref={panelRef}
         className="tool-panel dial-column"
@@ -261,7 +265,14 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
               card: 'filter',
               step: '3. Apply a filter',
             },
-            { paths: FORMAT_PATHS, node: <FormatPicker value={format} onChange={(next) => setValue('format', next)} />, replace: true, step: '4. Export' },
+            {
+              paths: FORMAT_PATHS,
+              node: <FormatPicker value={format} onChange={(next) => setValue('format', next)} />,
+              replace: true,
+              card: 'format',
+              step: '4. Export',
+            },
+            { paths: EXPORT_PATHS, node: null },
           ]}
           labels={PANEL_LABELS}
         />
