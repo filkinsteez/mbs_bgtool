@@ -1,9 +1,12 @@
 // How long the tool's page stops responding when you switch looks. Loads the tool in a fresh Chrome profile, then
-// switches through all seven looks with the panel's keyboard keys, twice in the same page and once in a second page
-// of the same browser. For each switch: the longest main-thread task (Long Tasks API) from the key press until the
-// new look's settled frame, the time to its first frame and to its settled frame. Also the time from page load to
-// the first frame. The page starts on Bands (or Halo with --start contour), so that look's first compile is in the
-// page load; run both to time every look's first switch. The canvas's times for the new look's first 1x and 2x
+// switches through all seven looks with the panel's keys, twice in the same page and once in a second page of the same
+// browser. The panel has no Look picker: the seed picks the look (src/tool/seedLook.ts), so a step is Enter on Shuffle,
+// with the page's next Math.random queued so that Shuffle lands on a chosen seed, or an arrow key on the Mood tiles,
+// which keeps the seed. For each switch: the longest main-thread task (Long Tasks API) from the key press until the
+// new look's settled frame, the time to its first frame and to its settled frame, and a note when the page shows
+// another look than the step expects. Also the time from page load to the first frame. The page starts on Bands (or
+// Halo with --start contour), so that look's first compile is in the page load; run both to time every look's first
+// switch. The canvas's times for the new look's first 1x and 2x
 // frames are kept too: from issuing the frame until it is on the canvas (data-fast-ms, data-settled-ms; whole
 // animation frames, and any compile), and the GPU's own time for the render (data-fast-gpu-ms, data-settled-gpu-ms;
 // when the browser offers EXT_disjoint_timer_query_webgl2). The longest task also catches other page work (in dev,
@@ -23,23 +26,51 @@ const outDir = path.resolve(ROOT, typeof args.out === 'string' ? args.out : 'art
 const start = args.start === 'contour' ? 'contour' : 'sunset'
 const START =
   start === 'contour'
-    ? '/?mood=contour&look=halo&pack=bold&intensity=0.5&softness=0.5&light=0.5&seed=1&format=16x9'
-    : '/?mood=sunset&look=bands&pack=bold&intensity=0.5&softness=0.5&horizon=0.5&seed=1&format=16x9'
+    ? '/?mood=contour&look=halo&pack=bold&intensity=0.5&seed=1&format=16x9'
+    : '/?mood=sunset&look=bands&pack=bold&intensity=0.5&seed=1&format=16x9'
 
-/** Each step: which select to move and which way, and the look it lands on. Switching the mood lands on its first look. */
-const SUNSET = [
-  ['look', 'ArrowDown', 'sunset.ramp'],
-  ['look', 'ArrowDown', 'sunset.blooms'],
-]
-const CONTOUR = [
-  ['look', 'ArrowDown', 'contour.rim'],
-  ['look', 'ArrowDown', 'contour.beam'],
-  ['look', 'ArrowDown', 'contour.streaks'],
-]
+/**
+ * Each step: Shuffle to a seed, or a key on the Mood tiles, and the look it lands on. A seed's look is look number
+ * (seed - 1) mod the mood's looks (Sunrise: Bands, Ramp, Blooms; Contour: Halo, Rim, Beam, Streaks). Each start ends
+ * on a seed from which its first step works again, for the second round in the same page.
+ */
 const STEPS =
   start === 'contour'
-    ? [...CONTOUR, ['mood', 'ArrowUp', 'sunset.bands'], ...SUNSET, ['mood', 'ArrowDown', 'contour.halo']]
-    : [...SUNSET, ['mood', 'ArrowDown', 'contour.halo'], ...CONTOUR, ['mood', 'ArrowUp', 'sunset.bands']]
+    ? [
+        ['shuffle', 2, 'contour.rim'],
+        ['shuffle', 3, 'contour.beam'],
+        ['shuffle', 4, 'contour.streaks'],
+        ['mood', 'ArrowUp', 'sunset.bands'],
+        ['shuffle', 5, 'sunset.ramp'],
+        ['shuffle', 9, 'sunset.blooms'],
+        ['mood', 'ArrowDown', 'contour.halo'],
+      ]
+    : [
+        ['shuffle', 5, 'sunset.ramp'],
+        ['shuffle', 9, 'sunset.blooms'],
+        ['mood', 'ArrowDown', 'contour.halo'],
+        ['shuffle', 10, 'contour.rim'],
+        ['shuffle', 11, 'contour.beam'],
+        ['shuffle', 4, 'contour.streaks'],
+        ['mood', 'ArrowUp', 'sunset.bands'],
+      ]
+
+/**
+ * The Math.random value that makes Shuffle go from seed `current` to seed `target`: Shuffle picks 1 to 99 and skips
+ * the current seed by adding 1 from it up (randomSeed in src/tool/state.ts).
+ */
+const randomFor = (current, target) => ((target > current ? target - 1 : target) - 1 + 0.5) / 99
+
+// Runs in the page before its scripts: a value the script queues in window.__nextRandom is Math.random's next result.
+const QUEUED_RANDOM = () => {
+  const random = Math.random
+  Math.random = () => {
+    const queued = window.__nextRandom
+    if (queued === undefined) return random()
+    window.__nextRandom = undefined
+    return queued
+  }
+}
 
 // Runs in the page before its scripts: long tasks, key presses and the canvas's frame and settled marks, with times.
 const RECORDER = () => {
@@ -157,12 +188,24 @@ async function settledAfter(page, t0) {
   }, t0)
 }
 
-async function pressAndMeasure(page, select, key) {
-  await page.locator(`.tool-panel [data-dial-path="${select}"]`).first().focus()
+const shownLook = (page) => {
+  const query = new URL(page.url()).searchParams
+  return `${query.get('mood')}.${query.get('look')}`
+}
+
+async function pressAndMeasure(page, [kind, value]) {
+  if (kind === 'shuffle') {
+    const current = Number(new URL(page.url()).searchParams.get('seed'))
+    await page.evaluate((next) => void (window.__nextRandom = next), randomFor(current, value))
+    await page.getByRole('button', { name: 'Shuffle' }).focus()
+  } else {
+    await page.locator('.tool-panel [data-dial-path="mood"]').first().focus()
+  }
   const before = await page.evaluate(() => window.__lookSwitch.length)
-  await page.keyboard.press(key)
+  await page.keyboard.press(kind === 'shuffle' ? 'Enter' : value)
   const t0 = await page.evaluate((n) => window.__lookSwitch.slice(n).find((e) => e.kind === 'key')?.t ?? performance.now(), before)
-  return settledAfter(page, t0)
+  const measured = await settledAfter(page, t0)
+  return { ...measured, shown: shownLook(page) }
 }
 
 const consoleErrors = []
@@ -175,6 +218,7 @@ async function loadPage(context) {
   page.on('pageerror', (error) => consoleErrors.push(`page error: ${error.message}`))
   await page.setViewportSize({ width: 1280, height: 800 })
   if (args['no-parallel'] === true) await page.addInitScript(HIDE_PARALLEL)
+  await page.addInitScript(QUEUED_RANDOM)
   await page.addInitScript(UNIQUE_SOURCES, RUN_TAG)
   await page.addInitScript(RECORDER)
   await page.goto(`${url}${START}`, { waitUntil: 'load', timeout: 180_000 })
@@ -218,11 +262,12 @@ try {
     )
     const entry = { load, switches: [] }
     for (const round of rounds) {
-      for (const [select, key, look] of STEPS) {
-        const m = await pressAndMeasure(page, select, key)
+      for (const step of STEPS) {
+        const look = step[2]
+        const m = await pressAndMeasure(page, step)
         entry.switches.push({ round, look, ...m })
         console.log(
-          `  ${round.padEnd(13)} ${look.padEnd(16)} compile wait ${fmt(m.compileWait).padStart(5)} ms (longest ${fmt(m.longestWait).padStart(5)}), longest task ${fmt(m.longestTask).padStart(5)} ms, first frame ${fmt(m.firstFrame).padStart(5)} ms, settled ${fmt(m.settled).padStart(5)} ms; on canvas 1x ${fmt(m.render1x).padStart(5)}, 2x ${fmt(m.render2x).padStart(5)} ms; GPU 1x ${fmtGpu(m.gpu1x).padStart(5)}, 2x ${fmtGpu(m.gpu2x).padStart(5)} ms${Object.keys(m.slowCalls).length ? `; slow calls ${JSON.stringify(m.slowCalls)}` : ''}`,
+          `  ${round.padEnd(13)} ${look.padEnd(16)} compile wait ${fmt(m.compileWait).padStart(5)} ms (longest ${fmt(m.longestWait).padStart(5)}), longest task ${fmt(m.longestTask).padStart(5)} ms, first frame ${fmt(m.firstFrame).padStart(5)} ms, settled ${fmt(m.settled).padStart(5)} ms; on canvas 1x ${fmt(m.render1x).padStart(5)}, 2x ${fmt(m.render2x).padStart(5)} ms; GPU 1x ${fmtGpu(m.gpu1x).padStart(5)}, 2x ${fmtGpu(m.gpu2x).padStart(5)} ms${Object.keys(m.slowCalls).length ? `; slow calls ${JSON.stringify(m.slowCalls)}` : ''}${m.shown === look ? '' : `; the page shows ${m.shown}`}`,
         )
       }
     }

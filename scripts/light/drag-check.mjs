@@ -1,21 +1,18 @@
 // Drags a line on the tool page with real pointer input in system Chrome (Playwright) and reports, per look, how the
 // preview keeps up: the time between animation frames during the drag, the time of each 1x preview render, and
 // shader compiles during the drag (there should be none). With --checks it also clicks, drags, double-clicks, drags
-// with touch and a pen, nudges the mood slider after a drag and shuffles the seed, and checks the URL, the slider and
-// the line shown while dragging after each. It uses a running dev server (the owner's at http://localhost:3000 by
-// default) and never starts one.
+// with touch and a pen and shuffles the seed, and checks the URL and the line shown while dragging after each. The
+// panel has no Softness or mood sliders (owner, 2026-11-09); a look is opened by its URL. It uses a running dev server
+// (the owner's at http://localhost:3000 by default) and never starts one.
 // Usage: node scripts/light/drag-check.mjs [--url http://localhost:3000] [--look ramp,rim,...] [--pack bold] [--seed 3]
 //   [--format 16x9] [--checks] [--steps 120] [--step-ms 8] [--out dir]
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { chromium } from '@playwright/test'
-import sharp from 'sharp'
 import { list, parseArgs } from './lib/args.mjs'
 import { ROOT } from './lib/harness.mjs'
 
 const LOOKS = ['sunset.ramp', 'sunset.bands', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
-const MOOD_LABEL = { sunset: 'Horizon', contour: 'Light position' }
-const MOOD_QUERY = { sunset: 'horizon', contour: 'light' }
 
 const args = parseArgs()
 const url = typeof args.url === 'string' ? args.url.replace(/\/$/, '') : 'http://localhost:3000'
@@ -116,20 +113,8 @@ try {
     }
     return q
   }
-  const sliderValue = (label) => page.evaluate((name) => Number(document.querySelector(`.tool-panel [role="slider"][aria-label="${name}"]`)?.getAttribute('aria-valuenow')), label)
   const cursor = () => page.evaluate(() => getComputedStyle(document.querySelector('.tool-frame')).cursor)
   const lineShown = () => page.evaluate(() => getComputedStyle(document.querySelector('.tool-frame svg')).display !== 'none')
-  const canvasShot = async () => {
-    await settle()
-    const { data, info } = await sharp(await page.locator('.tool-frame canvas').screenshot()).raw().toBuffer({ resolveWithObject: true })
-    return { data, info }
-  }
-  /** Mean change per channel between two shots, in 8-bit code values. */
-  const shotChange = (a, b) => {
-    let sum = 0
-    for (let i = 0; i < a.data.length; i++) sum += Math.abs(a.data[i] - b.data[i])
-    return sum / a.data.length
-  }
   const check = (name, ok, detail) => {
     report.checks.push({ name, ok: Boolean(ok), detail })
     if (!ok) failed = true
@@ -178,7 +163,6 @@ try {
     const intervals = result.ticks.slice(1).map((t, i) => t - result.ticks[i])
     const fast = result.draws.filter((d) => d.supersample === 1).map((d) => d.fastMs)
     const q = await waitForQuery((x) => Boolean(x.from))
-    const mood = look.split('.')[0]
     const row = {
       seconds,
       frames: result.ticks.length,
@@ -195,14 +179,12 @@ try {
       from: pointOf(q.from),
       to: pointOf(q.to),
       lastPointer: path.at(-1),
-      moodControl: Number(q[MOOD_QUERY[mood]]),
-      slider: await sliderValue(MOOD_LABEL[mood]),
     }
     report.looks[look] = row
     console.log(
       `${look.padEnd(16)} ${row.renderSize}: frame ${fixed(row.frameMs.median)} ms median, ${fixed(row.frameMs.p95)} p95, ${fixed(row.frameMs.max)} max, ${row.longFrames} over 25 ms; ` +
         `${row.draws} draws (${fixed(row.drawsPerSecond, 0)}/s), render ${fixed(row.renderMs.median)} ms median, ${fixed(row.renderMs.p95)} p95; ` +
-        `compiles ${row.compiles}${reloaded ? ' (a module update from the dev server landed during the drag)' : ''}; line ${q.from} to ${q.to}, ${MOOD_QUERY[mood]} ${row.moodControl} (slider ${row.slider})`,
+        `compiles ${row.compiles}${reloaded ? ' (a module update from the dev server landed during the drag)' : ''}; line ${q.from} to ${q.to}`,
     )
     for (const shader of result.compiled) console.log(`    compiled during the drag: ${shader.length} chars, ${shader.functions.join(', ')}`)
     if (result.compiles > 0 && !reloaded) failed = true
@@ -212,8 +194,6 @@ try {
   if (args.checks === true) {
     for (const look of ['sunset.ramp', 'contour.rim']) {
       const mood = look.split('.')[0]
-      const label = MOOD_LABEL[mood]
-      const moodKey = MOOD_QUERY[mood]
       await open(look)
       const rect = await frameRect()
       const at = ([x, y]) => [rect.x + x * rect.width, rect.y + y * rect.height]
@@ -243,40 +223,29 @@ try {
       let q = await waitForQuery((x) => Boolean(x.from))
       check(`${look}: the line shows while dragging and goes on release`, shownWhileDragging && !(await lineShown()))
       check(`${look}: the URL changes when the drag ends, not during it`, during === quiet && near(pointOf(q.from), [0.3, 0.7]) && near(pointOf(q.to), [0.7, 0.4]), `from ${q.from} to ${q.to}`)
-      check(`${look}: the ${label} slider shows the URL value`, Math.abs((await sliderValue(label)) - Number(q[moodKey])) < 1e-9, `${await sliderValue(label)} / ${q[moodKey]}`)
 
-      // A one-step nudge of the mood slider after the drag moves the whole line and changes the picture by a step.
-      const before = await canvasShot()
-      const moodBefore = Number(q[moodKey])
-      const lineBefore = [pointOf(q.from), pointOf(q.to)]
-      const key = moodBefore > 0.97 ? 'ArrowLeft' : 'ArrowRight'
-      await page.locator(`.tool-panel [role="slider"][aria-label="${label}"]`).focus()
-      await page.keyboard.press(key)
-      q = await waitForQuery((x) => Number(x[moodKey]) !== moodBefore)
-      const nudged = await canvasShot()
-      const lineAfter = [pointOf(q.from), pointOf(q.to)]
-      await page.keyboard.press(key)
-      await waitForQuery((x) => Number(x[moodKey]) !== Number(q[moodKey]))
-      const nudgedTwice = await canvasShot()
-      const first = shotChange(before, nudged)
-      const second = shotChange(nudged, nudgedTwice)
-      const shift = lineAfter.map((p, i) => [p[0] - lineBefore[i][0], p[1] - lineBefore[i][1]])
-      check(
-        `${look}: a ${label} step after a drag moves the whole line a step`,
-        near(shift[0], shift[1], 0.0015) && first < 4 * Math.max(second, 0.25),
-        `line ${lineBefore.join(' to ')} -> ${lineAfter.join(' to ')}, change ${first.toFixed(2)} then ${second.toFixed(2)} code values`,
-      )
-
-      // Shuffle keeps the line; the slider follows its start into the new scene.
+      // Shuffle picks a new seed, and the seed picks the look. A Sunrise line always stays; a Contour line stays when
+      // the new look's light can come near its start and goes otherwise (keepsLine), and it never moves.
       q = await query()
       const lineKept = `${q.from} ${q.to}`
       await page.getByRole('button', { name: 'Shuffle' }).click()
       q = await waitForQuery((x) => x.seed !== String(seed))
-      check(`${look}: a new seed keeps the line`, `${q.from} ${q.to}` === lineKept, `seed ${q.seed}, line ${q.from} to ${q.to}, ${moodKey} ${q[moodKey]}`)
+      const lineNow = q.from ? `${q.from} ${q.to}` : null
+      check(
+        `${look}: a new seed ${mood === 'sunset' ? 'keeps the line' : 'keeps the line or clears it, and never moves it'}`,
+        mood === 'sunset' ? lineNow === lineKept : lineNow === lineKept || lineNow === null,
+        `seed ${q.seed}, look ${q.look}, line ${lineNow ?? 'cleared'}`,
+      )
 
+      // A double-click returns to the seed's own direction and reach; a fresh drag first, in case Shuffle cleared the line.
+      await page.mouse.move(...at([0.3, 0.7]))
+      await page.mouse.down()
+      for (let i = 1; i <= 10; i++) await page.mouse.move(...at([0.3 + i * 0.03, 0.7 - i * 0.02]))
+      await page.mouse.up()
+      await waitForQuery((x) => Boolean(x.from))
       await page.mouse.dblclick(...at([0.5, 0.5]))
       q = await waitForQuery((x) => !x.from)
-      check(`${look}: a double-click returns to the seed's own direction and reach`, !q.from && !q.to && Number(q[moodKey]) === 0.5, page.url().split('?')[1])
+      check(`${look}: a double-click returns to the seed's own direction and reach`, !q.from && !q.to, page.url().split('?')[1])
 
       // Touch: a finger drag draws the line and neither scrolls the page nor selects text.
       const touch = (type, p) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: p ? [{ x: at(p)[0], y: at(p)[1] }] : [] })
