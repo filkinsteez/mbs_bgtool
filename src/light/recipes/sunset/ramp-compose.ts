@@ -463,6 +463,8 @@ const SUN_RISE = 0.1
 const DARK_L = 0.5
 /** How much deeper the light in the haze over dark land is under a warm light (pathColor's longer path). */
 const LAND_AIR_DEEPER = 1.5
+/** The least height (short sides) of Bold's glow line above the ridge's crest. */
+const BOLD_ABOVE_CREST = -0.1
 /** Under a sideways line, the most an open sky's edges lean and bow as a multiple of their own, and how much their softness changes along them. */
 const SIDE_SHAPE = 3
 const SIDE_SOFT = 0.22
@@ -943,12 +945,13 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // the brightest band, over water and land up to half of the sky's height by warm fill and seed,
   // higher in haze; under a dragged line, at its start.
   // Over land the glow's line stays a little above the ridge's crest, which would hide it. Bold's
-  // stays lower, leaving its Cyan band room above the glow.
+  // stays lower, leaving its Cyan band room above the glow, but not under the crest: there the
+  // ridge hides the Orange-red body and only its pale bridge shows, dimmed into the Meta Blue land.
   // Over land under a high line the glow's band is at least about the lens wide, or the lens
   // blurs it away and the frame is a field of dark ground.
   const highLand = clamp01((0.5 * tall - lineAt - 0.55 * tall) / (0.15 * tall))
   const lensBand = anchorY - crest + 1.5 * lerp(0.045, 0.12, softness)
-  const aboveCrest = land ? (packId !== 'bold' ? Math.max(anchorY - crest + 0.04, lerp(0, lensBand, highLand)) : lensBand * highLand) : 0
+  const aboveCrest = land ? Math.max(anchorY - crest + (packId !== 'bold' ? 0.04 : BOLD_ABOVE_CREST), lerp(0, lensBand, highLand)) : 0
   const glowRise = line ? dragRise : ground ? Math.max(glowShare(look, structure, warmShare, risePick, softness, day) * skyHeight, aboveCrest) : openRiseAt(anchorY)
   // How far the glow's lower side, the dusk band and the dimming toward the horizon reach. Over an
   // open sky a dragged line's horizon can lie far behind the glow; they keep the seed's own size
@@ -1238,6 +1241,9 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
   // under a warm light it has no clean mix with the light.
   const darkLand = warmLight && linearToOklab(srgbToLinearRgb(hexToSrgb(look.landTop[0])))[0] < DARK_L
   const litMost = darkLand ? Math.max(1, (2 / look.landTop[1] - 1) / Math.max(look.landLit, 1e-3)) : Infinity
+  // Land whose top is dark at its own light (Bold's Meta Blue ridge too) takes the warm light's
+  // deeper tail in its haze: dimmed over Meta Blue, Orange-red would mix into mauve and pink.
+  const dimLand = warmLight && linearToOklab(srgbToLinearRgb(hexToSrgb(look.landTop[0])).map((v) => v * look.landTop[1]))[0] < DARK_L
   const strip = lerp(lensStrip, Math.max(lerp(GLINT_SEA.strip[0], GLINT_SEA.strip[1], sea) * (0.5 * tall - lineAt), bankHeight > 0 ? lensStrip : 0.05), glints)
 
   const params: Record<string, ParamValue> = {
@@ -1429,7 +1435,7 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // Forest under Lime light turns olive, and Plum under Tan grey-brown. The light in a dark land
     // color's haze has come a longer way through the air and is deeper, as a warm light's tail is:
     // Lime goes toward Forest's green, where Lime itself at that low light reads olive.
-    groundHaze: [look.landHaze, land ? (darkLand ? (line ? 0.1 : 0.1 * tall) : Math.max(0.1 * tall, 0.25 * landRoom)) : 0.05 * tall, darkLand ? LAND_AIR_DEEPER : 0],
+    groundHaze: [look.landHaze, land ? (darkLand ? (line ? 0.1 : 0.1 * tall) : Math.max(0.1 * tall, 0.25 * landRoom)) : 0.05 * tall, dimLand ? LAND_AIR_DEEPER : 0],
     groundVeil: [land ? look.groundVeil * groundGain : 0, 0.35 * landRoom],
     // A tall land area carries more of the light, so a high line doesn't leave a dark field. A dark
     // land color takes no more of it than one stop over its own: brighter, Plum turns magenta and
