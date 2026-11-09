@@ -1104,8 +1104,13 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     const low = edges[edges.length - 1]
     const highest = -Math.min(topHeight - zenithRoom - tail * low[1], zenithCap)
     const under = Math.max(glowRise, land ? anchorY - crest : 0)
-    // Above a broad seed's warm haze, which reaches further up.
-    low[0] = Math.max(highest, Math.min(low[0], -(under + 0.3 * skyScale * Math.max(1, warmReach))))
+    // Above a broad seed's warm haze, which reaches further up. At the seed's own view, where the
+    // low sky is a warm light's own color (Elemental's Lime and Tan), the glow is already part of
+    // that band, and pushed up as far as the top fifth allows the light's band made the seeds'
+    // skies one picture: there it rises half as far, and the seed's depth decides the rest.
+    const ownBand = !line && packId !== 'atmospheric' && look.lowSky === look.light
+    const band = 0.3 * skyScale * Math.max(1, warmReach) * (ownBand ? 0.5 : 1)
+    low[0] = Math.max(highest, Math.min(low[0], -(under + band)))
   }
   // Under a long line Atmospheric's light seeds sink too little to give an all-sky frame a deep
   // side, so its sky's edges come down about the glow until the highest lies at most
