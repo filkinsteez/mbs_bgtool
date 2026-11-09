@@ -730,6 +730,9 @@ const FAN_ON_LINE = 0.55
 /** That share as a factor under thick clouds. */
 const FAN_THICK = 0.75
 
+/** How much of their brightening away from the point a thick-cloud seed's shafts keep under a line. */
+const RISE_THICK = 0.8
+
 /**
  * Thick clouds under a dragged line: the light's level, the clouds' optical depth and the light
  * left in their shadows, each as a factor. Thin-cloud seeds keep their own.
@@ -924,6 +927,8 @@ function streaksOnLine(params: Record<string, ParamValue>, line: ShortLine, skyH
   const fan = level - (share - 0.5) * width
   const reach = Math.hypot(line.length, 0.04)
   const scale = reach / Math.max(skyHeight, 0.05)
+  const riseKept = shade[1] > 1 ? RISE_THICK : 0.25
+  const nearDark = (1 + riseKept * rise[0]) / (1 + 0.25 * rise[0])
   return {
     center: line.from.map(round4),
     // The clouds move with the line's start, so dragging it moves the shafts as one piece
@@ -935,7 +940,10 @@ function streaksOnLine(params: Record<string, ParamValue>, line: ShortLine, skyH
     // point and fade out by the line's end.
     reach: round4(0.8 * reach),
     layer: [round4(layer[0] * scale), round4(layer[1] * scale), layer[2], layer[3]],
-    rise: [round4(0.25 * rise[0]), round4(rise[1] * scale), round4(rise[2] * scale), rise[3]],
+    // Thick clouds around the light darken the sky near it, so their shafts keep more of their
+    // brightening away from the point (their far shafts as bright as before, the sky near the
+    // point darker: see skyLevel); thin clouds let the light reach the point's surroundings.
+    rise: [round4(riseKept * rise[0]), round4(rise[1] * scale), round4(rise[2] * scale), rise[3]],
     // A sun high above shines through more gaps, so its shadows are narrow, and less light fills
     // them, so its shafts still read where its fan covers all of a tall frame.
     clouds: [round4(Math.min(64, (clouds[0] / scale) * (1 + GAPS_DOWN * down))), clouds[1], round4(clouds[2] * shade[1]), round4(clouds[3] * shade[2] * lerp(1, SHADOW_LIGHT_DOWN, down))],
@@ -957,7 +965,7 @@ function streaksOnLine(params: Record<string, ParamValue>, line: ShortLine, skyH
     // The brightest shafts point along the line, and the rest of the fan keeps a good share of
     // their light, so the shafts spread broadly instead of gathering into one column.
     skyPeak: round4(share),
-    skyLevel: [round4(skyLevel[0] * shade[0]), round4(0.35 * skyLevel[0] * shade[0]), skyLevel[2]],
+    skyLevel: [round4((skyLevel[0] * shade[0]) / nearDark), round4((0.35 * skyLevel[0] * shade[0]) / nearDark), skyLevel[2]],
   }
 }
 
