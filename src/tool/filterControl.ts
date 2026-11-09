@@ -17,22 +17,22 @@ export const FILTER_DIAL_KEY = 'filter'
  * The key of the slider under Filter for each filter. The tool panel shows it as "Strength" (`PANEL_LABELS`). Its
  * value is the filter's strength, `strength` in the URL.
  */
-export const STRENGTH_DIAL_KEYS: Readonly<Record<FilterKey, string>> = { grain: 'density', ascii: 'density', pixel: 'density' }
+export const STRENGTH_DIAL_KEYS: Readonly<Record<FilterKey, string>> = { grain: 'density', pixel: 'density' }
 
 /** Filters the tool offers, in panel order. A filter joins once it runs in the tool. */
-export const TOOL_FILTERS: readonly FilterKey[] = ['grain', 'ascii', 'pixel']
+export const TOOL_FILTERS: readonly FilterKey[] = ['grain', 'pixel']
 
 /** Off by default (the brief); a filter turned on starts at 0.5. */
 export const DEFAULT_FILTER: FilterState = { filter: 'none', strength: 0.5 }
 
 /**
- * The least value ASCII and Pixel get in the scene: the filter chain leaves out a filter at 0, but their Density 0 is
- * the coarsest grid, not off. Grain's Density 0 is no grain.
+ * The least value Pixel gets in the scene: the filter chain leaves out a filter at 0, but Pixel's Density 0 is the
+ * coarsest grid, not off. Grain's Density 0 is no grain.
  */
 const DENSITY_FLOOR = 0.001
-const FLOORED: readonly FilterKey[] = ['ascii', 'pixel']
+const FLOORED: readonly FilterKey[] = ['pixel']
 
-const LABELS: Readonly<Record<FilterChoice, string>> = { none: 'None', grain: 'Grain', ascii: 'ASCII', pixel: 'Pixel' }
+const LABELS: Readonly<Record<FilterChoice, string>> = { none: 'None', grain: 'Grain', pixel: 'Pixel' }
 
 const CHOICES: readonly FilterChoice[] = ['none', ...TOOL_FILTERS]
 

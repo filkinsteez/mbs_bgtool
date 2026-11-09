@@ -244,16 +244,9 @@
   vector-effect: non-scaling-stroke;
 }
 
-.tool-tile-icon > .tool-tile-fill,
-.tool-tile-icon > .tool-tile-glyph {
+.tool-tile-icon > .tool-tile-fill {
   fill: currentColor;
   stroke: none;
-}
-
-.tool-tile-glyph {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 15px;
-  font-weight: 600;
 }
 
 .tool-tile-shape {

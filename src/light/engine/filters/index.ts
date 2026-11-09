@@ -1,21 +1,20 @@
 import type { OutputSettings } from '../../scene'
 import { GRAIN_FILTER } from '../grain'
-import { ASCII_FILTER } from './ascii'
 import { PIXEL_FILTER } from './pixel'
 import type { FilterKey, OutputFilter } from './types'
 
 export type { FilterFrame, FilterKey, FilterSource, OutputFilter } from './types'
 
 /** Every filter strength in the output settings. */
-export const FILTER_KEYS: readonly FilterKey[] = ['grain', 'ascii', 'pixel']
+export const FILTER_KEYS: readonly FilterKey[] = ['grain', 'pixel']
 
 /**
  * The output filter chain, in the order the stages run: grain, then the cell
- * filters, then (in the output pass itself) the sRGB encode and the dither.
+ * filter, then (in the output pass itself) the sRGB encode and the dither.
  * A filter plugs in by exporting an OutputFilter from its own file in this
  * folder and adding it here.
  */
-export const OUTPUT_FILTERS: readonly OutputFilter[] = [GRAIN_FILTER, ASCII_FILTER, PIXEL_FILTER]
+export const OUTPUT_FILTERS: readonly OutputFilter[] = [GRAIN_FILTER, PIXEL_FILTER]
 
 /** The stages whose strength is above 0, in chain order. */
 export function activeFilters(output: OutputSettings): OutputFilter[] {

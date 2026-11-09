@@ -28,14 +28,15 @@ describe('filter control in the panel', () => {
     expect(state).toMatchObject({ filter: 'grain', strength: 0.8 })
     expect(toQuery(state)).toBe('mood=sunset&look=bands&pack=bold&intensity=0.5&softness=0.5&horizon=0.5&seed=1&format=16x9&filter=grain&strength=0.8')
     const scene = withFilter(buildScene(state.look, getPack(state.pack), state.seed, { intensity: 0.5, softness: 0.5, mood: 0.5 }), state)
-    expect(scene.output).toMatchObject({ grain: 0.8, ascii: 0, pixel: 0 })
+    expect(scene.output).toMatchObject({ grain: 0.8, pixel: 0 })
+    expect(scene.output).not.toHaveProperty('ascii')
 
-    DialStore.updateValue(id, FILTER_DIAL_KEY, 'ascii')
+    DialStore.updateValue(id, FILTER_DIAL_KEY, 'pixel')
     DialStore.updatePanel(id, 'Check', config())
     expect(paths()).toEqual(['mood', 'look', 'colors', 'intensity', 'softness', 'horizon', 'seed', 'filter', 'density', 'format', 'export'])
     expect(labels()).toContain('Density')
     DialStore.updateValue(id, 'density', 0.3)
-    expect(readToolState(DialStore.getValues(id), 'sunset')).toMatchObject({ filter: 'ascii', strength: 0.3 })
+    expect(readToolState(DialStore.getValues(id), 'sunset')).toMatchObject({ filter: 'pixel', strength: 0.3 })
 
     DialStore.updateValue(id, FILTER_DIAL_KEY, 'none')
     DialStore.updatePanel(id, 'Check', config())

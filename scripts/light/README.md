@@ -285,14 +285,14 @@ Drags a line on the tool page in system Chrome (1440x900 at 2x, so the preview r
 
 `output.grain` is the grain's Density 0..1 (`src/light/engine/grain.ts`): fine specks on Oklab L at output size, after the tone curve and before dither, like Figma's Noise effect. A speck is one pixel at 1080 px on the short side (about 2 px with soft edges in a 4K export); each output pixel averages the specks over its area, so a smaller preview shows what the export shows at that size. Density is the share of cells with a speck: 0 is off, 1 a speck in every cell. Each speck is lighter or darker by the same amount at every Density, so the mean stays: Density 0.5 is about 1.7 % Oklab L on an L 0.45 grey in a 4K export, Density 1 about 2.4 %. It fades to 0 at black and near white. Older presets' `grainSize` (px) and `grainChroma` are ignored.
 
-### Output filters: grain, then ASCII or Pixel, then dither
+### Output filters: grain, then Pixel, then dither
 
-The output pass (`src/light/engine/output.ts`) runs a chain of filter stages on every output pixel, after the Mitchell resolve and the tone curve and before the sRGB encode and the dither. Each stage has a strength in the output settings, 0..1: `output.grain`, `output.ascii`, `output.pixel`. A stage at 0 is left out of the shader. Stages run in the order of `OUTPUT_FILTERS` in `src/light/engine/filters/index.ts` (grain first). The tool turns on one filter at a time; the engine runs whatever is above 0.
+The output pass (`src/light/engine/output.ts`) runs a chain of filter stages on every output pixel, after the Mitchell resolve and the tone curve and before the sRGB encode and the dither. Each stage has a strength in the output settings, 0..1: `output.grain`, `output.pixel`. A stage at 0 is left out of the shader. The ASCII filter was removed on 2026-11-09 (owner). Stages run in the order of `OUTPUT_FILTERS` in `src/light/engine/filters/index.ts` (grain first). The tool turns on one filter at a time; the engine runs whatever is above 0.
 
 To plug in a filter:
 
 1. Write `src/light/engine/filters/<name>.ts` exporting an `OutputFilter` (`filters/types.ts`):
-   - `key`: `'ascii'` or `'pixel'`.
+   - `key`: the stage's name, added to `FilterKey` in `filters/types.ts` and to `OutputSettings` in `src/light/scene.ts`.
    - `glsl`: the stage's uniforms and helpers (prefix them with the stage's name) and `vec3 <apply>(vec3 display, ivec2 px, float weight)`. `display` is display-linear color, 0..1 per channel, in and out. `px` is the output pixel, x right and y down. `weight` is the recipe's grain weight (most stages ignore it). The pass has the chunk library and `uniform int uSeed;`. Size everything in fractions of the short side, so a preview and an export show the same cells.
    - `apply`: the function's name.
    - `uniforms(strength, { width, height, seed })`: the stage's uniforms at that output size, for a strength above 0.

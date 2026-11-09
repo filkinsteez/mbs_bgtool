@@ -118,9 +118,7 @@ export interface OutputSettings {
    * those keys are ignored.
    */
   grain: number
-  /** ASCII filter strength 0..1; 0 off. Output filters run in the order of OUTPUT_FILTERS (engine/filters). */
-  ascii: number
-  /** Pixel filter strength 0..1; 0 off. */
+  /** Pixel filter strength 0..1; 0 off. Output filters run in the order of OUTPUT_FILTERS (engine/filters). */
   pixel: number
   /**
    * Paper toe 0..1 below nominal: dim light gets purer, so dim warm light
@@ -148,7 +146,6 @@ export const DEFAULT_LENS: LensSettings = {
 export const DEFAULT_OUTPUT: OutputSettings = {
   exposure: 0,
   grain: 0,
-  ascii: 0,
   pixel: 0,
   toe: 0,
 }
@@ -183,7 +180,6 @@ export const LENS_COLORS: readonly { key: StringKeys<LensSettings>; label: strin
 export const OUTPUT_NUMBERS: readonly NumericSetting<NumericKeys<OutputSettings>>[] = [
   { key: 'exposure', label: 'Exposure', min: -4, max: 4, step: 0.01 },
   { key: 'grain', label: 'Grain', min: 0, max: 1, step: 0.01 },
-  { key: 'ascii', label: 'ASCII', min: 0, max: 1, step: 0.01 },
   { key: 'pixel', label: 'Pixel', min: 0, max: 1, step: 0.01 },
   { key: 'toe', label: 'Paper toe', min: 0, max: 1, step: 0.01 },
 ]

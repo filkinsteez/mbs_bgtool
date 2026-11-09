@@ -91,11 +91,6 @@ const FILTER_ICONS: Readonly<Record<FilterChoice, ReactNode>> = {
     </>
   ),
   grain: GRAIN_DOTS.map(([x, y, r]) => <circle key={`${x} ${y}`} className="tool-tile-fill" cx={x} cy={y} r={r} />),
-  ascii: (
-    <text className="tool-tile-glyph" x="10" y="15" textAnchor="middle">
-      A
-    </text>
-  ),
   pixel: PIXEL_CELLS.map(({ x, y, opacity }) => (
     <rect key={`${x} ${y}`} className="tool-tile-fill" x={x} y={y} width="5.5" height="5.5" rx="1" fillOpacity={opacity} />
   )),
