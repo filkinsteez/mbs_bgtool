@@ -1373,6 +1373,11 @@ export function composeRamp(packId: PackId, controls: ControlValues, seed: numbe
     // toward the sky: it meets Cyan through amber cream and white, not peach, salmon or green.
     bridgeCore: 1,
     bridgeSky: look.coreColor !== look.light ? 1 : 0,
+    // Elemental's sky pales into its light's own color, so its bridge over the blue side goes
+    // through white to Meta Blue's pale tint: Tan's or Lime's pale tint over the blue reads grey.
+    // Under a long line, whose far side is clear Meta Blue, the bridge's warm pale tint is the
+    // light's color in the frame, and it keeps it.
+    bridgeCool: packId === 'elemental' ? 0.75 * (1 - longLine) : 0,
     duskStop: dusk ? gains.length - 1 : -1,
     land: 0,
     // One lens over the whole scene: Softness is its radius.

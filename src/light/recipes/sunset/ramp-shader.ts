@@ -92,6 +92,7 @@ uniform vec3 uBridgeTint;    // luminance 1
 uniform vec3 uBandTint;      // under a field of glints, the low sky's pale tint that the band along the water's far edge takes
                              // away from the light, at luminance 1
 uniform float uBridgeSky;    // how far the bridge's tint turns neutral toward the sky's side of it
+uniform float uBridgeCool;   // how far the bridge's tint over the sky's cool side goes through white to the cool parts' pale tint
 uniform int uDuskStop;       // a dark dusk band low in the sky that the bridge leaves alone (-1: none)
 
 uniform vec4 uSkyPatch;      // light change inside the sky: amount, 1 / patch size, mean over the top fifth (removed), width over height
@@ -547,6 +548,7 @@ vec3 rampSky(vec2 p, out vec3 core) {
   }
   addPart(parts, veilLight * skyGain);
   float coolY = parts.y - parts.warm;
+  vec3 coolPale = parts.coolPale / max(luminance(parts.coolPale), 1e-6);
   if (parts.warm > 1e-6 && coolY > 1e-6) {
     float sides = min(parts.warmSat / parts.warm, (parts.sat - parts.warmSat) / coolY);
     float both = smoothstep(0.02, 0.15, min(parts.warm, coolY) / parts.y);
@@ -554,7 +556,6 @@ vec3 rampSky(vec2 p, out vec3 core) {
     float lost = both * clamp(1.0 - length(blend.yz) / max(blend.x, 1e-3) / max(sides, 1e-4), 0.0, 1.0);
     if (lost > GREY_PULL.x) {
       float cool = 1.0 - smoothstep(-0.3, 0.3, warmth(sky));
-      vec3 coolPale = parts.coolPale / max(luminance(parts.coolPale), 1e-6);
       vec3 tint = mix(mix(uBridgeTint, vec3(1.0), clamp(2.0 * cool, 0.0, 1.0)), coolPale, clamp(2.0 * cool - 1.0, 0.0, 1.0));
       // The light the glows add in front of the sky counts toward how light the bridge is.
       float y = luminance(sky);
@@ -571,7 +572,14 @@ vec3 rampSky(vec2 p, out vec3 core) {
     float bright = uBridge.z > 0.0 ? smoothstep(0.5 * uBridge.z, 1.5 * uBridge.z, y) : 1.0;
     float pull = min(1.0, uBridge.x * hueSpread(mixed) / 0.25) * bright * lightReach * behind;
     float lifted = max(y, 1.0 - (1.0 - y) * (1.0 - uBridge.y));
-    light += pull * (lifted * bridgeTint - light);
+    // Where the sky's pale side is its light's own color (Elemental), the bridge over its blue side
+    // takes Meta Blue's own pale tint, through white: the light's pale tint over the blue reads grey.
+    vec3 tint = bridgeTint;
+    if (uBridgeCool > 0.0) {
+      float cool = 1.0 - smoothstep(-0.3, 0.3, warmth(max(light, vec3(0.0))));
+      tint = mix(bridgeTint, mix(mix(bridgeTint, vec3(1.0), clamp(2.0 * cool, 0.0, 1.0)), coolPale, clamp(2.0 * cool - 1.0, 0.0, 1.0)), uBridgeCool);
+    }
+    light += pull * (lifted * tint - light);
   }
   // The bridge leaves the dusk band alone: lifted where the glow meets it, the band would draw a
   // pale line between the two.
