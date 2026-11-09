@@ -50,9 +50,9 @@ Later on 2026-11-02 the owner asked for crops of the Meta logo outline as Contou
     Softness and the mood controls (Light position, Horizon) are gone,
     and looks are softer in general. No Seed slider (owner, 2026-11-06).
   - The panel is four numbered steps, top to bottom: "1. Pick a color
-    pack" (the pack strips, Strength, Shuffle), "2. Pick a mood",
-    "3. Apply a filter" (None, Grain, Pixel and the filter's Strength),
-    "4. Export" (Format and the Export button).
+    pack" (the pack strips, Strength), "2. Pick a mood" (the moods, then
+    Shuffle), "3. Apply a filter" (None, Grain, Pixel and the filter's
+    Strength), "4. Export" (Format and the Export button).
   - Color: more control over the mix inside the picked pack (a Meta Blue
     on/off toggle is asked for; a lead color or percentages are being
     designed). Contour shows more of the pack's colors, where light
