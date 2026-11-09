@@ -51,25 +51,31 @@ Later on 2026-11-02 the owner asked for crops of the Meta logo outline as Contou
     and Rush. Each mood's looks merge into one look that keeps some
     variety, with fewer variations so the results look branded. Code ids
     such as `sunset.bands` stay.
-  - Controls stay minimal for non-designers: Strength and Shuffle.
-    Softness and the mood controls (Light position, Horizon) are gone,
-    and looks are softer in general. No Seed slider (owner, 2026-11-06).
+  - Controls stay minimal for non-designers: Shuffle, and the filter's
+    Strength. The light's Strength slider (removed by the owner later on
+    2026-11-09), Softness and the mood controls (Light position, Horizon)
+    are gone, and looks are softer in general. No Seed slider (owner,
+    2026-11-06).
   - The panel is four numbered steps, top to bottom: "1. Pick a color
-    pack" (the pack strips, Strength), "2. Pick a mood" (the moods, then
-    Shuffle), "3. Apply a filter" (None, Grain, Pixel and the filter's
-    Strength), "4. Export" (Format and the Export button).
-  - Color: more control over the mix inside the picked pack (a Meta Blue
-    on/off toggle is asked for; a lead color or percentages are being
-    designed). Contour shows more of the pack's colors, where light
-    would naturally put them.
+    pack" (the pack strips, then the color control once built), "2. Pick
+    a mood" (the moods, then Shuffle), "3. Apply a filter" (None, Grain,
+    Pixel and the filter's Strength), "4. Export" (Format and the Export
+    button).
+  - Color is the biggest piece of feedback: the pack's colors aren't
+    represented properly. Build a simple control that changes the
+    percentage of each pack color in the picture (a Meta Blue on/off
+    toggle is asked for too). The picture must show those percentages,
+    and the design stays the same. Contour shows more of the pack's
+    colors, where light would naturally put them.
   - A history of recent backgrounds is wanted: build a first version and
     change it with the owner's feedback. It replaces the 2026-11-06 "no
     Back button" rule.
   - Type: a toggle that showed a sample headline over the preview was
     tried and removed by the owner on 2026-11-09. Don't bring it back
     unless the owner asks.
-- Still in force from 2026-11-06 (owner): the panel's two Strength
-  sliders keep the keys `intensity` and `density`. Mood is picked from
+- Still in force from 2026-11-06 (owner): the filter's Strength slider
+  keeps the key `density`; the engine's `intensity` input stays, at a
+  fixed value, now that its slider is gone. Mood is picked from
   small pictures, Filter from icons and Format from shapes, each with its
   name, not dropdowns; the pictures are fixed renders from
   `scripts/light/panel-pictures.mjs`, not live, in the Atmospheric pack
