@@ -288,6 +288,8 @@ interface Entry {
   under: number
   /** A thin bright line in the middle of its place instead of a band. */
   line?: boolean
+  /** A thin dark ground under an ice sky, kept as it is. */
+  ground?: boolean
 }
 
 /**
@@ -340,12 +342,13 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   // other or both. A pack with no dark color (Bold) may end with a color again under less light: Meta Blue sunk to
   // a deep navy, or Orange-red itself, since Meta Blue right below Orange-red meets it through the lens as
   // magenta. Orange-red keeps most of its light: much dimmer it reads as brick.
-  // A pack whose light is near-white (Atmospheric) may also put its darkest chosen color as a band above the sky
-  // (a night top), Meta Blue again, under less light, as a band low in the frame (a low blue), or its near-white
-  // light as a thin bright line instead of a band (an ice line). Its greys change places too: an overcast grey top
-  // with Meta Blue as a band lower down (a grey top), or the grey between the sky and the light (steel first), so
-  // its seeds differ in where Meta Blue sits and in the order of their greys.
-  type Form = 'plain' | 'nightTop' | 'lowBlue' | 'iceLine' | 'greyTop' | 'steelFirst'
+  // A pack whose light is near-white (Atmospheric) never has a Meta Blue sky over a pale band over dark ground:
+  // that reads as Ramp's picture and made those seeds look like each other. Its near-white light is the sky itself,
+  // a wide pale sky over the greys with Meta Blue lower down as a narrower band above a thin dark ground, or right
+  // under the sky (an ice sky); or its darkest chosen color is a narrow band above the sky (a night top); or its
+  // overcast grey is the sky with Meta Blue as a band lower down (a grey top). Its dark colors are never wide parts,
+  // so its frames stay mostly light, and its seeds differ in where Meta Blue sits and in the order of their greys.
+  type Form = 'plain' | 'nightTop' | 'greyTop' | 'iceSky' | 'iceSkyHigh'
   const build = (chosenLight: string | undefined, chosenDarks: readonly string[], base: boolean, form: Form = 'plain'): Entry[] => {
     const picked = rest.filter((hex) => (lights.includes(hex) ? hex === chosenLight : darks.includes(hex) ? chosenDarks.includes(hex) : true))
     const list: Entry[] = [{ hex: sky, under: 1 }, ...picked.map((hex) => ({ hex, under: 1 }))]
@@ -355,19 +358,17 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
       const at = list.findIndex((e) => e.hex === darkest)
       if (at > 0) list.unshift(...list.splice(at, 1))
     }
-    if (form === 'lowBlue') {
-      const at = list.findIndex((e, i) => i > 0 && lightness(e.hex) < 0.45)
-      list.splice(at > 0 ? at : list.length, 0, { hex: sky, under: 0.7 })
-    }
     const greyAt = list.findIndex((e, i) => i > 0 && e.hex === tintHex)
     if (form === 'greyTop' && greyAt > 0) list.unshift(...list.splice(greyAt, 1))
-    if (form === 'steelFirst' && greyAt > 1) list.splice(1, 0, ...list.splice(greyAt, 1))
-    if (form === 'iceLine') {
-      // The line lies over the band below it: over Meta Blue it would read lavender through the lens.
-      const at = list.findIndex((e, i) => i > 0 && i < list.length - 1 && lightness(e.hex) > 0.95)
-      if (at > 0 && lightness(list[at + 1].hex) >= 0.45) {
-        const [near] = list.splice(at, 1)
-        list.splice(at + 1, 0, { ...near, line: true })
+    if (form === 'iceSky' || form === 'iceSkyHigh') {
+      const at = list.findIndex((e, i) => i > 0 && lightness(e.hex) > 0.95)
+      if (at > 0) {
+        const [ice] = list.splice(at, 1)
+        const [blue] = list.splice(0, 1, ice)
+        const ground = list.findIndex((e, i) => i > 0 && dark(e))
+        list.splice(form === 'iceSkyHigh' ? 1 : ground > 0 ? ground : list.length, 0, blue)
+        const last = list.length - 1
+        if (dark(list[last])) list[last] = { ...list[last], ground: true }
       }
     }
     return list
@@ -399,8 +400,12 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   // read as a second, muddier color.
   const shareOf = (e: Entry, i: number, wide: readonly number[], draw: (lo: number, hi: number) => number, structure: Structure = 'stack') => {
     if (e.line) return draw(0, 0.05)
-    // The sky is anything from a sliver to a wide area; as one of the seed's wide parts, most of the frame.
-    if (i === 0 && !wide.includes(0)) return structure === 'field' ? draw(0.6, 3.5) : structure === 'ramp' ? draw(0.4, 2.5) : draw(0.4, 3.5)
+    // The sky is anything from a sliver to a wide area; as one of the seed's wide parts, most of the frame. A dark
+    // sky (a night top) stays a narrower band along the top.
+    if (i === 0 && !wide.includes(0)) {
+      if (dark(e)) return draw(0.3, 0.8)
+      return structure === 'field' ? draw(0.6, 3.5) : structure === 'ramp' ? draw(0.4, 2.5) : draw(0.4, 3.5)
+    }
     const white = lightness(e.hex) > 0.95 ? 0.5 : 1
     if (structure === 'field') return (wide.includes(i) ? draw(6, 9) : draw(0.1, 0.3)) * white
     if (structure === 'ramp') return (wide.includes(i) ? draw(2.5, 3.5) : draw(0.05, 0.2)) * white
@@ -416,13 +421,11 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   type Structure = 'field' | 'ramp' | 'stack'
   type Choice = { light: string | undefined; darks: readonly string[]; base: boolean; wide: readonly number[]; zenith: number; form: Form; structure: Structure }
   const choices: Choice[] = []
-  const forms: Form[] = lights.length ? ['plain'] : ['plain', 'nightTop', 'lowBlue', 'iceLine', 'greyTop', 'steelFirst']
+  const forms: Form[] = lights.length ? ['plain'] : ['iceSky', 'iceSkyHigh', 'nightTop', 'greyTop']
   for (const [li, l] of (lights.length ? lights : [undefined]).entries()) {
     for (const d of darks.length > 1 ? [[darks[0]], [darks[1]], darks] : [darks]) {
       for (const base of darks.length ? [false] : [true, false]) {
         for (const form of forms) {
-          // A low blue only with one dark color: with two, the stack is too crowded for the lens.
-          if (form === 'lowBlue' && d.length > 1) continue
           const list = build(l, d, base, form)
           const can = list.map((e, i) => (e.line ? -1 : i)).filter((i) => i >= 0)
           const wides = [...can.map((i) => [i]), ...can.flatMap((i, k) => can.slice(k + 1).map((j) => [i, j]))]
@@ -436,6 +439,10 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
                 : 'stack'
           wides.forEach((wide, k) => {
             if (li > 0 && k % 2 === 1) return
+            // Under an ice sky Meta Blue stays a narrower band and the ground thin, and a night top and the dark ground
+            // under it stay narrow too, so the frame stays mostly light.
+            const iceSky = form === 'iceSky' || form === 'iceSkyHigh'
+            if ((iceSky || form === 'nightTop') && wide.some((i) => dark(list[i]) || (iceSky && list[i].hex === sky))) return
             for (const zenith of [0, 1.1]) choices.push({ light: l, darks: d, base, wide, zenith, form, structure: structureOf(wide) })
           })
         }
@@ -589,7 +596,7 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     let third = boldish && thirdDraw < 0.55
     for (let i = list.length - 1; i >= 1; i--) {
       const e = list[i]
-      if (wideEntries.includes(e) || e.line) continue
+      if (wideEntries.includes(e) || e.line || e.ground) continue
       const bright = lightness(e.hex) >= 0.6
       // Near-white Ice doesn't become a line here: it is Atmospheric's light, and a light drawn as a line on the sky
       // leaves a frame under a line through it nothing but sky.
@@ -879,6 +886,7 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   // A grey sky (Atmospheric's Slate or Near-black night top, Steel's overcast top) keeps its own lightness:
   // greys are told apart by lightness, so darker toward the top it reads as the next grey.
   const greySky = oklch(list[0].hex)[1] < 0.04
+  const lightGreySky = greySky && !dark(list[0])
   const zenith = greySky ? 0 : choice.zenith
   // The image's light: its warm or light color, else the brightest after the sky (Ice).
   const light = choice.light ?? list.slice(1).reduce((a, b) => (lightness(b.hex) > lightness(a.hex) ? b : a)).hex
@@ -1046,8 +1054,9 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     b.light = baseLight(list, i + 1) * lift * keep * (b.line ? 1 : iceCap(b.color, level)) * (1 + 0.6 * column)
     b.sun = Math.max(column, 1 - 1 / lift)
     if (warmLight && (darkAt(i - 1) || darkAt(i + 1))) b.vary = 0.5
-    // The light's pale core grows with Intensity up to the middle (`hazeOf`).
-    if (i === lightBand && haze.pale > 0) {
+    // The light's pale core grows with Intensity up to the middle (`hazeOf`). Under a near-white sky (an ice sky)
+    // the sky is the palest part already, and a grey band's core would turn white.
+    if (i === lightBand && haze.pale > 0 && lightness(list[0].hex) <= 0.95) {
       b.paleOwn = haze.paleOwn
       b.pale = haze.pale * Math.min(1, level) ** 1.2
     }
@@ -1099,10 +1108,18 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
   const skyWander = skyRnd.between(0.025, 0.05)
   const skyLattice = skyRnd.between(0.9, 1.5)
   // Where the sky pales leans against the sky's lower edge, and where its far part turns dark leans against that,
-  // so no two of them run parallel.
+  // so no two of them run parallel. Each leans away from the other's side, a seeded side where the other is level,
+  // changing over gradually so a drag that tilts an edge through level never flips a lean at once.
   const skyEdgeLean = bands[0] ? (bands[0].edge.tilt * frameH) / frameW : 0
-  const veilLean = skyEdgeLean - (Math.sign(skyEdgeLean) || skyRnd.sign()) * skyRnd.between(0.05, 0.12)
-  const farLean = veilLean - Math.sign(veilLean) * skyRnd.between(0.06, 0.14)
+  const veilStep = skyRnd.between(0.05, 0.12)
+  const farStep = skyRnd.between(0.06, 0.14)
+  const levelSide = skyRnd.sign()
+  const sideOf = (lean: number) => {
+    const t = Math.tanh(lean / 0.005)
+    return t + levelSide * (1 - Math.abs(t))
+  }
+  const veilLean = skyEdgeLean - sideOf(skyEdgeLean) * veilStep
+  const farLean = veilLean - sideOf(veilLean) * farStep
   const skyDrift: [number, number, number, number] = [skyWander, skyLattice, (veilLean * frameW) / frameH, (farLean * frameW) / frameH]
   // A wide area's own light falls off away from the light: deeper toward its far side, paler toward the light. Not
   // in Lime or Tan: dimmed, they read olive and khaki.
@@ -1144,9 +1161,12 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
     sun,
     lightVary,
     skyFall: greySky ? 0 : zenith + 3 * Math.max(0, 1 - level),
-    skyLift: 1.2 * Math.max(0, level - 1),
-    // Lighter than its hex, a grey reads as Meta Blue's pale side, and the sky's light change lifts parts of it.
-    skyLight: greySky && !dark(list[0]) ? 0.88 : 1,
+    // A light grey sky gets darker away from the light's column (to three quarters of its light), so it is never a
+    // flat field; it is at its own light only at the column.
+    skyLift: 1.2 * Math.max(0, level - 1) + (lightGreySky ? GREY_SKY_FALL / (1 - GREY_SKY_FALL) : 0),
+    // Lighter than its hex, a grey reads as Meta Blue's pale side, and the sky's light change lifts parts of it. A
+    // near-white sky (an ice sky) stays further below white, so drawn out under a long line it never turns flat white.
+    skyLight: lightGreySky ? (lightness(list[0].hex) > 0.95 ? 0.75 : 0.88) * (1 - GREY_SKY_FALL) : 1,
     dim,
     lightAt: spanOf(now),
     seedSpan,
@@ -1170,6 +1190,9 @@ function stack(pack: ColorPack, seed: number, R: number, level: number, horizon:
  * whole frame still ends at the top of the sky, so the frame shows the sky's paling and not the sky beyond it.
  */
 const MAX_ZOOM = 8
+
+/** How much darker a light grey sky is away from the light's column than at it. */
+const GREY_SKY_FALL = 0.25
 
 /** x held between lo and hi: unchanged more than `knee` inside them, bending smoothly onto them beyond. */
 function softLimit(x: number, lo: number, hi: number, knee: number): number {
