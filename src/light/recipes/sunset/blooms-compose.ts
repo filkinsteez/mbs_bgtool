@@ -214,10 +214,11 @@ const SPREAD_DRAG_REACH: Readonly<Record<Spread, number>> = { small: 0.72, broad
 /**
  * Beyond an edge pointing away: how far along the edge the light comes in (short sides), clearly to one side of the
  * line's start, so seeds differ in where the light enters; and its lit side's reach by deep form (the deep blue on the
- * far side shows the form, FORM_BACK_TURN).
+ * far side shows the form, FORM_BACK_TURN). Over a whole side of deep blue it reaches about as far as over a band: less
+ * far, the far sky and the deep blue left the frame mostly navy.
  */
 const EDGE_SHIFT: readonly [number, number] = [0.25, 0.65]
-const FORM_BEHIND: Readonly<Record<DeepForm, number>> = { band: 1.35, corner: 1, side: 0.7 }
+const FORM_BEHIND: Readonly<Record<DeepForm, number>> = { band: 1.35, corner: 1, side: 1.3 }
 /** The most that shift takes the light from the line's start, against half the frame along the edge. */
 const EDGE_SHIFT_MAX = 0.7
 /**
@@ -713,15 +714,15 @@ function followDrag(
     const warmOnes = keptOut.filter((other) => other !== glow && warm(other.color))
     for (const other of warmOnes) at = apart(at, glow.radius, other)
     const near = Math.min(1, ...warmOnes.map((other) => nearness(at, glow.radius, other)))
-    // Beside a broad lead beyond an edge pointing away (Bold's high-above view) a small cyan bloom out on the darker blue of
-    // a wide frame reads as a bubble: as the light goes out it grows larger, softer and fainter, a broad light over the dim
-    // blue. A narrow frame it would fill, and there its light keeps the warm light's dim edge from meeting the blue in khaki.
+    // Beside a broad lead beyond an edge pointing away (Bold's high-above view) a cyan bloom out on the darker blue of a wide
+    // frame falls off more softly as the light goes out, so it is a broad light, not a bubble. It keeps its own size and
+    // strength: larger and fainter, its dim light over the blue was a dull teal field. A narrow frame it would fill, and
+    // there its light keeps the warm light's dim edge from meeting the blue in khaki.
     const out = broadLead ? outWide * wide : 0
     return {
       ...glow,
       at,
-      gain: glow.gain * lerp(DRAG_OVERLAP_GAIN, 1, smoothstep(0.5, 1, near)) * lerp(1, OUT_CYAN_GAIN, out),
-      radius: glow.radius * lerp(1, OUT_CYAN_SIZE, out),
+      gain: glow.gain * lerp(DRAG_OVERLAP_GAIN, 1, smoothstep(0.5, 1, near)),
       beta: glow.beta * lerp(1, OUT_CYAN_SOFT, out),
     }
   })
@@ -807,10 +808,8 @@ const DRAG_APART = 0.6
 const DRAG_APART_LEAD = 0.6
 /** A cyan bloom's strength where it still lies on a warm one under a dragged line. */
 const DRAG_OVERLAP_GAIN = 0.45
-/** Beyond an edge pointing away, a cyan bloom beside a broad lead: its size, falloff and strength against its own. */
-const OUT_CYAN_SIZE = 1.25
+/** Beyond an edge pointing away, a cyan bloom beside a broad lead: its falloff against its own. */
 const OUT_CYAN_SOFT = 0.8
-const OUT_CYAN_GAIN = 0.6
 /** The broad warm lead's light, against its middle, out to which a cyan bloom moves from it under a dragged line. */
 const DRAG_CYAN_ON_LEAD = 0.4
 /** The same for a white bloom (Ice) beside a white lead. */
@@ -2323,7 +2322,7 @@ export function composeLayout(colors: readonly Rgb[], seed: number, controls: Bl
           veilPlateau: cyanPack ? CYAN_BAND_PLATEAU : null,
           broadLead: cyanPack,
           // Beyond an edge pointing away, Bold's light comes in toward the seed's own side, and its deep form sets how far
-          // its lit side reaches down the frame (a band of deep blue leaves it the most) and where the deep blue lies.
+          // its lit side reaches down the frame (a corner of deep blue leaves it the least) and where the deep blue lies.
           edgeShift: boldForm ? side * lerp(EDGE_SHIFT[0], EDGE_SHIFT[1], random(seed * 9173 + 31)()) : 0,
           behindScale: boldForm ? FORM_BEHIND[boldForm.deep] : groundBlends && dragStyle === 'third' ? lerp(THIRD_BEHIND, 1, smoothstep(0.5, 1, aspect)) : 1,
           groundTilt: lerp(-GROUND_DRAG_TILT, GROUND_DRAG_TILT, uDarkTilt),
