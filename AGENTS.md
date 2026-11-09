@@ -79,5 +79,5 @@ Later on 2026-11-02 the owner asked for crops of the Meta logo outline as Contou
   reposition the gradient" in the middle of the preview, shown until the
   first drag (`src/tool/Preview.tsx`, `src/tool/Tool.tsx`). Keep it. Since
   2026-11-06 it shows on every page load, not once per browser (owner).
-  Since 2026-11-09 pressing a slider, or moving one with the keys, also
-  hides it (owner).
+  Since 2026-11-09 using any control in the panel (pressing or clicking
+  it, or a key that changes it) also hides it (owner).

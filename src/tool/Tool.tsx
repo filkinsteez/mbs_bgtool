@@ -55,7 +55,10 @@ const frameAspect = (format: ExportAspect) => EXPORT_SIZES[format].width / EXPOR
 const isTextField = (target: EventTarget | null) =>
   target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select') !== null)
 
-const inSlider = (target: EventTarget | null) => target instanceof Element && target.closest('.dialkit-slider-wrapper') !== null
+/** The panel's sliders, tiles and buttons. */
+const PANEL_CONTROL = '.dialkit-slider-wrapper, button, [role="button"]'
+
+const inControl = (target: EventTarget | null) => target instanceof Element && target.closest(PANEL_CONTROL) !== null
 
 export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const [start] = useState(() => parseQuery(searchParams))
@@ -67,7 +70,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const [seedHistory, setSeedHistory] = useState(EMPTY_SEED_HISTORY)
   const [drag, setDrag] = useState(start.drag)
   const [dragging, setDragging] = useState(false)
-  // The drag hint shows on every page load until the first drag or the first press or key move of a slider
+  // The drag hint shows on every page load until the first drag or the first use of a control in the panel
   // (owner, 2026-11-06 and 2026-11-09).
   const [dragHint, setDragHint] = useState(true)
   const exportingRef = useRef(false)
@@ -284,11 +287,15 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
         ref={panelRef}
         className="tool-panel dial-column"
         onPointerDownCapture={(event) => {
-          if (inSlider(event.target)) setDragHint(false)
+          if (inControl(event.target)) setDragHint(false)
+        }}
+        onClickCapture={(event) => {
+          if (inControl(event.target)) setDragHint(false)
         }}
         onKeyDown={(event) => {
-          // The panel's key handler (usePanelAccess) runs first and prevents the default for the keys that move a slider.
-          if (event.defaultPrevented && inSlider(event.target)) setDragHint(false)
+          // A key that changes a control has its default prevented by now, by usePanelAccess's handler on this
+          // element (sliders) or by TilePicker's own (tiles).
+          if (event.defaultPrevented && inControl(event.target)) setDragHint(false)
         }}
       >
         <ToolPanel
