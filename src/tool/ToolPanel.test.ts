@@ -10,8 +10,7 @@ const SLOTS = [
   { paths: ['mood'], replace: true, card: 'mood', step: '2. Pick a mood' },
   { paths: ['seed'], replace: true, card: 'mood' },
   { paths: ['filter'], replace: true, card: 'filter', step: '3. Apply a filter' },
-  { paths: ['format'], replace: true, card: 'format', step: '4. Export' },
-  { paths: ['export'] },
+  { paths: ['format'], replace: true, step: '4. Export' },
 ]
 
 /** What a block shows: a slot as its first path, a run of DialKit controls as their paths. */
@@ -39,7 +38,7 @@ describe('tool panel layout', () => {
       { card: 'colors', shows: ['colors', 'intensity'] },
       { card: 'mood', shows: ['mood', 'seed'] },
       { card: 'filter', shows: ['filter'] },
-      { card: 'format', shows: ['format', 'headline'] },
+      { card: undefined, shows: ['format'] },
       { card: undefined, shows: ['export'] },
     ])
     const off = panelSteps(offBlocks, SLOTS)
@@ -47,10 +46,8 @@ describe('tool panel layout', () => {
       { title: '1. Pick a color pack', shows: ['colors', 'intensity'] },
       { title: '2. Pick a mood', shows: ['mood', 'seed'] },
       { title: '3. Apply a filter', shows: ['filter'] },
-      { title: '4. Export', shows: ['format', 'headline', 'export'] },
+      { title: '4. Export', shows: ['format', 'export'] },
     ])
-    const exportBlock = offBlocks.find((block) => block.parts.some((part) => 'slot' in part && part.slot === 5))
-    expect(exportBlock?.parts).toEqual([{ key: 'slot-5', slot: 5, control: paths().indexOf('export') }])
 
     DialStore.updatePanel(id, 'Check', buildDialConfig(DEFAULT_STATE, 'Export', 'grain'))
     const grain = panelSteps(panelLayout(paths(), SLOTS), SLOTS)

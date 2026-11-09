@@ -13,12 +13,12 @@ describe('filter control in the panel', () => {
     DialStore.registerPanel(id, 'Check', buildDialConfig(DEFAULT_STATE, 'Export', 'none'))
     const paths = () => DialStore.getPanel(id)!.controls.map((control) => control.path)
     const labels = () => DialStore.getPanel(id)!.controls.map((control) => control.label)
-    expect(paths()).toEqual(['colors', 'intensity', 'mood', 'seed', 'filter', 'format', 'headline', 'export'])
+    expect(paths()).toEqual(['colors', 'intensity', 'mood', 'seed', 'filter', 'format', 'export'])
     expect(readToolState(DialStore.getValues(id), 'sunset')).toMatchObject({ filter: 'none', strength: 0.5 })
 
     DialStore.updateValue(id, FILTER_DIAL_KEY, 'grain')
     DialStore.updatePanel(id, 'Check', config())
-    expect(paths()).toEqual(['colors', 'intensity', 'mood', 'seed', 'filter', 'density', 'format', 'headline', 'export'])
+    expect(paths()).toEqual(['colors', 'intensity', 'mood', 'seed', 'filter', 'density', 'format', 'export'])
     expect(labels()).toContain('Density')
     expect(DialStore.getValue(id, 'filter')).toBe('grain')
     expect(DialStore.getValue(id, 'density')).toBe(0.5)
@@ -33,7 +33,7 @@ describe('filter control in the panel', () => {
 
     DialStore.updateValue(id, FILTER_DIAL_KEY, 'pixel')
     DialStore.updatePanel(id, 'Check', config())
-    expect(paths()).toEqual(['colors', 'intensity', 'mood', 'seed', 'filter', 'density', 'format', 'headline', 'export'])
+    expect(paths()).toEqual(['colors', 'intensity', 'mood', 'seed', 'filter', 'density', 'format', 'export'])
     expect(labels()).toContain('Density')
     DialStore.updateValue(id, 'density', 0.3)
     expect(readToolState(DialStore.getValues(id), 'sunset')).toMatchObject({ filter: 'pixel', strength: 0.3 })

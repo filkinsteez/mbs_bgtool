@@ -1,6 +1,6 @@
 import { DialStore } from 'dialkit'
 import { describe, expect, it } from 'vitest'
-import { buildDialConfig, HEADLINE_DIAL_KEY, MOOD_OPTIONS, readToolState, SEED_DIAL_KEY } from './dialConfig'
+import { buildDialConfig, MOOD_OPTIONS, readToolState, SEED_DIAL_KEY } from './dialConfig'
 import { DEFAULT_STATE, parseQuery } from './state'
 
 describe('seed slider in the panel', () => {
@@ -25,25 +25,14 @@ describe('seed slider in the panel', () => {
 })
 
 describe('panel controls', () => {
-  it('run in step order: the pack and Strength, the mood and Shuffle, the filter, the format, Headline and Export, with no Look', () => {
+  it('run in step order: the pack and Strength, the mood and Shuffle, the filter, the format and Export, with no Look', () => {
     const id = 'order-check'
     const paths = () => DialStore.getPanel(id)!.controls.map((control) => control.path)
     DialStore.registerPanel(id, 'Check', buildDialConfig(DEFAULT_STATE, 'Export', 'grain'))
-    expect(paths()).toEqual(['colors', 'intensity', 'mood', 'seed', 'filter', 'density', 'format', 'headline', 'export'])
+    expect(paths()).toEqual(['colors', 'intensity', 'mood', 'seed', 'filter', 'density', 'format', 'export'])
     DialStore.updatePanel(id, 'Check', buildDialConfig(DEFAULT_STATE, 'Export', 'none'))
-    expect(paths()).toEqual(['colors', 'intensity', 'mood', 'seed', 'filter', 'format', 'headline', 'export'])
+    expect(paths()).toEqual(['colors', 'intensity', 'mood', 'seed', 'filter', 'format', 'export'])
     DialStore.unregisterPanel(id)
-  })
-
-  it('show the sample headline control as an on/off toggle named Headline, off by default, read from the panel', () => {
-    const id = 'headline-check'
-    DialStore.registerPanel(id, 'Check', buildDialConfig(DEFAULT_STATE, 'Export', 'none'))
-    expect(DialStore.getPanel(id)!.controls.find((control) => control.path === HEADLINE_DIAL_KEY)).toMatchObject({ type: 'toggle', label: 'Headline' })
-    expect(readToolState(DialStore.getValues(id), 'sunset').headline).toBe(false)
-    DialStore.updateValue(id, HEADLINE_DIAL_KEY, true)
-    expect(readToolState(DialStore.getValues(id), 'sunset').headline).toBe(true)
-    DialStore.unregisterPanel(id)
-    expect(buildDialConfig({ ...DEFAULT_STATE, headline: true }, 'Export', 'none')[HEADLINE_DIAL_KEY]).toBe(true)
   })
 
   it('offer Sunrise and Contour as the moods, with their code ids kept', () => {

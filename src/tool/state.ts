@@ -16,8 +16,6 @@ export interface ToolState {
   /** The surface filter (`filter=grain` in the URL), none by default, and its strength 0..1 (`strength=0.5`). */
   filter: FilterChoice
   strength: number
-  /** Whether the sample headline shows over the preview (`headline=1` in the URL); off by default, never exported. */
-  headline: boolean
 }
 
 export const MOOD_IDS: readonly MoodId[] = ['sunset', 'contour']
@@ -32,7 +30,6 @@ export const DEFAULT_STATE: ToolState = {
   seed: 1,
   format: '16:9',
   ...DEFAULT_FILTER,
-  headline: false,
 }
 
 export function isMoodId(value: unknown): value is MoodId {
@@ -137,13 +134,12 @@ export function parseQuery(query: QueryInput): ToolState {
     format: isExportAspect(format) ? format : DEFAULT_STATE.format,
     ...(drag ? { drag } : {}),
     ...parseFilterQuery(query),
-    headline: readParam(query, 'headline') === '1',
   }
 }
 
 /**
  * The URL query (without "?") that reproduces the state. The line's commas are left as they are, so the link stays
- * readable. The sample headline goes after the format and the filter last, each only when on.
+ * readable. The filter goes last, and only when one is on.
  */
 export function toQuery(state: ToolState): string {
   const head = new URLSearchParams([
@@ -157,7 +153,6 @@ export function toQuery(state: ToolState): string {
   const tail = new URLSearchParams([
     ['seed', String(state.seed)],
     ['format', formatToQuery(state.format)],
-    ...(state.headline ? [['headline', '1']] : []),
   ]).toString()
   return [head, line, tail, filterQuery(state)].filter(Boolean).join('&')
 }
