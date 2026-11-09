@@ -20,11 +20,13 @@ import {
   CONTROL_MAPPINGS,
   controlsForDrag,
   DEFAULT_CONTROLS,
+  FIXED_CONTROLS,
   KEEP_LINE_DISTANCE,
   keepsLine,
   lightPlace,
   moodForPoint,
   moveDragWithMood,
+  toolControls,
   type ControlValues,
   type LightDrag,
   type LightPoint,
@@ -278,6 +280,23 @@ describe('dragging the light', () => {
         }
       })
     }
+  })
+
+  describe('the controls the tool sends', () => {
+    it("are the panel's Intensity and the mood's fixed Softness and mood control without a line", () => {
+      for (const id of RECIPE_IDS) {
+        const fixed = FIXED_CONTROLS[getRecipe(id).mood]
+        expect(toolControls(id, PACKS[0], 5, 16 / 9, 0.73), id).toEqual({ intensity: 0.73, softness: fixed.softness, mood: fixed.mood })
+      }
+    })
+
+    it('set the mood control from the start of a line, as controlsForDrag does', () => {
+      const drag: LightDrag = { from: [0.3, 0.62], to: [0.75, 0.2] }
+      for (const id of RECIPE_IDS) {
+        const fixed = { intensity: 0.4, ...FIXED_CONTROLS[getRecipe(id).mood] }
+        expect(toolControls(id, PACKS[1], 6, 9 / 16, 0.4, drag), id).toEqual(controlsForDrag(id, PACKS[1], 6, fixed, 9 / 16, drag))
+      }
+    })
   })
 
   it('gives the look the line and the mood control set from its start', () => {

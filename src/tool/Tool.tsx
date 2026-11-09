@@ -5,19 +5,8 @@ import '@/styles/dial-panel.css'
 import '@/styles/tool.css'
 import { DialStore, useDialKitController } from 'dialkit'
 import { useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { flushSync } from 'react-dom'
 import { EXPORT_SIZES, getPack, type ExportAspect } from '@/light'
-import {
-  buildScene,
-  clampDrag,
-  controlsForDrag,
-  DEFAULT_CONTROLS,
-  keepsLine,
-  MOOD_DIAL_KEY,
-  moodForPoint,
-  moveDragWithMood,
-  type LightDrag,
-} from './controls'
+import { buildScene, clampDrag, keepsLine, toolControls, type LightDrag } from './controls'
 import { buildDialConfig, PACK_DIAL_KEY, PANEL_ID, PANEL_LABELS, PANEL_NAME, readToolState, SEED_DIAL_KEY } from './dialConfig'
 import { exportImage } from './exportImage'
 import { FILTER_DIAL_KEY, readChoice, withFilter } from './filterControl'
@@ -25,7 +14,7 @@ import { panelAccessFor, usePanelAccess } from './panelAccess'
 import { FilterPicker, FormatPicker, LookPicker, MoodPicker, PackPicker } from './panelPickers'
 import { Preview } from './Preview'
 import { EMPTY_SEED_HISTORY, recordSeedChange, stepBack, stepForward, type SeedStep } from './seedHistory'
-import { clampUnit, fixLook, isMoodId, parseQuery, randomSeed, readSeed, toQuery, type SearchParams } from './state'
+import { fixLook, isMoodId, parseQuery, randomSeed, readSeed, toQuery, type SearchParams } from './state'
 import { ToolPanel } from './ToolPanel'
 
 const EXPORT_LABEL = 'Export'
@@ -75,11 +64,10 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const [dragHint, setDragHint] = useState(true)
   const exportingRef = useRef(false)
   const panelRef = useRef<HTMLElement>(null)
-  // The line, the mood control and the seed as this component last set or saw them. The panel store calls back
-  // before React renders, so these tell a slider move by the user from this component's own updates.
+  // The line, the seed and the mood as this component last set or saw them. The panel store calls back before React
+  // renders, so these tell a change by the user from this component's own updates.
   const dragRef = useRef(start.drag)
   const seedRef = useRef(start.seed)
-  const moodValueRef = useRef<number | undefined>(start.moodControl)
   const panelMoodRef = useRef(start.mood)
   const dragEndedRef = useRef(false)
 
@@ -89,11 +77,12 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const { getValues, setValue } = dial
   const state = { ...readToolState(dial.values, mood), drag }
   const query = toQuery(state)
-  const { look, pack, seed, intensity, softness, moodControl, format, filter, strength } = state
+  const { look, pack, seed, intensity, format, filter, strength } = state
   const scene = useMemo(() => {
-    const controls = { intensity, softness, mood: moodControl, drag }
-    return withFilter(buildScene(look, getPack(pack), seed, controls, frameAspect(format)), { filter, strength })
-  }, [look, pack, seed, intensity, softness, moodControl, drag, format, filter, strength])
+    const aspect = frameAspect(format)
+    const controls = toolControls(look, getPack(pack), seed, aspect, intensity, drag)
+    return withFilter(buildScene(look, getPack(pack), seed, controls, aspect), { filter, strength })
+  }, [look, pack, seed, intensity, drag, format, filter, strength])
 
   const access = useMemo(
     () => panelAccessFor(PANEL_ID, PANEL_NAME, config, { busy: exportStatus === 'busy' ? [EXPORTING_LABEL] : [], labels: PANEL_LABELS }),
@@ -127,29 +116,15 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     setDrag(next)
   }
 
-  function setMoodControl(value: number) {
-    moodValueRef.current = value
-    setValue(MOOD_DIAL_KEY[mood], value)
-  }
-
-  /** The line being dragged, and the mood control set from its start (the Horizon at the start's height). */
+  /** The line being dragged; the scene sets the mood control from its start (`toolControls`). */
   function dragLine(line: LightDrag) {
     const next = clampDrag(line)
-    if (!next) return
-    const live = readToolState(getValues(), mood)
-    const controls = { intensity: live.intensity, softness: live.softness, mood: live.moodControl }
-    const updated = controlsForDrag(live.look, getPack(live.pack), live.seed, controls, frameAspect(live.format), next)
-    // One render for both: the panel store's update and the line's would otherwise render one after the other.
-    flushSync(() => {
-      placeDrag(updated.drag)
-      if (updated.mood !== live.moodControl) setMoodControl(updated.mood)
-    })
+    if (next) placeDrag(next)
   }
 
   /** Double-click: the light goes back to the seed's own direction and reach. */
   function resetLight() {
     placeDrag(undefined)
-    setMoodControl(DEFAULT_CONTROLS.mood)
   }
 
   function handleDragging(isDragging: boolean) {
@@ -158,48 +133,23 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     setDragging(isDragging)
   }
 
-  // Moving the mood slider after a drag moves the whole line by as much as the look's light moves, so the
-  // light carries on from where the drag left it with the same direction and reach. A mood change clears
-  // the line, as it resets the mood control.
+  // A mood change clears the line.
   const onPanelChange = useEffectEvent(() => {
-    const values = DialStore.getValues(PANEL_ID)
-    const panelMoodNow = values.mood
-    if (!isMoodId(panelMoodNow)) return
-    if (panelMoodNow !== panelMoodRef.current) {
-      panelMoodRef.current = panelMoodNow
-      moodValueRef.current = undefined
-      if (dragRef.current) placeDrag(undefined)
-      return
-    }
-    const raw = values[MOOD_DIAL_KEY[panelMoodNow]]
-    if (raw === undefined) return
-    const next = clampUnit(raw, DEFAULT_CONTROLS.mood)
-    const previous = moodValueRef.current
-    moodValueRef.current = next
-    const current = dragRef.current
-    if (previous === undefined || previous === next || !current) return
-    const live = readToolState(values, panelMoodNow)
-    placeDrag(moveDragWithMood(live.look, getPack(live.pack), live.seed, frameAspect(live.format), current, previous, next))
+    const panelMoodNow = DialStore.getValue(PANEL_ID, 'mood')
+    if (!isMoodId(panelMoodNow) || panelMoodNow === panelMoodRef.current) return
+    panelMoodRef.current = panelMoodNow
+    if (dragRef.current) placeDrag(undefined)
   })
 
   useEffect(() => DialStore.subscribe(PANEL_ID, () => onPanelChange()), [])
 
-  // A new look, pack, seed or format keeps the line when the new scene's light can come near its start, and the mood
-  // control moves to show the start in the new scene. A Contour light whose new path passes far from the start would
-  // only reach an end of its track, so there the line goes and the mood control stays where it is.
+  // A new look, pack, seed or format keeps the line when the new scene's light can come near its start. A Contour light
+  // whose new path passes far from the start would only reach an end of its track, so there the line goes.
   const sceneKey = `${look}|${pack}|${seed}|${format}`
   const sceneKeyRef = useRef(sceneKey)
   const followScene = useEffectEvent(() => {
     const current = dragRef.current
-    if (!current) return
-    const scenePack = getPack(pack)
-    const aspect = frameAspect(format)
-    if (!keepsLine(look, scenePack, seed, aspect, current.from)) {
-      placeDrag(undefined)
-      return
-    }
-    const next = moodForPoint(look, scenePack, seed, aspect, current.from)
-    if (next !== null && next !== moodControl) setMoodControl(next)
+    if (current && !keepsLine(look, getPack(pack), seed, frameAspect(format), current.from)) placeDrag(undefined)
   })
 
   useEffect(() => {
@@ -254,7 +204,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     setExportStatus('busy')
     try {
       await nextPaint()
-      const outcome = await exportImage(scene, pack, format, { intensity, softness, mood: moodControl, drag })
+      const outcome = await exportImage(scene, pack, format, { intensity, drag })
       console.info('Exported', outcome)
       setExportStatus('idle')
     } catch (error) {

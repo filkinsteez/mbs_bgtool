@@ -10,21 +10,19 @@ describe('panel access', () => {
   it('names sliders by the label the panel shows', () => {
     expect(toolAccess('grain').sliders.map((slider) => [slider.path, slider.where])).toEqual([
       ['intensity', 'Strength'],
-      ['softness', 'Softness'],
-      ['horizon', 'Horizon'],
       ['seed', 'Seed'],
       ['density', 'Strength'],
     ])
   })
 
   it('gives each of two sliders with the same label its own path, in the order the panel draws them', () => {
-    const shown = ['Strength', 'Softness', 'Horizon', 'Strength']
-    expect(matchByPlace(shown, toolAccess('grain').sliders).map((slider) => slider?.path)).toEqual(['intensity', 'softness', 'horizon', 'density'])
-    expect(matchByPlace(shown.slice(0, 3), toolAccess('none').sliders).map((slider) => slider?.path)).toEqual(['intensity', 'softness', 'horizon'])
+    const shown = ['Strength', 'Strength']
+    expect(matchByPlace(shown, toolAccess('grain').sliders).map((slider) => slider?.path)).toEqual(['intensity', 'density'])
+    expect(matchByPlace(shown.slice(0, 1), toolAccess('none').sliders).map((slider) => slider?.path)).toEqual(['intensity'])
   })
 
   it('matches a control inside its panel folder, and nothing for a label it does not know', () => {
     const { sliders } = toolAccess('none')
-    expect(matchByPlace([`${PANEL_NAME} / Softness`, 'Density'], sliders).map((slider) => slider?.path)).toEqual(['softness', undefined])
+    expect(matchByPlace([`${PANEL_NAME} / Strength`, 'Softness'], sliders).map((slider) => slider?.path)).toEqual(['intensity', undefined])
   })
 })

@@ -14,18 +14,13 @@ import { placeHorizon } from '@/light/recipes/sunset/horizon'
 
 export { DEFAULT_CONTROLS, type ControlValues } from '@/light'
 
-export type MoodControlKey = 'horizon' | 'light'
-
-/** The mood control's name in the URL query. */
-export const MOOD_CONTROL: Readonly<Record<MoodId, MoodControlKey>> = {
-  sunset: 'horizon',
-  contour: 'light',
-}
-
-/** The mood control's key in the panel. DialKit shows a key as the control's label, with its first letter upper case. */
-export const MOOD_DIAL_KEY: Readonly<Record<MoodId, string>> = {
-  sunset: 'horizon',
-  contour: 'light position',
+/**
+ * The Softness and mood control the tool sends for each mood: the panel has no sliders for them (owner, 2026-11-09).
+ * A dragged line still sets the mood control from its start (`toolControls`).
+ */
+export const FIXED_CONTROLS: Readonly<Record<MoodId, Pick<ControlValues, 'softness' | 'mood'>>> = {
+  sunset: { softness: 0.5, mood: 0.5 },
+  contour: { softness: 0.5, mood: 0.5 },
 }
 
 export interface RecipeMapping {
@@ -363,4 +358,13 @@ export function controlsForDrag(
 ): ControlValues & { drag: LightDrag } {
   const mood = moodForPoint(recipeId, pack, seed, aspect, drag.from)
   return { ...controls, mood: mood ?? controls.mood, drag }
+}
+
+/**
+ * The controls the tool sends for a look: the panel's Intensity, the mood's fixed Softness and mood control, and the
+ * dragged line, with the mood control set from the line's start as `controlsForDrag` sets it.
+ */
+export function toolControls(recipeId: RecipeId, pack: ColorPack, seed: number, aspect: number, intensity: number, drag?: LightDrag): ControlValues {
+  const controls = { intensity, ...FIXED_CONTROLS[moodOf(recipeId)] }
+  return drag ? controlsForDrag(recipeId, pack, seed, controls, aspect, drag) : controls
 }

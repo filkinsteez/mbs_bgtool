@@ -1,5 +1,5 @@
-import { exportPreset, getRecipe, type ControlValues, type ExportAspect, type MoodId, type PackId, type Scene } from '@/light'
-import { clampDrag, MOOD_CONTROL } from './controls'
+import { exportPreset, type ControlValues, type ExportAspect, type PackId, type Scene } from '@/light'
+import { clampDrag } from './controls'
 
 export interface ExportOutcome {
   fileName: string
@@ -11,20 +11,22 @@ export interface ExportOutcome {
   retryReason?: string
 }
 
-/** The control values an export's file name carries. */
-export type NamedControls = Pick<ControlValues, 'intensity' | 'softness' | 'mood' | 'drag'>
+/**
+ * The control values an export's file name carries: the ones the user sets. Softness and the mood control are fixed
+ * per mood, and with a line the mood control follows from the line.
+ */
+export type NamedControls = Pick<ControlValues, 'intensity' | 'drag'>
 
 const percent = (value: number) => String(Math.round(value * 100))
 /** Line ends are kept to 0.001 of the frame, so tenths of a percent tell any two lines apart. */
 const framePercent = (value: number) => String(Math.round(value * 1000) / 10)
 
 /**
- * File name parts for the controls, at the precision the URL keeps them: `i50-s50-h28` (Intensity, Softness and
- * the mood control in percent; `h` for Horizon, `l` for Light position) and, when the user dragged a line,
- * `from20,80-to75,30` (its ends in percent of the frame's width and height).
+ * File name parts for the controls, at the precision the URL keeps them: `i50` (Intensity in percent) and, when the
+ * user dragged a line, `from20,80-to75,30` (its ends in percent of the frame's width and height).
  */
-export function controlNameParts(mood: MoodId, controls: NamedControls): string[] {
-  const parts = [`i${percent(controls.intensity)}`, `s${percent(controls.softness)}`, `${MOOD_CONTROL[mood][0]}${percent(controls.mood)}`]
+export function controlNameParts(controls: NamedControls): string[] {
+  const parts = [`i${percent(controls.intensity)}`]
   const line = controls.drag ? clampDrag(controls.drag) : undefined
   if (line) parts.push(`from${line.from.map(framePercent).join(',')}`, `to${line.to.map(framePercent).join(',')}`)
   return parts
@@ -47,7 +49,7 @@ function download(blob: Blob, fileName: string): void {
  */
 export async function exportImage(scene: Scene, pack: PackId, aspect: ExportAspect, controls?: NamedControls): Promise<ExportOutcome> {
   const preset = { id: 'tool', pack, scene }
-  const nameParts = controls ? controlNameParts(getRecipe(scene.recipe).mood, controls) : []
+  const nameParts = controls ? controlNameParts(controls) : []
   const start = performance.now()
   let supersample: 1 | 2 = 2
   let retryReason: string | undefined

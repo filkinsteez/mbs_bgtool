@@ -32,7 +32,7 @@ describe('tool panel layout', () => {
     expect(shows(paths(), off)).toEqual([
       { card: undefined, shows: ['mood'] },
       { card: undefined, shows: ['look'] },
-      { card: 'colors', shows: ['colors', 'intensity', 'softness', 'horizon', 'seed'] },
+      { card: 'colors', shows: ['colors', 'intensity', 'seed'] },
       { card: 'filter', shows: ['filter'] },
       { card: undefined, shows: ['format'] },
       { card: undefined, shows: ['export'] },
@@ -45,7 +45,7 @@ describe('tool panel layout', () => {
 
     DialStore.updatePanel(id, 'Check', buildDialConfig('contour', DEFAULT_STATE, 'Export', 'grain'))
     const contour = panelLayout(paths(), SLOTS)
-    expect(shows(paths(), contour).find((block) => block.card === 'colors')).toEqual({ card: 'colors', shows: ['colors', 'intensity', 'softness', 'light position', 'seed'] })
+    expect(shows(paths(), contour).find((block) => block.card === 'colors')).toEqual({ card: 'colors', shows: ['colors', 'intensity', 'seed'] })
     expect(tree(contour)).toEqual(tree(off))
     DialStore.unregisterPanel(id)
   })
@@ -73,8 +73,6 @@ describe('tool panel layout', () => {
     const controls = withLabels(DialStore.getPanel(id)!.controls, PANEL_LABELS)
     expect(controls.filter((control) => control.type === 'slider').map((control) => [control.path, control.label])).toEqual([
       ['intensity', 'Strength'],
-      ['softness', 'Softness'],
-      ['horizon', 'Horizon'],
       ['seed', 'Seed'],
       ['density', 'Strength'],
     ])

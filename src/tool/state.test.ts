@@ -13,36 +13,37 @@ describe('tool state in the URL', () => {
       look: 'contour.beam',
       pack: 'atmospheric',
       intensity: 0.8,
-      softness: 0.25,
-      moodControl: 0.1,
       seed: 43,
       format: '4:5',
       filter: 'none',
       strength: 0.5,
     }
     const query = toQuery(state)
-    expect(query).toBe('mood=contour&look=beam&pack=atmospheric&intensity=0.8&softness=0.25&light=0.1&seed=43&format=4x5')
+    expect(query).toBe('mood=contour&look=beam&pack=atmospheric&intensity=0.8&seed=43&format=4x5')
     expect(parseQuery(new URLSearchParams(query))).toEqual(state)
   })
 
   it('writes the filter last, only when one is on', () => {
     const state: ToolState = { ...DEFAULT_STATE, filter: 'grain', strength: 0.35 }
     const query = toQuery(state)
-    expect(query).toBe('mood=sunset&look=bands&pack=bold&intensity=0.5&softness=0.5&horizon=0.5&seed=1&format=16x9&filter=grain&strength=0.35')
+    expect(query).toBe('mood=sunset&look=bands&pack=bold&intensity=0.5&seed=1&format=16x9&filter=grain&strength=0.35')
     expect(parseQuery(new URLSearchParams(query))).toEqual(state)
     expect(toQuery(DEFAULT_STATE)).not.toContain('filter')
   })
 
-  it('writes the mood control under the mood name', () => {
-    expect(toQuery(DEFAULT_STATE)).toContain('horizon=0.5')
-    expect(parseQuery({ mood: 'sunset', horizon: '0.2', light: '0.9' }).moodControl).toBe(0.2)
+  it("ignores old links' Softness, Horizon and Light position, and no longer writes them", () => {
+    const old = parseQuery(new URLSearchParams('mood=sunset&look=ramp&seed=7&softness=0.3&horizon=0.7'))
+    expect(old).toEqual({ ...DEFAULT_STATE, look: 'sunset.ramp', seed: 7 })
+    expect(toQuery(old)).toBe('mood=sunset&look=ramp&pack=bold&intensity=0.5&seed=7&format=16x9')
+    const contour = parseQuery(new URLSearchParams('mood=contour&look=beam&light=0.9'))
+    expect(contour).toMatchObject({ mood: 'contour', look: 'contour.beam' })
+    expect(toQuery(contour)).not.toMatch(/softness|horizon|light/)
   })
 
   it('fixes looks from another mood and clamps values', () => {
     const state = parseQuery({ mood: 'sunset', look: 'rim', intensity: '7', softness: '-1', seed: '0', format: '2:1', pack: 'neon' })
     expect(state.look).toBe('sunset.bands')
     expect(state.intensity).toBe(1)
-    expect(state.softness).toBe(0)
     expect(state.seed).toBe(1)
     expect(state.format).toBe('16:9')
     expect(state.pack).toBe('bold')
@@ -109,8 +110,6 @@ describe('dragged line in the URL', () => {
     look: 'sunset.bands',
     pack: 'elemental',
     intensity: 0.5,
-    softness: 0.5,
-    moodControl: 0.62,
     seed: 77,
     format: '9:16',
     drag: { from: [0.312, 0.681], to: [0.75, 0.2] },
@@ -118,9 +117,9 @@ describe('dragged line in the URL', () => {
     strength: 0.5,
   }
 
-  it('round-trips a line, written after the mood control with its commas as they are', () => {
+  it('round-trips a line, written after Intensity with its commas as they are', () => {
     const query = toQuery(dragged)
-    expect(query).toBe('mood=sunset&look=bands&pack=elemental&intensity=0.5&softness=0.5&horizon=0.62&from=0.312,0.681&to=0.75,0.2&seed=77&format=9x16')
+    expect(query).toBe('mood=sunset&look=bands&pack=elemental&intensity=0.5&from=0.312,0.681&to=0.75,0.2&seed=77&format=9x16')
     expect(parseQuery(new URLSearchParams(query))).toEqual(dragged)
     expect(parseQuery({ ...Object.fromEntries(new URLSearchParams(query)) })).toEqual(dragged)
     expect(parseQuery(new URLSearchParams(toQuery({ ...dragged, filter: 'grain', strength: 0.4 })))).toEqual({ ...dragged, filter: 'grain', strength: 0.4 })
@@ -133,11 +132,11 @@ describe('dragged line in the URL', () => {
     expect(parseQuery({ from: '0.12345,0.98765', to: '0.5,0.5' }).drag).toEqual({ from: [0.123, 0.988], to: [0.5, 0.5] })
   })
 
-  it('reads old links without a line as before and writes them the same way', () => {
+  it('reads old links without a line as before and writes them without the removed controls', () => {
     const old = 'mood=contour&look=beam&pack=atmospheric&intensity=0.8&softness=0.25&light=0.1&seed=43&format=4x5'
     const state = parseQuery(new URLSearchParams(old))
     expect(state).not.toHaveProperty('drag')
-    expect(toQuery(state)).toBe(old)
+    expect(toQuery(state)).toBe('mood=contour&look=beam&pack=atmospheric&intensity=0.8&seed=43&format=4x5')
     expect(parseQuery(new URLSearchParams(`${old}&point=0.3,0.6`))).toEqual(state)
   })
 

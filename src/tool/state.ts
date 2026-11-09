@@ -9,17 +9,15 @@ import {
   type PackId,
   type RecipeId,
 } from '@/light'
-import { clampDrag, clampPoint, DEFAULT_CONTROLS, MOOD_CONTROL, type LightDrag, type LightPoint } from './controls'
+import { clampDrag, clampPoint, DEFAULT_CONTROLS, type LightDrag, type LightPoint } from './controls'
 import { DEFAULT_FILTER, filterQuery, parseFilterQuery, type FilterChoice } from './filterControl'
 
+/** What the panel and the URL set. Softness and the mood control are fixed per mood (`FIXED_CONTROLS`). */
 export interface ToolState {
   mood: MoodId
   look: RecipeId
   pack: PackId
   intensity: number
-  softness: number
-  /** Horizon for Sunset, Light position for Contour (`light` in the URL). */
-  moodControl: number
   seed: number
   format: ExportAspect
   /** The line the user dragged on the image, in frame units (`from=x,y&to=x,y` in the URL). Missing until they drag. */
@@ -38,8 +36,6 @@ export const DEFAULT_STATE: ToolState = {
   look: 'sunset.bands',
   pack: 'bold',
   intensity: DEFAULT_CONTROLS.intensity,
-  softness: DEFAULT_CONTROLS.softness,
-  moodControl: DEFAULT_CONTROLS.mood,
   seed: 1,
   format: '16:9',
   ...DEFAULT_FILTER,
@@ -114,7 +110,10 @@ const shortLook = (look: RecipeId) => look.slice(look.indexOf('.') + 1)
 const formatToQuery = (format: ExportAspect) => format.replace(':', 'x')
 const unitToQuery = (value: number) => String(Math.round(value * 100) / 100)
 
-/** Reads the tool state from a URL query; missing or invalid values take the defaults. */
+/**
+ * Reads the tool state from a URL query; missing or invalid values take the defaults. Old links' `softness`, `horizon`
+ * and `light` are ignored, as the panel no longer sets them.
+ */
 export function parseQuery(query: QueryInput): ToolState {
   const moodParam = readParam(query, 'mood')
   const mood = isMoodId(moodParam) ? moodParam : DEFAULT_STATE.mood
@@ -127,8 +126,6 @@ export function parseQuery(query: QueryInput): ToolState {
     look: fixLook(mood, lookParam && !lookParam.includes('.') ? `${mood}.${lookParam}` : lookParam),
     pack: pack && isPackId(pack) ? pack : DEFAULT_STATE.pack,
     intensity: clampUnit(readParam(query, 'intensity'), DEFAULT_STATE.intensity),
-    softness: clampUnit(readParam(query, 'softness'), DEFAULT_STATE.softness),
-    moodControl: clampUnit(readParam(query, MOOD_CONTROL[mood]), DEFAULT_STATE.moodControl),
     seed: readSeed(readParam(query, 'seed'), DEFAULT_STATE.seed),
     format: isExportAspect(format) ? format : DEFAULT_STATE.format,
     ...(drag ? { drag } : {}),
@@ -146,8 +143,6 @@ export function toQuery(state: ToolState): string {
     ['look', shortLook(state.look)],
     ['pack', state.pack],
     ['intensity', unitToQuery(state.intensity)],
-    ['softness', unitToQuery(state.softness)],
-    [MOOD_CONTROL[state.mood], unitToQuery(state.moodControl)],
   ]).toString()
   const drag = state.drag ? clampDrag(state.drag) : undefined
   const line = drag ? `from=${drag.from.join(',')}&to=${drag.to.join(',')}` : null
