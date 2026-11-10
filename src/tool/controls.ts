@@ -116,6 +116,7 @@ export function lightPlace(scene: Scene, aspect: number): LightPoint | null {
     case 'sunset.ramp':
     case 'sunset.bands':
     case 'sunset.blooms':
+    case 'sunset.merged':
       return null
     case 'contour.rim':
     case 'contour.halo': {

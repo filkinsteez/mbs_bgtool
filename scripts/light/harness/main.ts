@@ -21,6 +21,7 @@ import { ProgramRenderer } from '../../../src/light/engine/programRenderer'
 import type { SceneInput } from '../../../src/light/engine/resolve'
 import type { IgnoreRect } from '../../../src/light/references'
 import {
+  HIDDEN_RECIPE_IDS,
   isRecipeId,
   RECIPE_IDS,
   type ControlValues,
@@ -46,7 +47,7 @@ function isDefinition(value: unknown, id: RecipeId): value is RecipeDefinition {
 
 async function loadRecipes(): Promise<void> {
   await Promise.all(
-    RECIPE_IDS.map(async (id) => {
+    [...RECIPE_IDS, ...HIDDEN_RECIPE_IDS].map(async (id) => {
       const [mood, name] = id.split('.')
       const file = `src/light/recipes/${mood}/${name}.ts`
       const load = RECIPE_FILES[`../../../${file}`]

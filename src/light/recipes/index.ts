@@ -5,12 +5,14 @@ import { contourRim } from './contour/rim'
 import { contourStreaks } from './contour/streaks'
 import { sunsetBands } from './sunset/bands'
 import { sunsetBlooms } from './sunset/blooms'
+import { sunsetMerged } from './sunset/merged'
 import { sunsetRamp } from './sunset/ramp'
 
 export const RECIPES: Readonly<Record<RecipeId, RecipeDefinition>> = {
   'sunset.ramp': sunsetRamp,
   'sunset.bands': sunsetBands,
   'sunset.blooms': sunsetBlooms,
+  'sunset.merged': sunsetMerged,
   'contour.rim': contourRim,
   'contour.beam': contourBeam,
   'contour.halo': contourHalo,

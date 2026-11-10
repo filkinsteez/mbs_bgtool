@@ -1,3 +1,4 @@
+import { mergedParts } from '../recipes/sunset/merged'
 import type { ParamValue, RecipeId } from '../scene'
 
 /** Cells on the frame's short side. The color stage reads the design and solves its weights on this grid. */
@@ -108,6 +109,8 @@ export function lookParts(recipe: RecipeId, params: Readonly<Record<string, Para
     }
     case 'contour.beam':
       return []
+    case 'sunset.merged':
+      return mergedParts(params, aspect)
     default: {
       const unknown: never = recipe
       throw new Error(`No parts for ${String(unknown)}`)

@@ -17,10 +17,13 @@ export const RECIPE_IDS = [
   'contour.streaks',
 ] as const
 
-export type RecipeId = (typeof RECIPE_IDS)[number]
+/** Looks that render but aren't in the panel: the tool shows one only behind its URL switch (`sunrise=merged`). */
+export const HIDDEN_RECIPE_IDS = ['sunset.merged'] as const
+
+export type RecipeId = (typeof RECIPE_IDS)[number] | (typeof HIDDEN_RECIPE_IDS)[number]
 
 export function isRecipeId(value: string): value is RecipeId {
-  return (RECIPE_IDS as readonly string[]).includes(value)
+  return (RECIPE_IDS as readonly string[]).includes(value) || (HIDDEN_RECIPE_IDS as readonly string[]).includes(value)
 }
 
 // ---------------------------------------------------------------------------

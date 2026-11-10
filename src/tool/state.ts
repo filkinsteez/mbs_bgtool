@@ -1,4 +1,4 @@
-import { EXPORT_ASPECTS, getPack, getRecipe, isPackId, isRecipeId, type ColorPack, type ExportAspect, type MoodId, type PackId, type RecipeId } from '@/light'
+import { EXPORT_ASPECTS, getPack, isPackId, isRecipeId, recipesForMood, type ColorPack, type ExportAspect, type MoodId, type PackId, type RecipeId } from '@/light'
 import { defaultMix, formatMix, isMetaBlueOn, metaBlueIndex, mixPercents, parseMix, setMetaBlue, type ColorMix } from '@/light/color/mix'
 import { clampDrag, clampPoint, type LightDrag, type LightPoint } from './controls'
 import { DEFAULT_FILTER, filterQuery, parseFilterQuery, type FilterChoice } from './filterControl'
@@ -20,6 +20,8 @@ export interface ToolState {
   /** The surface filter (`filter=grain` in the URL), none by default, and its strength 0..1 (`strength=0.5`). */
   filter: FilterChoice
   strength: number
+  /** `sunrise=merged` in the URL: Sunrise shows the merged look in place of the seed's look. Missing (off) by default. */
+  sunrise?: 'merged'
 }
 
 export const MOOD_IDS: readonly MoodId[] = ['sunset', 'contour']
@@ -45,10 +47,15 @@ export function isExportAspect(value: unknown): value is ExportAspect {
   return typeof value === 'string' && (EXPORT_ASPECTS as readonly string[]).includes(value)
 }
 
-/** The look if it belongs to the mood, else the look the seed picks for the mood. */
+/** The look if it is one of the mood's panel looks, else the look the seed picks for the mood. */
 export function fixLook(mood: MoodId, look: unknown, seed: number): RecipeId {
-  if (typeof look === 'string' && isRecipeId(look) && getRecipe(look).mood === mood) return look
+  if (typeof look === 'string' && isRecipeId(look) && recipesForMood(mood).some((recipe) => recipe.id === look)) return look
   return lookForSeed(mood, seed)
+}
+
+/** The look the picture draws: the merged Sunrise look while `sunrise=merged` is on in Sunrise, else the state's look. */
+export function sceneLook(state: Pick<ToolState, 'mood' | 'look' | 'sunrise'>): RecipeId {
+  return state.sunrise === 'merged' && state.mood === 'sunset' ? 'sunset.merged' : state.look
 }
 
 /** The mood, seed and look a page opened with. */
@@ -149,6 +156,7 @@ export function parseQuery(query: QueryInput): ToolState {
     mix: colormix ? parseMix(getPack(pack), readParam(query, 'mix')) : defaultMix(getPack(pack)),
     ...(drag ? { drag } : {}),
     ...parseFilterQuery(query),
+    ...(readParam(query, 'sunrise') === 'merged' ? { sunrise: 'merged' as const } : {}),
   }
 }
 
@@ -164,11 +172,12 @@ export function toQuery(state: ToolState): string {
   ]).toString()
   const mix = customMix(state)
   const color = state.colormix ? `colormix=1${mix ? `&mix=${mix.join(',')}` : ''}` : null
+  const trial = state.sunrise ? `sunrise=${state.sunrise}` : null
   const drag = state.drag ? clampDrag(state.drag) : undefined
   const line = drag ? `from=${drag.from.join(',')}&to=${drag.to.join(',')}` : null
   const tail = new URLSearchParams([
     ['seed', String(state.seed)],
     ['format', formatToQuery(state.format)],
   ]).toString()
-  return [head, color, line, tail, filterQuery(state)].filter(Boolean).join('&')
+  return [head, color, trial, line, tail, filterQuery(state)].filter(Boolean).join('&')
 }

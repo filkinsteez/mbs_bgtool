@@ -18,7 +18,7 @@ import { useHistory } from './history/useHistory'
 import { MixControl } from './MixControl'
 import { FilterPicker, FormatPicker, MoodPicker, PackPicker } from './panelPickers'
 import { Preview } from './Preview'
-import { customMix, isMoodId, mixForPack, parseQuery, randomSeed, toQuery, type LinkLook, type SearchParams } from './state'
+import { customMix, isMoodId, mixForPack, parseQuery, randomSeed, sceneLook, toQuery, type LinkLook, type SearchParams } from './state'
 import { ToolPanel } from './ToolPanel'
 
 const EXPORT_LABEL = 'Export'
@@ -83,18 +83,19 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const dial = useDialKitController(PANEL_NAME, config, { id: PANEL_ID, onAction: (action) => handleAction(action) })
   const { setValue } = dial
   // The seed picks the look; the link's own look holds at the link's mood and seed.
-  const state = { ...readToolState(dial.values, mood, link, start.colormix), drag }
+  const state = { ...readToolState(dial.values, mood, link, start.colormix), drag, ...(start.sunrise ? { sunrise: start.sunrise } : {}) }
   const query = toQuery(state)
   const { look, pack, seed, format, filter, strength, colormix, mix } = state
+  const drawn = sceneLook(state)
   // With the color mix on, every pack draws one design and the color stage gives it the pack's colors and the mix.
   const shares = colormix ? mixPanelValue(mix) : null
   const scene = useMemo(() => {
     const aspect = frameAspect(format)
     const design = getPack(shares ? COLOR_DESIGN_PACK : pack)
-    const controls = toolControls(look, design, seed, aspect, drag)
-    const built = buildScene(look, design, seed, controls, aspect)
+    const controls = toolControls(drawn, design, seed, aspect, drag)
+    const built = buildScene(drawn, design, seed, controls, aspect)
     return withFilter(shares ? withColorMix(built, getPack(pack), { shares: shares.split(',').map(Number) }) : built, { filter, strength })
-  }, [look, pack, seed, drag, format, filter, strength, shares])
+  }, [drawn, pack, seed, drag, format, filter, strength, shares])
 
   const access = useMemo(
     () => panelAccessFor(PANEL_ID, PANEL_NAME, config, { busy: exportStatus === 'busy' ? [EXPORTING_LABEL] : [], labels: PANEL_LABELS }),
@@ -155,7 +156,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const sceneKeyRef = useRef(sceneKey)
   const followScene = useEffectEvent(() => {
     const current = dragRef.current
-    if (current && !keepsLine(look, getPack(pack), seed, frameAspect(format), current.from)) placeDrag(undefined)
+    if (current && !keepsLine(drawn, getPack(pack), seed, frameAspect(format), current.from)) placeDrag(undefined)
   })
 
   useEffect(() => {

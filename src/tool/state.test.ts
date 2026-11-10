@@ -12,6 +12,7 @@ import {
   readSeed,
   SEED_MAX,
   SEED_MIN,
+  sceneLook,
   shownLook,
   toQuery,
   type ToolState,
@@ -267,5 +268,23 @@ describe('dragged line in the URL', () => {
     expect(parseDrag('0.2,0.2', undefined)).toBeUndefined()
     expect(parseDrag('0.2,0.2', '0.2005,0.2')).toBeUndefined()
     expect(parseDrag('0.2,0.2', '0.21,0.2')).toEqual({ from: [0.2, 0.2], to: [0.21, 0.2] })
+  })
+})
+
+describe('the merged Sunrise look behind sunrise=merged', () => {
+  it('draws the merged look in Sunrise while the link has sunrise=merged, and keeps the switch in the link', () => {
+    const on = parseQuery(new URLSearchParams('mood=sunset&look=bands&pack=bold&sunrise=merged&seed=3&format=16x9'))
+    expect(on.look).toBe('sunset.bands')
+    expect(sceneLook(on)).toBe('sunset.merged')
+    expect(toQuery(on)).toBe('mood=sunset&look=bands&pack=bold&sunrise=merged&seed=3&format=16x9')
+    expect(sceneLook({ ...on, mood: 'contour', look: 'contour.rim' })).toBe('contour.rim')
+  })
+
+  it("is off by default: without it a link opens as before, and look=merged alone opens the seed's look", () => {
+    const plain = parseQuery(new URLSearchParams('mood=sunset&pack=bold&seed=3&format=16x9'))
+    expect(plain).not.toHaveProperty('sunrise')
+    expect(sceneLook(plain)).toBe(plain.look)
+    expect(parseQuery(new URLSearchParams('mood=sunset&look=merged&pack=bold&seed=3&format=16x9'))).toEqual(plain)
+    for (const value of ['1', 'Merged', 'bands', '']) expect(parseQuery({ sunrise: value }), value).not.toHaveProperty('sunrise')
   })
 })
