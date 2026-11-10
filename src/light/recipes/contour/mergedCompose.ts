@@ -547,6 +547,10 @@ const SECOND_MARGIN = 0.12
  * core turns white only at its peak. */
 const SECOND_CORE = 0.35
 const SECOND_FAR = 0.6
+/** The main light's glow: wider and stronger, so Meta Blue's own light is the brightest and widest and its brightest
+ * part reaches its own color's lightness. */
+const MAIN_GLOW = 2
+const MAIN_GLOW_WEIGHT = 1.5
 /** Red over blue in sRGB: above zero for warm colors. */
 const warmthOf = (hex: string) => parseInt(hex.slice(1, 3), 16) - parseInt(hex.slice(5, 7), 16)
 
@@ -819,7 +823,14 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const parts = productionParts('', { side: def.outside ? 2 : 1, soften, face: 0.035 * (def.fill ?? 1), glow: 0.009, haze: round4(0.04 * hazeScale), fan: 2, hotCore })
   // A light brightens in its own color first: a small hot spot over a strong colored glow, so a blue light blooms
   // saturated blue and only a thin core goes to white.
-  Object.assign(parts, { ...(hotCore ? {} : { n1Weight: 0.8 }), n2Weight: 1.1, n3Weight: 1.2, f1Weight: round4(0.09 * (def.fill ?? 1)), f2Width: round4(0.035 * hazeScale) })
+  Object.assign(parts, {
+    ...(hotCore ? {} : { n1Weight: 0.8 }),
+    n2Weight: MAIN_GLOW_WEIGHT,
+    n2Width: round4(Number(parts.n2Width) * MAIN_GLOW),
+    n3Weight: 1.2,
+    f1Weight: round4(0.09 * (def.fill ?? 1)),
+    f2Width: round4(0.035 * hazeScale),
+  })
   // The face takes soft light from the whole lit stretch of its edge: brighter near it, deep at the far side.
   Object.assign(parts, {
     f3Weight: round4(FACE * (def.fill ?? 1) * lerp(0.6, 1.4, design.faceDraw)),
