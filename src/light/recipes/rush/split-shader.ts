@@ -149,6 +149,11 @@ vec3 radiance(vec2 uv, vec2 p) {
     }
     sum += hue / max(luminance(hue), 1e-5) * luminanceHere;
   }
+  // A soft shoulder on the total light, below the level where the tone curve turns a near-white color (Ice, a white
+  // streak) flat white: those reach white only at their peak, while saturated colors still whiten at their cores.
+  float total = luminance(sum);
+  float shoulder = total < 0.5 ? total : 0.5 + 0.4 * (1.0 - exp(-(total - 0.5) / 0.4));
+  sum *= shoulder / max(total, 1e-5);
   return uGround + sum * shadow(p);
 }
 `

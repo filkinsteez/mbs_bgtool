@@ -174,11 +174,16 @@ export function rushColors(hexes: readonly string[], shares?: readonly number[])
       const step = paths[k]?.[j]
       ramp.push(...(step ? [...step.hue.map(round4), round4(step.at)] : [0, 0, 0, 0]))
     }
-  // A muted warm color with no dim path (Tan) sits only in a white streak's middle.
-  const brown = lights.map((c, k) => mutedWarm(c) && paths[k].length === 0)
-  const edgeColors = brown.filter((b) => !b).length
-  let edgeAt = 0
-  const places = brown.map((b) => (b || edgeColors < 2 ? 0.5 : edgeAt++ / (edgeColors - 1)))
+  // A white streak's edges take the cool and warm streaks' colors (Cyan and Yellow in Bold) and the others sit only in
+  // its white middle, so its edges never tint it pink or lavender. Where one color takes both (Lime, Ice), all sit in
+  // the middle.
+  const colorFor = (place: number) => {
+    for (let k = 0; k < count; k++) if (place < cellEnd[k]) return k
+    return count - 1
+  }
+  const coolK = colorFor(0.58)
+  const warmK = colorFor(0.74)
+  const places = lights.map((_, k) => (coolK === warmK ? 0.5 : k === coolK ? 0 : k === warmK ? 1 : 0.5))
   const ground = darks[0]?.hex ?? lights[0].hex
   return {
     slots: [...[0, 1, 2, 3].map((k) => lights[k]?.hex ?? '#000000'), ground],

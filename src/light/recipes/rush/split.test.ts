@@ -58,10 +58,11 @@ describe('Rush split', () => {
       }
   })
 
-  it("spreads a white streak's colors across it in list order, with Tan, which reads brown when dim, only in its middle", () => {
-    expect(rushColors(hexesOf('bold')).spectrum).toEqual([0, 0.3333, 0.6667, 1])
-    expect(rushColors(hexesOf('elemental')).spectrum.slice(0, 3)).toEqual([0, 1, 0.5])
-    expect(rushColors(hexesOf('atmospheric')).spectrum.slice(0, 3)).toEqual([0, 0.5, 1])
+  it("gives a white streak's edges the cool and warm streaks' colors, and puts the others only in its middle", () => {
+    expect(rushColors(hexesOf('bold')).spectrum).toEqual([0.5, 0, 1, 0.5])
+    // Lime and Ice take both the cool and the warm streaks, so every color sits in the middle.
+    expect(rushColors(hexesOf('elemental')).spectrum.slice(0, 3)).toEqual([0.5, 0.5, 0.5])
+    expect(rushColors(hexesOf('atmospheric')).spectrum.slice(0, 3)).toEqual([0.5, 0.5, 0.5])
   })
 
   it('dims each color through darker colors of its own pack, and keeps Meta Blue and Tan as they are', () => {

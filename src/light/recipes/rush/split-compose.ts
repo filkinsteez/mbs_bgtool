@@ -209,7 +209,8 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
     const white = role === 'white'
     const falloff = role === 'deep' ? lerp(2, 2.8, random()) : lerp(0.75, 1.1, random())
     const half = (0.5 * width) / reachTo(0.3, falloff)
-    const split1 = white ? half * lerp(1, 1.3, random()) : 0
+    // A white band stays near-white across, with its cool and warm colors only at its edges.
+    const split1 = white ? half * lerp(0.6, 0.9, random()) : 0
     bands.push({
       role,
       center,
@@ -222,11 +223,11 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
       split0: split1 * lerp(0.4, 0.7, random()),
       split1,
       luminance: white
-        ? STAND_IN_WHITE * lerp(0.7, 0.9, random())
+        ? STAND_IN_WHITE * lerp(0.9, 1.05, random())
         : // Cool and warm bands near their color's own lightness (Lime, Ice), so they never read dim (olive, grey).
-          standInLuminance(PLACE[role]) * (role === 'lead' ? lerp(1.1, 1.5, random()) : role === 'cool' ? lerp(1.2, 1.5, random()) : role === 'warm' ? lerp(1, 1.2, random()) : lerp(1.4, 1.8, random())),
+          standInLuminance(PLACE[role]) * (role === 'lead' ? lerp(1.1, 1.5, random()) : role === 'cool' ? lerp(1.2, 1.5, random()) : role === 'warm' ? lerp(1, 1.2, random()) : lerp(1.6, 2, random())),
       brightVary: lerp(0.15, 0.35, random()),
-      coreGain: role === 'lead' ? lerp(1.2, 2.2, random()) : 0,
+      coreGain: role === 'lead' ? lerp(1.8, 3, random()) : white ? 0.2 : role === 'cool' || role === 'warm' ? 0.35 : 0,
       gradient: either(random) * lerp(0.15, 0.5, random()),
       wander: lerp(0.004, 0.012, random()),
       texture: lerp(0.05, 0.1, random()),
@@ -251,10 +252,12 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
     if (bands[i + 1].role === 'lead') steepRight[i] = true
     else steepLeft[i + 1] = true
   }
-  // A white streak turns its lead-color side toward a lead neighbour, so its last color's fringe (Orange-red in Bold)
-  // never meets Meta Blue.
+  // A white streak turns its cool edge (Cyan in Bold) toward a blue neighbour and its warm edge (Yellow) toward a warm
+  // one, so each side meets a related color.
+  const bluer = (r: Role | undefined) => r === 'lead' || r === 'cool'
+  const warmer = (r: Role | undefined) => r === 'warm' || r === 'deep'
   bands.forEach((b, i) => {
-    if (b.role === 'white') b.fringeDir = bands[i + 1]?.role === 'lead' && bands[i - 1]?.role !== 'lead' ? -1 : 1
+    if (b.role === 'white') b.fringeDir = bluer(bands[i + 1]?.role) || warmer(bands[i - 1]?.role) ? -1 : 1
   })
   bands.forEach((b, i) => {
     if (steepLeft[i] && steepRight[i]) {
@@ -368,7 +371,7 @@ const pad = (values: number[], length: number) => [...values.map(round4), ...new
 export function composeRushSplit(hexes: readonly string[], controls: ControlValues, seed: number, aspect: number): Composition {
   const layout = rushLayout(seed, aspect, controls.drag)
   const colors = rushColors(hexes)
-  const power = 0.7 + 0.6 * controls.intensity
+  const power = 1.4 * (0.7 + 0.6 * controls.intensity)
   const B = layout.bands
   const params: Record<string, ParamValue> = {
     run: [round4(layout.from[0]), round4(layout.from[1]), round4(layout.angle), round4(layout.reach)],
