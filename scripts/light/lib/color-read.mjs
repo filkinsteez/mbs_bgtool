@@ -253,6 +253,13 @@ export const BLEND = {
   center: 0.08,
   ring: 0.02,
   enclosed: 0.6,
+  // A pack color takes blended pixels only in a frame where it also reads as itself, in the first reading, on one
+  // 8-connected area of `own` or more of the lit pixels (a light's pale core left out). Without it a color that shows
+  // only as a mix of two others (mauve where Orange-red's and Meta Blue's lights overlap, with no Orange-red of its
+  // own) would count as shown (coordinator, 2026-11-10 4:13 AM). Set by eye in compare round 29: Rush Bold s2's
+  // Orange-red band (16:9, owner drag) is 1.4%, a Tan streak 1.1%, and both read as their color; areas under 1% are
+  // specks, corners and slivers along an edge.
+  own: 0.01,
 }
 // A pack color's own shade at lightness L, Oklab a and b: the hex dimmed below its lightness, mixed toward white above.
 function ownShade(c, L) {
@@ -402,9 +409,45 @@ function paleCores(rules, labels, width, height, o) {
   }
   return core
 }
-// Shares of one frame in the blend-aware reading (`labels` from sharesOf). With `wantMap`, also each pixel's split (the
-// indexes of its two pack colors, -1 when not split, and how far it lies toward the second), its window in pixels and
-// the pale cores. `options` overrides BLEND's values (for checks of the reading itself).
+// Per pack color (index into `names`), the pixel count of its largest 8-connected area in `labels`, cores left out.
+function largestAreas(names, labels, core, width, height) {
+  const n = width * height
+  const index = new Map(names.map((name, k) => [name, k]))
+  const largest = new Float64Array(names.length)
+  const seen = new Uint8Array(n)
+  const stack = new Int32Array(n)
+  for (let start = 0; start < n; start++) {
+    const k = index.get(labels[start])
+    if (seen[start] || core[start] || k === undefined) continue
+    let size = 0
+    let top = 0
+    stack[top++] = start
+    seen[start] = 1
+    while (top) {
+      const p = stack[--top]
+      size++
+      const x = p % width
+      const y = (p - x) / width
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx
+          const yy = y + dy
+          if (xx < 0 || yy < 0 || xx >= width || yy >= height) continue
+          const q = yy * width + xx
+          if (!seen[q] && !core[q] && labels[q] === labels[start]) {
+            seen[q] = 1
+            stack[top++] = q
+          }
+        }
+    }
+    largest[k] = Math.max(largest[k], size)
+  }
+  return largest
+}
+// Shares of one frame in the blend-aware reading (`labels` from sharesOf), and `own`: each pack color's largest area
+// in the first reading, as a share of the lit pixels. With `wantMap`, also each pixel's split (the indexes of its two
+// pack colors, -1 when not split, and how far it lies toward the second), its window in pixels and the pale cores.
+// `options` overrides BLEND's values (for checks of the reading itself).
 export function blendSharesOf(rules, rgb, width, height, labels, wantMap = false, options = {}) {
   const o = { ...BLEND, ...options }
   const n = width * height
@@ -431,18 +474,20 @@ export function blendSharesOf(rules, rgb, width, height, labels, wantMap = false
       rate[y * width + x] = Math.hypot((A[rr] - A[l]) / sx, (A[dn] - A[u]) / sy, (B[rr] - B[l]) / sx, (B[dn] - B[u]) / sy)
     }
   const core = paleCores(rules, labels, width, height, o)
-  const near = names.map((name) => squaredDistance((p) => labels[p] === name && !core[p], width, height))
+  let lit = 0
+  for (let p = 0; p < n; p++) if (labels[p] !== 'none') lit++
+  const area = largestAreas(names, labels, core, width, height)
+  const shown = names.map((_, k) => lit > 0 && area[k] >= o.own * lit)
+  const near = names.map((name, k) => (shown[k] ? squaredDistance((p) => labels[p] === name && !core[p], width, height) : null))
   const counts = Object.fromEntries(keys.map((k) => [k, 0]))
   const split = wantMap ? { a: new Int8Array(n).fill(-1), b: new Int8Array(n).fill(-1), t: new Float32Array(n), window: new Float32Array(n), core } : null
-  let lit = 0
   for (let p = 0; p < n; p++) {
     const label = labels[p]
     if (label === 'none') continue
-    lit++
     let best = null
     if (label !== 'grey' && !core[p]) {
       const L = lab[3 * p]
-      const ks = names.flatMap((_, k) => (near[k][p] <= widest * widest ? [k] : []))
+      const ks = names.flatMap((_, k) => (shown[k] && near[k][p] <= widest * widest ? [k] : []))
       for (let i = 0; i < ks.length; i++)
         for (let j = i + 1; j < ks.length; j++) {
           const ci = rules.colors[ks[i]]
@@ -475,7 +520,7 @@ export function blendSharesOf(rules, rgb, width, height, labels, wantMap = false
       }
     } else counts[label]++
   }
-  return { shares: Object.fromEntries(keys.map((k) => [k, lit ? counts[k] / lit : 0])), split }
+  return { shares: Object.fromEntries(keys.map((k) => [k, lit ? counts[k] / lit : 0])), own: Object.fromEntries(names.map((name, k) => [name, lit ? area[k] / lit : 0])), split }
 }
 
 // A color mix by name, from src/light/color/mix.ts: `default`, `blue-off` (Meta Blue at 0%), or `<color>:<share>`
