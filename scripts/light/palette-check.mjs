@@ -266,6 +266,7 @@ for (const pair of list(args.at)) {
   if (!(name in controls) || Number.isNaN(Number(value))) throw new Error(`--at takes intensity, softness and horizon or light: ${pair}`)
   controls[name] = Number(value)
 }
+if (dev && list(args.at).length) throw new Error('--at does not apply with --dev: the tool page sends its own fixed intensity, softness and mood control')
 // The lens's radius follows Softness: R = 0.045 to 0.12 of the short side; a lens edge may be 2R wide.
 T.lensEdge = 2 * (0.045 + 0.075 * controls.softness)
 if (typeof args['lens-edge'] === 'string') T.lensEdge = Number(args['lens-edge'])
@@ -1275,11 +1276,9 @@ try {
       page = await (await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 })).newPage()
     }
     const [mood, short] = look.split('.')
-    const moodParam = mood === 'sunset' ? 'horizon' : 'light'
     const c = controlsOf(look, f)
     const line = f.drag ? `&from=${c.drag.from.join(',')}&to=${c.drag.to.join(',')}` : ''
-    const query = `intensity=${c.intensity}&softness=${c.softness}&${moodParam}=${c.mood}${line}`
-    await page.goto(`${devUrl}/?mood=${mood}&look=${short}&pack=${f.pack}&seed=${f.seed}&format=${f.format}&${query}`, { waitUntil: 'load', timeout: 90000 })
+    await page.goto(`${devUrl}/?mood=${mood}&look=${short}&pack=${f.pack}&seed=${f.seed}&format=${f.format}${line}`, { waitUntil: 'load', timeout: 90000 })
     // The drag hint ("Drag to reposition the gradient") sits over the middle of the image until the first drag in a
     // browser, so every fresh page would show it.
     await page.addStyleTag({ content: '.tool-hint{display:none!important}' })
