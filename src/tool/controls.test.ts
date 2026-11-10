@@ -290,7 +290,7 @@ describe('dragging the light', () => {
     })
 
     it('send intensity 0.5 in every mood', () => {
-      expect(Object.values(FIXED_CONTROLS).map((fixed) => fixed.intensity)).toEqual([0.5, 0.5])
+      expect(Object.values(FIXED_CONTROLS).map((fixed) => fixed.intensity)).toEqual(Object.keys(FIXED_CONTROLS).map(() => 0.5))
     })
 
     it('set the mood control from the start of a line, as controlsForDrag does', () => {

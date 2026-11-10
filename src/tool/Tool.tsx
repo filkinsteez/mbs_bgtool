@@ -88,6 +88,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     drag,
     ...(start.sunrise ? { sunrise: start.sunrise } : {}),
     ...(start.contour ? { contour: start.contour } : {}),
+    ...(start.rush ? { rush: start.rush } : {}),
   }
   const query = toQuery(state)
   const { look, pack, seed, format, filter, strength, colormix, mix } = state

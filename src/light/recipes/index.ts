@@ -4,6 +4,7 @@ import { contourHalo } from './contour/halo'
 import { contourMerged } from './contour/merged'
 import { contourRim } from './contour/rim'
 import { contourStreaks } from './contour/streaks'
+import { rushSplit } from './rush/split'
 import { sunsetBands } from './sunset/bands'
 import { sunsetBlooms } from './sunset/blooms'
 import { sunsetMerged } from './sunset/merged'
@@ -19,6 +20,7 @@ export const RECIPES: Readonly<Record<RecipeId, RecipeDefinition>> = {
   'contour.halo': contourHalo,
   'contour.streaks': contourStreaks,
   'contour.merged': contourMerged,
+  'rush.split': rushSplit,
 }
 
 export const RECIPE_LIST: readonly RecipeDefinition[] = RECIPE_IDS.map((id) => RECIPES[id])

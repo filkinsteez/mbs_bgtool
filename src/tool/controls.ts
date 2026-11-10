@@ -21,6 +21,7 @@ export { DEFAULT_CONTROLS, type ControlValues } from '@/light'
 export const FIXED_CONTROLS: Readonly<Record<MoodId, Omit<ControlValues, 'drag'>>> = {
   sunset: { intensity: 0.5, softness: 0.5, mood: 0.5 },
   contour: { intensity: 0.5, softness: 0.5, mood: 0.5 },
+  rush: { intensity: 0.5, softness: 0.5, mood: 0.5 },
 }
 
 export interface RecipeMapping {
@@ -106,8 +107,8 @@ const numberOf = (value: ParamValue | undefined): number => (typeof value === 'n
 /**
  * Where a Contour look puts its light, in frame units, read from its composed
  * params: the hot spot of Rim and Halo, the pool where Beam's beam lands, the
- * point where Streaks' shafts meet. Null for Sunset looks, whose light height
- * is the shared horizon, and for params it can't read.
+ * point where Streaks' shafts meet; where Rush's streaks start. Null for Sunset
+ * looks, whose light height is the shared horizon, and for params it can't read.
  */
 export function lightPlace(scene: Scene, aspect: number): LightPoint | null {
   const [fw, fh] = frameShorts(aspect)
@@ -137,6 +138,11 @@ export function lightPlace(scene: Scene, aspect: number): LightPoint | null {
     case 'contour.streaks': {
       const center = pairOf(params.center)
       return center ? [center[0] / fw + 0.5, center[1] / fh + 0.5] : null
+    }
+    case 'rush.split': {
+      // Where the streaks start, still together, before they split into their colors.
+      const start = pairOf(params.run)
+      return start ? [start[0] / fw + 0.5, start[1] / fh + 0.5] : null
     }
     default: {
       const unknown: never = scene.recipe
@@ -235,7 +241,7 @@ const moodOf = (recipeId: RecipeId): MoodId => getRecipe(recipeId).mood
  * light nearest the point. Sunset: the Horizon whose shared line sits at the
  * point's height. Contour: the Light position whose light lies nearest the
  * point along the look's own path. Null when a Contour look's light can't be
- * read from its params.
+ * read from its params, and for Rush, whose line sets the streaks itself.
  */
 export function moodForPoint(recipeId: RecipeId, pack: ColorPack, seed: number, aspect: number, point: LightPoint): number | null {
   const mood = moodOf(recipeId)
@@ -246,6 +252,8 @@ export function moodForPoint(recipeId: RecipeId, pack: ColorPack, seed: number, 
       const path = lightPath(recipeId, pack, seed, aspect)
       return path ? onSliderStep(nearestOnPath(path, point, aspect)) : null
     }
+    case 'rush':
+      return null
     default: {
       const unknown: never = mood
       throw new Error(`Unknown mood: ${String(unknown)}`)
@@ -263,7 +271,8 @@ export const KEEP_LINE_DISTANCE = 0.1
  * Whether a dragged line stays when the seed, look, pack or format changes. Sunset: always, as the shared horizon can
  * sit at the line's height for every seed. Contour: only when the look's light path in the new scene comes within
  * KEEP_LINE_DISTANCE of the line's start; farther away, the place on the path nearest the start is mostly an end of
- * the path, where the light is at the end of its track. A Contour path that can't be read keeps the line.
+ * the path, where the light is at the end of its track. A Contour path that can't be read keeps the line. Rush: always,
+ * as its streaks start wherever the line does.
  */
 export function keepsLine(recipeId: RecipeId, pack: ColorPack, seed: number, aspect: number, start: LightPoint): boolean {
   const mood = moodOf(recipeId)
@@ -275,6 +284,8 @@ export function keepsLine(recipeId: RecipeId, pack: ColorPack, seed: number, asp
       if (!path) return true
       return Math.min(...nearestOnStretches(path, start, aspect).map((f) => f.distance)) <= KEEP_LINE_DISTANCE
     }
+    case 'rush':
+      return true
     default: {
       const unknown: never = mood
       throw new Error(`Unknown mood: ${String(unknown)}`)
@@ -285,7 +296,7 @@ export function keepsLine(recipeId: RecipeId, pack: ColorPack, seed: number, asp
 /**
  * How far the look's light moves (frame units) when the mood control goes
  * from `from` to `to`: the shared horizon's height change for Sunset, the
- * move along the look's own path for Contour.
+ * move along the look's own path for Contour, none for Rush.
  */
 function moodShift(recipeId: RecipeId, pack: ColorPack, seed: number, aspect: number, from: number, to: number): LightPoint {
   const mood = moodOf(recipeId)
@@ -299,6 +310,8 @@ function moodShift(recipeId: RecipeId, pack: ColorPack, seed: number, aspect: nu
       const b = pathAt(path, to)
       return [b[0] - a[0], b[1] - a[1]]
     }
+    case 'rush':
+      return [0, 0]
     default: {
       const unknown: never = mood
       throw new Error(`Unknown mood: ${String(unknown)}`)

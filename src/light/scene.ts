@@ -1,7 +1,8 @@
 import type { ColorPack, PackId } from './color/packs'
 import type { Rgb } from './color/srgb'
 
-export type MoodId = 'sunset' | 'contour'
+/** `rush` has no panel tile yet: its one look shows only behind `rush=split`. */
+export type MoodId = 'sunset' | 'contour' | 'rush'
 
 /**
  * In panel order. Each mood's first look is the one picking the mood switches to, and the picture on its Mood
@@ -17,8 +18,11 @@ export const RECIPE_IDS = [
   'contour.streaks',
 ] as const
 
-/** Looks that render but aren't in the panel: the tool shows one only behind its URL switch (`sunrise=merged`, `contour=merged`). */
-export const HIDDEN_RECIPE_IDS = ['sunset.merged', 'contour.merged'] as const
+/**
+ * Looks that render but aren't in the panel: the tool shows one only behind its URL switch (`sunrise=merged`,
+ * `contour=merged`, `rush=split`).
+ */
+export const HIDDEN_RECIPE_IDS = ['sunset.merged', 'contour.merged', 'rush.split'] as const
 
 export type RecipeId = (typeof RECIPE_IDS)[number] | (typeof HIDDEN_RECIPE_IDS)[number]
 

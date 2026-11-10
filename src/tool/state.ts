@@ -24,6 +24,11 @@ export interface ToolState {
   sunrise?: 'merged'
   /** `contour=merged` in the URL: Contour shows the merged look in place of the seed's look. Missing (off) by default. */
   contour?: 'merged'
+  /**
+   * `rush=split` in the URL: the picture draws Rush's look in place of the seed's look, whichever mood the panel shows,
+   * as the panel has no Rush tile yet. Missing (off) by default.
+   */
+  rush?: 'split'
 }
 
 export const MOOD_IDS: readonly MoodId[] = ['sunset', 'contour']
@@ -56,10 +61,11 @@ export function fixLook(mood: MoodId, look: unknown, seed: number): RecipeId {
 }
 
 /**
- * The look the picture draws: the merged Sunrise look while `sunrise=merged` is on in Sunrise, the merged Contour look
- * while `contour=merged` is on in Contour, else the state's look.
+ * The look the picture draws: Rush's look while `rush=split` is on, the merged Sunrise look while `sunrise=merged` is
+ * on in Sunrise, the merged Contour look while `contour=merged` is on in Contour, else the state's look.
  */
-export function sceneLook(state: Pick<ToolState, 'mood' | 'look' | 'sunrise' | 'contour'>): RecipeId {
+export function sceneLook(state: Pick<ToolState, 'mood' | 'look' | 'sunrise' | 'contour' | 'rush'>): RecipeId {
+  if (state.rush === 'split') return 'rush.split'
   if (state.sunrise === 'merged' && state.mood === 'sunset') return 'sunset.merged'
   if (state.contour === 'merged' && state.mood === 'contour') return 'contour.merged'
   return state.look
@@ -165,6 +171,7 @@ export function parseQuery(query: QueryInput): ToolState {
     ...parseFilterQuery(query),
     ...(readParam(query, 'sunrise') === 'merged' ? { sunrise: 'merged' as const } : {}),
     ...(readParam(query, 'contour') === 'merged' ? { contour: 'merged' as const } : {}),
+    ...(readParam(query, 'rush') === 'split' ? { rush: 'split' as const } : {}),
   }
 }
 
@@ -182,11 +189,12 @@ export function toQuery(state: ToolState): string {
   const color = state.colormix ? `colormix=1${mix ? `&mix=${mix.join(',')}` : ''}` : null
   const trial = state.sunrise ? `sunrise=${state.sunrise}` : null
   const contourTrial = state.contour ? `contour=${state.contour}` : null
+  const rushTrial = state.rush ? `rush=${state.rush}` : null
   const drag = state.drag ? clampDrag(state.drag) : undefined
   const line = drag ? `from=${drag.from.join(',')}&to=${drag.to.join(',')}` : null
   const tail = new URLSearchParams([
     ['seed', String(state.seed)],
     ['format', formatToQuery(state.format)],
   ]).toString()
-  return [head, color, trial, contourTrial, line, tail, filterQuery(state)].filter(Boolean).join('&')
+  return [head, color, trial, contourTrial, rushTrial, line, tail, filterQuery(state)].filter(Boolean).join('&')
 }
