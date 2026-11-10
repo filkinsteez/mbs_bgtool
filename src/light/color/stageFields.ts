@@ -32,6 +32,11 @@ export interface StageGrid {
   glow?: Float32Array
   /** How much the light as the picture shows it (`seen`) changes per grid cell, smoothed over about a cell. */
   slope?: Float32Array
+  /**
+   * Like `coverage`, but each point counts in step with its light from a little under the visible lightness to a little
+   * over it; in a look colored by its parts the solve weighs cells by it, so a light fading in counts smoothly.
+   */
+  softCoverage?: Float32Array
 }
 
 /** Points per cell side where the design is read for `coverage`. */

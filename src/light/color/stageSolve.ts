@@ -339,8 +339,9 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
   const K = colors.length
   const L = grid.lightness
   const visible: number[] = []
-  for (let i = 0; i < L.length; i++) if (grid.coverage[i] > 0) visible.push(i)
-  const cover = Float32Array.from(visible, (i) => grid.coverage[i] * Math.min(L[i], SEEN_CAP))
+  const coverage = byParts ? (grid.softCoverage ?? grid.coverage) : grid.coverage
+  for (let i = 0; i < L.length; i++) if (coverage[i] > 0) visible.push(i)
+  const cover = Float32Array.from(visible, (i) => coverage[i] * Math.min(L[i], SEEN_CAP))
   const n = Math.max(1e-6, cover.reduce((a, b) => a + b, 0))
   const F = assignment.map((f) => fields[f].values)
   // In a look colored by its parts the colors' lightness masks key on the light as the picture shows it.

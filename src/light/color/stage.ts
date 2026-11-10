@@ -128,6 +128,7 @@ function readDesign(input: ColorStageInput): StageGrid | null {
   gpu.release(light)
   const lightness = new Float32Array(w * h)
   const coverage = new Float32Array(w * h)
+  const softCoverage = new Float32Array(w * h)
   const peak = new Float32Array(w * h)
   const points = COVERAGE_SPLIT * COVERAGE_SPLIT
   for (let py = 0; py < ph; py++)
@@ -139,6 +140,7 @@ function readDesign(input: ColorStageInput): StageGrid | null {
       lightness[i] += v / points
       peak[i] = Math.max(peak[i], v)
       if (Math.cbrt(v) >= VISIBLE) coverage[i] += 1 / points
+      softCoverage[i] += litShare(Math.cbrt(v)) / points
     }
   const spread = afterLens(lightness, w, h, input.lens)
   const glow = new Float32Array(w * h)
@@ -149,8 +151,20 @@ function readDesign(input: ColorStageInput): StageGrid | null {
     lightness[i] = Math.cbrt(lightness[i])
     peak[i] = Math.cbrt(peak[i])
   }
-  return { width: w, height: h, lightness, coverage, peak, seen, glow, slope: lightSlope(seen, w, h) }
+  return { width: w, height: h, lightness, coverage, softCoverage, peak, seen, glow, slope: lightSlope(seen, w, h) }
 }
+
+/**
+ * How much a point of light counts as lit for a look colored by its parts: from a little under the visible lightness
+ * to a little over it, so a light fading in counts in step with its light, not a grid point at a time.
+ */
+function litShare(lightness: number): number {
+  const t = Math.min(1, Math.max(0, (lightness - (VISIBLE - LIT_SOFT)) / (2 * LIT_SOFT)))
+  return t * t * (3 - 2 * t)
+}
+
+/** Half the lightness over which a point starts to count as lit (litShare). */
+const LIT_SOFT = 0.05
 
 /**
  * Each cell's luminance after the lens spreads part of the light over its levels (its bloom and the camera's glare),
