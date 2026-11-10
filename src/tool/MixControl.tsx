@@ -48,11 +48,8 @@ export function shareAt(fraction: number): number {
   return steps * SHARE_STEP
 }
 
-/** The first and last colors the bar draws: those with a share, and the chosen one, which shows even at 0%. */
-export function barEnds(mix: ColorMix, chosen: number): { first: number; last: number } {
-  const drawn = mix.shares.flatMap((share, index) => (share > 0 || index === chosen ? [index] : []))
-  return { first: drawn[0] ?? chosen, last: drawn.at(-1) ?? chosen }
-}
+/** A color the mix has off: at or below the share `isMetaBlueOn` counts as off, so the bar and the switch agree. */
+export const isOff = (share: number) => share <= 1e-9
 
 interface MixControlProps {
   pack: ColorPack
@@ -63,8 +60,9 @@ interface MixControlProps {
 /**
  * The color mix in step 1: a bar of the pack's colors, each as wide as its share with its percent under it, where a
  * click or the arrow keys pick a color; one slider for the picked color's share, 0 to 90% in steps of 5, the others
- * keeping their ratios; and the Meta Blue switch, which is Meta Blue at 0%. A double-click on the bar, or Escape on it,
- * gives the pack's default mix with the switch as it is.
+ * keeping their ratios; and the Meta Blue switch, which is Meta Blue at 0%. Every color keeps a place on the bar that a
+ * click can hit, a color at 0% as a thin stripe, so it can be picked and raised again. A double-click on the bar, or
+ * Escape on it, gives the pack's default mix with the switch as it is.
  */
 export function MixControl({ pack, mix, onChange }: MixControlProps) {
   const blue = metaBlueIndex(pack)
@@ -77,7 +75,6 @@ export function MixControl({ pack, mix, onChange }: MixControlProps) {
   const [dragging, setDragging] = useState(false)
   const labelId = useId()
   const percents = mixPercents(mix)
-  const { first, last } = barEnds(mix, chosen)
   const share = mix.shares[chosen]
   const name = pack.colors[chosen].name
   const fill = (share / MAX_SHARE) * 100
@@ -141,9 +138,8 @@ export function MixControl({ pack, mix, onChange }: MixControlProps) {
             aria-label={`${color.name} ${percents[index]}%`}
             tabIndex={index === chosen ? 0 : -1}
             data-dial-path={index === chosen ? MIX_DIAL_KEY : undefined}
-            data-first={index === first ? '' : undefined}
-            data-last={index === last ? '' : undefined}
-            style={{ flexGrow: mix.shares[index], background: color.hex }}
+            data-off={isOff(mix.shares[index]) ? '' : undefined}
+            style={{ flexGrow: mix.shares[index], '--mix-color': color.hex } as CSSProperties}
             onClick={() => pick(index)}
             onKeyDown={(event) => handleBarKey(event, index)}
           />

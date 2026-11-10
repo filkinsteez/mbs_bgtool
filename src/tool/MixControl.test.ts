@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { getPack } from '@/light'
-import { MAX_SHARE, mixFromShares, SHARE_STEP } from '@/light/color/mix'
-import { barEnds, shareAt, shareForKey } from './MixControl'
+import { defaultMix, isMetaBlueOn, MAX_SHARE, mixFromShares, setMetaBlue, setShare, SHARE_STEP } from '@/light/color/mix'
+import { isOff, shareAt, shareForKey } from './MixControl'
 
 /** A share in percent to a tenth, so float error doesn't hide which step a key gave. */
 const percent = (share: number | null) => (share === null ? null : Math.round(share * 1000) / 10)
@@ -48,10 +48,12 @@ describe('the mix slider', () => {
 describe('the mix bar', () => {
   const bold = getPack('bold')
 
-  it('rounds its ends at the first and last colors it draws, the picked one included at 0%', () => {
-    expect(barEnds(mixFromShares(bold, [0, 30, 30, 40])!, 1)).toEqual({ first: 1, last: 3 })
-    expect(barEnds(mixFromShares(bold, [0, 30, 30, 40])!, 0)).toEqual({ first: 0, last: 3 })
-    expect(barEnds(mixFromShares(bold, [40, 60, 0, 0])!, 1)).toEqual({ first: 0, last: 1 })
-    expect(barEnds(mixFromShares(bold, [40, 60, 0, 0])!, 3)).toEqual({ first: 0, last: 3 })
+  it('draws a color as off exactly when the Meta Blue switch would count it off', () => {
+    const blueOff = setMetaBlue(bold, defaultMix(bold), false)
+    const blueLow = setShare(bold, defaultMix(bold), 0, SHARE_STEP)
+    for (const mix of [defaultMix(bold), blueOff, blueLow, mixFromShares(bold, [0, 30, 30, 40])!]) {
+      expect(isOff(mix.shares[0]), mix.shares.join(',')).toBe(!isMetaBlueOn(bold, mix))
+    }
+    expect(mixFromShares(bold, [50, 0, 25, 25])!.shares.map(isOff)).toEqual([false, true, false, false])
   })
 })

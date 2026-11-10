@@ -298,6 +298,8 @@
    the picked color and the Meta Blue switch. */
 .tool-mix {
   --mix-bar-height: 30px;
+  /* The narrowest a color gets on the bar, so a click can pick any color, even one at 0%. */
+  --mix-tap: 14px;
   /* The card's surface, opaque: the gap between the picked color and its ring. */
   --mix-gap: color-mix(in srgb, var(--chrome-1) 95%, #fff);
   display: flex;
@@ -325,31 +327,46 @@
 /* Each color's width follows its share (flex-grow, set inline). */
 .tool-mix-color {
   flex: 0 1 0;
-  min-width: 0;
+  min-width: var(--mix-tap);
   padding: 0;
   border: none;
   border-radius: 0;
+  background: var(--mix-color);
   cursor: pointer;
   outline: 2px solid transparent;
   outline-offset: 2px;
   transition: outline-color 0.15s;
 }
 
-.tool-mix-color[data-first] {
+.tool-mix-color:first-child {
   border-top-left-radius: 6px;
   border-bottom-left-radius: 6px;
 }
 
-.tool-mix-color[data-last] {
+.tool-mix-color:last-child {
   border-top-right-radius: 6px;
   border-bottom-right-radius: 6px;
 }
 
-/* The picked color takes the strips' ring, and stays a sliver at 0% so the ring and focus still show. */
+/* A color at 0%: a thin stripe in the middle of its place, with the strips' thin edge so dark colors still show. */
+.tool-mix-color[data-off] {
+  position: relative;
+  background: none;
+}
+
+.tool-mix-color[data-off]::before {
+  content: '';
+  position: absolute;
+  inset: 0 calc(50% - 2px);
+  border-radius: 2px;
+  background: var(--mix-color);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+/* The picked color takes the strips' ring. */
 .tool-mix-color[aria-checked='true'] {
   position: relative;
   z-index: 1;
-  min-width: 6px;
   border-radius: 6px;
   outline-color: var(--dial-text-primary);
   box-shadow: 0 0 0 2px var(--mix-gap);
@@ -362,7 +379,7 @@
 
 .tool-mix-percent {
   flex: 0 1 0;
-  min-width: 0;
+  min-width: var(--mix-tap);
   container-type: inline-size;
   color: var(--dial-text-secondary);
   font-size: 11px;
@@ -374,7 +391,6 @@
 }
 
 .tool-mix-percent[data-chosen] {
-  min-width: 6px;
   color: var(--dial-text-primary);
   font-weight: 600;
 }
