@@ -9,11 +9,16 @@
 // 0.01 of the short side, from each base line (--line), and the scene is what the tool shows for that drag
 // (controlsForDrag: the line and the mood control set from its start). --grid writes two sheets per look: one start
 // with 8 directions at one length, and one direction at 3 lengths.
-// Usage: node scripts/light/control-sweep.mjs [--look ramp,bands,...]
+// --mix default|blue-off|Cyan:0.6 draws every frame as the tool does with colormix=1 at that mix (each design drawn in
+// the color stage's design pack, the line's controls too, and given the frame's pack colors by the stage), so a color
+// that flips as the line moves shows as a jump. Each jump gives the share of its worst block's change that is color
+// rather than lightness. The looks behind a switch in the tool (sunset.merged, contour.merged, rush.split) are swept
+// when named in full.
+// Usage: node scripts/light/control-sweep.mjs [--look ramp,bands,...,sunset.merged,contour.merged,rush.split]
 //   [--control intensity,softness,horizon|light,startx,starty,angle,length|line] [--pack bold,...] [--seeds 1-12,5081]
 //   [--format 16x9,9x16] [--at intensity=0.75,softness=1,horizon=0.79] [--from 0] [--to 1]
-//   [--line 0.35,0.7,-40,0.6 ...] [--quick] [--rev HEAD [--patch file] | --tree] [--label text] [--out dir]
-//   [--ratio 4] [--floor 0.003] [--peak-floor 0.02] [--frames 0:1:0.1] [--no-strips] [--strip-all]
+//   [--line 0.35,0.7,-40,0.6 ...] [--quick] [--mix default] [--rev HEAD [--patch file] | --tree] [--label text]
+//   [--out dir] [--ratio 4] [--floor 0.003] [--peak-floor 0.02] [--frames 0:1:0.1] [--no-strips] [--worst 6] [--strip-all]
 //   [--tool-check http://localhost:3000]
 //   node scripts/light/control-sweep.mjs --grid [--look ...] [--pack bold] [--seeds 1-3] [--format 16x9] [--out dir]
 import { execFileSync, spawnSync } from 'node:child_process'
@@ -23,9 +28,12 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
 import { list, parseArgs } from './lib/args.mjs'
+import { mixByName } from './lib/color-read.mjs'
 import { ROOT, startHarness } from './lib/harness.mjs'
 
 const LOOKS = ['sunset.ramp', 'sunset.bands', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
+/** Looks the tool draws only behind a switch in the URL, swept when named in full: the switch for each. */
+const SWITCHED = { 'sunset.merged': { sunrise: 'merged' }, 'contour.merged': { contour: 'merged' }, 'rush.split': { rush: 'split' } }
 const PACKS = ['bold', 'elemental', 'atmospheric']
 /** The dragged line's sweeps: its start along x or y (frame units), its angle (turns) and its length (short sides). */
 const LINE_CONTROLS = ['startx', 'starty', 'angle', 'length']
@@ -101,8 +109,11 @@ const ratioLimit = Number(args.ratio ?? 4)
 const floor = Number(args.floor ?? 0.003)
 const peakFloor = Number(args['peak-floor'] ?? 0.02)
 const strips = args['no-strips'] !== true
+/** --worst N: strips only for the N largest jumps (by mean ΔE) of each look and format, written after the sweeps. */
+const worst = args.worst === undefined ? null : Number(args.worst)
 const frameValues = parseFrames(args.frames)
-const label = typeof args.label === 'string' ? args.label : `working tree at ${clock()}`
+const mixName = typeof args.mix === 'string' ? args.mix : null
+const label = `${typeof args.label === 'string' ? args.label : `working tree at ${clock()}`}${mixName ? `, color stage on at the mix ${mixName}` : ''}`
 const outDir = path.resolve(ROOT, typeof args.out === 'string' ? args.out : defaultOut())
 
 for (const pack of packs) if (!PACKS.includes(pack)) throw new Error(`Unknown pack ${pack}`)
@@ -114,14 +125,20 @@ function range(a, b) {
 }
 
 function defaultOut() {
-  if (args.grid === true) return 'artifacts/control-sweep/grid'
-  return args.quick === true ? 'artifacts/control-sweep/quick' : 'artifacts/control-sweep'
+  const dir = args.grid === true ? 'artifacts/control-sweep/grid' : args.quick === true ? 'artifacts/control-sweep/quick' : 'artifacts/control-sweep'
+  return typeof args.mix === 'string' ? `${dir}-mix` : dir
 }
 
 function lookId(name) {
+  if (SWITCHED[name]) return name
   const id = LOOKS.find((look) => look === name || look.endsWith(`.${name}`))
-  if (!id) throw new Error(`Unknown look ${name}; use ${LOOKS.join(', ')}`)
+  if (!id) throw new Error(`Unknown look ${name}; use ${[...LOOKS, ...Object.keys(SWITCHED)].join(', ')}`)
   return id
+}
+
+/** A look's name in file names: ramp, halo, ..., and sunset-merged, contour-merged, rush-split. */
+function lookTag(look) {
+  return SWITCHED[look] ? look.replace('.', '-') : look.slice(look.indexOf('.') + 1)
 }
 
 function controlKey(name) {
@@ -287,11 +304,17 @@ function median(numbers) {
   return sorted.length % 2 ? sorted[mid] : 0.5 * (sorted[mid - 1] + sorted[mid])
 }
 
-/** Mean ΔE over the frame, the worst block's mean ΔE, and the ΔE per pixel, between two Oklab thumbnails. */
+/**
+ * Mean ΔE over the frame, the worst block's mean ΔE, the share of the worst block's change that is color rather than
+ * lightness (Σ|Δab| / (Σ|ΔL| + Σ|Δab|): 0 when only the lightness changes, 1 when only the color does), and the ΔE
+ * per pixel, between two Oklab thumbnails.
+ */
 function change(a, b) {
   const { width, height } = a
   const blocksX = Math.ceil(width / BLOCK)
   const sums = new Float64Array(blocksX * Math.ceil(height / BLOCK))
+  const lights = new Float64Array(sums.length)
+  const hues = new Float64Array(sums.length)
   const counts = new Uint32Array(sums.length)
   const perPixel = new Float32Array(width * height)
   let total = 0
@@ -307,12 +330,18 @@ function change(a, b) {
       total += d
       const k = Math.floor(y / BLOCK) * blocksX + Math.floor(x / BLOCK)
       sums[k] += d
+      lights[k] += Math.abs(dl)
+      hues[k] += Math.sqrt(da * da + db * db)
       counts[k]++
     }
   }
   let peak = 0
-  for (let k = 0; k < sums.length; k++) peak = Math.max(peak, sums[k] / counts[k])
-  return { mean: total / (width * height), peak, perPixel }
+  let worst = 0
+  for (let k = 0; k < sums.length; k++) {
+    if (sums[k] / counts[k] > peak) [peak, worst] = [sums[k] / counts[k], k]
+  }
+  const color = hues[worst] / Math.max(1e-9, lights[worst] + hues[worst])
+  return { mean: total / (width * height), peak, color, perPixel }
 }
 
 /** Steps far larger than the steps around them; flagged steps next to each other make one jump. */
@@ -483,7 +512,7 @@ async function writeCurves(look, format, lookSweeps) {
       }
     })
   })
-  const file = path.join(outDir, 'curves', `${look.split('.')[1]}-${format}.png`)
+  const file = path.join(outDir, 'curves', `${lookTag(look)}-${format}.png`)
   await mkdir(path.dirname(file), { recursive: true })
   await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">${parts.join('')}</svg>`))
     .png()
@@ -502,6 +531,18 @@ try {
   const { getRecipe } = await harness.ssr('/src/light/recipes/index.ts')
   const { recipeContext, resolveScene } = await harness.ssr('/src/light/engine/resolve.ts')
   const toLinear = Float32Array.from({ length: 256 }, (_, i) => srgbToLinear(i / 255))
+  const stage = mixName ? await harness.ssr('/src/light/color/stage.ts') : null
+  if (mixName && !stage?.withColorMix) throw new Error('--mix: this code has no color stage (src/light/color/stage.ts with withColorMix)')
+  const mixes = mixName ? await harness.ssr('/src/light/color/mix.ts') : null
+  const mixOf = (pack) => mixByName(mixes, getPack(pack), mixName)
+  for (const pack of mixName ? packs : []) if (!mixOf(pack)) throw new Error(`--mix ${mixName}: the ${pack} pack has no such color`)
+  /** The pack the tool draws a frame's design in: with --mix the stage's design pack, whatever the frame's pack. */
+  const designOf = (pack) => getPack(stage ? stage.COLOR_DESIGN_PACK : pack)
+  /** The scene the tool draws for a frame's pack: with --mix the design, given the pack's colors at the mix. */
+  const sceneOf = (look, pack, seed, controls, aspect) => {
+    const scene = buildScene(look, designOf(pack), seed, controls, aspect)
+    return stage ? stage.withColorMix(scene, getPack(pack), mixOf(pack)) : scene
+  }
 
   const frameOf = (format) => {
     const size = EXPORT_SIZES[format.replace('x', ':')]
@@ -514,7 +555,7 @@ try {
   /** The tool's controls for a dragged line (as the tool clamps it), or the controls without one. */
   const controlsForLine = (look, pack, seed, format, line) => {
     const drag = line ? clampDrag(line) : undefined
-    return drag ? controlsForDrag(look, getPack(pack), seed, base, frameOf(format).aspect, drag) : base
+    return drag ? controlsForDrag(look, designOf(pack), seed, base, frameOf(format).aspect, drag) : base
   }
   /** The tool's controls for a sweep's value: a slider at that value, or the line for that value. */
   /**
@@ -527,7 +568,7 @@ try {
     let lines = steppedLines.get(key)
     if (!lines) {
       const { aspect } = frameOf(sweep.format)
-      const pack = getPack(sweep.pack)
+      const pack = designOf(sweep.pack)
       const line = clampDrag(lineOf(sweep, value, aspect))
       const first = Math.round((moodForPoint(sweep.look, pack, sweep.seed, aspect, line.from) ?? base.mood) * 100)
       lines = new Map([[first, line]])
@@ -555,7 +596,7 @@ try {
   }
   const sceneFor = (sweep, value) => {
     const start = performance.now()
-    const scene = buildScene(sweep.look, getPack(sweep.pack), sweep.seed, controlsFor(sweep, value), frameOf(sweep.format).aspect)
+    const scene = sceneOf(sweep.look, sweep.pack, sweep.seed, controlsFor(sweep, value), frameOf(sweep.format).aspect)
     timing.compose += performance.now() - start
     return scene
   }
@@ -685,8 +726,8 @@ try {
     const { perPixel } = change(a, thumbs.get(jump.to + 1))
     const white = heatScale(perPixel)
     panels.push({ image: await enlarge(heatmap(perPixel, a.width, a.height, white), RENDER_FACTOR), caption: `ΔE ${jump.a.toFixed(2)} to ${jump.b.toFixed(2)}, white ${white.toFixed(3)}` })
-    const title = `${label}: ${sweep.look} ${sweep.pack} seed ${sweep.seed} ${sweep.format}, ${name} ${jump.a.toFixed(2)} to ${jump.b.toFixed(2)}: ΔE ${jump.step.toFixed(4)}, ${jump.ratio.toFixed(1)}x the steps around it (${jump.usual.toFixed(4)}), worst block ${jump.peak.toFixed(3)}`
-    const file = path.join(outDir, 'jumps', `${sweep.look.split('.')[1]}-${sweepFileName(sweep)}-${sweep.pack}-s${sweep.seed}-${sweep.format}-${jump.a.toFixed(2)}.jpg`)
+    const title = `${label}: ${sweep.look} ${sweep.pack} seed ${sweep.seed} ${sweep.format}, ${name} ${jump.a.toFixed(2)} to ${jump.b.toFixed(2)}: ΔE ${jump.step.toFixed(4)}, ${jump.ratio.toFixed(1)}x the steps around it (${jump.usual.toFixed(4)}), worst block ${jump.peak.toFixed(3)}${jump.color === undefined ? '' : `, ${Math.round(100 * jump.color)}% of its change color rather than lightness`}`
+    const file = path.join(outDir, 'jumps', `${lookTag(sweep.look)}-${sweepFileName(sweep)}-${sweep.pack}-s${sweep.seed}-${sweep.format}-${jump.a.toFixed(2)}.jpg`)
     const causes = jump.causes ? `Jumps with it: ${describeCauses(jump.causes, 5) || 'nothing in the scene or uniforms'}` : ''
     await composeStrip(file, [title, causes], panels)
     return file
@@ -711,7 +752,7 @@ try {
       panels.push({ image: shownFrame(sweep, value, image), caption: `${caption}${previous ? `  Δ ${change(previous, thumb).mean.toFixed(3)}` : ''}` })
       previous = thumb
     }
-    const file = path.join(outDir, 'frames', `${sweep.look.split('.')[1]}-${sweepFileName(sweep)}-${sweep.pack}-s${sweep.seed}-${sweep.format}.jpg`)
+    const file = path.join(outDir, 'frames', `${lookTag(sweep.look)}-${sweepFileName(sweep)}-${sweep.pack}-s${sweep.seed}-${sweep.format}.jpg`)
     const columns = sweep.format === '16x9' ? 4 : 6
     await composeStrip(file, `${label}: ${sweep.look} ${sweep.pack} seed ${sweep.seed} ${sweep.format}, ${name} across its range (${othersText(sweep)}); Δ: mean ΔE from the frame before`, panels, columns)
     return panels
@@ -742,7 +783,7 @@ try {
         composites.push({ input: small, left: labelWidth + c * (width + gap), top: y })
       }
     }
-    const file = path.join(outDir, 'contact', `${look.split('.')[1]}-${fileName}-${format}.jpg`)
+    const file = path.join(outDir, 'contact', `${lookTag(look)}-${fileName}-${format}.jpg`)
     await mkdir(path.dirname(file), { recursive: true })
     await sharp({ create: { width: sheetWidth, height: top + rows.length * (height + gap), channels: 3, background: BACKGROUND } })
       .composite(composites)
@@ -769,11 +810,12 @@ try {
         const [mood, look] = sweep.look.split('.')
         const query = new URLSearchParams({
           mood,
-          look,
+          ...(SWITCHED[sweep.look] ?? { look }),
           pack: sweep.pack,
           ...(line ? { from: line.from.join(','), to: line.to.join(',') } : {}),
           seed: String(sweep.seed),
           format: sweep.format,
+          ...(mixName ? { colormix: '1', mix: mixes.formatMix(getPack(sweep.pack), mixOf(sweep.pack)) } : {}),
         })
         if (checked.has(String(query))) continue
         checked.add(String(query))
@@ -783,13 +825,13 @@ try {
         const size = await canvas.evaluate((element) => ({ width: element.width, height: element.height }))
         const shot = await sharp(await canvas.screenshot()).resize(size.width, size.height, { fit: 'fill' }).ensureAlpha().raw().toBuffer()
         const { aspect } = frameOf(sweep.format)
-        const scene = buildScene(sweep.look, getPack(sweep.pack), sweep.seed, toolControls(sweep.look, getPack(sweep.pack), sweep.seed, aspect, line), aspect)
+        const scene = sceneOf(sweep.look, sweep.pack, sweep.seed, toolControls(sweep.look, designOf(sweep.pack), sweep.seed, aspect, line), aspect)
         const render = await harness.render({ scene, width: size.width, height: size.height, supersample: 2 })
         const factor = Math.max(1, Math.floor(Math.min(size.width, size.height) / frameOf(sweep.format).thumb[size.width >= size.height ? 'height' : 'width']))
         const tool = labThumb({ ...size, data: shot }, factor)
         const ours = labThumb(render, factor)
         const { mean, peak } = change(tool, ours)
-        const file = path.join(outDir, 'tool-check', `${sweep.look.split('.')[1]}-${sweep.pack}-s${sweep.seed}-${sweepFileName(sweep)}-${value.toFixed(2)}.jpg`)
+        const file = path.join(outDir, 'tool-check', `${lookTag(sweep.look)}-${sweep.pack}-s${sweep.seed}-${sweepFileName(sweep)}-${value.toFixed(2)}.jpg`)
         await composeStrip(file, `${url}/?${query} (${size.width}x${size.height}): tool canvas, harness render; mean ΔE ${mean.toFixed(4)}, worst block ${peak.toFixed(4)}`, [
           { image: { ...size, data: shot }, caption: 'tool' },
           { image: render, caption: `harness (${label})` },
@@ -805,7 +847,7 @@ try {
   const renderLine = async (look, pack, seed, format, line) => {
     const { aspect, render } = frameOf(format)
     const controls = controlsForLine(look, pack, seed, format, line)
-    const scene = buildScene(look, getPack(pack), seed, controls, aspect)
+    const scene = sceneOf(look, pack, seed, controls, aspect)
     const image = await harness.render({ scene, width: Math.round(render.width * 1.5), height: Math.round(render.height * 1.5), supersample: 2 })
     return { image: controls.drag ? withLine(image, controls.drag) : image, mood: controls.mood }
   }
@@ -842,14 +884,14 @@ try {
         }
       }
     }
-    const directions = path.join(outDir, `${look.split('.')[1]}-directions-${format}.jpg`)
+    const directions = path.join(outDir, `${lookTag(look)}-directions-${format}.jpg`)
     await composeStrip(
       directions,
       `${label}: ${look} ${format}, ${others}. Each block: the seed's own frame in the middle, around it the line from ${SHEET_START.from.join(', ')} with length ${SHEET_START.length} short sides in 8 directions (0 right, -90 up), each where it points. The drawn line runs from the start (ring) to its end.`,
       directionPanels,
       3,
     )
-    const lengths = path.join(outDir, `${look.split('.')[1]}-lengths-${format}.jpg`)
+    const lengths = path.join(outDir, `${lookTag(look)}-lengths-${format}.jpg`)
     await composeStrip(
       lengths,
       `${label}: ${look} ${format}, ${others}. Per row: the seed's own frame, then the line from ${SHEET_DIRECTION.from.join(', ')} at ${SHEET_DIRECTION.angle} degrees with length ${SHEET_LENGTHS.join(', ')} short sides. The drawn line runs from the start (ring) to its end.`,
@@ -887,7 +929,7 @@ try {
         for (const [i, place] of places.entries()) {
           const end = place ? (offToMirror ? [1 - place[0], 1 - place[1]] : [0.5, 0.5]) : null
           const controls = controlsForLine(look, pack, seed, format, place ? { from: place, to: end } : null)
-          const scene = buildScene(look, getPack(pack), seed, controls, aspect)
+          const scene = sceneOf(look, pack, seed, controls, aspect)
           const image = await harness.render({ scene, width: render.width, height: render.height, supersample: 2 })
           const thumb = labThumb(image)
           let sum = 0
@@ -902,7 +944,7 @@ try {
         }
       }
     }
-    const file = path.join(outDir, `${look.split('.')[1]}-off${d}${offToMirror ? '-across' : ''}-${format}.jpg`)
+    const file = path.join(outDir, `${lookTag(look)}-off${d}${offToMirror ? '-across' : ''}-${format}.jpg`)
     await mkdir(outDir, { recursive: true })
     await sharp({ create: { width: packs.length * blockWidth, height: titleHeight + seeds.length * blockHeight, channels: 3, background: BACKGROUND } })
       .composite(composites)
@@ -948,33 +990,35 @@ try {
             const sweep = { look, ...sweepKey, pack, seed, format, values: sweepValues }
             const steps = []
             const peaks = []
+            const colors = []
             let previous = null
             for (const value of sweepValues) {
               const image = await renderFrame(sweep, value)
               const start = performance.now()
               const thumb = labThumb(image)
               if (previous) {
-                const { mean, peak } = change(previous, thumb)
+                const { mean, peak, color } = change(previous, thumb)
                 steps.push(mean)
                 peaks.push(peak)
+                colors.push(color)
               }
               previous = thumb
               timing.measure += performance.now() - start
             }
-            const jumps = findJumps(steps, peaks).map((jump) => ({ ...jump, a: sweepValues[jump.from], b: sweepValues[jump.to + 1] }))
+            const jumps = findJumps(steps, peaks).map((jump) => ({ ...jump, a: sweepValues[jump.from], b: sweepValues[jump.to + 1], color: colors[jump.i] }))
             for (const jump of jumps) jump.causes = jumpCauses(sweep, jump)
             const result = { ...sweep, steps, peaks, jumps }
             lookSweeps.push(result)
             sweeps.push(result)
             const largest = Math.max(...steps)
             const at = steps.indexOf(largest)
-            const notes = jumps.map((j) => `${j.a.toFixed(2)}-${j.b.toFixed(2)} ΔE ${j.step.toFixed(4)} (${j.ratio.toFixed(1)}x, worst block ${j.peak.toFixed(3)})`)
+            const notes = jumps.map((j) => `${j.a.toFixed(2)}-${j.b.toFixed(2)} ΔE ${j.step.toFixed(4)} (${j.ratio.toFixed(1)}x, worst block ${j.peak.toFixed(3)}, ${Math.round(100 * j.color)}% color)`)
             console.log(
               `${look} ${sweepName(sweep)} ${pack} seed ${seed} ${format}: largest step ${largest.toFixed(4)} at ${sweepValues[at].toFixed(2)}-${sweepValues[at + 1].toFixed(2)}, median ${median(steps).toFixed(4)}${notes.length ? `  JUMP ${notes.join(', ')}` : ''}`,
             )
             for (const jump of jumps) console.log(`    jumps with it: ${describeCauses(jump.causes) || 'nothing in the scene or uniforms (look in the shader)'}`)
             if (jumps.length) failed = true
-            if (strips) for (const jump of jumps) await writeStrip(result, jump)
+            if (strips && worst === null) for (const jump of jumps) await writeStrip(result, jump)
             if (frameValues.length) contactRows.push({ pack, seed, panels: await writeFrames(result) })
             if (args['strip-all'] === true) await writeStrip(result, { from: at, to: at, i: at, a: sweepValues[at], b: sweepValues[at + 1], step: largest, usual: median(steps), ratio: largest / Math.max(median(steps), NOISE), peak: peaks[at] })
           }
@@ -982,6 +1026,10 @@ try {
         if (contactRows.length) await writeContact(look, sweepKey, format, contactRows)
       }
       if (lookSweeps.length) await writeCurves(look, format, lookSweeps)
+      if (strips && worst !== null) {
+        const ranked = lookSweeps.flatMap((sweep) => sweep.jumps.map((jump) => ({ sweep, jump }))).sort((p, q) => q.jump.step - p.jump.step)
+        for (const { sweep, jump } of ranked.slice(0, worst)) await writeStrip(sweep, jump)
+      }
     }
   }
 
@@ -991,6 +1039,7 @@ try {
     path.join(outDir, 'steps.json'),
     JSON.stringify({
       label,
+      mix: mixName,
       base,
       values: [values[0], values.at(-1)],
       thresholds: { ratio: ratioLimit, floor, peakFloor, window: WINDOW },
@@ -998,6 +1047,11 @@ try {
     }),
   )
   const jumpCount = sweeps.reduce((n, s) => n + s.jumps.length, 0)
+  for (const look of looks) {
+    const own = sweeps.filter((s) => s.look === look)
+    const jumps = own.flatMap((s) => s.jumps)
+    if (own.length) console.log(`${look}: ${own.length} sweeps, ${jumps.length} jumps (${jumps.filter((j) => j.color > 0.5).length} mostly color)`)
+  }
   const perFrame = (ms) => (ms / Math.max(1, timing.frames)).toFixed(1)
   console.log(`${label}: ${sweeps.length} sweeps, ${jumpCount} jumps. Wrote ${shown(outDir)}`)
   console.log(`${timing.frames} frames; per frame ${perFrame(timing.compose)} ms compose, ${perFrame(timing.render)} ms render, ${perFrame(timing.measure)} ms measure`)
