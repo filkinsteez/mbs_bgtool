@@ -41,6 +41,11 @@ Later on 2026-11-02 the owner asked for crops of the Meta logo outline as Contou
   points for contour rim"). Along a Contour outline the light fades to
   dark before a sharp tip or a corner that turns sharply, and the hot
   spot stays on smooth stretches.
+- Forms are soft, organic and rounded, never hard or angular (owner,
+  2026-11-10: "forms should be soft, organic, rounded, not hard and
+  angular"). No straight runs, sharp corners or pinch points in a shape.
+  Blur is soft and smooth, never streaky, and each color's light spreads
+  into the colors around it.
 - Reference images are visual targets only. Never feed reference pixels
   to the renderer.
 - Every visual change gets a visual audit: render it, put it next to the
