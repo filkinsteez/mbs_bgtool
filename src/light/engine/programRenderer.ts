@@ -3,7 +3,8 @@ import { frameAspect } from './frame'
 import { CONTEXT_LOST_MESSAGE, Gpu, LightEngineError, type Target } from './gl'
 import {
   BASE_FROM_RADIANCE_SHADER,
-  halationLuminance,
+  halationDriftColor,
+  halationLevel,
   halationStart,
   LENS_BASE_SHORT_SIDE,
   lensBaseSize,
@@ -249,7 +250,8 @@ export class ProgramRenderer {
     const lensUniforms: UniformMap = {
       uBloomMix: lens.bloom ? spreadMix : 0,
       uHalation: lens.halation ? resolved.lens.halation : 0,
-      uHalationLuminance: halationLuminance(resolved.lens),
+      uHalationLevel: halationLevel(resolved.lens),
+      uHalationDriftColor: halationDriftColor(resolved.lens),
       uExposure: resolved.output.exposure,
       uToe: resolved.output.toe,
       uLensVignette: resolved.lens.vignette,

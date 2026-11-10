@@ -117,21 +117,28 @@ function levelBump(center: number): number[] {
   return weights.map((w) => w / total)
 }
 
+type Rgba = [number, number, number, number]
+
 /**
- * Per-level halation factors with the halo's color in them. The halo has one source per pixel, how far its
- * light is above halationTint's own level, so it has the same place and size whatever the light's color, and
- * only these factors color it: halationTint at halationRadius, and halationDrift of it in halationDriftTint
- * (at halationTint's luminance) halationSpread x 1.5 levels wider (0.67 is one level).
+ * Per-level halation weights: red, green, blue, and a fourth for the drift part. The halo's source is each pixel's
+ * own light where its luminance is above the light's own (halationTint's), so the halo keeps the light's color, also
+ * after the color stage has recolored it, and its place and size follow the light's brightness, not its color. The
+ * color channels carry (1 - halationDrift) of it at halationRadius; the fourth carries its luminance,
+ * halationDrift of it, halationSpread x 1.5 levels wider (0.67 is one level), for halationDriftColor.
  */
-export function halationLevelFactors(lens: LensSettings): Rgb[] {
+export function halationLevelFactors(lens: LensSettings): Rgba[] {
   const level = levelForRadius(lens.halationRadius)
   const main = levelBump(level)
   const outer = levelBump(level + lens.halationSpread * 1.5)
-  const color = hexToLinear(lens.halationTint)
-  const drift = hexToLinear(lens.halationDriftTint)
-  const driftScale = halationLuminance(lens) / Math.max(1e-3, drift[0] * LUMA[0] + drift[1] * LUMA[1] + drift[2] * LUMA[2])
   const d = Math.min(1, Math.max(0, lens.halationDrift))
-  return main.map((w, i) => [0, 1, 2].map((c) => (1 - d) * w * color[c] + d * outer[i] * drift[c] * driftScale) as Rgb)
+  return main.map((w, i) => [(1 - d) * w, (1 - d) * w, (1 - d) * w, d * outer[i]] as Rgba)
+}
+
+/** halationDriftTint at luminance 1: the drift part takes this color at the halo's own luminance. */
+export function halationDriftColor(lens: LensSettings): Rgb {
+  const drift = hexToLinear(lens.halationDriftTint)
+  const y = drift[0] * LUMA[0] + drift[1] * LUMA[1] + drift[2] * LUMA[2]
+  return y > 1e-6 ? [drift[0] / y, drift[1] / y, drift[2] / y] : [0, 0, 0]
 }
 
 const DOWNSAMPLE_SHADER =
@@ -140,25 +147,24 @@ const DOWNSAMPLE_SHADER =
 uniform sampler2D uSrc;
 uniform vec2 uDstSize;
 out vec4 fragColor;
-// Jimenez 2014: 13 bilinear taps, weights sum to 1.
+// Jimenez 2014: 13 bilinear taps, weights sum to 1; all four channels.
 void main() {
   vec2 uv = gl_FragCoord.xy / uDstSize;
   vec2 t = 1.0 / vec2(textureSize(uSrc, 0));
-  vec3 a = texture(uSrc, uv + t * vec2(-2.0, 2.0)).rgb;
-  vec3 b = texture(uSrc, uv + t * vec2(0.0, 2.0)).rgb;
-  vec3 c = texture(uSrc, uv + t * vec2(2.0, 2.0)).rgb;
-  vec3 d = texture(uSrc, uv + t * vec2(-2.0, 0.0)).rgb;
-  vec3 e = texture(uSrc, uv).rgb;
-  vec3 f = texture(uSrc, uv + t * vec2(2.0, 0.0)).rgb;
-  vec3 g = texture(uSrc, uv + t * vec2(-2.0, -2.0)).rgb;
-  vec3 h = texture(uSrc, uv + t * vec2(0.0, -2.0)).rgb;
-  vec3 i = texture(uSrc, uv + t * vec2(2.0, -2.0)).rgb;
-  vec3 j = texture(uSrc, uv + t * vec2(-1.0, 1.0)).rgb;
-  vec3 k = texture(uSrc, uv + t * vec2(1.0, 1.0)).rgb;
-  vec3 l = texture(uSrc, uv + t * vec2(-1.0, -1.0)).rgb;
-  vec3 m = texture(uSrc, uv + t * vec2(1.0, -1.0)).rgb;
-  vec3 result = e * 0.125 + (a + c + g + i) * 0.03125 + (b + d + f + h) * 0.0625 + (j + k + l + m) * 0.125;
-  fragColor = vec4(result, 1.0);
+  vec4 a = texture(uSrc, uv + t * vec2(-2.0, 2.0));
+  vec4 b = texture(uSrc, uv + t * vec2(0.0, 2.0));
+  vec4 c = texture(uSrc, uv + t * vec2(2.0, 2.0));
+  vec4 d = texture(uSrc, uv + t * vec2(-2.0, 0.0));
+  vec4 e = texture(uSrc, uv);
+  vec4 f = texture(uSrc, uv + t * vec2(2.0, 0.0));
+  vec4 g = texture(uSrc, uv + t * vec2(-2.0, -2.0));
+  vec4 h = texture(uSrc, uv + t * vec2(0.0, -2.0));
+  vec4 i = texture(uSrc, uv + t * vec2(2.0, -2.0));
+  vec4 j = texture(uSrc, uv + t * vec2(-1.0, 1.0));
+  vec4 k = texture(uSrc, uv + t * vec2(1.0, 1.0));
+  vec4 l = texture(uSrc, uv + t * vec2(-1.0, -1.0));
+  vec4 m = texture(uSrc, uv + t * vec2(1.0, -1.0));
+  fragColor = e * 0.125 + (a + c + g + i) * 0.03125 + (b + d + f + h) * 0.0625 + (j + k + l + m) * 0.125;
 }
 `
 
@@ -167,24 +173,24 @@ const UPSAMPLE_SHADER =
   /* glsl */ `
 uniform sampler2D uCoarse;
 uniform sampler2D uFine;
-uniform vec3 uFineWeight;
+uniform vec4 uFineWeight;
 uniform bool uHasCoarse;
 uniform vec2 uDstSize;
 out vec4 fragColor;
-// 3x3 tent over the coarser level (offsets of one coarse texel) plus this level times its weight.
+// 3x3 tent over the coarser level (offsets of one coarse texel) plus this level times its weight, per channel.
 void main() {
   vec2 uv = gl_FragCoord.xy / uDstSize;
-  vec3 result = uFineWeight * texture(uFine, uv).rgb;
+  vec4 result = uFineWeight * texture(uFine, uv);
   if (uHasCoarse) {
     vec2 t = 1.0 / vec2(textureSize(uCoarse, 0));
-    vec3 tent = texture(uCoarse, uv).rgb * 4.0;
-    tent += (texture(uCoarse, uv + vec2(t.x, 0.0)).rgb + texture(uCoarse, uv - vec2(t.x, 0.0)).rgb
-           + texture(uCoarse, uv + vec2(0.0, t.y)).rgb + texture(uCoarse, uv - vec2(0.0, t.y)).rgb) * 2.0;
-    tent += texture(uCoarse, uv + t).rgb + texture(uCoarse, uv - t).rgb
-          + texture(uCoarse, uv + vec2(t.x, -t.y)).rgb + texture(uCoarse, uv + vec2(-t.x, t.y)).rgb;
+    vec4 tent = texture(uCoarse, uv) * 4.0;
+    tent += (texture(uCoarse, uv + vec2(t.x, 0.0)) + texture(uCoarse, uv - vec2(t.x, 0.0))
+           + texture(uCoarse, uv + vec2(0.0, t.y)) + texture(uCoarse, uv - vec2(0.0, t.y))) * 2.0;
+    tent += texture(uCoarse, uv + t) + texture(uCoarse, uv - t)
+          + texture(uCoarse, uv + vec2(t.x, -t.y)) + texture(uCoarse, uv + vec2(-t.x, t.y));
     result += tent / 16.0;
   }
-  fragColor = vec4(result, 1.0);
+  fragColor = result;
 }
 `
 
@@ -192,13 +198,16 @@ const HOT_SHADER =
   GLSL_HEADER +
   /* glsl */ `
 uniform sampler2D uSrc;
-uniform float uStart;
+uniform vec2 uStart;
 uniform float uExposureScale;
 out vec4 fragColor;
-// Each channel's own exposed light above nominal, ramping in from uStart to 2 uStart, from an averaged image.
+const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+// Each texel's own exposed light where it is brighter than the start (its luminance against uStart.x or its largest
+// channel against uStart.y, whichever is more), ramping in up to twice that, from an averaged image.
 void main() {
   vec3 c = max(texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0).rgb, vec3(0.0)) * uExposureScale;
-  fragColor = vec4(c * smoothstep(vec3(uStart), vec3(2.0 * uStart), c), 1.0);
+  float s = max(dot(c, LUMA) / uStart.x, max(c.r, max(c.g, c.b)) / uStart.y);
+  fragColor = vec4(c * smoothstep(1.0, 2.0, s), 1.0);
 }
 `
 
@@ -206,33 +215,32 @@ const FEED_SHADER =
   GLSL_HEADER +
   /* glsl */ `
 uniform sampler2D uSrc;
-uniform float uScale;
 out vec4 fragColor;
-// The halo's source, the same in every channel: the largest channel's light above the start, in multiples of
-// the light's own level. Each channel's ramp rises with its light, so the largest channel's is the largest.
+const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+// The halo's source: each pixel's own light above the start, in its own color, with its luminance for the drift part.
 void main() {
   vec3 hot = max(texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0).rgb, vec3(0.0));
-  fragColor = vec4(vec3(max(max(hot.r, hot.g), hot.b) * uScale), 1.0);
+  fragColor = vec4(hot, dot(hot, LUMA));
 }
 `
 
 /**
- * The light's own level: the largest channel of halationTint in linear light. The halo counts light in
- * multiples of it, so a Tan, Meta Blue or Yellow light k times brighter than its own hex makes the same halo.
+ * The light's own level, from halationTint (the light's own hex): its luminance and its largest channel. A pixel is k
+ * times the light's level when its luminance or its largest channel, whichever is more, is k times the light's. The
+ * color stage gives each pixel the design's luminance or, where that would take a channel past the design's
+ * brightest, the design's largest channel, so one of the two always keeps the design's level and the halo keeps its
+ * place and size whatever colors the stage gives the light.
  */
-export function halationLevel(lens: LensSettings): number {
-  return Math.max(0.05, ...hexToLinear(lens.halationTint))
-}
-
-/** Channel value (after exposure) where light starts to feed the halo: never below the light's own level. */
-export function halationStart(lens: LensSettings): number {
-  return Math.max(1, lens.halationThreshold) * halationLevel(lens)
-}
-
-/** Luminance of halationTint at its own level, the light the halo's fade and hold measure against. */
-export function halationLuminance(lens: LensSettings): number {
+export function halationLevel(lens: LensSettings): [number, number] {
   const light = hexToLinear(lens.halationTint)
-  return Math.max(1e-3, light[0] * LUMA[0] + light[1] * LUMA[1] + light[2] * LUMA[2])
+  return [Math.max(1e-3, light[0] * LUMA[0] + light[1] * LUMA[1] + light[2] * LUMA[2]), Math.max(1e-3, ...light)]
+}
+
+/** Where light starts to feed the halo, as a luminance and a largest channel (after exposure): never below the light's own. */
+export function halationStart(lens: LensSettings): [number, number] {
+  const t = Math.max(1, lens.halationThreshold)
+  const [y, v] = halationLevel(lens)
+  return [t * y, t * v]
 }
 
 /** Short side of the surroundings map that holds halation back on bright backgrounds, and its blur in px. */
@@ -246,11 +254,11 @@ uniform sampler2D uSrc;
 uniform vec2 uDstSize;
 uniform int uTaps;
 uniform float uExposureScale;
-uniform float uLumScale;
+uniform vec2 uLevelScale;
 out vec4 fragColor;
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
-// Area-averaged luminance of the exposed scene as a share of the light's own luminance, each sample capped at 1,
-// so a hot source itself barely counts as surroundings.
+// Area-averaged brightness of the exposed scene in multiples of the light's own level (luminance or largest channel,
+// whichever is more), each sample capped at 1, so a hot source itself barely counts as surroundings.
 void main() {
   vec2 corner = gl_FragCoord.xy - 0.5;
   float inv = 1.0 / float(uTaps);
@@ -260,7 +268,8 @@ void main() {
     for (int i = 0; i < 8; i++) {
       if (i >= uTaps) break;
       vec3 c = texture(uSrc, (corner + (vec2(float(i), float(j)) + 0.5) * inv) / uDstSize).rgb * uExposureScale;
-      sum += min(dot(max(c, 0.0), LUMA) * uLumScale, 1.0);
+      vec3 lit = max(c, vec3(0.0));
+      sum += min(max(dot(lit, LUMA) * uLevelScale.x, max(lit.r, max(lit.g, lit.b)) * uLevelScale.y), 1.0);
     }
   }
   fragColor = vec4(vec3(sum * inv * inv), 1.0);
@@ -269,8 +278,9 @@ void main() {
 
 /**
  * Lens composite, all in exposed light: exposure, energy-conserving bloom mix,
- * halation (the blurred light above the light's own level, colored by the
- * halation factors), tone curve. Needs CHUNK_LIBRARY.
+ * halation (each light's own blurred light above the light's luminance, in its
+ * own color, and the drift part in the drift color), tone curve. Needs
+ * CHUNK_LIBRARY.
  */
 export const LENS_COMPOSITE_GLSL =
   TONE_CURVE_GLSL +
@@ -280,7 +290,8 @@ uniform sampler2D uHalationTex;
 uniform sampler2D uHalationSurround;
 uniform float uBloomMix;
 uniform float uHalation;
-uniform float uHalationLuminance; // halationTint's luminance at its own level
+uniform vec2 uHalationLevel; // the light's own luminance and largest channel (halationTint)
+uniform vec3 uHalationDriftColor; // halationDriftTint at luminance 1
 uniform float uExposure;
 uniform float uLensVignette;
 uniform vec2 uLensVignetteAxes; // frame proportions scaled so the corners are at distance 1
@@ -295,9 +306,11 @@ vec3 lensAndTone(vec3 radiance, vec2 uv) {
     // Not over the hot core itself (only light above the light's own level fades it), and held back only where
     // the wide surroundings are brighter than 0.15 of that level, so a light on a bright background does not
     // tint it while halos in dark scenes, including inside a recipe's own glow, keep their full strength.
-    float fade = 1.0 / (1.0 + max(luminance(c) / uHalationLuminance - 1.0, 0.0));
+    float level = max(luminance(c) / uHalationLevel.x, maxComponent(c) / uHalationLevel.y);
+    float fade = 1.0 / (1.0 + max(level - 1.0, 0.0));
     float hold = 1.0 / (1.0 + 4.0 * max(sampleSmooth(uHalationSurround, uv).r - 0.15, 0.0));
-    c += uHalation * sampleSmooth(uHalationTex, uv) * fade * hold;
+    vec4 halo = sampleSmooth4(uHalationTex, uv);
+    c += uHalation * (halo.rgb + halo.a * uHalationDriftColor) * fade * hold;
   }
   if (uLensVignette > 0.0) {
     vec2 q = (2.0 * uv - 1.0) * uLensVignetteAxes;
@@ -344,18 +357,19 @@ void main() {
 /**
  * The lens base from a radiance texture at render resolution: the area
  * average of the texels under each base pixel, and (output 1) of each texel's
- * own exposed light above nominal, as the radiance pass takes it per sample.
- * At most 7 texels per base pixel per axis.
+ * own exposed light where its luminance is above the halo's start, as the
+ * radiance pass takes it per sample. At most 7 texels per base pixel per axis.
  */
 export const BASE_FROM_RADIANCE_SHADER =
   GLSL_HEADER +
   /* glsl */ `
 uniform sampler2D uSrc;
 uniform vec2 uDstSize;
-uniform float uStart;
+uniform vec2 uStart;
 uniform float uExposureScale;
 layout(location = 0) out vec4 fragColor;
 layout(location = 1) out vec4 hotColor;
+const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 void main() {
   vec2 scale = vec2(textureSize(uSrc, 0)) / uDstSize;
   vec2 lo = (gl_FragCoord.xy - 0.5) * scale;
@@ -374,7 +388,7 @@ void main() {
       vec4 c = texelFetch(uSrc, ivec2(x, y), 0);
       vec3 exposed = max(c.rgb, vec3(0.0)) * uExposureScale;
       sum += w * c;
-      hot += w * exposed * smoothstep(vec3(uStart), vec3(2.0 * uStart), exposed);
+      hot += w * exposed * smoothstep(1.0, 2.0, max(dot(exposed, LUMA) / uStart.x, max(exposed.r, max(exposed.g, exposed.b)) / uStart.y));
       total += w;
     }
   }
@@ -413,9 +427,8 @@ export function runLens(gpu: Gpu, base: Target, lens: LensSettings, exposure: nu
       })
       hot = owned
     }
-    const level = halationLevel(lens)
     const feed = gpu.acquire(hot.width, hot.height)
-    gpu.draw(gpu.program(FEED_SHADER), feed, { textures: { uSrc: hot }, uniforms: { uScale: 1 / level } })
+    gpu.draw(gpu.program(FEED_SHADER), feed, { textures: { uSrc: hot } })
     gpu.release(owned)
     halation = pyramid(gpu, feed, halationLevelFactors(lens))
     gpu.release(feed)
@@ -427,7 +440,7 @@ export function runLens(gpu: Gpu, base: Target, lens: LensSettings, exposure: nu
         uDstSize: [small.width, small.height],
         uTaps: Math.min(8, Math.ceil(base.width / small.width)),
         uExposureScale: 2 ** exposure,
-        uLumScale: 1 / halationLuminance(lens),
+        uLevelScale: halationLevel(lens).map((v) => 1 / v),
       },
     })
     surround = gaussianBlur(gpu, small, SURROUND_BLUR_PX)
@@ -437,7 +450,8 @@ export function runLens(gpu: Gpu, base: Target, lens: LensSettings, exposure: nu
   return { bloom, halation, surround }
 }
 
-function pyramid(gpu: Gpu, base: Target, factors: Rgb[]): Target {
+/** Blurs `base` over the levels, `factors` per level for red, green, blue and the fourth channel (0 when not given). */
+function pyramid(gpu: Gpu, base: Target, factors: readonly (readonly number[])[]): Target {
   const down = gpu.program(DOWNSAMPLE_SHADER)
   const up = gpu.program(UPSAMPLE_SHADER)
   const levels: Target[] = [base]
@@ -453,7 +467,7 @@ function pyramid(gpu: Gpu, base: Target, factors: Rgb[]): Target {
     const out = gpu.acquire(fine.width, fine.height)
     gpu.draw(up, out, {
       textures: coarse ? { uFine: fine, uCoarse: coarse } : { uFine: fine },
-      uniforms: { uFineWeight: factors[i], uHasCoarse: coarse !== null, uDstSize: [fine.width, fine.height] },
+      uniforms: { uFineWeight: [factors[i][0], factors[i][1], factors[i][2], factors[i][3] ?? 0], uHasCoarse: coarse !== null, uDstSize: [fine.width, fine.height] },
     })
     gpu.release(coarse)
     coarse = out

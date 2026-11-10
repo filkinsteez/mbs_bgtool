@@ -841,36 +841,43 @@ try {
     const after = meanLinear(dimBloom)
     record('bloom keeps total light on a dim scene', Math.abs(after / before - 1) < 0.02, `mean linear luminance ${before.toFixed(5)} -> ${after.toFixed(5)} (${((after / before - 1) * 100).toFixed(2)} %)`)
 
-    // Halation: fed by light above the tint's own level after exposure (amber by default, so channel value 1).
+    // Halation: each light's own light where its luminance after exposure is above the tint's (white by default, so
+    // luminance 1), blurred and added back in its own color.
     const halSize = { width: 480, height: 270 }
     const halLens = { ...noLens, halation: 1, halationRadius: 0.05 }
-    const halPair = async (params, output = {}) => {
+    const halPair = async (params, output = {}, lens = {}) => {
       const scene = { program: 'test.halation', params, output }
       const off = await harness.render({ scene: { ...scene, lens: noLens }, ...halSize, dither: false })
-      const on = await harness.render({ scene: { ...scene, lens: halLens }, ...halSize, dither: false })
+      const on = await harness.render({ scene: { ...scene, lens: { ...halLens, ...lens } }, ...halSize, dither: false })
       const added = [0, 0, 0]
+      // Also where the scene without halation is dark, away from the lights, where the tone curve changes nothing.
+      const outside = [0, 0, 0]
       let largest = 0
       for (let i = 0; i < on.data.length; i += 4) {
+        const dark = 0.2126 * SRGB_TO_LINEAR[off.data[i]] + 0.7152 * SRGB_TO_LINEAR[off.data[i + 1]] + 0.0722 * SRGB_TO_LINEAR[off.data[i + 2]] < 0.01
         for (let k = 0; k < 3; k++) {
-          added[k] += (SRGB_TO_LINEAR[on.data[i + k]] - SRGB_TO_LINEAR[off.data[i + k]]) / (on.data.length / 4)
+          const step = (SRGB_TO_LINEAR[on.data[i + k]] - SRGB_TO_LINEAR[off.data[i + k]]) / (on.data.length / 4)
+          added[k] += step
+          if (dark) outside[k] += step
           largest = Math.max(largest, Math.abs(on.data[i + k] - off.data[i + k]))
         }
       }
-      return { off, on, added, largest }
+      return { off, on, added, outside, largest }
     }
     const only = (light, gain) => ({ blue: 0, white: 0, orange: 0, [light]: gain })
-    const blue4 = await halPair(only('blue', 4))
-    const blue8 = await halPair(only('blue', 8))
+    const blue4 = await halPair(only('blue', 4), {}, { halationTint: '#0064E0' })
+    const blue8 = await halPair(only('blue', 8), {}, { halationTint: '#0064E0' })
     const white4 = await halPair(only('white', 4))
-    const orange4 = await halPair(only('orange', 4))
+    const orange4 = await halPair(only('orange', 4), {}, { halationTint: '#FF4F00' })
     const nominal = await halPair({ blue: 1, white: 1, orange: 1 })
     const exposed = await halPair({ blue: 1, white: 1, orange: 1 }, { exposure: 2 })
     const all = await halPair({ blue: 4, white: 4, orange: 4 })
     const bright = await halPair({ blue: 4, white: 4, orange: 4, background: 0.6 })
+    const whiteBright = await halPair({ ...only('white', 4), background: 0.6 })
     await composeRow(path.join(outDir, 'lens-halation.png'), [
       { image: all.off, caption: 'blue disk, white line, orange dot at 4x, halation off' },
       { image: all.on, caption: 'the same, halation 1' },
-      { image: blue8.on, caption: 'blue disk alone at 8x, halation 1' },
+      { image: blue8.on, caption: 'blue disk alone at 8x, halation 1, tint Meta Blue' },
     ])
     await composeRow(path.join(outDir, 'lens-halation-2.png'), [
       { image: nominal.on, caption: 'all at nominal, halation 1' },
@@ -879,9 +886,17 @@ try {
     ])
     const fmt = (rgb) => rgb.map((v) => v.toFixed(5)).join(', ')
     record(
-      'halation: a hot blue light gets a halo too, colored only by the tints',
-      blue4.added[0] > 1e-3 && blue4.added[0] > 5 * blue4.added[2] && blue8.added[0] > blue4.added[0],
-      `added linear light (R, G, B), the default amber tint: 4x ${fmt(blue4.added)}; 8x ${fmt(blue8.added)}; images in lens-halation.png`,
+      "halation: each light's halo comes in its own color",
+      blue4.outside[0] < 2e-5 &&
+        blue4.outside[1] > 0 &&
+        blue4.outside[2] > 4 * blue4.outside[1] &&
+        blue8.outside[2] > blue4.outside[2] &&
+        orange4.outside[0] > 5 * orange4.outside[1] &&
+        orange4.outside[2] < 2e-5 &&
+        white4.outside[2] > 0 &&
+        white4.outside[0] >= white4.outside[1] &&
+        white4.outside[1] >= white4.outside[2],
+      `added linear light away from the lights (R, G, B): Meta Blue disk at 4x ${fmt(blue4.outside)}, at 8x ${fmt(blue8.outside)} (tint Meta Blue); Orange-red dot at 4x ${fmt(orange4.outside)} (tint Orange-red); warm white line at 4x ${fmt(white4.outside)} (tint white); images in lens-halation.png`,
     )
     // The pack rule: one ring of light at 4x its hex in three pack colors (Tan's largest channel is 0.48, Meta Blue's
     // 0.75, Yellow's 1), with the light's own hex as the halo's tint, gets the same halo in multiples of its color.
@@ -907,21 +922,59 @@ try {
     const ringBlue = await ringHalo('#0064E0')
     const ringYellow = await ringHalo('#FFD61E')
     const ringTan = await ringHalo('#B8996E')
-    await composeRow(path.join(outDir, 'lens-halation-packs.png'), [
-      { image: ringBlue.on, caption: 'Meta Blue ring at 4x, Meta Blue halo' },
-      { image: ringYellow.on, caption: 'Yellow ring at 4x, Yellow halo' },
-      { image: ringTan.on, caption: 'Tan ring at 4x, Tan halo' },
-    ])
     const ringOff = (ring) => `${((ring.value / ringYellow.value - 1) * 100).toFixed(1)} %`
     record(
       'halation: one light in three pack colors, each with its own hex as the tint, gets the same halo',
       Math.abs(ringBlue.value / ringYellow.value - 1) < 0.05 && Math.abs(ringTan.value / ringYellow.value - 1) < 0.05,
       `halo in multiples of the light's color, outside the ring: Yellow ${ringYellow.value.toFixed(5)}, Meta Blue ${ringBlue.value.toFixed(5)} (${ringOff(ringBlue)}), Tan ${ringTan.value.toFixed(5)} (${ringOff(ringTan)}); images in lens-halation-packs.png`,
     )
+    // The color stage gives each pixel another hue before the lens, at the design's luminance or, where that would take
+    // a channel past the design's brightest, at the design's largest channel. A ring recolored either way, with the tint
+    // still the design light's hex, gets the same halo as the design's own ring, in its new color: Yellow at Meta Blue's
+    // luminance (tint Meta Blue), and Meta Blue at Yellow's largest channel (tint Yellow). Each halo is counted against
+    // its own ring's light, outside the ring (below a quarter of the ring's own luminance).
+    const lum = (rgb) => 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]
+    const toHex = (rgb) => `#${rgb.map((v) => Math.round(255 * linearToSrgb(Math.min(1, Math.max(0, v)))).toString(16).padStart(2, '0')).join('')}`
+    const metaBlue = hexToLinear('#0064E0')
+    const yellow = hexToLinear('#FFD61E')
+    const yellowAsBlue = toHex(yellow.map((v) => (v * lum(metaBlue)) / lum(yellow)))
+    const blueAsYellow = toHex(metaBlue.map((v) => v / Math.max(...metaBlue)))
+    const stageRing = async (hex, tint) => {
+      const scene = { program: 'test.scatter', colors: [hex, '#000000'], params: { amount: 0 }, output: { exposure: Math.log2(4 / 1.55) } }
+      const lens = { ...noLens, halation: 1, halationRadius: 0.05, halationTint: tint }
+      const off = await harness.render({ scene: { ...scene, lens: noLens }, ...halSize, dither: false })
+      const on = await harness.render({ scene: { ...scene, lens }, ...halSize, dither: false })
+      const own = lum(hexToLinear(hex))
+      const added = [0, 0, 0]
+      let count = 0
+      for (let i = 0; i < on.data.length; i += 4) {
+        const before = [0, 1, 2].map((k) => SRGB_TO_LINEAR[off.data[i + k]])
+        if (lum(before) > 0.25 * own) continue
+        for (let k = 0; k < 3; k++) added[k] += SRGB_TO_LINEAR[on.data[i + k]] - before[k]
+        count++
+      }
+      return { on, added: added.map((v) => v / count), value: lum(added) / count / own }
+    }
+    const stageBlue = await stageRing('#0064E0', '#0064E0')
+    const stageYellowAsBlue = await stageRing(yellowAsBlue, '#0064E0')
+    const stageYellow = await stageRing('#FFD61E', '#FFD61E')
+    const stageBlueAsYellow = await stageRing(blueAsYellow, '#FFD61E')
+    await composeRow(path.join(outDir, 'lens-halation-packs.png'), [
+      { image: ringBlue.on, caption: 'Meta Blue ring at 4x, tint Meta Blue' },
+      { image: ringYellow.on, caption: 'Yellow ring at 4x, tint Yellow' },
+      { image: ringTan.on, caption: 'Tan ring at 4x, tint Tan' },
+      { image: stageYellowAsBlue.on, caption: `Yellow at Meta Blue's luminance (${yellowAsBlue}), tint Meta Blue` },
+      { image: stageBlueAsYellow.on, caption: `Meta Blue at Yellow's largest channel (${blueAsYellow}), tint Yellow` },
+    ])
+    const stageOff = (a, b) => `${((a.value / b.value - 1) * 100).toFixed(1)} %`
     record(
-      'halation: white-hot and orange lights keep a red-orange halo',
-      white4.added[0] > 1e-3 && white4.added[1] > 0 && white4.added[0] > 2 * white4.added[1] && orange4.added[0] > 5e-4,
-      `added linear light (R, G, B): white 4x ${fmt(white4.added)}; orange 4x ${fmt(orange4.added)}`,
+      'halation: a light the color stage recolors keeps its halo, which takes the new color',
+      Math.abs(stageYellowAsBlue.value / stageBlue.value - 1) < 0.03 &&
+        Math.abs(stageBlueAsYellow.value / stageYellow.value - 1) < 0.03 &&
+        stageYellowAsBlue.added[0] > stageYellowAsBlue.added[1] &&
+        stageYellowAsBlue.added[1] > 4 * stageYellowAsBlue.added[2] &&
+        stageBlueAsYellow.added[2] > 4 * stageBlueAsYellow.added[1],
+      `halo against its own ring's light: Meta Blue ${stageBlue.value.toFixed(5)}, Yellow at Meta Blue's luminance ${stageYellowAsBlue.value.toFixed(5)} (${stageOff(stageYellowAsBlue, stageBlue)}); Yellow ${stageYellow.value.toFixed(5)}, Meta Blue at Yellow's largest channel ${stageBlueAsYellow.value.toFixed(5)} (${stageOff(stageBlueAsYellow, stageYellow)}); their halos add (R, G, B) ${fmt(stageYellowAsBlue.added)} and ${fmt(stageBlueAsYellow.added)}; images in lens-halation-packs.png`,
     )
     record(
       'halation: nothing from nominal light; exposure counts before the threshold',
@@ -930,8 +983,8 @@ try {
     )
     record(
       'halation: held back where the wide surroundings are bright',
-      bright.added[0] < 0.6 * all.added[0],
-      `added red light, the same lights at 4x: ${all.added[0].toFixed(5)} on black, ${bright.added[0].toFixed(5)} on a 0.6 grey background (${((bright.added[0] / all.added[0]) * 100).toFixed(0)} %)`,
+      whiteBright.added[0] < 0.6 * white4.added[0],
+      `added red light, the warm white line at 4x: ${white4.added[0].toFixed(5)} on black, ${whiteBright.added[0].toFixed(5)} on a 0.6 grey background (${((whiteBright.added[0] / white4.added[0]) * 100).toFixed(0)} %)`,
     )
     record('lens images written', true, path.relative(ROOT, path.join(outDir, 'lens.png')))
 

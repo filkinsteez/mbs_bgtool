@@ -10,14 +10,14 @@ uniform vec2 uFrameAspect;  // uRenderSize / short side
 uniform float uPixel;       // one sample spacing in short-side units (for antialiasing)
 uniform int uSeed;
 uniform int uSubsamples;    // per axis, radiance modes only
-uniform float uHalationStart; // channel value (x nominal, after exposure) where light starts to feed halation, >= 1
+uniform vec2 uHalationStart;  // luminance and largest channel (after exposure) where light starts to feed halation
 uniform float uExposureScale; // 2^exposure
 `
 
 // Averages uSubsamples^2 samples of SAMPLE(uv, p) per pixel. Used for the lens base, the post-pass input and scatter
-// sources. Alpha is the mean grain weight in radiance mode. Output 1 (drawn only into the lens base) is each
-// channel's own exposed light above nominal, which feeds halation; it is taken per sample so thin bright lines count
-// before they are averaged away.
+// sources. Alpha is the mean grain weight in radiance mode. Output 1 (drawn only into the lens base) is each sample's
+// own exposed light where it is brighter than the halo's start, which feeds halation in its own color; it is taken
+// per sample so thin bright lines count before they are averaged away.
 function subsampledMain(sample: string, clampNegative: boolean, weighted: boolean): string {
   return /* glsl */ `
 layout(location = 0) out vec4 fragColor;
@@ -39,7 +39,7 @@ void main() {
       ${clampNegative ? 'c = max(c, vec3(0.0));' : ''}
       sum += c;
       vec3 exposed = max(c, vec3(0.0)) * uExposureScale;
-      hot += exposed * smoothstep(vec3(uHalationStart), vec3(2.0 * uHalationStart), exposed);
+      hot += exposed * smoothstep(1.0, 2.0, max(dot(exposed, LUMA) / uHalationStart.x, maxComponent(exposed) / uHalationStart.y));
       weight += ${weighted ? 'sceneGrainWeight(uv, p)' : '1.0'};
     }
   }

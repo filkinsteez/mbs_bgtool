@@ -82,30 +82,33 @@ export interface LensSettings {
   /** Optional explicit tint per pyramid level (up to 8 hexes, finest first); replaces bloomTint. */
   bloomLevelTints?: string[]
   /**
-   * Strength of the film halation glow: how far light is above halationTint's
-   * own level, blurred and added back in halationTint (and halationDriftTint).
-   * So the halo's place and size follow the light's brightness, not its color,
-   * and only the tints color it. 0 turns it off.
+   * Strength of the film halation glow: each light's own light where it is
+   * brighter than halationTint, blurred and added back in its own color (and
+   * halationDriftTint for the drift part). So the halo's place and size follow
+   * the light's brightness, and its color is the light's, also after the
+   * color stage has recolored it. 0 turns it off.
    */
   halation: number
   /**
-   * Brightness, in multiples of halationTint's own level after exposure, where
-   * light starts to feed the halation; it ramps in fully by twice this. Values
-   * below 1 act as 1, so light at or below that level never makes halation.
+   * Brightness, in multiples of halationTint's after exposure (luminance or
+   * largest channel, whichever ratio is more), where light starts to feed the
+   * halation; it ramps in fully by twice this. Values below 1 act as 1, so
+   * light no brighter than the tint never makes halation.
    */
   halationThreshold: number
   /** Blur radius of the halo as a fraction of the frame's short side. */
   halationRadius: number
   /**
-   * The halo's color, as a hex read in linear light: set it to the light's own
-   * hex. Its largest channel is the level the halo counts light in, so a light
-   * of any color k times brighter than its hex makes the same halo. Default
-   * amber (red 1, green 0.3).
+   * The light the halo counts in, as a hex: set it to the light's own hex. Its
+   * luminance and largest channel are the level 1, so a light of any color k
+   * times brighter than its hex makes the same halo, and the color stage, which
+   * keeps each pixel's luminance or largest channel, leaves the halo's place and
+   * size alone. It doesn't color the halo. Default white.
    */
   halationTint: string
   /**
    * A pack color the halo's outer part drifts to (Yellow's to Orange-red, as
-   * fire does), as a hex; scaled to halationTint's luminance, so only its hue
+   * fire does), as a hex; it takes the halo's own luminance, so only its hue
    * counts.
    */
   halationDriftTint: string
@@ -160,7 +163,7 @@ export const DEFAULT_LENS: LensSettings = {
   halation: 0,
   halationThreshold: 1,
   halationRadius: 0.06,
-  halationTint: '#FF9500',
+  halationTint: '#FFFFFF',
   halationDriftTint: '#FF4F00',
   halationDrift: 0,
   halationSpread: 0.67,
