@@ -171,6 +171,8 @@ export function assignFields(colors: readonly StageColor[], fields: readonly Sta
     // color, leaving the lightest for the bright parts (Tan in the warm glow, Lime on the dome).
     let k = free[0]
     if (byParts && field.want === 'warm') k = free.find((c) => colors[c].kind === KIND_TO_NEIGHBOR) ?? [...free].sort((a, b) => colors[a].lightness - colors[b].lightness)[0]
+    // A look's dark spots come in the pack's order of its dark colors.
+    if (byParts && field.want === 'dark') k = [...free].sort((a, b) => a - b)[0]
     // A pack without a warm color lights its warm places with its brightest color left (Atmospheric's Ice).
     if (k === undefined && field.want === 'warm') k = ranked.filter((c) => out[c] < 0 && colors[c].group !== 'dark').sort((a, b) => colors[b].lightness - colors[a].lightness)[0]
     if (k === undefined) return

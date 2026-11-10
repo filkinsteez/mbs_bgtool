@@ -119,7 +119,7 @@ describe('color stage', () => {
     }
   })
 
-  it('counts a part by its strength and shares the dark spots between the dark colors by where they are', () => {
+  it('counts a part by its strength and gives the dark spots to the dark fields in their order', () => {
     const grid = flatGrid()
     const glow = (strength: number): StagePart[] => [{ kind: 'spot', at: [0.5, 0.5], radius: 0.2, want: 'warm', strength }]
     const peakOf = (parts: StagePart[]) => Math.max(...buildFields('sunset.merged', parts, grid, 3, 16 / 9)[2].values)
