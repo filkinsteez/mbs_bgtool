@@ -7,7 +7,15 @@ import { DEFAULT_LENS, RECIPE_IDS, type RecipeContext, type RecipeProgram } from
 import { encodeJpeg, exportFileName, exportSize } from './export'
 import { EXPORT_ASPECTS, EXPORT_SIZES, frameAspect, type ExportAspect } from './frame'
 import { grainAmplitude, grainCellPx, grainField, grainParams, grainUniforms } from './grain'
-import { bloomLevelFactors, halationLevelFactors, lensBaseSize, levelForRadius } from './lens'
+import {
+  bloomLevelFactors,
+  halationLevel,
+  halationLevelFactors,
+  halationLuminance,
+  halationStart,
+  lensBaseSize,
+  levelForRadius,
+} from './lens'
 import { paperToeInverse, TONE_CROSSTALK, TONE_TIE_BAND, toneCurve } from './output'
 import { radianceScaleFor } from './programRenderer'
 import { coerceParam, recipeContext, resolveScene } from './resolve'
@@ -215,12 +223,18 @@ describe('scene resolution', () => {
 })
 
 describe('lens weights', () => {
-  it('bloom levels keep total luminance and halation channels sum to 1', () => {
-    const lens = { ...DEFAULT_LENS, bloom: 0.2, bloomRadius: 0.4, bloomWidth: 1.2, bloomTint: '#FF8040', halation: 1, halationRadius: 0.05, halationTint: '#FF5A1F', halationSpread: 0.5 }
+  it('bloom levels keep total luminance and the halo carries its color and its drift color at the same luminance', () => {
+    const lens = { ...DEFAULT_LENS, bloom: 0.2, bloomRadius: 0.4, bloomWidth: 1.2, bloomTint: '#FF8040', halation: 1, halationRadius: 0.05, halationTint: '#FFD61E', halationDriftTint: '#FF4F00', halationDrift: 0.4, halationSpread: 0.5 }
     const bloom = bloomLevelFactors(lens)
     expect(bloom.reduce((sum, f) => sum + luminance(f), 0)).toBeCloseTo(1, 6)
     const halation = halationLevelFactors(lens)
-    for (let channel = 0; channel < 3; channel++) expect(halation.reduce((sum, f) => sum + f[channel], 0)).toBeCloseTo(1, 6)
+    const own = hexToLinear('#FFD61E')
+    const drift = hexToLinear('#FF4F00')
+    const driftScale = luminance(own) / luminance(drift)
+    for (let channel = 0; channel < 3; channel++) {
+      expect(halation.reduce((sum, f) => sum + f[channel], 0)).toBeCloseTo(0.6 * own[channel] + 0.4 * drift[channel] * driftScale, 6)
+    }
+    expect(halation.reduce((sum, f) => sum + luminance(f), 0)).toBeCloseTo(luminance(own), 6)
   })
 
   it('accepts explicit per-level bloom weights and tints from a scene', () => {
@@ -235,12 +249,28 @@ describe('lens weights', () => {
     expect(resolveScene(recipe, { lens: { bloomLevels: [-1] } }).lens.bloomLevels).toBeUndefined()
   })
 
-  it('puts the red halo at the halation radius and green one level narrower by default', () => {
-    const factors = halationLevelFactors({ ...DEFAULT_LENS, halation: 1, halationRadius: 0.05 })
-    const center = (channel: number) => factors.reduce((sum, f, level) => sum + f[channel] * level, 0)
-    expect(center(0)).toBeCloseTo(levelForRadius(0.05), 1)
-    expect(center(0) - center(1)).toBeCloseTo(1, 1)
+  it('puts the halo at the halation radius and its drift part a level wider, amber with no drift by default', () => {
+    const centerOf = (drift: number) => {
+      const factors = halationLevelFactors({ ...DEFAULT_LENS, halation: 1, halationRadius: 0.05, halationTint: '#FF0000', halationDriftTint: '#FF0000', halationDrift: drift })
+      return factors.reduce((sum, f, level) => sum + f[0] * level, 0) / factors.reduce((sum, f) => sum + f[0], 0)
+    }
+    expect(centerOf(0)).toBeCloseTo(levelForRadius(0.05), 1)
+    expect(centerOf(1) - centerOf(0)).toBeCloseTo(1, 1)
+    expect(DEFAULT_LENS.halationDrift).toBe(0)
     expect(hexToLinear(DEFAULT_LENS.halationTint).map((v) => Number(v.toFixed(2)))).toEqual([1, 0.3, 0])
+  })
+
+  it("counts the halo's light in multiples of its color's own level, so every light color starts its halo at its hex", () => {
+    for (const hex of ['#0064E0', '#FFD61E', '#B8996E', '#F2F4F7']) {
+      const lens = { ...DEFAULT_LENS, halationTint: hex, halationThreshold: 1.5 }
+      const largest = Math.max(...hexToLinear(hex))
+      expect(halationLevel(lens)).toBeCloseTo(largest, 6)
+      expect(halationStart(lens)).toBeCloseTo(1.5 * largest, 6)
+      expect(halationStart({ ...lens, halationThreshold: 0.5 })).toBeCloseTo(largest, 6)
+      expect(halationLuminance(lens)).toBeCloseTo(luminance(hexToLinear(hex)), 6)
+    }
+    expect(halationStart({ ...DEFAULT_LENS, halationTint: '#FFFFFF' })).toBe(1)
+    expect(resolveScene(getRecipe('contour.rim'), { lens: { halationDriftTint: '#0f3d33', halationDrift: 0.5 } }).lens).toMatchObject({ halationDriftTint: '#0F3D33', halationDrift: 0.5 })
   })
 
   it('works on a 512 px short side at any output size', () => {

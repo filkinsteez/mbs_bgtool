@@ -12,7 +12,7 @@ const args = parseArgs()
 const outDir = path.resolve(ROOT, typeof args.out === 'string' ? args.out : 'artifacts/dim-study')
 const WIDTH = 1200
 const ROW_HEIGHT = 90
-const noLens = { bloom: 0, halation: 0 }
+const noLens = { bloom: 0, halation: 0, glare: 0 }
 
 const harness = await startHarness()
 try {

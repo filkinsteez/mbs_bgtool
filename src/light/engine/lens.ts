@@ -63,22 +63,75 @@ export function bloomLevelFactors(lens: LensSettings): Rgb[] {
 }
 
 /**
- * Per-level, per-channel halation weights; each channel sums to 1. Red sits at
- * halationRadius; green is narrower by halationSpread x 1.5 levels (0.67 makes
- * it one level narrower) and blue by twice that, so a white-hot light gets an
- * orange halo near it and a red one farther out.
+ * Level weights of the camera's glare, by its near length L: least-squares fits (non-negative, relative error
+ * on the point and the line spread from 0.003 to 0.45 of the short side) of half exp(-r / L) / (2 pi L^2) and
+ * half a tail (1 + r / L)^-3 / (pi L^2), both of unit light. At L 0.0025, 47% of the glare lands beyond 0.005
+ * of the short side, 4.3% beyond 0.05 and 0.9% beyond 0.2; at L 0.016, 95%, 29% and 5.4%.
+ */
+const GLARE_TABLE: readonly (readonly [number, readonly number[]])[] = [
+  [0.0025, [0.3275, 0.4411, 0.1115, 0.056, 0.0315, 0.0179, 0.0074, 0.007]],
+  [0.004, [0.1228, 0.3963, 0.2997, 0.0828, 0.0473, 0.0281, 0.0118, 0.0113]],
+  [0.0063, [0.0545, 0.1824, 0.4193, 0.2038, 0.0608, 0.0436, 0.0178, 0.0178]],
+  [0.0101, [0.018, 0.0816, 0.2547, 0.4089, 0.1218, 0.059, 0.0284, 0.0276]],
+  [0.016, [0.0042, 0.0364, 0.1001, 0.3768, 0.3094, 0.0888, 0.0412, 0.0432]],
+]
+
+/** Glare weights per level for a near length, interpolated in log length between the table's rows. */
+export function glareLevelWeights(length: number): number[] {
+  const first = GLARE_TABLE[0][0]
+  const last = GLARE_TABLE[GLARE_TABLE.length - 1][0]
+  const x = Math.log(Math.min(last, Math.max(first, length)))
+  let k = 0
+  while (k < GLARE_TABLE.length - 2 && x > Math.log(GLARE_TABLE[k + 1][0])) k++
+  const [l0, w0] = GLARE_TABLE[k]
+  const [l1, w1] = GLARE_TABLE[k + 1]
+  const t = Math.min(1, Math.max(0, (x - Math.log(l0)) / (Math.log(l1) - Math.log(l0))))
+  return w0.map((w, i) => w + (w1[i] - w) * t)
+}
+
+/**
+ * The share of light the lens spreads and the per-level factors of the one pyramid that carries both the
+ * recipe's bloom and the camera's glare. Two spreads in a row keep (1 - bloom)(1 - glare) of the light sharp;
+ * the rest goes to the two kernels, half of the light both touch to each.
+ */
+export function lensSpread(lens: LensSettings): { mix: number; factors: Rgb[] } {
+  const a = Math.min(1, Math.max(0, lens.bloom))
+  const b = Math.min(1, Math.max(0, lens.glare))
+  const mix = a + b - a * b
+  if (mix <= 0) return { mix: 0, factors: [] }
+  const bloom = bloomLevelFactors(lens)
+  const glare = glareLevelWeights(lens.glareLength)
+  const sa = (a * (1 - b / 2)) / mix
+  const sb = (b * (1 - a / 2)) / mix
+  return {
+    mix,
+    factors: bloom.map((f, i) => [sa * f[0] + sb * glare[i], sa * f[1] + sb * glare[i], sa * f[2] + sb * glare[i]] as Rgb),
+  }
+}
+
+/** Gaussian weights over the pyramid levels around a (fractional) level, summing to 1. */
+function levelBump(center: number): number[] {
+  const clamped = Math.min(LENS_LEVELS - 1, Math.max(0, center))
+  const weights = Array.from({ length: LENS_LEVELS }, (_, i) => Math.exp(-0.5 * ((i - clamped) / 0.8) ** 2))
+  const total = weights.reduce((a, b) => a + b, 0)
+  return weights.map((w) => w / total)
+}
+
+/**
+ * Per-level halation factors with the halo's color in them. The halo has one source per pixel, how far its
+ * light is above halationTint's own level, so it has the same place and size whatever the light's color, and
+ * only these factors color it: halationTint at halationRadius, and halationDrift of it in halationDriftTint
+ * (at halationTint's luminance) halationSpread x 1.5 levels wider (0.67 is one level).
  */
 export function halationLevelFactors(lens: LensSettings): Rgb[] {
-  const red = levelForRadius(lens.halationRadius)
-  const step = lens.halationSpread * 1.5
-  const centers = [red, red - step, red - 2 * step]
-  const columns = centers.map((c) => {
-    const clamped = Math.min(LENS_LEVELS - 1, Math.max(0, c))
-    const weights = Array.from({ length: LENS_LEVELS }, (_, i) => Math.exp(-0.5 * ((i - clamped) / 0.8) ** 2))
-    const total = weights.reduce((a, b) => a + b, 0)
-    return weights.map((w) => w / total)
-  })
-  return Array.from({ length: LENS_LEVELS }, (_, i) => [columns[0][i], columns[1][i], columns[2][i]] as Rgb)
+  const level = levelForRadius(lens.halationRadius)
+  const main = levelBump(level)
+  const outer = levelBump(level + lens.halationSpread * 1.5)
+  const color = hexToLinear(lens.halationTint)
+  const drift = hexToLinear(lens.halationDriftTint)
+  const driftScale = halationLuminance(lens) / Math.max(1e-3, drift[0] * LUMA[0] + drift[1] * LUMA[1] + drift[2] * LUMA[2])
+  const d = Math.min(1, Math.max(0, lens.halationDrift))
+  return main.map((w, i) => [0, 1, 2].map((c) => (1 - d) * w * color[c] + d * outer[i] * drift[c] * driftScale) as Rgb)
 }
 
 const DOWNSAMPLE_SHADER =
@@ -149,9 +202,37 @@ void main() {
 }
 `
 
-/** Halation only ever starts above nominal (channel value 1 after exposure), whatever the setting says. */
+const FEED_SHADER =
+  GLSL_HEADER +
+  /* glsl */ `
+uniform sampler2D uSrc;
+uniform float uScale;
+out vec4 fragColor;
+// The halo's source, the same in every channel: the largest channel's light above the start, in multiples of
+// the light's own level. Each channel's ramp rises with its light, so the largest channel's is the largest.
+void main() {
+  vec3 hot = max(texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0).rgb, vec3(0.0));
+  fragColor = vec4(vec3(max(max(hot.r, hot.g), hot.b) * uScale), 1.0);
+}
+`
+
+/**
+ * The light's own level: the largest channel of halationTint in linear light. The halo counts light in
+ * multiples of it, so a Tan, Meta Blue or Yellow light k times brighter than its own hex makes the same halo.
+ */
+export function halationLevel(lens: LensSettings): number {
+  return Math.max(0.05, ...hexToLinear(lens.halationTint))
+}
+
+/** Channel value (after exposure) where light starts to feed the halo: never below the light's own level. */
 export function halationStart(lens: LensSettings): number {
-  return Math.max(1, lens.halationThreshold)
+  return Math.max(1, lens.halationThreshold) * halationLevel(lens)
+}
+
+/** Luminance of halationTint at its own level, the light the halo's fade and hold measure against. */
+export function halationLuminance(lens: LensSettings): number {
+  const light = hexToLinear(lens.halationTint)
+  return Math.max(1e-3, light[0] * LUMA[0] + light[1] * LUMA[1] + light[2] * LUMA[2])
 }
 
 /** Short side of the surroundings map that holds halation back on bright backgrounds, and its blur in px. */
@@ -165,9 +246,11 @@ uniform sampler2D uSrc;
 uniform vec2 uDstSize;
 uniform int uTaps;
 uniform float uExposureScale;
+uniform float uLumScale;
 out vec4 fragColor;
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
-// Area-averaged luminance of the exposed scene clamped to nominal, so a hot source itself barely counts as surroundings.
+// Area-averaged luminance of the exposed scene as a share of the light's own luminance, each sample capped at 1,
+// so a hot source itself barely counts as surroundings.
 void main() {
   vec2 corner = gl_FragCoord.xy - 0.5;
   float inv = 1.0 / float(uTaps);
@@ -177,7 +260,7 @@ void main() {
     for (int i = 0; i < 8; i++) {
       if (i >= uTaps) break;
       vec3 c = texture(uSrc, (corner + (vec2(float(i), float(j)) + 0.5) * inv) / uDstSize).rgb * uExposureScale;
-      sum += dot(clamp(c, 0.0, 1.0), LUMA);
+      sum += min(dot(max(c, 0.0), LUMA) * uLumScale, 1.0);
     }
   }
   fragColor = vec4(vec3(sum * inv * inv), 1.0);
@@ -186,8 +269,8 @@ void main() {
 
 /**
  * Lens composite, all in exposed light: exposure, energy-conserving bloom mix,
- * halation (each channel's own blurred light above nominal times
- * halationTint as per-channel strength), tone curve. Needs CHUNK_LIBRARY.
+ * halation (the blurred light above the light's own level, colored by the
+ * halation factors), tone curve. Needs CHUNK_LIBRARY.
  */
 export const LENS_COMPOSITE_GLSL =
   TONE_CURVE_GLSL +
@@ -197,7 +280,7 @@ uniform sampler2D uHalationTex;
 uniform sampler2D uHalationSurround;
 uniform float uBloomMix;
 uniform float uHalation;
-uniform vec3 uHalationTint;
+uniform float uHalationLuminance; // halationTint's luminance at its own level
 uniform float uExposure;
 uniform float uLensVignette;
 uniform vec2 uLensVignetteAxes; // frame proportions scaled so the corners are at distance 1
@@ -209,12 +292,12 @@ vec3 lensAndTone(vec3 radiance, vec2 uv) {
   c = max(c, vec3(0.0)) * exposure;
   if (uBloomMix > 0.0) c = mix(c, sampleSmooth(uBloomTex, uv) * exposure, uBloomMix);
   if (uHalation > 0.0) {
-    // Not over the hot core itself (only light above nominal fades it), and held back only where the wide
-    // surroundings are brighter than 0.15, so a light on a bright background does not tint it while halos in
-    // dark scenes, including inside a recipe's own glow, keep their full strength.
-    float fade = 1.0 / (1.0 + max(luminance(c) - 1.0, 0.0));
+    // Not over the hot core itself (only light above the light's own level fades it), and held back only where
+    // the wide surroundings are brighter than 0.15 of that level, so a light on a bright background does not
+    // tint it while halos in dark scenes, including inside a recipe's own glow, keep their full strength.
+    float fade = 1.0 / (1.0 + max(luminance(c) / uHalationLuminance - 1.0, 0.0));
     float hold = 1.0 / (1.0 + 4.0 * max(sampleSmooth(uHalationSurround, uv).r - 0.15, 0.0));
-    c += uHalation * uHalationTint * sampleSmooth(uHalationTex, uv) * fade * hold;
+    c += uHalation * sampleSmooth(uHalationTex, uv) * fade * hold;
   }
   if (uLensVignette > 0.0) {
     vec2 q = (2.0 * uv - 1.0) * uLensVignetteAxes;
@@ -314,7 +397,8 @@ export interface LensOutput {
  * releases the returned targets.
  */
 export function runLens(gpu: Gpu, base: Target, lens: LensSettings, exposure: number, profiler: Profiler = NO_PROFILE): LensOutput {
-  const bloom = lens.bloom > 0 ? pyramid(gpu, base, bloomLevelFactors(lens)) : null
+  const spread = lensSpread(lens)
+  const bloom = spread.mix > 0 ? pyramid(gpu, base, spread.factors) : null
   if (bloom) profiler.mark('lens bloom', bloom)
   let halation: Target | null = null
   let surround: Target | null = null
@@ -329,13 +413,22 @@ export function runLens(gpu: Gpu, base: Target, lens: LensSettings, exposure: nu
       })
       hot = owned
     }
-    halation = pyramid(gpu, hot, halationLevelFactors(lens))
+    const level = halationLevel(lens)
+    const feed = gpu.acquire(hot.width, hot.height)
+    gpu.draw(gpu.program(FEED_SHADER), feed, { textures: { uSrc: hot }, uniforms: { uScale: 1 / level } })
     gpu.release(owned)
+    halation = pyramid(gpu, feed, halationLevelFactors(lens))
+    gpu.release(feed)
     const scale = SURROUND_SHORT_SIDE / Math.min(base.width, base.height)
     const small = gpu.acquire(Math.max(1, Math.round(base.width * scale)), Math.max(1, Math.round(base.height * scale)))
     gpu.draw(gpu.program(SURROUND_SHADER), small, {
       textures: { uSrc: base },
-      uniforms: { uDstSize: [small.width, small.height], uTaps: Math.min(8, Math.ceil(base.width / small.width)), uExposureScale: 2 ** exposure },
+      uniforms: {
+        uDstSize: [small.width, small.height],
+        uTaps: Math.min(8, Math.ceil(base.width / small.width)),
+        uExposureScale: 2 ** exposure,
+        uLumScale: 1 / halationLuminance(lens),
+      },
     })
     surround = gaussianBlur(gpu, small, SURROUND_BLUR_PX)
     gpu.release(small)

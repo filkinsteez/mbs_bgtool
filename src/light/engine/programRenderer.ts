@@ -1,12 +1,13 @@
-import { hexToLinear } from '../color/srgb'
 import type { RecipeContext, RecipeProgram, UniformMap } from '../scene'
 import { frameAspect } from './frame'
 import { CONTEXT_LOST_MESSAGE, Gpu, LightEngineError, type Target } from './gl'
 import {
   BASE_FROM_RADIANCE_SHADER,
+  halationLuminance,
   halationStart,
   LENS_BASE_SHORT_SIDE,
   lensBaseSize,
+  lensSpread,
   runLens,
   TEXEL_COMPOSITE_SHADER,
   TEXTURE_COMPOSITE_SHADER,
@@ -192,7 +193,8 @@ export class ProgramRenderer {
     const radianceScale = radianceScaleFor(program, ctx)
     const usesTexture = usesPost || radianceScale < 1
     const baseSize = lensBaseSize(width, height)
-    const lensOn = resolved.lens.bloom > 0 || resolved.lens.halation > 0
+    const spreadMix = lensSpread(resolved.lens).mix
+    const lensOn = spreadMix > 0 || resolved.lens.halation > 0
     const renderShort = Math.min(renderWidth, renderHeight)
     const reuse = lensOn && !usesTexture && factor === 1 && renderShort >= REUSE_MIN_SHORT_SIDE && renderWidth * renderHeight <= REUSE_MAX_PIXELS
     const base = lensOn ? gpu.acquire(baseSize.width, baseSize.height, 'rgba16f', !usesTexture && resolved.lens.halation > 0 ? 2 : 1) : null
@@ -245,9 +247,9 @@ export class ProgramRenderer {
     gpu.release(base)
 
     const lensUniforms: UniformMap = {
-      uBloomMix: lens.bloom ? resolved.lens.bloom : 0,
+      uBloomMix: lens.bloom ? spreadMix : 0,
       uHalation: lens.halation ? resolved.lens.halation : 0,
-      uHalationTint: hexToLinear(resolved.lens.halationTint),
+      uHalationLuminance: halationLuminance(resolved.lens),
       uExposure: resolved.output.exposure,
       uToe: resolved.output.toe,
       uLensVignette: resolved.lens.vignette,

@@ -79,26 +79,45 @@ export interface LensSettings {
   /** Optional explicit tint per pyramid level (up to 8 hexes, finest first); replaces bloomTint. */
   bloomLevelTints?: string[]
   /**
-   * Strength of the film halation glow: each channel's own light above
-   * nominal, blurred and added back, times halationTint. 0 turns it off.
+   * Strength of the film halation glow: how far light is above halationTint's
+   * own level, blurred and added back in halationTint (and halationDriftTint).
+   * So the halo's place and size follow the light's brightness, not its color,
+   * and only the tints color it. 0 turns it off.
    */
   halation: number
   /**
-   * Channel value (in multiples of nominal, after exposure) where light starts
-   * to feed the halation; it ramps in fully by twice this. Values below 1 act
-   * as 1, so light at or below nominal never makes halation.
+   * Brightness, in multiples of halationTint's own level after exposure, where
+   * light starts to feed the halation; it ramps in fully by twice this. Values
+   * below 1 act as 1, so light at or below that level never makes halation.
    */
   halationThreshold: number
-  /** Blur radius of the red halo as a fraction of the frame's short side. */
+  /** Blur radius of the halo as a fraction of the frame's short side. */
   halationRadius: number
   /**
-   * Per-channel strength, as a hex read in linear light. The default
-   * #FF9500 is red 1, green 0.3, blue 0, like film: red and white-hot lights
-   * get a red-orange halo, blue lights none.
+   * The halo's color, as a hex read in linear light: set it to the light's own
+   * hex. Its largest channel is the level the halo counts light in, so a light
+   * of any color k times brighter than its hex makes the same halo. Default
+   * amber (red 1, green 0.3).
    */
   halationTint: string
-  /** Green sits narrower than red by this x 1.5 pyramid levels (0.67 is one level), blue by twice that. 0..1. */
+  /**
+   * A pack color the halo's outer part drifts to (Yellow's to Orange-red, as
+   * fire does), as a hex; scaled to halationTint's luminance, so only its hue
+   * counts.
+   */
+  halationDriftTint: string
+  /** Share of the halo in halationDriftTint, 0..1; 0 keeps the whole halo in halationTint. */
+  halationDrift: number
+  /** The drift part sits wider than halationRadius by this x 1.5 pyramid levels (0.67 is one level). 0..1. */
   halationSpread: number
+  /**
+   * Share of all light the camera's own lens moves out of the sharp core, 0..1: half into a near spread of
+   * length glareLength, half into a veil that falls as the inverse cube of the distance. It acts on every
+   * light with no threshold and keeps the total light, on top of the recipe's bloom.
+   */
+  glare: number
+  /** Length of the glare's near spread, as a fraction of the short side; 0.0025 to 0.016. */
+  glareLength: number
   /**
    * Soft darkening toward the frame corners, 0..1, in linear light before
    * the tone curve: light is multiplied by (1 + d^2)^(-2 vignette), with d
@@ -139,7 +158,11 @@ export const DEFAULT_LENS: LensSettings = {
   halationThreshold: 1,
   halationRadius: 0.06,
   halationTint: '#FF9500',
+  halationDriftTint: '#FF4F00',
+  halationDrift: 0,
   halationSpread: 0.67,
+  glare: 0.06,
+  glareLength: 0.0025,
   vignette: 0,
 }
 
@@ -168,13 +191,17 @@ export const LENS_NUMBERS: readonly NumericSetting<NumericKeys<LensSettings>>[] 
   { key: 'halation', label: 'Halation', min: 0, max: 2, step: 0.01 },
   { key: 'halationThreshold', label: 'Halation threshold', min: 0, max: 4, step: 0.01 },
   { key: 'halationRadius', label: 'Halation radius', min: 0.005, max: 0.4, step: 0.005 },
+  { key: 'halationDrift', label: 'Halation drift', min: 0, max: 1, step: 0.01 },
   { key: 'halationSpread', label: 'Halation spread', min: 0, max: 1, step: 0.01 },
+  { key: 'glare', label: 'Glare', min: 0, max: 0.5, step: 0.005 },
+  { key: 'glareLength', label: 'Glare length', min: 0.0025, max: 0.016, step: 0.0005 },
   { key: 'vignette', label: 'Vignette', min: 0, max: 1, step: 0.01 },
 ]
 
 export const LENS_COLORS: readonly { key: StringKeys<LensSettings>; label: string }[] = [
   { key: 'bloomTint', label: 'Bloom tint' },
   { key: 'halationTint', label: 'Halation tint' },
+  { key: 'halationDriftTint', label: 'Halation drift tint' },
 ]
 
 export const OUTPUT_NUMBERS: readonly NumericSetting<NumericKeys<OutputSettings>>[] = [

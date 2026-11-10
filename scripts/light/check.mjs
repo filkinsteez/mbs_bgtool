@@ -134,7 +134,7 @@ try {
   const { toneCurve, TONE_TIE_BAND } = await harness.ssr('/src/light/engine/output.ts')
   const { compareImages, bandingScore, buildMask } = await harness.ssr('/src/light/audit/index.ts')
   const { linearToOklch, linearToOklab } = await harness.ssr('/src/light/color/oklab.ts')
-  const noLens = { bloom: 0, halation: 0 }
+  const noLens = { bloom: 0, halation: 0, glare: 0 }
   const { recipeErrors } = await harness.info()
   const loads = (scene) => !scene.recipe || !recipeErrors[scene.recipe]
   const notLoaded = (scenes) => [...new Set(scenes.filter((scene) => !loads(scene)).map((scene) => scene.recipe))]
@@ -841,9 +841,9 @@ try {
     const after = meanLinear(dimBloom)
     record('bloom keeps total light on a dim scene', Math.abs(after / before - 1) < 0.02, `mean linear luminance ${before.toFixed(5)} -> ${after.toFixed(5)} (${((after / before - 1) * 100).toFixed(2)} %)`)
 
-    // Halation: fed by each channel's own light above nominal after exposure (red in full, green 0.3, blue 0).
+    // Halation: fed by light above the tint's own level after exposure (amber by default, so channel value 1).
     const halSize = { width: 480, height: 270 }
-    const halLens = { bloom: 0, halation: 1, halationRadius: 0.05 }
+    const halLens = { ...noLens, halation: 1, halationRadius: 0.05 }
     const halPair = async (params, output = {}) => {
       const scene = { program: 'test.halation', params, output }
       const off = await harness.render({ scene: { ...scene, lens: noLens }, ...halSize, dither: false })
@@ -879,9 +879,44 @@ try {
     ])
     const fmt = (rgb) => rgb.map((v) => v.toFixed(5)).join(', ')
     record(
-      'halation: blue lights at 4x and 8x make no warm halo',
-      Math.max(...blue4.added, ...blue8.added) < 2e-5,
-      `added linear light (R, G, B): 4x ${fmt(blue4.added)}; 8x ${fmt(blue8.added)}; images in lens-halation.png`,
+      'halation: a hot blue light gets a halo too, colored only by the tints',
+      blue4.added[0] > 1e-3 && blue4.added[0] > 5 * blue4.added[2] && blue8.added[0] > blue4.added[0],
+      `added linear light (R, G, B), the default amber tint: 4x ${fmt(blue4.added)}; 8x ${fmt(blue8.added)}; images in lens-halation.png`,
+    )
+    // The pack rule: one ring of light at 4x its hex in three pack colors (Tan's largest channel is 0.48, Meta Blue's
+    // 0.75, Yellow's 1), with the light's own hex as the halo's tint, gets the same halo in multiples of its color.
+    // Counted where the ring itself is below a quarter of its own color's level, so every color counts the same pixels.
+    const ringHalo = async (hex) => {
+      const scene = { program: 'test.scatter', colors: [hex, '#000000'], params: { amount: 0 }, output: { exposure: Math.log2(4 / 1.55) } }
+      const lens = { ...noLens, halation: 1, halationRadius: 0.05, halationTint: hex }
+      const off = await harness.render({ scene: { ...scene, lens: noLens }, ...halSize, dither: false })
+      const on = await harness.render({ scene: { ...scene, lens }, ...halSize, dither: false })
+      const own = hexToLinear(hex)
+      const ownSquared = own[0] ** 2 + own[1] ** 2 + own[2] ** 2
+      const level = Math.max(...own)
+      let sum = 0
+      let count = 0
+      for (let i = 0; i < on.data.length; i += 4) {
+        const before = [0, 1, 2].map((k) => SRGB_TO_LINEAR[off.data[i + k]])
+        if (Math.max(...before) > 0.25 * level) continue
+        for (let k = 0; k < 3; k++) sum += ((SRGB_TO_LINEAR[on.data[i + k]] - before[k]) * own[k]) / ownSquared
+        count++
+      }
+      return { on, value: sum / count }
+    }
+    const ringBlue = await ringHalo('#0064E0')
+    const ringYellow = await ringHalo('#FFD61E')
+    const ringTan = await ringHalo('#B8996E')
+    await composeRow(path.join(outDir, 'lens-halation-packs.png'), [
+      { image: ringBlue.on, caption: 'Meta Blue ring at 4x, Meta Blue halo' },
+      { image: ringYellow.on, caption: 'Yellow ring at 4x, Yellow halo' },
+      { image: ringTan.on, caption: 'Tan ring at 4x, Tan halo' },
+    ])
+    const ringOff = (ring) => `${((ring.value / ringYellow.value - 1) * 100).toFixed(1)} %`
+    record(
+      'halation: one light in three pack colors, each with its own hex as the tint, gets the same halo',
+      Math.abs(ringBlue.value / ringYellow.value - 1) < 0.05 && Math.abs(ringTan.value / ringYellow.value - 1) < 0.05,
+      `halo in multiples of the light's color, outside the ring: Yellow ${ringYellow.value.toFixed(5)}, Meta Blue ${ringBlue.value.toFixed(5)} (${ringOff(ringBlue)}), Tan ${ringTan.value.toFixed(5)} (${ringOff(ringTan)}); images in lens-halation-packs.png`,
     )
     record(
       'halation: white-hot and orange lights keep a red-orange halo',
