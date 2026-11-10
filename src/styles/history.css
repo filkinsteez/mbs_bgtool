@@ -1,0 +1,127 @@
+/* The preview and the history under it. */
+.tool-view {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tool-view > .tool-stage {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+/* Colors are DialKit's dark theme values: its variables only exist inside the panel. */
+.tool-history {
+  --history-height: 44px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 0 28px 20px;
+}
+
+/* Before the first state is recorded the strip keeps its place, so the image doesn't move when it appears. */
+.tool-history[data-empty] {
+  visibility: hidden;
+}
+
+.tool-history-title {
+  flex: none;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.95);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+/* 4px around the pictures leaves room for the ring inside the scrolling row. */
+.tool-history-items {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tool-history-item {
+  position: relative;
+  flex: none;
+  height: var(--history-height);
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  transition: outline-color 0.15s;
+}
+
+/* A thin edge, so dark pictures stay visible on the dark stage, as on the panel's tiles. */
+.tool-history-item::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  pointer-events: none;
+}
+
+.tool-history-picture {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-position: center;
+  background-size: cover;
+}
+
+.tool-history-item:hover {
+  outline-color: rgba(255, 255, 255, 0.15);
+}
+
+.tool-history-item[aria-checked='true'],
+.tool-history-item:focus-visible {
+  outline-color: rgba(255, 255, 255, 0.95);
+}
+
+@media (max-height: 820px) {
+  .tool-history {
+    --history-height: 36px;
+    gap: 10px;
+    padding-bottom: 14px;
+  }
+
+  .tool-history-title {
+    font-size: 12px;
+    line-height: 14px;
+  }
+}
+
+@media (max-height: 620px) {
+  .tool-history {
+    --history-height: 28px;
+    padding-bottom: 10px;
+  }
+}
+
+@media (max-width: 720px) {
+  .tool-view {
+    flex: 1 1 0;
+    min-height: 0;
+  }
+
+  .tool-history {
+    padding: 0 12px 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-history-item {
+    transition: none;
+  }
+}

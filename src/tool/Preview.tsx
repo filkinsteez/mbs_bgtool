@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react'
 import { EXPORT_SIZES, type ExportAspect, type Scene } from '@/light'
 import { clampPoint, type LightDrag, type LightPoint } from './controls'
+import { thumbnailOf } from './history/thumbnail'
 import { PreviewLoop } from './previewLoop'
 
 const MAX_LONG_SIDE = 2560
@@ -106,15 +107,19 @@ export interface PreviewProps {
   onDragging: (dragging: boolean) => void
   /** A double-click or double-tap in the stage. */
   onReset: () => void
+  /** The settled frame of `scene` is on screen, with a small JPEG of it, or '' when the canvas can't be read. */
+  onSettle?: (scene: Scene, thumb: string) => void
 }
 
-export function Preview({ scene, aspect, paused, hint, onDrag, onDragging, onReset }: PreviewProps) {
+export function Preview({ scene, aspect, paused, hint, onDrag, onDragging, onReset, onSettle }: PreviewProps) {
   const stageRef = useRef<HTMLDivElement>(null)
   const frameRef = useRef<HTMLDivElement>(null)
   const lineRefs = useRef<(SVGLineElement | null)[]>([])
   const loopRef = useRef<PreviewLoop | null>(null)
   const attemptsRef = useRef(0)
-  const handlersRef = useRef({ onDrag, onDragging, onReset })
+  const handlersRef = useRef({ onDrag, onDragging, onReset, onSettle })
+  /** The scene the loop was last given: the one a settled frame shows. */
+  const drawnSceneRef = useRef<Scene | null>(null)
   const pressRef = useRef<Press | null>(null)
   const pendingRef = useRef<LightDrag | null>(null)
   const lineFrameRef = useRef(0)
@@ -136,7 +141,7 @@ export function Preview({ scene, aspect, paused, hint, onDrag, onDragging, onRes
   const box = cantDraw ? target : (shownBox ?? target)
 
   useLayoutEffect(() => {
-    handlersRef.current = { onDrag, onDragging, onReset }
+    handlersRef.current = { onDrag, onDragging, onReset, onSettle }
   })
 
   useEffect(() => {
@@ -180,6 +185,13 @@ export function Preview({ scene, aspect, paused, hint, onDrag, onDragging, onRes
       setShownBox((previous) => (previous && previous.width === next.box.width && previous.height === next.box.height ? previous : next.box))
     })
     drawn.observe(canvas, { attributes: true, attributeFilter: ['data-frame'] })
+    // The thumbnail is read in the task that marked the frame settled: the task that drew it, unless settled frames are
+    // too slow at this size.
+    const settled = new MutationObserver(() => {
+      const scene = drawnSceneRef.current
+      if (canvas.dataset.settled === 'true' && scene) handlersRef.current.onSettle?.(scene, thumbnailOf(canvas))
+    })
+    settled.observe(canvas, { attributes: true, attributeFilter: ['data-settled'] })
     let loop: PreviewLoop | null = null
     try {
       loop = new PreviewLoop(canvas, () => retry(50))
@@ -192,6 +204,7 @@ export function Preview({ scene, aspect, paused, hint, onDrag, onDragging, onRes
     return () => {
       timers.forEach(clearTimeout)
       drawn.disconnect()
+      settled.disconnect()
       loop?.dispose()
       canvas.remove()
       if (loopRef.current === loop) loopRef.current = null
@@ -214,6 +227,7 @@ export function Preview({ scene, aspect, paused, hint, onDrag, onDragging, onRes
     const next = { width: boxWidth, height: boxHeight }
     const size = renderSize(next, window.devicePixelRatio || 1)
     nextBoxRef.current = { box: next, key: sizeKey(size) }
+    drawnSceneRef.current = scene
     loop.update(scene, size.width, size.height)
   }, [scene, boxWidth, boxHeight, generation])
 
