@@ -1,5 +1,5 @@
 import { linearToOklch } from '../../color/oklab'
-import type { StagePart } from '../../color/stageFields'
+import type { FieldWant, StagePart } from '../../color/stageFields'
 import type { ColorPack } from '../../color/packs'
 import { defaultMix, mixColors } from '../../color/mix'
 import { hexToLinear, type Rgb } from '../../color/srgb'
@@ -127,7 +127,8 @@ export function mergedLayout(seed: number, aspect: number, drag?: ControlValues[
   // dome of pale light around the sun in some seeds, a band along the whole horizon in others.
   const pale: [number, number, number, number] = [lerp(0.4, 1.6, next()), lerp(0.22, 0.55, next()), lerp(0.76, 0.84, next()), next()]
   let paleBase = next() < 0.45 ? 0 : lerp(0.3, 0.7, next())
-  const warm: [number, number, number] = [lerp(0.35, 1.3, next()), lerp(0.03, 0.09, next()), lerp(0.6, 0.7, next())]
+  // The warm band: an accent near the glow, not the width of the sky.
+  const warm: [number, number, number] = [lerp(0.25, 0.7, next()), lerp(0.03, 0.09, next()), lerp(0.6, 0.7, next())]
   // Meta Blue's sky: paler toward the pale sky and the glow, full in the middle, deeper away from the light; then a
   // small, light deep top far from the light.
   const sky: [number, number, number, number] = [lerp(0.66, 0.72, next()), lerp(0.53, 0.57, next()), lerp(0.4, 0.44, next()), 0]
@@ -180,9 +181,9 @@ export function mergedLayout(seed: number, aspect: number, drag?: ControlValues[
     tilt = tiltDraw * 1.2
     mostLean = 1.2
     horizon[0] = 0
-    dome[0] = lerp(0.08, 0.22, domeDraw)
+    dome[0] = lerp(0.06, 0.16, domeDraw)
     dome[1] = dome[0]
-    warm[1] = lerp(0.08, 0.18, rise)
+    warm[1] = Math.max(lerp(0.06, 0.12, rise), 1.3 * dome[0])
     farDim()
   } else if (kind === 2) {
     // A sky lit from one side: the light on the left or right edge, the sky turned toward the far side.
@@ -191,19 +192,22 @@ export function mergedLayout(seed: number, aspect: number, drag?: ControlValues[
     mostLean = 1.7
     farDim()
   } else {
-    // A plain sky gradient with no light in sight: no glow, the warm and the pale light low across the whole width,
-    // over a soft dim band along the bottom.
+    // A plain sky gradient with no light in sight: no glow, the pale light low across the width and the warm light
+    // low near where the light would be, over a soft dim band along the bottom. The horizon bows and waves, the warm
+    // band's top and the pale sky's edge each rise and fall their own way, so no two boundaries run parallel.
     sun = toP(lerp(0.2, 0.8, (across - 0.06) / 0.88), lerp(0.74, 0.86, height))
     tilt = tiltDraw * 0.25
     mostLean = 0.4
     ground = true
     groundL[3] = lerp(0.05, 0.1, rise)
+    horizon[3] = lerp(0.03, 0.06, dimDraw)
     dome[3] = 0
-    paleBase = 1
-    pale[0] = 4
+    paleBase = lerp(0.35, 0.7, height)
+    pale[0] = lerp(1.0, 2.0, rise)
     pale[1] = lerp(0.3, 0.5, rise)
-    warm[0] = 4
-    warm[1] = lerp(0.1, 0.2, height)
+    warm[0] = lerp(0.6, 1.2, tiltDraw + 0.5)
+    warm[1] = lerp(0.08, 0.16, height)
+    slant[1] *= 1.5
     smallTop()
   }
   sun = [sun[0], sun[1] + horizon[0]]
@@ -274,6 +278,8 @@ export function mergedLayout(seed: number, aspect: number, drag?: ControlValues[
     dome[1] *= reach
     pale[0] *= reach
     warm[0] *= reach
+    // Round a high light the warm halo grows with the glow, so the rings keep their proportions.
+    if (kind === 1) warm[1] *= reach
     patch[0] *= reach
     patch[2] *= reach
   }
@@ -394,9 +400,12 @@ export function composeMerged({ pack, controls, seed, aspect, mix }: MergedInput
  *   units, as the stage measures height);
  * - Meta Blue's own lit patch, in the seeds that have one (want `any`: the lead color's own light, not an accent);
  * - a bright spot: the glow over the light (Yellow, white); a plain sky has none;
- * - a warm spot: the warm band on the horizon near the light, or the warm halo round a high light (Orange-red, Tan);
- * - a cool spot: the pale sky over the glow, or round a high light (Cyan, Lime, Ice, or the pale end of the sky);
- * - dark spots for the dim room: the lit hills or a plain sky's dim band, and the dim far corner of the sky.
+ * - a warm spot: the warm band on the horizon near the light, or the warm halo round a high light, a ring (Orange-red,
+ *   Tan);
+ * - a cool spot: the pale sky over the glow, or round a high light, a ring (Cyan, Ice, or the pale end of the sky);
+ * - two dark spots for the dim room, one per dark color: the two halves of the lit hills or a plain sky's dim band,
+ *   or the two corners of the sky farthest from the light.
+ * Every frame of a seed has the same parts in the same order; they move and resize smoothly as a line moves.
  * The rest is the sky's: Meta Blue paler toward the pale sky and the glow, full in the middle, deeper far from the
  * light. The stage colors the look's lightness-only render (`lightnessOnlyParams`).
  */
@@ -413,6 +422,7 @@ export function mergedParts(params: Record<string, unknown>, aspect: number): St
   const [off] = params.horizon as number[]
   const [domeWidth, domeHeight, , domeOn] = params.dome as number[]
   const [paleReach, paleHeight] = params.pale as number[]
+  const paleBase = params.paleBase as number
   const [warmReach, warmThickness] = params.warm as number[]
   const [patchAlong, patchHeight, patchSize, patchOn] = params.patch as number[]
   const slant = (params.slant as number[])[0]
@@ -422,41 +432,66 @@ export function mergedParts(params: Record<string, unknown>, aspect: number): St
   const at = (along: number, height: number) => [glowAt[0] + side[0] * along + up[0] * height, glowAt[1] + side[1] * along + up[1] * height]
   const paleTop = Math.max(0.04, paleHeight * span)
   const parts: StagePart[] = [{ kind: 'horizon', light: toFrame(glowAt), sky: [up[0] / skyLength, up[1] / skyLength] }]
+  // A spot as the stage reads it: half-lengths of radius * sqrt(stretch) along `angle` and radius / sqrt(stretch)
+  // across; a ring's `inner` is a share of `radius`. `turn` tilts a spot off the horizon (degrees), so the parts'
+  // edges don't all run along it.
+  const spot = (center: readonly number[], along: number, across: number, want: FieldWant, turn = 0, innerShare?: number): StagePart => {
+    const a = Math.max(along, 0.005)
+    const c = Math.max(across, 0.005)
+    const radius = Math.sqrt(a * c)
+    const shape = { kind: 'spot' as const, at: toFrame(center), radius, stretch: a / c, angle: angle + turn, want }
+    return innerShare === undefined ? shape : { ...shape, inner: radius * Math.min(0.95, innerShare) }
+  }
+  const degrees = (slope: number) => (Math.atan(slope) * 180) / Math.PI
+  const [, , horizonSlope] = params.horizon as number[]
+  const paleSlant = (params.slant as number[])[1]
   if (patchOn > 0) {
     // Where the patch's place along the horizon and height in the sky put it (round a high light, as a distance
     // from the glow).
     const reach = patchHeight * span - slant * patchAlong
-    const patchAt = ringed ? at(patchAlong / squash, Math.sqrt(Math.max(0, reach * reach - patchAlong * patchAlong))) : at(patchAlong, reach)
-    parts.push({ kind: 'spot', at: toFrame(patchAt), radius: 0.7 * patchSize, stretch: 1 / 0.7, angle, want: 'any' })
+    // The constant under the root keeps the patch moving smoothly where the root nears zero.
+    const patchAt = ringed ? at(patchAlong / squash, Math.sqrt(Math.max(0, reach * reach - patchAlong * patchAlong) + 0.0225)) : at(patchAlong, reach)
+    parts.push(spot(patchAt, patchSize, 0.7 * patchSize, 'any'))
   }
   if (ringed) {
-    if (domeOn > 0) parts.push({ kind: 'spot', at: toFrame(glowAt), radius: domeHeight, stretch: 1 / squash, angle, want: 'bright' })
-    parts.push({ kind: 'spot', at: toFrame(glowAt), radius: warmThickness, stretch: 1 / squash, angle, want: 'warm' })
-    parts.push({ kind: 'spot', at: toFrame(glowAt), radius: paleTop, stretch: 1 / squash, angle, want: 'cool' })
+    // Round a high light: the glow, then the warm halo and the pale sky as rings, wider along the horizon than up;
+    // the halo sits a little to one side and the pale sky reaches farther up, so the rings are not concentric.
+    const round = (center: readonly number[], outer: number, want: FieldWant, innerShare?: number) => spot(center, outer / squash, outer, want, 0, innerShare)
+    if (domeOn > 0) parts.push(round(glowAt, domeHeight, 'bright'))
+    parts.push(round(at(0.15 * warmThickness * Math.sign(slant || 1), 0), warmThickness, 'warm', (0.7 * domeHeight) / warmThickness))
+    parts.push(round(at(0, 0.3 * paleTop), paleTop, 'cool', (0.9 * warmThickness) / (1.3 * paleTop)))
   } else {
-    if (domeOn > 0) parts.push({ kind: 'spot', at: toFrame(glowAt), radius: domeHeight, stretch: domeWidth / domeHeight, angle, want: 'bright' })
-    parts.push({ kind: 'spot', at: toFrame(at(0, warmThickness / 2)), radius: warmThickness, stretch: warmReach / warmThickness, angle, want: 'warm' })
-    parts.push({ kind: 'spot', at: toFrame(at(0, paleTop / 2)), radius: paleTop / 2, stretch: Math.max(1, paleReach / (paleTop / 2)), angle, want: 'cool' })
+    // The warm band as an accent by the glow, along the horizon's own slope there; the pale sky along its own slant.
+    if (domeOn > 0) parts.push(spot(glowAt, domeWidth, domeHeight, 'bright'))
+    parts.push(spot(at(0, warmThickness / 2), 0.5 * warmReach, warmThickness, 'warm', degrees(horizonSlope)))
+    parts.push(spot(at(0, paleTop / 2), paleReach + (paleBase * Math.hypot(frameW, frameH)) / 2, paleTop / 2, 'cool', -degrees(0.5 * paleTop * paleSlant)))
   }
+  // Two dark spots in every frame, one for each dark color, placed by smooth weights so they glide as a line moves.
   const corners = [-0.5, 0.5].flatMap((x) => [-0.5, 0.5].map((y) => [x * frameW, y * frameH]))
   if (params.ground) {
-    // The lit hills, or a plain sky's dim band: below the horizon across the frame.
-    const depth = Math.max(...corners.map((c) => -((c[0] - glowAt[0]) * up[0] + (c[1] - glowAt[1]) * up[1])))
-    if (depth > 0.02) {
-      const across = -(glowAt[0] * side[0] + glowAt[1] * side[1])
-      const width = Math.hypot(frameW, frameH)
-      parts.push({ kind: 'spot', at: toFrame(at(across, -depth / 2)), radius: depth / 2, stretch: Math.max(1, width / depth), angle, want: 'dark' })
-    }
-  }
-  const [deepStart, , deepLower] = params.deep as number[]
-  if (deepLower > 0) {
-    // The dim far sky: the frame's corner farthest from the light (round a high light, by distance).
+    // The lit hills or a plain sky's dim band, in two halves along the horizon; thin where the horizon sits low, so
+    // they fade instead of vanishing.
+    const depth = Math.max(0, ...corners.map((c) => -((c[0] - glowAt[0]) * up[0] + (c[1] - glowAt[1]) * up[1])))
+    const middle = -(glowAt[0] * side[0] + glowAt[1] * side[1])
+    const half = 0.25 * (Math.abs(frameW * side[0]) + Math.abs(frameH * side[1]))
+    for (const s of [-1, 1]) parts.push(spot(at(middle + s * half, -depth / 2), half, depth / 2, 'dark', 8 * s))
+  } else {
+    // The dim far sky: the two frame corners farthest from the light (round a high light, by distance).
+    const [deepStart, , deepLower] = params.deep as number[]
     const far = (c: number[]) => {
       const d = [c[0] - glowAt[0], c[1] - glowAt[1]]
       return ringed ? Math.hypot(d[0], d[1]) : d[0] * up[0] + d[1] * up[1] + deepLower * Math.abs(d[0] * side[0] + d[1] * side[1])
     }
-    const corner = corners.reduce((best, c) => (far(c) > far(best) ? c : best))
-    parts.push({ kind: 'spot', at: toFrame([corner[0] * 0.85, corner[1] * 0.85]), radius: Math.max(0.15, 0.8 * (1 - deepStart) * span), stretch: 1.5, angle, want: 'dark' })
+    const most = Math.max(...corners.map(far))
+    const middleOf = (weights: number[]) => {
+      const total = weights.reduce((s, w) => s + w, 0)
+      return total > 1e-9 ? [0, 1].map((i) => corners.reduce((s, c, k) => s + c[i] * weights[k], 0) / total) : null
+    }
+    const firstWeights = corners.map((c) => Math.exp((far(c) - most) / 0.12))
+    const first = middleOf(firstWeights) ?? corners[0]
+    const second = middleOf(corners.map((c, k) => firstWeights[k] * (1 - Math.exp(-((c[0] - first[0]) ** 2 + (c[1] - first[1]) ** 2) / 0.25)))) ?? first
+    const size = Math.max(0.15, 0.8 * (1 - deepStart) * span)
+    for (const [k, c] of [first, second].entries()) parts.push(spot([0.85 * c[0], 0.85 * c[1]], 1.2 * size, 0.8 * size, 'dark', k ? -25 : 25))
   }
   return parts
 }
@@ -638,8 +673,12 @@ float skyLightness(float a, float h) {
   L = mix(L, uSkyL.w, deepAt(a, t));
   L = mix(L, max(L, uSkyL.x), patchAt(a, t));
   float pale = paleAt(a, h);
-  L = mix(L, uPale.z + 0.04 * (1.0 - clamp(h / max(uPale.y * uSpan, 0.05), 0.0, 1.0)), pale);
-  L = mix(L, uWarm.z, warmAt(a, h));
+  // The pale sky and the warm band are the glow's light spreading: brightest by the glow, dimming with height and
+  // along the horizon away from it, with no level stretch.
+  float paleLight = uPale.z - 0.03 + 0.07 * (1.0 - clamp(h / max(uPale.y * uSpan, 0.05), 0.0, 1.0)) + 0.05 * sideLight(a, uPale.x);
+  L = mix(L, paleLight, pale);
+  float warmLight = uWarm.z + 0.1 * sideLight(a, max(0.15, 0.5 * uWarm.x)) - 0.05 * clamp(h / max(uWarm.y, 0.02), 0.0, 1.0);
+  L = mix(L, warmLight, warmAt(a, h));
   L = mix(L, uDome.z, domeAt(a, h));
   return min(L, 0.97);
 }
