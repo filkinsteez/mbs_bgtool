@@ -8,15 +8,26 @@ export function gridSize(aspect: number): [number, number] {
   return aspect >= 1 ? [Math.max(1, Math.round(GRID_SHORT * aspect)), GRID_SHORT] : [GRID_SHORT, Math.max(1, Math.round(GRID_SHORT / aspect))]
 }
 
-/** The design's light on the grid: per cell, the cube root of its luminance before the lens (0 is black). Row 0 is the top. */
+/**
+ * The design's light on the grid, row 0 at the top. Per cell: the cube root of its luminance before the lens (0 is
+ * black), and the share of the cell that is visibly lit (read at 4 x 4 points a cell), so a thin bright line counts by
+ * its own area and not by the cell's.
+ */
 export interface StageGrid {
   width: number
   height: number
   lightness: Float32Array
+  coverage: Float32Array
 }
 
-/** What a field asks for: a warm light, a cool one, a dark color, or whichever the shares give it. */
-export type FieldWant = 'any' | 'warm' | 'cool' | 'dark'
+/** Points per cell side where the design is read for `coverage`. */
+export const COVERAGE_SPLIT = 4
+
+/**
+ * What a field asks for: a warm light, a cool one, a dark color, a color that only reads as itself when bright (Yellow,
+ * Lime, Tan, Ice: for the brightest part of a light), or whichever the shares give it.
+ */
+export type FieldWant = 'any' | 'warm' | 'cool' | 'dark' | 'bright'
 
 /**
  * A look's part, in frame units: x from the left edge and y from the top edge (0..1 inside the frame), sizes in
@@ -62,8 +73,9 @@ function fromCenter(p: readonly [number, number], aspect: number): [number, numb
 }
 
 /**
- * The parts of today's seven looks, read from what each look's compose already writes into its params. Rim and Halo
- * give only their light here; the stage also places fields along the bright structure it reads from the design.
+ * The parts of today's seven looks, read from what each look's compose already writes into its params. Rim, Halo and
+ * Streaks give only their light here and Beam none; the stage also places fields along the bright structure it reads
+ * from the design.
  */
 export function lookParts(recipe: RecipeId, params: Readonly<Record<string, ParamValue>>, aspect: number): StagePart[] {
   switch (recipe) {
@@ -94,10 +106,8 @@ export function lookParts(recipe: RecipeId, params: Readonly<Record<string, Para
       const light = vec2(params.light1At)
       return light ? [{ kind: 'spot', at: fromCenter(light, aspect), radius: 0.35 }] : []
     }
-    case 'contour.beam': {
-      const source = vec2(params.source)
-      return source ? [{ kind: 'spot', at: fromCenter(source, aspect), radius: 0.3 }] : []
-    }
+    case 'contour.beam':
+      return []
     default: {
       const unknown: never = recipe
       throw new Error(`No parts for ${String(unknown)}`)
@@ -186,10 +196,6 @@ const smooth = (e0: number, e1: number, x: number) => {
   return t * t * (3 - 2 * t)
 }
 const sigmoid = (x: number) => 1 / (1 + Math.exp(-x))
-const smoothstep = (a: number, b: number, x: number) => {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
-  return t * t * (3 - 2 * t)
-}
 
 /** Lightness from which a cell counts as visibly lit. */
 export const VISIBLE = 0.15
@@ -289,7 +295,8 @@ function brightestPoint(grid: StageGrid): [number, number] {
 /**
  * The color fields of one design, from its parts, its light on the grid and the seed. They never depend on the
  * colors or the shares. In order: the look's own (Sunrise: the sky, its layers, the glow along the horizon, the
- * ground; Contour: the light with its haze, then the given parts), then seeded fields, then two fields for dark colors.
+ * ground; Contour: the given parts, then four seeded fields that take turns along the light, each with its haze), then
+ * two fields for dark colors.
  */
 export function buildFields(recipe: RecipeId, parts: readonly StagePart[], grid: StageGrid, seed: number, aspect: number): StageField[] {
   const { width: w, height: h, lightness: L } = grid
@@ -306,77 +313,98 @@ export function buildFields(recipe: RecipeId, parts: readonly StagePart[], grid:
     const turn = (rng() - 0.5) * 0.25
     const dx = sky[0] * Math.cos(turn) - sky[1] * Math.sin(turn)
     const dy = sky[0] * Math.sin(turn) + sky[1] * Math.cos(turn)
-    // The glow and the sky around and above it are one lit field, strongest around the glow (the lead color's light,
-    // with its own glow and gradient). The others are accents beside it, away from the hottest spot: a low band to one
-    // side of the glow, a soft high layer on the other side, a broad field from a far corner, and the ground.
-    const side = rng() < 0.5 ? -1 : 1
-    const lowAt = 0.05 + rng() * 0.12
-    const lowSide = side * (0.55 + rng() * 0.7)
-    const highAt = 0.45 + rng() * 0.45
-    const highSide = -side * (0.3 + rng() * 0.9)
-    const cornerX = rng() < 0.5 ? -0.15 : fw + 0.15
-    const cornerY = rng() < 0.5 ? -0.15 : fh + 0.15
-    const soft = 0.05
-    const height = new Float32Array(w * h)
-    const across = new Float32Array(w * h)
+    // Layers by height above the horizon, as in a sky at sunrise: the glow on the horizon (widest at the light), a low
+    // warm layer, a high cool layer, and the sky above (the lead color's light, deep at the top and bright where it
+    // meets the layers); the ground below. Each boundary drifts on its own noise, so no two run parallel.
+    const drift = [0, 1, 2, 3].map(() => makeNoise(rng, fw, fh))
+    const n = w * h
+    const height = new Float32Array(n)
+    const across = new Float32Array(n)
     for (let y = 0; y < h; y++)
       for (let x = 0; x < w; x++) {
         const u = ((x + 0.5) / w) * fw
         const v = ((y + 0.5) / h) * fh
         const du = u - light[0] * fw
         const dv = v - light[1] * fh
-        height[y * w + x] = du * dx + dv * dy + 0.06 * nu(u, v)
-        across[y * w + x] = -du * dy + dv * dx + 0.08 * nv(u, v)
+        height[y * w + x] = du * dx + dv * dy + 0.04 * nu(u, v)
+        across[y * w + x] = -du * dy + dv * dx
       }
-    fields.push({ name: 'sky', want: 'cool', values: height.map((t, i) => sigmoid((t + 0.02) / soft) * (0.55 + 0.45 * Math.exp(-0.5 * (t / 0.35) ** 2 - 0.5 * (across[i] / 0.9) ** 2))) })
-    fields.push({ name: 'low', want: 'any', values: height.map((t, i) => Math.exp(-0.5 * ((t - lowAt) / 0.09) ** 2 - 0.5 * ((across[i] - lowSide) / 0.45) ** 2)) })
-    fields.push({ name: 'high', want: 'any', values: height.map((t, i) => Math.exp(-0.5 * ((t - highAt) / 0.15) ** 2 - 0.5 * ((across[i] - highSide) / 0.55) ** 2)) })
-    fields.push({ name: 'corner', want: 'any', values: blobField({ cx: cornerX, cy: cornerY, r: 0.5, stretch: 1.5, angle: rng() * Math.PI }, w, h, fw, fh, nu, nv) })
-    fields.push({ name: 'ground', want: 'dark', values: height.map((t) => sigmoid(-(t + 0.03) / soft)) })
-  } else {
-    const own = normalizeMax(blurGrid(L, w, h, 0.06 * Math.min(w, h)))
-    fields.push({ name: 'light', want: 'any', values: followLight(own, grid) })
-    // A spot part sits on the light itself: as a field of its own it would take the light's core from the lead color.
-    for (const [i, part] of parts.entries()) {
-      if (part.kind === 'line') {
-        fields.push({ name: `part${i + 1}`, want: part.want ?? 'any', values: followLight(lineField(part.from, part.to, part.width, w, h, fw, fh), grid) })
+    // The layers' tops sit at seeded shares of the lit sky's height above the horizon, so a light in a corner gets
+    // layers across the frame and not squeezed into the corner.
+    const litSky = Array.from(height.keys()).filter((i) => height[i] > 0 && grid.coverage[i] > 0).sort((i, j) => height[i] - height[j])
+    const skyArea = litSky.reduce((a, i) => a + grid.coverage[i], 0)
+    const quantile = (q: number) => {
+      let a = 0
+      for (const i of litSky) {
+        a += grid.coverage[i]
+        if (a >= q * skyArea) return height[i]
       }
+      return litSky.length ? height[litSky[litSky.length - 1]] : 0.5
     }
-    // Seeded accent fields on the lit structure away from its hottest spot, so accents tint parts of a beam, a pool or
-    // an outline and their haze follows them, while the core stays the lead color's light.
-    const [bx, by] = brightestPoint(grid)
+    const tops = skyArea > 0 ? [0.12 + 0.08 * rng(), 0.28 + 0.08 * rng(), 0.45 + 0.1 * rng()].map((q) => Math.max(0.03, quantile(q))) : [0.08, 0.2, 0.35]
+    for (let k = 1; k < 3; k++) tops[k] = Math.max(tops[k], tops[k - 1] + 0.03)
+    const soft = 0.045
+    const ground = new Float32Array(n)
+    const glow = new Float32Array(n)
+    const low = new Float32Array(n)
+    const high = new Float32Array(n)
+    const top = new Float32Array(n)
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const u = ((x + 0.5) / w) * fw
+        const v = ((y + 0.5) / h) * fh
+        const i = y * w + x
+        const t = height[i]
+        const edge = [0.02 * drift[0](u, v), ...tops.map((b, k) => b + 0.35 * (b - (k ? tops[k - 1] : 0)) * drift[k + 1](u, v))]
+        const above = edge.map((b) => sigmoid((t - b) / soft))
+        ground[i] = 1 - above[0]
+        glow[i] = above[0] * (1 - above[1]) * (0.35 + 0.65 * Math.exp(-0.5 * (across[i] / 0.7) ** 2))
+        low[i] = above[1] * (1 - above[2])
+        high[i] = above[2] * (1 - above[3])
+        top[i] = above[3]
+      }
+    fields.push({ name: 'sky', want: 'cool', values: top })
+    fields.push({ name: 'glow', want: 'warm', values: glow })
+    fields.push({ name: 'low', want: 'warm', values: low })
+    fields.push({ name: 'high', want: 'cool', values: high })
+    fields.push({ name: 'ground', want: 'dark', values: ground })
+  } else {
+    // A part only gets a field where it overlaps the lit area (a light just outside the frame lights nothing here).
+    const litShare = (values: Float32Array) => {
+      let on = 0
+      let all = 0
+      for (let i = 0; i < w * h; i++) {
+        on += values[i] * grid.coverage[i]
+        all += grid.coverage[i]
+      }
+      return all > 0 ? on / all : 0
+    }
+    for (const [i, part] of parts.entries()) {
+      if (part.kind === 'horizon') continue
+      const values =
+        part.kind === 'spot'
+          ? blobField({ cx: part.at[0] * fw, cy: part.at[1] * fh, r: part.radius, stretch: part.stretch ?? 1, angle: ((part.angle ?? 0) * Math.PI) / 180 }, w, h, fw, fh, nu, nv)
+          : lineField(part.from, part.to, part.width, w, h, fw, fh)
+      if (litShare(values) >= 0.05) fields.push({ name: `part${i + 1}`, want: part.want ?? 'any', values: followLight(values, grid) })
+    }
+    // Seeded broad fields along the bright structure: the first on the brightest part (a lit cell among the brightest
+    // tenth, picked by lightness cubed), for a color that only reads as itself when bright; each next one on the
+    // brighter lit cell farthest from those already placed, so colors take turns along a beam or an outline instead
+    // of in rings around one spot, and never sit in the dim haze alone.
+    const litL = Array.from(L.keys()).filter((i) => grid.coverage[i] > 0).map((i) => L[i]).sort((a, b) => a - b)
+    const brightest = litL.length ? litL[Math.floor(0.9 * (litL.length - 1))] : 0
+    const brighter = litL.length ? litL[Math.floor(0.6 * (litL.length - 1))] : 0
     const cdf = new Float64Array(w * h)
     let total = 0
     for (let i = 0; i < w * h; i++) {
-      const d = Math.hypot((((i % w) + 0.5) / w - bx) * fw, ((Math.floor(i / w) + 0.5) / h - by) * fh) / Math.min(fw, fh)
-      total += L[i] >= VISIBLE ? L[i] * smoothstep(0.12, 0.3, d) : 0
+      total += grid.coverage[i] > 0 && L[i] >= brightest ? L[i] ** 3 : 0
       cdf[i] = total
     }
-    // The light's main direction (the long axis of its lit cells): accents stretch along it, so they run along a beam,
-    // a fan of shafts or an outline instead of sitting in it as ovals.
-    let [mx, my, sw] = [0, 0, 0]
-    for (let i = 0; i < w * h; i++) {
-      const wt = L[i] >= VISIBLE ? L[i] ** 2 : 0
-      mx += wt * (((i % w) + 0.5) / w) * fw
-      my += wt * ((Math.floor(i / w) + 0.5) / h) * fh
-      sw += wt
-    }
-    mx /= sw || 1
-    my /= sw || 1
-    let [cxx, cyy, cxy] = [0, 0, 0]
-    for (let i = 0; i < w * h; i++) {
-      const wt = L[i] >= VISIBLE ? L[i] ** 2 : 0
-      const du = (((i % w) + 0.5) / w) * fw - mx
-      const dv = ((Math.floor(i / w) + 0.5) / h) * fh - my
-      cxx += wt * du * du
-      cyy += wt * dv * dv
-      cxy += wt * du * dv
-    }
-    const axis = 0.5 * Math.atan2(2 * cxy, cxx - cyy)
-    for (let k = 0; k < 3; k++) {
-      let cx = rng() * fw
-      let cy = rng() * fh
-      if (total > 0) {
+    const centers: [number, number][] = []
+    const cellAt = (i: number): [number, number] => [(((i % w) + 0.5) / w) * fw, ((Math.floor(i / w) + 0.5) / h) * fh]
+    for (let k = 0; k < 4; k++) {
+      let at: [number, number] = [rng() * fw, rng() * fh]
+      if (total > 0 && k === 0) {
         const t = rng() * total
         let lo = 0
         let hi = w * h - 1
@@ -385,11 +413,25 @@ export function buildFields(recipe: RecipeId, parts: readonly StagePart[], grid:
           if (cdf[mid] < t) lo = mid + 1
           else hi = mid
         }
-        cx = (((lo % w) + 0.5) / w) * fw
-        cy = ((Math.floor(lo / w) + 0.5) / h) * fh
+        at = cellAt(lo)
+      } else if (total > 0) {
+        let best = -1
+        let bestScore = -1
+        for (let i = 0; i < w * h; i++) {
+          if (grid.coverage[i] <= 0 || L[i] < brighter) continue
+          const [x, y] = cellAt(i)
+          const gap = Math.min(...centers.map(([cx, cy]) => Math.hypot(x - cx, y - cy)))
+          const score = gap * L[i] * (0.85 + 0.3 * rng())
+          if (score > bestScore) {
+            bestScore = score
+            best = i
+          }
+        }
+        if (best >= 0) at = cellAt(best)
       }
-      const blob = { cx, cy, r: 0.18 + rng() * 0.2, stretch: 2 + rng() * 1.5, angle: axis + (rng() - 0.5) * 0.6 }
-      fields.push({ name: `along${k + 1}`, want: 'any', values: followLight(blobField(blob, w, h, fw, fh, nu, nv), grid) })
+      centers.push(at)
+      const blob = { cx: at[0], cy: at[1], r: 0.3 + rng() * 0.25, stretch: 1 + rng(), angle: rng() * Math.PI }
+      fields.push({ name: `along${k + 1}`, want: k === 0 ? 'bright' : 'any', values: followLight(blobField(blob, w, h, fw, fh, nu, nv), grid) })
     }
   }
   // Dark colors are the room's or the ground's own dark: two broad seeded fields, kept out of a Contour light's haze.
@@ -399,12 +441,5 @@ export function buildFields(recipe: RecipeId, parts: readonly StagePart[], grid:
     if (!isSunrise(recipe)) for (let i = 0; i < w * h; i++) values[i] *= 1 - haze[i]
     fields.push({ name: `dark${k + 1}`, want: 'dark', values })
   }
-  // A floor under every field, ten times higher under the lead field: where all of a frame's fields fade out (Bold's
-  // ground, with no dark color to take it), the lead color's light takes it smoothly, instead of the rounding of tiny
-  // tails or a grey mix of every color.
-  fields.forEach((field, f) => {
-    const floor = f === 0 ? 0.02 : 0.002
-    for (let i = 0; i < field.values.length; i++) field.values[i] = floor + (1 - floor) * field.values[i]
-  })
   return fields
 }

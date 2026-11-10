@@ -1,9 +1,10 @@
 /**
  * The color stage in GLSL: `vec3 colorStage(vec2 uv, vec3 radiance)` keeps each pixel's luminance and gives it the
  * hue of the color fields (two textures of four fields on the stage grid), weighted and added like overlapping light.
- * Bright-only colors turn into their darker neighbor (or neutral) as their light dims; where two colors far apart in
- * hue meet, the mix goes neutral and a little lighter along a narrow line. Needs SAMPLE_GLSL and LUMA from the
- * chunk library, and uExposureScale from the engine.
+ * Bright-only colors turn into their darker neighbor (or neutral) as their light dims, and a warm color with a lighter
+ * warm neighbor turns into it as its light grows (Orange-red's core goes Yellow, then white); where two colors far
+ * apart in hue meet, the line goes pale in lit parts and dark in dim parts. Needs SAMPLE_GLSL and LUMA from the chunk
+ * library, and uExposureScale from the engine.
  */
 export const COLOR_STAGE_GLSL = /* glsl */ `
 uniform sampler2D uMixFieldsA;
@@ -11,12 +12,13 @@ uniform sampler2D uMixFieldsB;
 uniform int uMixCount;
 uniform vec4 uMixColor[5];
 uniform vec4 uMixNeighbor[5];
-uniform vec4 uMixField[5];
 uniform vec4 uMixUpper[5];
+uniform vec4 uMixField[5];
 uniform int uMixFar;
 uniform float uMixSharp;
 uniform float uMixBridge;
 uniform float uMixLift;
+uniform float uMixDip;
 
 float mixFieldValue(int index, vec4 a, vec4 b) {
   vec4 src = index < 4 ? a : b;
@@ -24,7 +26,7 @@ float mixFieldValue(int index, vec4 a, vec4 b) {
   return c == 0 ? src.x : c == 1 ? src.y : c == 2 ? src.z : src.w;
 }
 
-vec3 mixUnit(vec3 c) { return c / max(dot(c, LUMA), 1e-6); }
+vec3 mixUnit(vec3 c) { return c / max(c.r, max(c.g, max(c.b, 1e-6))); }
 
 float mixMask(int k, float L) {
   if (uMixColor[k].a < 2.5) return 1.0;
@@ -40,8 +42,8 @@ vec3 mixColorAt(int k, float L) {
     float t = 1.0 - smoothstep(edge - uMixField[k].w, edge + uMixField[k].z, L);
     c = mixUnit(mix(c, uMixNeighbor[k].rgb, t));
   }
-  float from = uMixUpper[k].a;
-  if (from < 1.5) c = mixUnit(mix(c, uMixUpper[k].rgb, smoothstep(from, from + 0.18, L)));
+  float upper = uMixUpper[k].a;
+  if (upper < 1.5) c = mixUnit(mix(c, uMixUpper[k].rgb, smoothstep(upper, upper + 0.15, L)));
   return c;
 }
 
@@ -52,8 +54,6 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
   float L = pow(y * uExposureScale, 1.0 / 3.0);
   vec4 fa = sampleSmooth4(uMixFieldsA, uv);
   vec4 fb = sampleSmooth4(uMixFieldsB, uv);
-  fa *= fa;
-  fb *= fb;
   float p[5];
   float s = 0.0;
   float bestValue = -1.0;
@@ -73,12 +73,16 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
     for (int k = 0; k < 5; k++) p[k] = k == best ? 1.0 : 0.0;
     s = 1.0;
   }
+  // Each side keeps its own hue up to the meeting line (shares squared); two hues far apart meet through neutral.
   vec3 m = vec3(0.0);
+  float s2 = 0.0;
   for (int k = 0; k < 5; k++) {
     if (k >= uMixCount) continue;
     p[k] /= s;
-    m += p[k] * mixColorAt(k, L);
+    s2 += p[k] * p[k];
+    m += p[k] * p[k] * mixColorAt(k, L);
   }
+  m /= max(s2, 1e-6);
   float b = 0.0;
   for (int i = 0; i < 5; i++) {
     for (int j = 0; j < 5; j++) {
@@ -88,9 +92,16 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
     }
   }
   b = min(b, 1.0);
-  // Only lit parts pale toward white between far hues; in dim parts that would read grey, and dim light there mixes.
-  m = mix(m, vec3(1.0), uMixBridge * b * b * (3.0 - 2.0 * b) * smoothstep(0.3, 0.7, L));
-  float lift = L < 1.0 ? uMixLift * b * (1.0 - L) * smoothstep(0.3, 0.6, L) : 0.0;
-  return mixUnit(m) * y * pow((L + lift) / L, 3.0);
+  // Where the design is lit, far hues meet through a pale bridge, a little lighter. Where it is dim, each hue dims into
+  // its own dark and the meeting line goes dark, so far hues never mix into mauve, indigo or teal.
+  float lit = smoothstep(0.3, 0.55, L);
+  float pale = b * b * lit;
+  m = mix(m, vec3(1.0), uMixBridge * pale);
+  float lift = L < 1.0 ? uMixLift * pale * (1.0 - L) : 0.0;
+  // The pixel keeps the design's luminance, but no channel goes past the design's brightest channel there: Meta Blue
+  // where the design was Yellow stays deep to mid instead of going white, and only light past full strength turns white.
+  float v = max(rad.r, max(rad.g, rad.b));
+  float scale = min(y / max(dot(m, LUMA), 1e-6), v / max(m.r, max(m.g, max(m.b, 1e-6))));
+  return m * scale * pow((L + lift) / L, 3.0) * (1.0 - uMixDip * b * (1.0 - lit));
 }
 `

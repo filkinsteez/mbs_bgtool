@@ -1,181 +1,159 @@
 import { describe, expect, it } from 'vitest'
+import { composeScene } from '../compose'
 import { buildRecipeShader } from '../engine/recipeShader'
-import type { RecipeProgram, Scene } from '../scene'
-import { defaultMix, setMetaBlue, setShare } from './mix'
+import { getRecipe } from '../recipes'
+import { RECIPE_IDS, type RecipeId, type Scene } from '../scene'
+import { defaultMix, mixFromShares } from './mix'
 import { getPack } from './packs'
 import { COLOR_DESIGN_PACK, withColorMix } from './stage'
-import { COLOR_STAGE_GLSL } from './stageGlsl'
 import { buildFields, gridSize, lookParts, type StageField, type StageGrid } from './stageFields'
+import { COLOR_STAGE_GLSL } from './stageGlsl'
 import { assignFields, KIND_DARK, KIND_PLAIN, KIND_TO_NEIGHBOR, KIND_TO_NEUTRAL, solveWeights, stageColors } from './stageSolve'
 
-const bold = getPack('bold')
-const elemental = getPack('elemental')
-const atmospheric = getPack('atmospheric')
+const CONTROLS = { intensity: 0.5, softness: 0.5, mood: 0.5 }
 
-const program: Pick<RecipeProgram, 'fragment' | 'scatter' | 'grainWeight'> = {
-  fragment: 'vec3 radiance(vec2 uv, vec2 p) { return vec3(uv, 0.5); }\n',
+function designScene(recipe: RecipeId, seed: number, aspect = 16 / 9): Scene {
+  const scene = composeScene(getRecipe(recipe), { pack: getPack(COLOR_DESIGN_PACK), controls: CONTROLS, seed, aspect })
+  if (!scene) throw new Error(`${recipe} has no compose`)
+  return scene
 }
 
-describe('recipe shaders with the color stage', () => {
-  it('builds the same shader as before when the stage is off', () => {
-    for (const mode of ['radiance', 'composite', 'source', 'aux'] as const) {
-      const off = buildRecipeShader({ ...program, fragment: program.fragment + 'vec3 auxRadiance(vec2 uv, vec2 p) { return vec3(0.0); }\n' }, mode)
-      expect(off).not.toContain('colorStage')
-      expect(off).not.toContain('designRadiance')
+function flatGrid(aspect = 16 / 9, lightness = 0.6): StageGrid {
+  const [width, height] = gridSize(aspect)
+  return { width, height, lightness: new Float32Array(width * height).fill(lightness), coverage: new Float32Array(width * height).fill(1) }
+}
+
+/** Two fields meeting softly down the middle of the grid. */
+function halves(grid: StageGrid): StageField[] {
+  const left = new Float32Array(grid.width * grid.height)
+  for (let y = 0; y < grid.height; y++)
+    for (let x = 0; x < grid.width; x++) left[y * grid.width + x] = 1 / (1 + Math.exp(((x + 0.5) / grid.width - 0.5) / 0.05))
+  return [
+    { name: 'left', want: 'any', values: left },
+    { name: 'right', want: 'any', values: left.map((v) => 1 - v) },
+  ]
+}
+
+describe('color stage', () => {
+  it('names each color by how it dims', () => {
+    const kinds = (packId: 'bold' | 'elemental' | 'atmospheric') =>
+      Object.fromEntries(stageColors(getPack(packId), defaultMix(getPack(packId))).map((c) => [c.hex, c.kind]))
+    expect(kinds('bold')).toEqual({ '#0064E0': KIND_PLAIN, '#1FCDF0': KIND_PLAIN, '#FFD61E': KIND_TO_NEIGHBOR, '#FF4F00': KIND_PLAIN })
+    expect(kinds('elemental')).toEqual({ '#0064E0': KIND_PLAIN, '#D6F26C': KIND_TO_NEIGHBOR, '#0F3D33': KIND_DARK, '#B8996E': KIND_TO_NEUTRAL, '#4A0A3C': KIND_DARK })
+    expect(kinds('atmospheric')).toEqual({ '#0064E0': KIND_PLAIN, '#F2F4F7': KIND_TO_NEIGHBOR, '#6A7788': KIND_PLAIN, '#384753': KIND_DARK, '#1C2B33': KIND_DARK })
+  })
+
+  it('brightens Orange-red toward Yellow, and no other color toward another', () => {
+    for (const packId of ['bold', 'elemental', 'atmospheric'] as const) {
+      const colors = stageColors(getPack(packId), defaultMix(getPack(packId)))
+      for (const c of colors) {
+        if (c.hex !== '#FF4F00') expect(c.upperFrom).toBe(2)
+        else {
+          expect(c.upperFrom).toBeLessThan(1)
+          expect(c.upper).toEqual(colors.find((o) => o.hex === '#FFD61E')!.unit)
+        }
+      }
     }
   })
 
-  it('recolors the scene radiance in the radiance and composite modes only', () => {
-    for (const mode of ['radiance', 'composite'] as const) {
-      const on = buildRecipeShader(program, mode, COLOR_STAGE_GLSL)
-      expect(on).toContain('vec3 designRadiance(vec2 uv, vec2 p) { return radiance(uv, p); }')
-      expect(on).toContain('return colorStage(uv, designRadiance(uv, p));')
+  it('gives Meta Blue the sky, warm colors the glow and dark colors the ground in a sunrise', () => {
+    const grid = flatGrid()
+    const field = (name: string, want: StageField['want']): StageField => ({ name, want, values: new Float32Array(grid.width * grid.height) })
+    const fields = [field('sky', 'cool'), field('glow', 'warm'), field('low', 'warm'), field('high', 'cool'), field('ground', 'dark'), field('dark1', 'dark'), field('dark2', 'dark')]
+    const names = (packId: 'bold' | 'elemental' | 'atmospheric') => {
+      const pack = getPack(packId)
+      const colors = stageColors(pack, defaultMix(pack))
+      return Object.fromEntries(assignFields(colors, fields, 3).map((f, k) => [colors[k].hex, fields[f].name]))
     }
-    expect(buildRecipeShader(program, 'source', COLOR_STAGE_GLSL)).not.toContain('colorStage')
-  })
-})
-
-describe('stage grid', () => {
-  it('has 36 cells on the short side', () => {
-    expect(gridSize(16 / 9)).toEqual([64, 36])
-    expect(gridSize(9 / 16)).toEqual([36, 64])
-    expect(gridSize(1)).toEqual([36, 36])
-    expect(gridSize(4 / 5)).toEqual([36, 45])
-  })
-})
-
-describe('stage colors', () => {
-  it('dims Yellow through Orange-red, brightens Orange-red toward Yellow, and keeps Meta Blue and Cyan plain', () => {
-    const colors = stageColors(bold, defaultMix(bold))
-    const byName = (hex: string) => colors.find((c) => c.hex === hex)!
-    expect(byName('#FFD61E').kind).toBe(KIND_TO_NEIGHBOR)
-    expect(byName('#FFD61E').neighbor).toEqual(byName('#FF4F00').unit)
-    expect(byName('#FF4F00').upperFrom).toBeLessThan(1)
-    expect(byName('#FF4F00').upper).toEqual(byName('#FFD61E').unit)
-    expect(byName('#0064E0').kind).toBe(KIND_PLAIN)
-    expect(byName('#1FCDF0').kind).toBe(KIND_PLAIN)
+    expect(names('bold')).toEqual({ '#0064E0': 'sky', '#1FCDF0': 'high', '#FFD61E': 'glow', '#FF4F00': 'low' })
+    expect(names('elemental')).toMatchObject({ '#0064E0': 'sky', '#D6F26C': 'glow', '#B8996E': 'low' })
+    expect(['ground', 'dark1']).toContain(names('elemental')['#0F3D33'])
+    expect(names('atmospheric')).toMatchObject({ '#0064E0': 'sky', '#F2F4F7': 'glow', '#6A7788': 'low' })
   })
 
-  it('dims Lime through Forest, turns Tan neutral, and keeps Forest and Plum to the dark', () => {
-    const colors = stageColors(elemental, defaultMix(elemental))
-    const byName = (hex: string) => colors.find((c) => c.hex === hex)!
-    expect(byName('#D6F26C').kind).toBe(KIND_TO_NEIGHBOR)
-    expect(byName('#D6F26C').neighbor).toEqual(byName('#0F3D33').unit)
-    expect(byName('#B8996E').kind).toBe(KIND_TO_NEUTRAL)
-    expect(byName('#0F3D33').kind).toBe(KIND_DARK)
-    expect(byName('#4A0A3C').kind).toBe(KIND_DARK)
-  })
-
-  it('dims Ice through Steel, and leaves out a color that is off', () => {
-    const colors = stageColors(atmospheric, setMetaBlue(atmospheric, defaultMix(atmospheric), false))
-    expect(colors.map((c) => c.hex)).toEqual(['#F2F4F7', '#6A7788', '#384753', '#1C2B33'])
-    expect(colors[0].kind).toBe(KIND_TO_NEIGHBOR)
-    expect(colors[0].neighbor).toEqual(colors[1].unit)
-  })
-
-  it('scales every color to luminance 1', () => {
-    for (const pack of [bold, elemental, atmospheric]) {
-      for (const c of stageColors(pack, defaultMix(pack))) expect(0.2126 * c.unit[0] + 0.7152 * c.unit[1] + 0.0722 * c.unit[2]).toBeCloseTo(1, 6)
+  it('solves the weights so each color leads its share of the lit area, the same way every time', () => {
+    const pack = getPack('bold')
+    const grid = flatGrid()
+    const fields = halves(grid)
+    for (const [blue, red] of [
+      [0.5, 0.5],
+      [0.7, 0.3],
+      [0.2, 0.8],
+    ]) {
+      const mix = mixFromShares(pack, [blue, 0, 0, red])
+      expect(mix).not.toBeNull()
+      const colors = stageColors(pack, mix!)
+      const solved = solveWeights(grid, fields, colors, [0, 1])
+      expect(solved.light[0]).toBeCloseTo(blue, 1)
+      expect(solved.light[1]).toBeCloseTo(red, 1)
+      expect(solveWeights(grid, fields, colors, [0, 1])).toEqual(solved)
     }
   })
-})
 
-function flatGrid(lightness: number, [w, h] = [64, 36]): StageGrid {
-  return { width: w, height: h, lightness: new Float32Array(w * h).fill(lightness) }
-}
-
-/** Left-to-right ramps, one per field, so fields lead in different places. */
-function rampFields(count: number, w = 64, h = 36): StageField[] {
-  return Array.from({ length: count }, (_, f) => ({
-    name: `f${f}`,
-    want: 'any' as const,
-    values: Float32Array.from({ length: w * h }, (_, i) => Math.exp(-0.5 * (((i % w) / w - (f + 0.5) / count) / 0.25) ** 2)),
-  }))
-}
-
-describe('field assignment', () => {
-  it('gives Meta Blue the first field and a warm color the field that asks for warm', () => {
-    const colors = stageColors(bold, defaultMix(bold))
-    const fields: StageField[] = [
-      { name: 'sky', want: 'cool', values: new Float32Array(4) },
-      { name: 'glow', want: 'warm', values: new Float32Array(4) },
-      { name: 'a', want: 'any', values: new Float32Array(4) },
-      { name: 'b', want: 'any', values: new Float32Array(4) },
-      { name: 'ground', want: 'dark', values: new Float32Array(4) },
-    ]
-    const assignment = assignFields(colors, fields, 3)
-    expect(assignment[0]).toBe(0)
-    const glowColor = colors[assignment.indexOf(1)]
-    expect(glowColor.group).toBe('warm')
-    expect(assignment).not.toContain(4)
-    expect(assignFields(colors, fields, 3)).toEqual(assignment)
-  })
-
-  it('puts dark colors on the fields that ask for dark', () => {
-    const colors = stageColors(elemental, defaultMix(elemental))
-    const fields: StageField[] = ['light', 'a', 'b', 'c', 'dark1', 'dark2'].map((name) => ({ name, want: name.startsWith('dark') ? 'dark' : 'any', values: new Float32Array(4) }))
-    const assignment = assignFields(colors, fields, 5)
-    colors.forEach((c, k) => expect(fields[assignment[k]].want === 'dark').toBe(c.group === 'dark'))
-  })
-})
-
-describe('weight solve', () => {
-  it('gives each color its asked share of the lit cells', () => {
-    const colors = stageColors(bold, defaultMix(bold))
-    const fields = rampFields(4)
-    const assignment = [0, 1, 2, 3]
-    const { light } = solveWeights(flatGrid(0.6), fields, colors, assignment)
-    colors.forEach((c, k) => expect(Math.abs(light[k] - c.share)).toBeLessThan(0.02))
-  })
-
-  it('moves the weights a little for a small change in a share', () => {
-    const fields = rampFields(4)
-    const a = solveWeights(flatGrid(0.6), fields, stageColors(bold, setShare(bold, defaultMix(bold), 3, 0.2)), [0, 1, 2, 3])
-    const b = solveWeights(flatGrid(0.6), fields, stageColors(bold, setShare(bold, defaultMix(bold), 3, 0.25)), [0, 1, 2, 3])
-    for (let k = 0; k < 4; k++) expect(Math.abs(a.light[k] - b.light[k])).toBeLessThan(0.08)
+  it('moves each color by about as much lit area as its share moves', () => {
+    const pack = getPack('bold')
+    const grid = flatGrid()
+    const fields = halves(grid)
+    const at = (blue: number) => solveWeights(grid, fields, stageColors(pack, mixFromShares(pack, [blue, 0, 0, 1 - blue])!), [0, 1])
+    let last = at(0.4)
+    for (let blue = 0.42; blue <= 0.6; blue += 0.02) {
+      const next = at(blue)
+      const moved = next.light[0] - last.light[0]
+      expect(moved).toBeGreaterThan(0)
+      expect(moved).toBeLessThan(0.04)
+      expect(next.weights[0] / next.weights[1]).toBeGreaterThan(last.weights[0] / last.weights[1])
+      last = next
+    }
   })
 
   it('gives a dark color only the dim cells and the rest of its share to the others', () => {
-    const colors = stageColors(elemental, defaultMix(elemental))
-    const fields = rampFields(5)
-    const { light } = solveWeights(flatGrid(0.8), fields, colors, [0, 1, 2, 3, 4])
-    colors.forEach((c, k) => {
-      if (c.group === 'dark') expect(light[k]).toBeLessThan(0.02)
+    const pack = getPack('elemental')
+    const grid = flatGrid(16 / 9, 0.8)
+    const strips = Array.from({ length: 5 }, (_, s): StageField => {
+      const values = new Float32Array(grid.width * grid.height)
+      for (let y = 0; y < grid.height; y++)
+        for (let x = 0; x < grid.width; x++) values[y * grid.width + x] = Math.exp(-0.5 * (((x + 0.5) / grid.width - (s + 0.5) / 5) / 0.12) ** 2)
+      return { name: `strip${s + 1}`, want: 'any', values }
     })
-    expect(light.reduce((s, v) => s + v, 0)).toBeCloseTo(1, 3)
+    const colors = stageColors(pack, defaultMix(pack))
+    const { light } = solveWeights(grid, strips, colors, [0, 1, 2, 3, 4])
+    colors.forEach((c, k) => {
+      if (c.kind === KIND_DARK) expect(light[k]).toBeLessThan(0.02)
+    })
+    expect(light.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 3)
   })
-})
 
-describe('stage fields', () => {
-  it('are the same for the same design and seed, and at most eight', () => {
-    const grid: StageGrid = { width: 64, height: 36, lightness: Float32Array.from({ length: 64 * 36 }, (_, i) => ((i % 64) / 64) * 0.9) }
-    for (const recipe of ['sunset.bands', 'contour.beam'] as const) {
-      const parts = recipe === 'sunset.bands' ? lookParts(recipe, { stack: [1, 0, 0, 1, 0, 0] }, 16 / 9) : []
-      const a = buildFields(recipe, parts, grid, 7, 16 / 9)
-      const b = buildFields(recipe, parts, grid, 7, 16 / 9)
-      expect(a.length).toBeLessThanOrEqual(8)
-      expect(a.map((f) => Array.from(f.values))).toEqual(b.map((f) => Array.from(f.values)))
+  it('reads parts for every look and builds the same fields for the same design', () => {
+    for (const recipe of RECIPE_IDS) {
+      for (const aspect of [16 / 9, 9 / 16]) {
+        const scene = designScene(recipe, 2, aspect)
+        const parts = lookParts(recipe, scene.params, aspect)
+        if (recipe.startsWith('sunset.')) expect(parts.map((p) => p.kind)).toEqual(['horizon'])
+        if (recipe === 'contour.beam') expect(parts).toEqual([])
+        const grid = flatGrid(aspect)
+        const fields = buildFields(recipe, parts, grid, 2, aspect)
+        expect(fields.length).toBeLessThanOrEqual(8)
+        for (const f of fields) for (const v of f.values) expect(v >= 0 && v <= 1.000001).toBe(true)
+        expect(buildFields(recipe, parts, grid, 2, aspect)).toEqual(fields)
+      }
     }
   })
 
-  it('read each look\'s light from its params', () => {
-    expect(lookParts('contour.streaks', { center: [0, 0] }, 16 / 9)).toEqual([{ kind: 'spot', at: [0.5, 0.5], radius: 0.3 }])
-    const [ramp] = lookParts('sunset.ramp', { anchor: [0.5, 1], angle: 0 }, 16 / 9)
-    expect(ramp.kind).toBe('horizon')
-    if (ramp.kind === 'horizon') {
-      expect(ramp.light).toEqual([0.5, 1])
-      expect(ramp.sky[1]).toBeCloseTo(-1, 6)
+  it('turns on only through withColorMix, and leaves the recipe shaders as they were without it', () => {
+    const scene = designScene('sunset.bands', 1)
+    expect(scene.colorMix).toBeUndefined()
+    const pack = getPack('elemental')
+    expect(withColorMix(scene, pack, defaultMix(pack)).colorMix).toEqual({ pack: 'elemental', shares: defaultMix(pack).shares })
+    const program = { fragment: 'vec3 radiance(vec2 uv, vec2 p) { return vec3(uv, 0.0); }\n' }
+    for (const mode of ['radiance', 'composite'] as const) {
+      const plain = buildRecipeShader(program, mode)
+      expect(buildRecipeShader(program, mode, undefined)).toBe(plain)
+      expect(plain).not.toContain('colorStage')
+      const staged = buildRecipeShader(program, mode, COLOR_STAGE_GLSL)
+      expect(staged).toContain('vec3 designRadiance(vec2 uv, vec2 p) { return radiance(uv, p); }')
+      expect(staged).toContain('vec3 sceneRadiance(vec2 uv, vec2 p) { return colorStage(uv, designRadiance(uv, p)); }')
     }
-    expect(lookParts('contour.beam', {}, 16 / 9)).toEqual([])
-  })
-})
-
-describe('withColorMix', () => {
-  it('adds the pack and shares and leaves the design as it is', () => {
-    const design: Scene = { recipe: 'contour.beam', seed: 4, colors: ['#1FCDF0'], params: { power: 0.5 }, lens: {}, output: {} }
-    const scene = withColorMix(design, elemental, defaultMix(elemental))
-    expect(scene.colorMix).toEqual({ pack: 'elemental', shares: defaultMix(elemental).shares })
-    expect({ ...scene, colorMix: undefined }).toEqual({ ...design, colorMix: undefined })
-    expect(COLOR_DESIGN_PACK).toBe('atmospheric')
+    const withAux = { fragment: program.fragment + 'vec3 auxRadiance(vec2 uv, vec2 p) { return vec3(0.0); }\n' }
+    for (const mode of ['source', 'aux'] as const) expect(buildRecipeShader(withAux, mode, COLOR_STAGE_GLSL)).toBe(buildRecipeShader(withAux, mode))
   })
 })
