@@ -119,67 +119,95 @@ export function veilLevelWeights(reach: number): number[] {
 export function lensSpread(lens: LensSettings): { mix: number; factors: Rgb[] } {
   const a = Math.min(1, Math.max(0, lens.bloom))
   const b = Math.min(1, Math.max(0, lens.glare))
-  const v = Math.min(1, Math.max(0, lens.veil ?? 0))
   const mix = a + b - a * b
-  let factors: Rgb[] = []
-  if (mix > 0) {
-    const bloom = bloomLevelFactors(lens)
-    const glare = glareLevelWeights(lens.glareLength)
-    const sa = (a * (1 - b / 2)) / mix
-    const sb = (b * (1 - a / 2)) / mix
-    factors = bloom.map((f, i) => [sa * f[0] + sb * glare[i], sa * f[1] + sb * glare[i], sa * f[2] + sb * glare[i]] as Rgb)
-  }
-  if (v <= 0) return mix > 0 ? { mix, factors } : { mix: 0, factors: [] }
-  const veil = veilLevelWeights(lens.veilReach ?? 0.02)
-  const all = mix + v - mix * v
-  const sm = (mix * (1 - v / 2)) / all
-  const sv = (v * (1 - mix / 2)) / all
+  if (mix <= 0) return { mix: 0, factors: [] }
+  const bloom = bloomLevelFactors(lens)
+  const glare = glareLevelWeights(lens.glareLength)
+  const sa = (a * (1 - b / 2)) / mix
+  const sb = (b * (1 - a / 2)) / mix
   return {
-    mix: all,
-    factors: veil.map((w, i) => {
-      const f = factors[i] ?? [0, 0, 0]
-      return [sm * f[0] + sv * w, sm * f[1] + sv * w, sm * f[2] + sv * w] as Rgb
-    }),
+    mix,
+    factors: bloom.map((f, i) => [sa * f[0] + sb * glare[i], sa * f[1] + sb * glare[i], sa * f[2] + sb * glare[i]] as Rgb),
   }
 }
 
-/** How strongly the brighter of a pixel's own light and the spread light leads its color: weights go as luminance to this power. */
+/** The veil's level weights at its reach, or null while it is off. It is not part of lensSpread. */
+export function veilFactors(lens: LensSettings): number[] | null {
+  return (lens.veil ?? 0) > 0 ? veilLevelWeights(lens.veilReach ?? 0.02) : null
+}
+
+/**
+ * The light the veil adds to a pixel (CPU twin of the composite's): with x how far the pixel's own light is below
+ * the light around it (through the veil's falloff) as a share of that light, `veil` x^3 of the light around it. A
+ * bright core or an even field (x 0) gets nothing and keeps its light; a dark gap beside bright light (x near 1)
+ * fills most; a place half as bright as its surroundings gets an eighth of that, so gradients inside a color keep
+ * their range. Luminances in, a luminance out.
+ */
+export function veilFill(own: number, around: number, veil: number): number {
+  if (!(around > 0)) return 0
+  const x = Math.max(1 - own / around, 0)
+  return veil * around * x * x * x
+}
+
+/**
+ * How strongly the more colored light of a pixel's own and the veil's leads its color: weights go as luminance times
+ * colorfulness to this power.
+ */
 export const SPREAD_LEAD_POWER = 4
-/** The same for the lights a place's spread light comes from; lower, so the weights stay inside half-float range. */
+/** The same for the lights a place's veil light comes from; lower, so the weights stay inside half-float range. */
 const LEAD_FEED_POWER = 3
 /** Luminance that weighs 1 in the lead weights, so they stay inside half-float range for lights up to 10 times it. */
 const SPREAD_LEAD_LEVEL = 0.25
-/** A white light's lead weight against a pure color's of the same luminance. */
+/** A white light's colorfulness against a pure color's: its weight in the lead at the same luminance. */
 const SPREAD_LEAD_WHITE = 0.05
 
+/** How far apart two colors at luminance 1 are round white (CPU twin): 0 within 45 degrees or near white, 1 at 90 or more. */
+export function hueApart(a: readonly number[], b: readonly number[]): number {
+  const ca = a.map((v) => v - 1)
+  const cb = b.map((v) => v - 1)
+  const na = Math.hypot(ca[0], ca[1], ca[2])
+  const nb = Math.hypot(cb[0], cb[1], cb[2])
+  if (na < 1e-3 || nb < 1e-3) return 0
+  const t = Math.min(1, Math.max(0, (ca[0] * cb[0] + ca[1] * cb[1] + ca[2] * cb[2]) / (na * nb) / 0.7))
+  return 1 - t * t * (3 - 2 * t)
+}
+
 /**
- * CPU twin of the composite's leadMix, for tests: a pixel's own light and the light the lens spreads onto it (whose
- * color is `spreadHue`, any luminance), added up in luminance and colored by whichever brings more, weighed as
- * luminance to the power p.
+ * CPU twin of the composite's leadMix, for tests: a pixel's own light and the light the veil adds to it (whose color
+ * is `spreadHue`, any luminance), added up in luminance. Colors within 45 degrees of each other round white add as
+ * light does; colors 90 degrees or more apart are colored by whichever brings more colored light, weighed as its
+ * luminance times its colorfulness (purity squared, at least SPREAD_LEAD_WHITE) to the power p.
  */
 export function leadMix(own: Rgb, spread: Rgb, spreadHue: Rgb, p = SPREAD_LEAD_POWER): Rgb {
   const lum = (c: Rgb) => c[0] * LUMA[0] + c[1] * LUMA[1] + c[2] * LUMA[2]
   const yo = lum(own)
   const ys = lum(spread)
-  const top = Math.max(yo, ys)
-  if (top <= 0) return own.map((v, i) => v + spread[i]) as Rgb
+  if (Math.max(yo, ys) <= 0) return own.map((v, i) => v + spread[i]) as Rgb
   const sh = lum(spreadHue) > 0 ? spreadHue.map((v) => v / lum(spreadHue)) : spread.map((v) => v / Math.max(ys, 1e-12))
-  const wo = (yo / top) ** p
-  const ws = (ys / top) ** p
+  const colorfulness = (c: readonly number[]) => {
+    const top = Math.max(c[0], c[1], c[2])
+    const purity = top > 0 ? 1 - Math.min(c[0], c[1], c[2]) / top : 0
+    return SPREAD_LEAD_WHITE + (1 - SPREAD_LEAD_WHITE) * purity * purity
+  }
+  const co = yo * colorfulness(own)
+  const cs = ys * colorfulness(sh)
+  const top = Math.max(co, cs)
+  const q = 1 + (p - 1) * hueApart(own.map((v) => v / Math.max(yo, 1e-12)), sh)
+  const wo = top > 0 ? (co / top) ** q : 1
+  const ws = top > 0 ? (cs / top) ** q : 1
   const hue = own.map((v, i) => (wo * (v / Math.max(yo, 1e-12)) + ws * sh[i]) / (wo + ws)) as Rgb
   const yh = Math.max(lum(hue), 1e-6)
   return hue.map((v) => ((yo + ys) * v) / yh) as Rgb
 }
 
 /**
- * Level weights for the spread light's lead color: the spread's own weights one level finer. A light's share in a
+ * Level weights for the veil light's lead color: the veil's own weights one level finer. A light's share in a
  * place is its spread there times its luminance; weighing hues by that share to the power p is close to weighing
  * them by its luminance to the power p through a kernel about half as wide.
  */
-export function spreadLeadFactors(factors: readonly Rgb[]): number[] {
-  const luminanceWeights = factors.map((f) => f[0] * LUMA[0] + f[1] * LUMA[1] + f[2] * LUMA[2])
-  const out = luminanceWeights.map((_, i) => luminanceWeights[i + 1] ?? 0)
-  out[0] += luminanceWeights[0]
+export function spreadLeadFactors(weights: readonly number[]): number[] {
+  const out = weights.map((_, i) => weights[i + 1] ?? 0)
+  out[0] += weights[0]
   return out
 }
 
@@ -384,7 +412,8 @@ uniform sampler2D uLeadTex;
 uniform sampler2D uHalationTex;
 uniform sampler2D uHalationSurround;
 uniform float uBloomMix;
-uniform float uSpreadLead; // 0: the spread light mixes in as it is; else the power its lead color is weighed by
+uniform sampler2D uVeilTex;
+uniform float uVeil; // the veil's strength, 0 off
 uniform float uHalation;
 uniform vec2 uHalationLevel; // the light's own luminance and largest channel (halationTint)
 uniform vec3 uHalationDriftColor; // halationDriftTint at luminance 1
@@ -395,16 +424,37 @@ uniform vec2 uLensVignetteAxes; // frame proportions scaled so the corners are a
 // The pixel's own light and the light the lens spreads onto it, added up in luminance, in the color of whichever
 // brings more (weighed as luminance to the power p); the spread light's own color is that of the light that brings
 // the most of it here (lead: hue times weight, and the weight).
+float leadColorfulness(vec3 c) {
+  float top = max(c.r, max(c.g, c.b));
+  float purity = top > 0.0 ? 1.0 - min(c.r, min(c.g, c.b)) / top : 0.0;
+  return mix(${SPREAD_LEAD_WHITE}, 1.0, purity * purity);
+}
+// How far apart two colors at luminance 1 are round white: 0 within 45 degrees (or when either is near white), 1 at
+// 90 degrees or more.
+float hueApart(vec3 a, vec3 b) {
+  vec3 ca = a - 1.0;
+  vec3 cb = b - 1.0;
+  float na = length(ca);
+  float nb = length(cb);
+  if (na < 1e-3 || nb < 1e-3) return 0.0;
+  return 1.0 - smoothstep(0.0, 0.7, dot(ca, cb) / (na * nb));
+}
+
 vec3 leadMix(vec3 own, vec3 spread, vec4 lead, float p) {
   float yo = luminance(own);
   float ys = luminance(spread);
-  float top = max(yo, ys);
-  if (top <= 0.0) return own + spread;
+  if (max(yo, ys) <= 0.0) return own + spread;
   vec3 spreadHue = lead.a > 0.0 ? lead.rgb / lead.a : spread / max(ys, 1e-12);
   spreadHue /= max(luminance(spreadHue), 1e-6);
-  // Weights relative to the brighter, so they never both round to zero in the dark.
-  float wo = pow(yo / top, p);
-  float ws = pow(ys / top, p);
+  // Each counts by its luminance times how colored it is, so a pale glow over a dim colored place brightens that
+  // place in its own color instead of greying it; relative to the larger, so they never both round to zero.
+  float co = yo * leadColorfulness(own);
+  float cs = ys * leadColorfulness(spreadHue);
+  float top = max(co, cs);
+  // Near hues add as light does; only hues far apart (90 degrees or more round white) lead.
+  float q = mix(1.0, p, hueApart(own / max(yo, 1e-12), spreadHue));
+  float wo = top > 0.0 ? pow(co / top, q) : 1.0;
+  float ws = top > 0.0 ? pow(cs / top, q) : 1.0;
   vec3 hue = (wo * own / max(yo, 1e-12) + ws * spreadHue) / (wo + ws);
   return (yo + ys) * hue / max(luminance(hue), 1e-6);
 }
@@ -414,10 +464,15 @@ vec3 lensAndTone(vec3 radiance, vec2 uv) {
   if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0);
   float exposure = exp2(uExposure);
   c = max(c, vec3(0.0)) * exposure;
-  if (uBloomMix > 0.0) {
-    vec3 spread = sampleSmooth(uBloomTex, uv) * exposure;
-    if (uSpreadLead > 0.0) c = leadMix(c * (1.0 - uBloomMix), spread * uBloomMix, sampleSmooth4(uLeadTex, uv), uSpreadLead);
-    else c = mix(c, spread, uBloomMix);
+  if (uBloomMix > 0.0) c = mix(c, sampleSmooth(uBloomTex, uv) * exposure, uBloomMix);
+  if (uVeil > 0.0) {
+    // The light around this pixel through the veil's falloff; where it is brighter than the pixel, part of the
+    // difference comes in as glow (veilFill), in the color of the light that brings the most of it here.
+    float around = luminance(sampleSmooth(uVeilTex, uv)) * exposure;
+    float x = around > 0.0 ? max(1.0 - luminance(c) / around, 0.0) : 0.0;
+    float lift = uVeil * around * x * x * x;
+    vec4 lead = sampleSmooth4(uLeadTex, uv);
+    if (lift > 0.0) c = leadMix(c, vec3(lift), lead, ${SPREAD_LEAD_POWER.toFixed(1)});
   }
   if (uHalation > 0.0) {
     // Not over the hot core itself (only light above the light's own level fades it), and held back only where
@@ -527,7 +582,9 @@ void main() {
 
 export interface LensOutput {
   bloom: Target | null
-  /** With the veil on: the spread light's lead color (hue times weight, and the weight), else null. */
+  /** With the veil on: the scene through the veil's falloff, else null. */
+  veil: Target | null
+  /** With the veil on: the veil light's lead color (hue times weight, and the weight), else null. */
   lead: Target | null
   halation: Target | null
   /** Luminance of the wide surroundings (scene clamped to nominal, about 0.03 of the short side blur). */
@@ -544,13 +601,16 @@ export function runLens(gpu: Gpu, base: Target, lens: LensSettings, exposure: nu
   const spread = lensSpread(lens)
   const bloom = spread.mix > 0 ? pyramid(gpu, base, spread.factors) : null
   if (bloom) profiler.mark('lens bloom', bloom)
+  const veilWeights = veilFactors(lens)
+  let veil: Target | null = null
   let lead: Target | null = null
-  if (bloom && (lens.veil ?? 0) > 0) {
+  if (veilWeights) {
+    veil = pyramid(gpu, base, veilWeights.map((w) => [w, w, w, 0]))
     const feed = gpu.acquire(base.width, base.height)
     gpu.draw(gpu.program(LEAD_FEED_SHADER), feed, { textures: { uSrc: base } })
-    lead = pyramid(gpu, feed, spreadLeadFactors(spread.factors).map((w) => [w, w, w, w]))
+    lead = pyramid(gpu, feed, spreadLeadFactors(veilWeights).map((w) => [w, w, w, w]))
     gpu.release(feed)
-    profiler.mark('lens lead', lead)
+    profiler.mark('lens veil', lead)
   }
   let halation: Target | null = null
   let surround: Target | null = null
@@ -585,7 +645,7 @@ export function runLens(gpu: Gpu, base: Target, lens: LensSettings, exposure: nu
     gpu.release(small)
     profiler.mark('lens halation', surround)
   }
-  return { bloom, lead, halation, surround }
+  return { bloom, veil, lead, halation, surround }
 }
 
 /** Blurs `base` over the levels, `factors` per level for red, green, blue and the fourth channel (0 when not given). */

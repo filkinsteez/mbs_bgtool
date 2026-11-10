@@ -1,4 +1,4 @@
-import type { PostPass, RecipeContext, UniformMap } from '../scene'
+import type { PostPass, RecipeContext } from '../scene'
 import type { Gpu, Target } from './gl'
 import { CHUNK_LIBRARY, GLSL_HEADER } from './glsl'
 import { NO_PROFILE, type Profiler } from './profile'
@@ -235,22 +235,45 @@ void main() {
 `
 
 /** Taps on each side of a flow blur pass; the along part runs twice, the first at a fifth of the width. */
-export const FLOW_TAPS = 24
+export const FLOW_TAPS = 16
+/** The flow's directions are drawn once per frame into a texture this many pixels on its short side at most. */
+export const FLOW_FIELD_SHORT_SIDE = 256
 
-// Gathers uSrc along flowDirection through this pixel (uFlowAcross 0) with a gaussian of sigma uFlowSigma out to 3
-// sigma, in midpoint steps that keep the direction's sense, or straight across the flow (uFlowAcross 1). Positions
-// are frame points in short sides from the center, as the radiance pass sees them.
-const FLOW_MAIN = /* glsl */ `
+// The recipe's flowDirection at each texel, at unit length (zero where it gives none).
+const FLOW_FIELD_MAIN = /* glsl */ `
+out vec4 fragColor;
+void main() {
+  vec2 p = (gl_FragCoord.xy / uFieldSize - 0.5) * uFrameAspect;
+  vec2 d = flowDirection(p);
+  float n = length(d);
+  fragColor = vec4(n > 1e-6 ? d / n : vec2(0.0), 0.0, 1.0);
+}
+`
+
+/** The size of a flow blur's direction texture for an input of this size: the same shape, FLOW_FIELD_SHORT_SIDE at most. */
+export function flowFieldSize(width: number, height: number): [number, number] {
+  const scale = Math.min(1, FLOW_FIELD_SHORT_SIDE / Math.min(width, height))
+  return [Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale))]
+}
+
+// Gathers uSrc along the flow through this pixel (uFlowAcross 0) with a gaussian of sigma uFlowSigma out to 3 sigma,
+// in midpoint steps that keep the direction's sense, or straight across the flow (uFlowAcross 1). Directions come from
+// uFlowField (FLOW_FIELD_MAIN). Positions are frame points in short sides from the center.
+export const FLOW_BLUR_SHADER =
+  GLSL_HEADER +
+  /* glsl */ `
 uniform sampler2D uSrc;
+uniform sampler2D uFlowField;
+uniform vec2 uFrameAspect;
 uniform float uFlowSigma;
 uniform int uFlowAcross;
 out vec4 fragColor;
-vec2 flowAt(vec2 p) {
-  vec2 d = flowDirection(p);
-  float n = length(d);
-  return n > 1e-6 ? d / n : vec2(0.0);
-}
 vec2 flowUv(vec2 p) { return p / uFrameAspect + 0.5; }
+vec2 flowAt(vec2 p) {
+  vec2 d = texture(uFlowField, flowUv(p)).xy;
+  float n = length(d);
+  return n > 1e-3 ? d / n : vec2(0.0);
+}
 void main() {
   vec2 uv0 = gl_FragCoord.xy / vec2(textureSize(uSrc, 0));
   vec2 p0 = (uv0 - 0.5) * uFrameAspect;
@@ -285,9 +308,9 @@ void main() {
 }
 `
 
-/** The pass shader for a flow blur whose `glsl` defines `vec2 flowDirection(vec2 p)` and declares its uniforms. */
+/** The pass that draws a flow blur's directions, for `glsl` that defines `vec2 flowDirection(vec2 p)` and declares its uniforms. */
 export function buildFlowShader(glsl: string): string {
-  return GLSL_HEADER + 'uniform vec2 uFrameAspect;\nuniform int uSeed;\n' + CHUNK_LIBRARY + glsl + FLOW_MAIN
+  return GLSL_HEADER + 'uniform vec2 uFrameAspect;\nuniform int uSeed;\nuniform vec2 uFieldSize;\n' + CHUNK_LIBRARY + glsl + FLOW_FIELD_MAIN
 }
 
 /**
@@ -349,13 +372,19 @@ export function runPostPasses(gpu: Gpu, input: Target, passes: readonly PostPass
       case 'flowBlur': {
         const { along, across } = pass.settings(ctx)
         if (!(along > 0) && !(across > 0)) break
-        const program = gpu.program(buildFlowShader(pass.glsl))
-        const uniforms: UniformMap = { ...(pass.uniforms?.(ctx) ?? {}), uFrameAspect: aspect, uSeed: ctx.seed }
+        // The directions once per frame at a small size (they change slowly), so each tap reads a texel instead of
+        // running the recipe's flowDirection.
+        const [fieldWidth, fieldHeight] = flowFieldSize(current.width, current.height)
+        const field = gpu.acquire(fieldWidth, fieldHeight)
+        gpu.draw(gpu.program(buildFlowShader(pass.glsl)), field, {
+          uniforms: { ...(pass.uniforms?.(ctx) ?? {}), uFrameAspect: aspect, uSeed: ctx.seed, uFieldSize: [field.width, field.height] },
+        })
+        const program = gpu.program(FLOW_BLUR_SHADER)
         const blur = (sigma: number, acrossFlow: boolean) => {
           const out = gpu.acquire(current.width, current.height)
           gpu.draw(program, out, {
-            textures: { uSrc: current },
-            uniforms: { ...uniforms, uFlowSigma: sigma, uFlowAcross: acrossFlow ? 1 : 0 },
+            textures: { uSrc: current, uFlowField: field },
+            uniforms: { uFrameAspect: aspect, uFlowSigma: sigma, uFlowAcross: acrossFlow ? 1 : 0 },
           })
           swap(out)
         }
@@ -365,6 +394,7 @@ export function runPostPasses(gpu: Gpu, input: Target, passes: readonly PostPass
           blur(along * Math.sqrt(24 / 25), false)
         }
         if (across > 0) blur(across, true)
+        gpu.release(field)
         break
       }
       default: {

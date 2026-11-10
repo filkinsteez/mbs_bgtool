@@ -13,15 +13,18 @@ import {
   halationLevel,
   halationLevelFactors,
   halationStart,
+  hueApart,
   leadMix,
   lensBaseSize,
   lensSpread,
   levelForRadius,
   spreadLeadFactors,
+  veilFactors,
+  veilFill,
   veilLevelWeights,
 } from './lens'
 import { paperToeInverse, TONE_CROSSTALK, TONE_TIE_BAND, toneCurve } from './output'
-import { buildFlowShader, FLOW_TAPS } from './passes'
+import { buildFlowShader, FLOW_BLUR_SHADER, FLOW_TAPS, flowFieldSize } from './passes'
 import { designFrame, lensBaseFromFrame, radianceScaleFor } from './programRenderer'
 import { coerceParam, recipeContext, resolveScene } from './resolve'
 
@@ -287,21 +290,37 @@ describe('lens weights', () => {
 describe('veil', () => {
   const lens = { ...DEFAULT_LENS, bloom: 0.04, glare: 0.06 }
 
-  it('is off by default and leaves the bloom and glare spread as it was', () => {
+  it('is off by default and never changes the bloom and glare spread the color stage reads', () => {
     expect(DEFAULT_LENS.veil).toBe(0)
+    expect(veilFactors(lens)).toBeNull()
     const before = lensSpread(lens)
-    expect(lensSpread({ ...lens, veil: 0, veilReach: 0.04 })).toEqual(before)
+    for (const veil of [0, 0.2, 0.6]) expect(lensSpread({ ...lens, veil, veilReach: 0.04 })).toEqual(before)
     expect(before.mix).toBeCloseTo(0.04 + 0.06 - 0.04 * 0.06, 9)
   })
 
-  it('spreads its share of the light over levels that keep the total, wider with its reach', () => {
+  it('falls over levels that sum to 1, wider with its reach', () => {
     for (const reach of [0.005, 0.007, 0.01, 0.02, 0.03, 0.04]) expect(veilLevelWeights(reach).reduce((a, b) => a + b, 0)).toBeCloseTo(1, 3)
     const center = (w: number[]) => w.reduce((sum, v, level) => sum + v * level, 0)
     expect(center(veilLevelWeights(0.04))).toBeGreaterThan(center(veilLevelWeights(0.02)))
     expect(center(veilLevelWeights(0.02))).toBeGreaterThan(center(veilLevelWeights(0.005)))
-    const spread = lensSpread({ ...lens, veil: 0.2 })
-    expect(spread.mix).toBeCloseTo(1 - (1 - 0.04) * (1 - 0.06) * (1 - 0.2), 9)
-    expect(spread.factors.reduce((sum, f) => sum + luminance(f), 0)).toBeCloseTo(1, 3)
+    expect(veilFactors({ ...lens, veil: 0.2, veilReach: 0.02 })).toEqual(veilLevelWeights(0.02))
+  })
+
+  it('brightens only places dimmer than the light around them, so cores and even fields keep their light', () => {
+    expect(veilFill(1, 1, 0.2)).toBe(0)
+    expect(veilFill(2, 1, 0.2)).toBe(0)
+    expect(veilFill(0, 1, 0.2)).toBeCloseTo(0.2, 9)
+    // A place half as bright as its surroundings gets an eighth of a dark gap's fill, so gradients keep their range.
+    expect(veilFill(0.5, 1, 0.2)).toBeCloseTo(0.2 / 8, 9)
+    // It rises from zero with zero slope, so no crease where the surroundings pass the pixel's own light.
+    expect(veilFill(0.999, 1, 0.2) / 0.001).toBeLessThan(0.01)
+    let last = 0
+    for (let own = 1; own >= 0; own -= 0.05) {
+      const lift = veilFill(own, 1, 0.2)
+      expect(lift).toBeGreaterThanOrEqual(last)
+      expect(lift).toBeLessThanOrEqual(0.2 * (1 - own) + 1e-12)
+      last = lift
+    }
   })
 
   it("colors the spread light by the light that brings the most of it, so two colors' glows never mix into a third hue", () => {
@@ -328,23 +347,49 @@ describe('veil', () => {
     expect(leadMix([0, 0, 0], [0, 0, 0], red)).toEqual([0, 0, 0])
   })
 
-  it('weighs the lead color one level finer than the spread', () => {
-    const factors = lensSpread({ ...lens, veil: 0.3 }).factors
-    const lead = spreadLeadFactors(factors)
-    expect(lead.reduce((a, b) => a + b, 0)).toBeCloseTo(factors.reduce((sum, f) => sum + luminance(f), 0), 9)
-    expect(lead[0]).toBeCloseTo(luminance(factors[0]) + luminance(factors[1]), 9)
-    for (let i = 1; i < 7; i++) expect(lead[i]).toBeCloseTo(luminance(factors[i + 1]), 9)
+  it('lets near colors add as light does and leads only between colors far apart', () => {
+    const at1 = (c: readonly number[]) => c.map((v) => v / luminance(c))
+    const blue = hexToLinear('#0064E0')
+    const cyan = hexToLinear('#1FCDF0')
+    const red = hexToLinear('#FF4F00')
+    expect(hueApart(at1(blue), at1(cyan))).toBe(0)
+    expect(hueApart(at1(blue), at1(red))).toBe(1)
+    expect(hueApart(at1(blue), [1, 1, 1])).toBe(0)
+    // Meta Blue with Cyan's glow comes out close to the added light; with Orange-red's it stays Meta Blue.
+    const hue = (c: readonly number[]) => linearToOklch(c)[2]
+    const glowOf = (c: readonly number[]) => c.map((v) => (v * 0.5 * luminance(blue)) / luminance(c)) as [number, number, number]
+    const added = (g: readonly number[]) => blue.map((v, i) => v + g[i])
+    expect(Math.abs(hue(leadMix(blue, glowOf(cyan), cyan)) - hue(added(glowOf(cyan))))).toBeLessThan(2)
+    expect(Math.abs(hue(leadMix(blue, glowOf(red), red)) - hue(blue))).toBeLessThan(6)
+    expect(Math.abs(hue(added(glowOf(red))) - hue(blue))).toBeGreaterThan(20)
+  })
+
+  it('weighs the lead color one level finer than the veil', () => {
+    const weights = veilLevelWeights(0.02)
+    const lead = spreadLeadFactors(weights)
+    expect(lead.reduce((a, b) => a + b, 0)).toBeCloseTo(weights.reduce((a, b) => a + b, 0), 9)
+    expect(lead[0]).toBeCloseTo(weights[0] + weights[1], 9)
+    for (let i = 1; i < 7; i++) expect(lead[i]).toBeCloseTo(weights[i + 1], 9)
     expect(lead[7]).toBe(0)
   })
 })
 
 describe('flow blur', () => {
-  it('builds its pass from the GLSL that gives the direction of the flow, with no recipe needed', () => {
+  it('draws the directions from the GLSL that gives the flow, with no recipe needed, and blurs with one shared pass', () => {
     const glsl = 'uniform vec2 uWind;\nvec2 flowDirection(vec2 p) { return uWind; }\n'
     const shader = buildFlowShader(glsl)
     expect(shader).toContain(glsl)
     expect(shader).toContain('flowDirection(p)')
-    expect(shader).toContain(`k <= ${FLOW_TAPS}`)
+    expect(FLOW_BLUR_SHADER).toContain(`k <= ${FLOW_TAPS}`)
+    expect(FLOW_BLUR_SHADER).toContain('uFlowField')
+    expect(FLOW_BLUR_SHADER).not.toContain('flowDirection')
+  })
+
+  it('keeps the directions at a small size of the same shape', () => {
+    expect(flowFieldSize(3840, 2160)).toEqual([455, 256])
+    expect(flowFieldSize(1076, 606)).toEqual([455, 256])
+    expect(flowFieldSize(200, 120)).toEqual([200, 120])
+    expect(flowFieldSize(2160, 3840)).toEqual([256, 455])
   })
 })
 

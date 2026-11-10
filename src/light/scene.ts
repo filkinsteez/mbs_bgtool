@@ -129,11 +129,11 @@ export interface LensSettings {
   /** Length of the glare's near spread, as a fraction of the short side; 0.0025 to 0.016. */
   glareLength: number
   /**
-   * Share of all light the haze and lens carry far, 0..1 (0 off): each light's glow reaches the colors around it,
-   * falling as (1 + r / veilReach)^-3, and the total light stays. While it is on, the light the lens spreads keeps
-   * the color of the light that brings the most of it to each place, so where two colors' glows overlap neither
-   * turns into a third hue between them: the overlap fades through dark or brightens toward white along the
-   * leading light's own path. Brightness follows the light alone, so a pack swap only recolors.
+   * The haze's glow, 0..1 (0 off): each light's glow reaches the colors around it, falling as (1 + r / veilReach)^-3.
+   * A pixel gets `veil` of how much brighter the light around it is than its own, so bright cores and even fields
+   * keep their light and only dimmer places brighten. The glow takes the color of the light that brings the most of
+   * it to each place, so where two colors' glows overlap neither turns into a third hue between them. Brightness
+   * follows the light alone, so a pack swap only recolors. The color stage reads the light before the veil.
    */
   veil: number
   /** The veil's reach, as a fraction of the short side; 0.005 to 0.04. Half its light lands within 2.4 times it. */
