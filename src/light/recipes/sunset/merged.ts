@@ -736,8 +736,10 @@ float skyHeight(float a, float h) {
 // How far into the deep sky a place is (0 to 1); the edge drifts, changes softness along its length, and comes lower
 // far from the light, so the deep sky can be a far corner rather than a band across the top.
 float deepAt(float a, float t) {
-  float edge = uDeep.x + 0.08 * gradientNoise(vec2(a * 0.8 + 6.6, 2.2), uHorizonSeed + 5) - uDeep.z * (1.0 - sideLight(a, 1.0));
-  float soft = uDeep.y * (0.6 + 0.8 * (0.5 + 0.5 * gradientNoise(vec2(a * 0.7 + 1.4, 9.9), uHorizonSeed + 9)));
+  // Round a high light the edge's waver also drifts with distance, so it curves instead of running in straight bands.
+  float drift = uKind == 1 ? 1.4 * t : 0.0;
+  float edge = uDeep.x + 0.08 * gradientNoise(vec2(a * 0.8 + 6.6, 2.2 + drift), uHorizonSeed + 5) - uDeep.z * (1.0 - sideLight(a, 1.0));
+  float soft = uDeep.y * (0.6 + 0.8 * (0.5 + 0.5 * gradientNoise(vec2(a * 0.7 + 1.4, 9.9 + drift), uHorizonSeed + 9)));
   return smoothstep(edge - soft, edge + soft + 0.15, t);
 }
 
@@ -753,8 +755,9 @@ float patchAt(float a, float t) {
 // the warm band on the horizon, and the glow over the light.
 float skyLightness(float a, float h) {
   float t = skyHeight(a, h);
-  // From the pale sky's edge (Meta Blue at its palest) up to where the deep top starts.
-  float edge = paleTop(a) / uSpan;
+  // From the pale sky's edge (Meta Blue at its palest) up to where the deep top starts; round a high light, from a
+  // fixed distance, so no waver across the frame draws bands in Meta Blue's light.
+  float edge = uKind == 1 ? 0.15 : paleTop(a) / uSpan;
   float u = clamp((t - edge) / max(uDeep.x - edge, 0.1), 0.0, 1.0);
   float L = u < 0.5 ? mix(uSkyL.x, uSkyL.y, smoothstep(0.0, 0.5, u)) : mix(uSkyL.y, uSkyL.z, smoothstep(0.5, 1.0, u));
   L -= 0.05 * (1.0 - sideLight(a, 1.2));
@@ -763,7 +766,10 @@ float skyLightness(float a, float h) {
   float pale = paleAt(a, h);
   // The pale sky and the warm band are the glow's light spreading: brightest by the glow (round a high light, at the
   // light itself), dimming with height and along the horizon away from it, with no level stretch.
-  float paleLight = uPale.z - 0.03 + 0.11 * exp(-pow(h / max(0.45 * uPale.y * uSpan, 0.03), 2.0)) + 0.05 * sideLight(a, uPale.x);
+  // Squares are written out: pow of a negative number is undefined in GLSL.
+  float paleScale = max(0.45 * uPale.y * uSpan, 0.03);
+  float paleRise = max(h, 0.0) / paleScale;
+  float paleLight = uPale.z - 0.03 + 0.11 * exp(-paleRise * paleRise) + 0.05 * sideLight(a, uPale.x);
   L = mix(L, paleLight, pale);
   // The warm light's wider, dimmer outer glow only adds light where the sky is dimmer than it.
   L += max(0.0, uWarm.z - 0.03 - L) * 0.8 * warmOuterAt(a, h);
@@ -771,6 +777,8 @@ float skyLightness(float a, float h) {
   // Round a high light the warm lobe only adds light, running down its own slope from the light.
   L = uKind == 1 ? mix(L, max(L, gHaloLight), gHalo) : mix(L, warmLight, warmAt(a, h));
   L = mix(L, uDome.z, domeAt(a, h));
+  // Below the horizon line the sky's light rises to white over a short distance.
+  L = mix(L, 0.97, 1.0 - smoothstep(-0.3 * paleScale, 0.0, h));
   return min(L, 0.97);
 }
 
@@ -840,8 +848,10 @@ vec3 auxRadiance(vec2 uv, vec2 p) {
     float wob = 1.0 + 0.2 * gradientNoise(q * 2.0 + vec2(1.3, 6.1), uHorizonSeed + 43);
     float width = 0.7 * uHalo.z * (0.6 + 0.4 * clamp(along / max(lobeReach, 0.05), 0.0, 1.5)) * wob;
     float across = dot(q, vec2(-lobe.y, lobe.x)) / max(width, 0.02);
-    gHalo = uHalo.w * exp(-across * across) * smoothstep(-0.06, 0.02, along) * exp(-pow(max(along, 0.0) / (1.4 * lobeReach), 2.0));
-    gHaloLight = 0.62 + 0.31 * exp(-pow(max(along, 0.0) / max(lobeReach, 0.05), 2.0));
+    float lobeOut = max(along, 0.0) / (1.4 * lobeReach);
+    float lobeFall = max(along, 0.0) / max(lobeReach, 0.05);
+    gHalo = uHalo.w * exp(-across * across) * smoothstep(-0.06, 0.02, along) * exp(-lobeOut * lobeOut);
+    gHaloLight = 0.62 + 0.31 * exp(-lobeFall * lobeFall);
   }
   float edge = smoothstep(-0.5 * uPixel - uGround.w, 0.5 * uPixel + uGround.w, h);
   if (uLightnessOnly == 1) {
