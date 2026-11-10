@@ -69,6 +69,8 @@ interface Band {
   /** The dim skirt on the low and the high side, as shares of the streak's light, and its length in half-widths. */
   skirt?: [number, number]
   skirtLength?: number
+  /** A lead band's hottest place along the run (where its core is brightest). */
+  hotAt?: number
 }
 
 /** Streaks across the frame at most, before accents and seams. */
@@ -89,6 +91,8 @@ export interface RushLayout {
 const frameHalves = (aspect: number): [number, number] => (aspect >= 1 ? [aspect / 2, 0.5] : [0.5, 0.5 / aspect])
 
 /** How far out, in half-widths, a body with this falloff is down to a share of its peak (0.12: 12%). */
+/** A lead band's share of its stand-in luminance: a navy swell under its bright core, overlapping its neighbours. */
+const SWELL_SHARE = 0.3
 const reachTo = (share: number, falloff: number) => Math.sqrt(Math.log(1 / share) / falloff)
 
 /**
@@ -104,8 +108,10 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
   const random = seededRandom(seed, 0x52a9)
   const [hx, hy] = frameHalves(aspect)
   const longAxis = aspect >= 1 ? 0 : Math.PI / 2
-  const acrossShort = random() < 0.18
-  const theta = longAxis + (acrossShort ? Math.PI / 2 : 0) + (random() * 2 - 1) * (acrossShort ? 0.6 : 0.4) + (random() < 0.5 ? Math.PI : 0)
+  // The flow runs along the frame, tilted up to about 43 degrees, or across it in about a third of the seeds, so seeds
+  // don't share one gentle diagonal.
+  const acrossShort = random() < 0.3
+  const theta = longAxis + (acrossShort ? Math.PI / 2 : 0) + (random() * 2 - 1) * (acrossShort ? 0.6 : 0.75) + (random() < 0.5 ? Math.PI : 0)
   let dir = [Math.cos(theta), Math.sin(theta)]
   let nrm = [-dir[1], dir[0]]
   const alongHalf = Math.abs(dir[0]) * hx + Math.abs(dir[1]) * hy
@@ -128,6 +134,20 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
   // A big sweep that bends more and more toward the far end in some seeds, a near-straight flow in others.
   const curvy = random() < 0.4
   const hook: [number, number] = [either(random) * (curvy ? lerp(0.2, 0.45, random()) : lerp(0, 0.08, random())), curvy ? either(random) * lerp(0.05, 0.2, random()) : 0]
+  // How much of the stack is lit and where, from the seed (a stream of its own). Half of the seeds have a white bridge
+  // and soft streaks that fill the stack edge to edge and run straighter; most others have no bridge and a band of
+  // streaks that fills 58-78% of it along one side with dark room beyond, which a curving flow turns into a broad bright
+  // curve with a dark side. One frame-wide feature per seed, so no seed reads as another one moved.
+  const coverRandom = seededRandom(seed, 0x5f17)
+  const hasBridge = coverRandom() < 0.5
+  const edgeToEdge = hasBridge || coverRandom() < 0.3
+  const coverShare = edgeToEdge ? 1 : lerp(0.58, 0.78, coverRandom())
+  const brightAt = lerp(0.25, 0.75, coverRandom())
+  const cover = { share: coverShare, from: coverRandom() < 0.5 ? 0 : 1 - coverShare, at: brightAt }
+  if (edgeToEdge) {
+    hook[0] *= 0.7
+    hook[1] *= 0.7
+  }
   // A third of the seeds fan out strongly, as from a point behind the start, off the frame.
   const fan = random() < 0.35 ? lerp(0.8, 1.5, random()) : lerp(-0.2, 0.6, random())
   // Where the frame lies across a flow (with the bend and the fan) and along it, over a grid of points. The stack
@@ -197,21 +217,37 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
   // firmer than the others.
   const scale = kind === 'broad' ? 1.25 : kind === 'narrow' ? 0.7 : 0.85
   const dominantAt = kind === 'dominant' ? roles.indexOf('lead') : -1
-  const widths = roles.map((r, i) =>
+  const baseWidths = roles.map((r, i) =>
     i === dominantAt
       ? lerp(0.45, 0.6, random())
       : scale * (r === 'lead' ? lerp(0.22, 0.32, random()) : r === 'white' ? lerp(0.16, 0.24, random()) : r === 'deep' ? lerp(0.09, 0.14, random()) : lerp(0.16, 0.26, random())),
   )
-  // Neighbours touch, and meet in white. In about a quarter of the seeds one pair stands apart with black between
-  // them, like a dark sky. Two draws per gap as before, so the rest of the layout keeps its draws.
-  const gapDraws = roles.slice(1).map(() => [random(), random()])
+  // Widths vary a lot within a frame: in a broad seed one band is much wider than the rest, and every other band is
+  // narrower by its own amount. These draws come from a separate random stream, so the draws above and below stay as
+  // they were.
   const extra = seededRandom(seed, 0x3c7d)
-  const apartAt = extra() < 0.25 ? gapDraws.reduce((best, d, i) => (d[0] < gapDraws[best][0] ? i : best), 0) : -1
-  const gaps = gapDraws.map((d, i) => (i === apartAt ? lerp(0.18, 0.3, d[1]) : lerp(0.01, 0.04, d[1])))
+  const wideAt = dominantAt >= 0 ? dominantAt : kind === 'broad' ? Math.floor(extra() * roles.length) : -1
+  const widths = baseWidths.map((w, i) => w * (i === wideAt ? (dominantAt >= 0 ? 1 : lerp(1.5, 2.1, extra())) : lerp(0.45, 1, extra())))
+  // Neighbours are spaced at uneven distances, and their swells overlap across the gaps, dipping between them to a
+  // dim light where colors hand over, never to black. Two draws per gap as before.
+  const gapDraws = roles.slice(1).map(() => [random(), random()])
+  // One bridge per frame, where the light is strongest: the differently colored pair nearest a point inside the lit
+  // part, by where each pair meets across the stack (from the widths). More than one, or a brighter one, would be the
+  // frame's main shape, so two seeds would differ only by where it sits.
+  const widthTotal = widths.reduce((a, w) => a + w, 0)
+  const pairAt = (i: number) => extent[0] + (cover.from + (cover.share * widths.slice(0, i + 1).reduce((a, w) => a + w, 0)) / widthTotal) * across
+  const brightest = extent[0] + (cover.from + cover.at * cover.share) * across
+  const candidates = roles
+    .slice(1)
+    .flatMap((r, i) => (r !== roles[i] && r !== 'white' && roles[i] !== 'white' ? [i] : []))
+    .sort((a, b) => Math.abs(pairAt(a) - brightest) - Math.abs(pairAt(b) - brightest))
+  const bridgeAt = new Set(candidates.slice(0, hasBridge ? 1 : 0))
+  const gaps = gapDraws.map((d, i) => (bridgeAt.has(i) ? lerp(0.14, 0.26, d[1]) : lerp(0.06, 0.3, d[1])))
   const total = widths.reduce((a, w) => a + w, 0) + gaps.reduce((a, g) => a + g, 0)
-  const unit = across / total
+  // The bands fill the lit share of the stack; the rest, on the dark side, is room lit only by the outer band's skirt.
+  const unit = (cover.share * across) / total
   const bands: Band[] = []
-  let at = extent[0]
+  let at = extent[0] + cover.from * across
   // Neighbours taper opposite ways: one widens along the flow as the next narrows.
   const taperSign = either(random)
   for (let i = 0; i < roles.length; i++) {
@@ -221,29 +257,40 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
     at += width + (gaps[i] ?? 0) * unit
     const white = role === 'white'
     const falloff = role === 'deep' ? lerp(2, 2.8, random()) : lerp(0.75, 1.1, random())
-    const half = (0.5 * width) / reachTo(0.3, falloff)
+    // Each colored band's light is a broad soft swell 1.8 to 2.2 times as wide as its place in the stack, so
+    // neighbours overlap and add up, the way light moving too fast to hold its shape spreads, with soft dips between
+    // swells where colors hand over. A white streak stays a highlight about as wide as its place (a wide one would be
+    // flat white).
+    const half = ((white ? 0.6 : 1) * lerp(1.8, 2.2, extra()) * 0.5 * width) / reachTo(0.3, falloff)
     // A white band stays near-white across, with its cool and warm colors only at its edges.
     const split1 = white ? half * lerp(0.6, 0.9, random()) : 0
     bands.push({
       role,
       center,
       half,
-      widthVary: lerp(0.08, 0.2, random()),
-      // A lead band's light is its own: the hottest core in its area, broad, whitening at its peak.
-      coreWidth: role === 'lead' ? lerp(0.35, 0.5, random()) : white ? 0.25 : 0.5,
+      // Each band pinches and widens along its length, so neighbouring edges converge and spread.
+      widthVary: lerp(0.25, 0.45, random()),
+      // A lead band (Meta Blue) carries its own light: a bright core on one side of its swell, hottest at one place
+      // along it, going toward a lighter blue and white only at the hottest point, with a dim navy side.
+      coreWidth: role === 'lead' ? lerp(0.6, 0.8, random()) : 0.5,
       asym: either(random) * lerp(0, 0.25, random()),
       rag: lerp(0.02, 0.06, random()),
       split0: split1 * lerp(0.4, 0.7, random()),
       split1,
       luminance: white
         ? STAND_IN_WHITE * lerp(0.9, 1.05, random())
-        : // Cool and warm bands near their color's own lightness (Lime, Ice), so they never read dim (olive, grey).
-          standInLuminance(PLACE[role]) * (role === 'lead' ? lerp(1.1, 1.5, random()) : role === 'cool' ? lerp(1.2, 1.5, random()) : role === 'warm' ? lerp(1, 1.2, random()) : lerp(1.6, 2, random())),
-      brightVary: lerp(0.15, 0.35, random()),
-      coreGain: role === 'lead' ? lerp(1.8, 3, random()) : white ? 0.5 : role === 'cool' || role === 'warm' ? 0.35 : 0,
-      gradient: either(random) * lerp(0.15, 0.5, random()),
+        : // Cool and warm bands near their color's own lightness (Lime, Ice), so they never read dim (olive, grey); deep
+          // bands at about their own (Orange-red, Tan, Steel). Meta Blue's wide swell adds onto its neighbours'.
+          standInLuminance(PLACE[role]) * (role === 'lead' ? SWELL_SHARE * lerp(0.85, 1.7, random()) : role === 'cool' ? lerp(0.95, 1.25, random()) : role === 'warm' ? lerp(0.9, 1.15, random()) : lerp(0.8, 1.05, random())),
+      // Each band's light rises and falls along its length in its own way, so no seed reads as another one moved.
+      brightVary: lerp(0.55, 0.8, random()),
+      coreGain: role === 'lead' ? lerp(3.5, 5, random()) : white ? 0.15 : 0,
+      // Every swell is brighter on one side than the other, so no area of a color is flat: Meta Blue's strongly (its
+      // navy side), the others gently, since a light color's dim side would read olive (Lime) or grey-brown (Tan).
+      gradient: either(random) * (role === 'lead' ? lerp(0.6, 0.95, random()) : lerp(0.15, 0.35, random())),
       wander: lerp(0.004, 0.012, random()),
-      texture: lerp(0.05, 0.1, random()),
+      // Fine streaks along the motion, visible but soft.
+      texture: lerp(0.18, 0.3, random()),
       textureFreq: lerp(25, 50, random()),
       fadeIn: lerp(-0.3, 0.05, random()) * reach,
       fadeLen: lerp(0.1, 0.25, random()) * reach,
@@ -251,7 +298,8 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
       fadeOut: Math.max(lerp(1, 1.6, random()) * reach, drag ? uFar + 0.15 : 0),
       drift: either(random) * lerp(0.02, 0.09, random()),
       bow: (either(random) * lerp(0.02, 0.1, random())) / Math.max(reach, 1),
-      corePlace: role === 'lead' ? (random() * 2 - 1) * 0.25 : 0,
+      corePlace: role === 'lead' ? (random() * 2 - 1) * 0.35 : 0,
+      hotAt: role === 'lead' ? lerp(uNear, uFar, lerp(0.25, 0.75, extra())) : 0,
       taper: (i % 2 === 0 ? taperSign : -taperSign) * lerp(0.3, 0.8, random()),
       falloff,
     })
@@ -273,11 +321,9 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
     if (b.role === 'white') b.fringeDir = bluer(bands[i + 1]?.role) || warmer(bands[i - 1]?.role) ? -1 : 1
   })
   bands.forEach((b, i) => {
-    if (steepLeft[i] && steepRight[i]) {
-      b.half *= 0.72
-      b.asym = 0
-    } else if (steepLeft[i]) b.asym = -1.2
-    else if (steepRight[i]) b.asym = 1.2
+    if (steepLeft[i] && steepRight[i]) b.asym = 0
+    else if (steepLeft[i]) b.asym = -0.25
+    else if (steepRight[i]) b.asym = 0.25
   })
   // Each band drifts and bows its own way, so no two run as one family of parallel curves. A band never closes in on
   // its neighbour to less than 60% of their distance (they would merge into one), except in a quarter of the seeds,
@@ -302,76 +348,59 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
     b.drift = a.drift + f * (b.drift - a.drift)
     b.bow = a.bow + f * (b.bow - a.bow)
   }
-  // Two touching bands of different colors overlap only at their seam: where they would meet before each is down to
-  // 10% of its light (3% where one dims through blue and the other through red, which mix mauve), both get narrower,
-  // so the tinted edges beside the white stay narrow.
-  const blueSide = (r: Role) => r === 'lead' || r === 'cool'
-  const edgeShare = (b: Band, side: 1 | -1, t: number, share: number) =>
-    b.half * Math.exp(b.taper * t - side * b.asym) * (1 + 0.5 * b.widthVary) * reachTo(share, b.falloff) + 0.45 * Math.max(b.split0, b.split1) + b.wander
-  for (let i = 0; i + 1 < bands.length; i++) {
-    const a = bands[i]
-    const b = bands[i + 1]
-    if (i === crossAt || i === apartAt || a.role === b.role) continue
-    const share = blueSide(a.role) !== blueSide(b.role) ? 0.03 : 0.1
-    let worst = 0
-    for (let k = 0; k <= 8; k++) {
-      const u = lerp(uNear, uFar, k / 8)
-      const t = Math.min(1.3, Math.max(-0.3, u / reach)) - 0.5
-      const apart = b.center + u * (b.drift + u * b.bow) - (a.center + u * (a.drift + u * a.bow))
-      worst = Math.max(worst, (edgeShare(a, 1, t, share) + edgeShare(b, -1, t, share)) / Math.max(apart, 1e-6))
-    }
-    if (worst > 1) {
-      const k = Math.max(0.5, 1 / worst)
-      for (const c of [a, b]) {
-        c.half *= k
-        c.split0 *= k
-        c.split1 *= k
-      }
-    }
-  }
   // The outermost bands light the room beyond them, toward the frame's edges, with a long dim skirt, and the band
   // that fills a trough (the one that doesn't fall off steeply there) lights it dimly in its own dim color (navy for
-  // Meta Blue). A gap where two bands stand apart stays black.
+  // Meta Blue); a bridge lights its own gap. The band beside the dim room on the dark side lights it far enough that it
+  // reads dim, not black.
   bands.forEach((b, i) => {
-    const level = lerp(0.01, 0.06, extra())
-    const length = lerp(3, 6, extra())
+    const roomBelow = i === 0 && cover.from > 0
+    const roomAbove = i === bands.length - 1 && cover.from === 0 && cover.share < 1
+    // The band beside the dark room falls off steeply on that side, softly in some seeds and crisply in others, so the
+    // room is one dark region where the light falls off, not lit by a wide swell.
+    const roomEdge = lerp(0.6, 1.3, extra())
+    if (roomBelow) b.asym = -roomEdge
+    if (roomAbove) b.asym = roomEdge
+    const drawnLevel = lerp(0.005, 0.04, extra())
+    const drawnLength = lerp(1, 2.5, extra())
+    const level = roomBelow || roomAbove ? 0.5 * drawnLevel : drawnLevel
+    const length = roomBelow || roomAbove ? 0.5 * drawnLength : drawnLength
     if (b.role === 'white') return
-    const fills = (pair: number, steep: boolean) => pair !== apartAt && pair !== crossAt && steep
+    const fills = (pair: number, steep: boolean) => pair !== crossAt && !bridgeAt.has(pair) && steep
     const low = i === 0 ? level : fills(i - 1, steepRight[i - 1]) ? 0.2 * level : 0
     const high = i === bands.length - 1 ? level : fills(i, steepLeft[i + 1]) ? 0.2 * level : 0
     if (low === 0 && high === 0) return
     b.skirt = [low, high]
     b.skirtLength = length
   })
-  // Where two neighbours touch, a seam: their overlap, hot enough to go white, so they meet lighter than both sides
-  // in every pack. It runs along the line where their edges (at 30% of their light) meet, fitted at three places.
+  // Where a pair meets in a bridge: their overlap, wide and soft, hot enough that its middle goes white, so they meet
+  // lighter than both sides in every pack. It runs along the line where their edges (at 30% of their light) meet,
+  // fitted at three places, and spans most of the gap between them.
   const edgeAt = (b: Band, side: 1 | -1, u: number) => {
     const t = Math.min(1.3, Math.max(-0.3, u / reach))
     return b.center + u * (b.drift + u * b.bow) + side * b.half * Math.exp(b.taper * (t - 0.5) - side * b.asym) * reachTo(0.3, b.falloff)
   }
   const seams: Band[] = []
   for (let i = 0; i + 1 < bands.length; i++) {
-    if (i === apartAt || i === crossAt) continue
+    if (!bridgeAt.has(i) || i === crossAt) continue
     const a = bands[i]
     const b = bands[i + 1]
     const [u0, u1, u2] = [uNear, 0.5 * (uNear + uFar), uFar]
     const [j0, j1, j2] = [u0, u1, u2].map((u) => 0.5 * (edgeAt(a, 1, u) + edgeAt(b, -1, u)))
     const bow = ((j2 - j0) / (u2 - u0) - (j1 - j0) / (u1 - u0)) / (u2 - u1)
     const drift = (j1 - j0) / (u1 - u0) - bow * (u0 + u1)
-    // The seam's glow spans most of the trough between the two bands' edges, so they meet through light.
     const trough = Math.max(0, edgeAt(b, -1, u1) - edgeAt(a, 1, u1))
     seams.push({
       role: 'white',
       seam: [a.role, b.role],
       center: j0 - drift * u0 - bow * u0 * u0,
-      half: Math.min(0.025, Math.max(lerp(0.008, 0.016, extra()), 0.25 * trough)),
+      half: Math.min(0.08, Math.max(0.03, lerp(0.25, 0.5, extra()) * trough)),
       widthVary: lerp(0.2, 0.4, extra()),
       coreWidth: 0.5,
       asym: 0,
       rag: 0.05,
       split0: 0,
       split1: 0,
-      luminance: lerp(0.6, 0.8, extra()),
+      luminance: lerp(0.6, 0.85, extra()),
       brightVary: lerp(0.2, 0.4, extra()),
       coreGain: 0,
       gradient: 0,
@@ -385,7 +414,7 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
       bow,
       corePlace: 0,
       taper: 0,
-      falloff: lerp(1.5, 2.2, extra()),
+      falloff: lerp(0.9, 1.3, extra()),
     })
   }
   // A dominant band carries one or two thin hot streaks of its own lead color as accents, over it near its edges,
@@ -460,7 +489,7 @@ export function composeRushSplit(hexes: readonly string[], controls: ControlValu
     le: pad(B.flatMap((b) => [b.fadeIn, b.fadeLen, b.fadeOut, b.seam ? colorOf(b.seam[0]) : b.role === 'white' ? 0 : colorOf(b.role)]), 4 * MAX_LIGHTS),
     lf: pad(B.flatMap((b) => [b.drift, b.bow, b.corePlace, b.seam ? -2 : b.role === 'white' ? -1 : PLACE[b.role]]), 4 * MAX_LIGHTS),
     lg: pad(B.flatMap((b) => [b.taper, b.falloff, b.fringeDir ?? 1, b.seam ? colorOf(b.seam[1]) : 0]), 4 * MAX_LIGHTS),
-    lh: pad(B.flatMap((b) => [b.skirt?.[0] ?? 0, b.skirt?.[1] ?? 0, b.skirtLength ?? 1, 0]), 4 * MAX_LIGHTS),
+    lh: pad(B.flatMap((b) => [b.skirt?.[0] ?? 0, b.skirt?.[1] ?? 0, b.skirtLength ?? 1, b.hotAt ?? 0]), 4 * MAX_LIGHTS),
     lights: B.length,
     spectrum: colors.spectrum,
     fringe: colors.fringe,

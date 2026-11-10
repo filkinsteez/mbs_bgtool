@@ -3,8 +3,8 @@ export const MAX_TONGUES = 4
 
 /**
  * Rush: light moving too fast to hold its shape. Streaks of light fill the frame side by side: one or two wide soft
- * bands, each with its own gradient and core, and thinner bright streaks. Neighbours touch and meet in a thin white
- * seam, their overlap gone white; only some seeds keep a black gap between two streaks that stand apart. They flow
+ * bands, each with its own gradient and core, and thinner bright streaks. One or two pairs of neighbours meet in a wide
+ * soft white bridge, the others through a soft dim trough; some seeds keep a black gap between two streaks. They flow
  * along a shared run that bends more and more toward its far end or runs nearly straight, and may fan out; each streak
  * widens or narrows along it. Each streak has a hot core and a long dim skirt that lights the room beside it; fine
  * streaks run inside it along its motion.
@@ -27,7 +27,7 @@ uniform vec4 uLD[MAX_LIGHTS];       // across gradient (log of hot side / other 
 uniform vec4 uLE[MAX_LIGHTS];       // fade in at (along), fade length, fade out at, color (index into the list)
 uniform vec4 uLF[MAX_LIGHTS];       // drift across per unit along, bow per unit along squared, core place (half-widths), role (for the color stage's parts)
 uniform vec4 uLG[MAX_LIGHTS];       // taper (log of the width at the reach over the width at the start), falloff (exponent of the body), a white streak's color order (-1 reversed), a seam's high-side color
-uniform vec4 uLH[MAX_LIGHTS];       // dim skirt on the low side and on the high side (shares of the streak's light), its length (half-widths), unused
+uniform vec4 uLH[MAX_LIGHTS];       // dim skirt on the low side and on the high side (shares of the streak's light), its length (half-widths), a lead streak's hottest place along the run
 uniform int uLights;
 uniform vec3 uC0;
 uniform vec3 uC1;
@@ -88,11 +88,24 @@ vec3 radiance(vec2 uv, vec2 p) {
   v -= (uHook.x * tb * tb + uHook.y * tb * tb * tb) * reach;
   float vs = v / max(1.0 + uStack.x * clamp(t, -0.3, 1.5), 0.25);
   float vw = vs + uStack.y * valueNoise(vec2(u * uStack.z, vs * uStack.w), uSeed + 7);
-  vec3 sum = vec3(0.0);
-  // White light added after the shoulder: seams and white streaks' cores, which reach white at their peak.
+  // Each light's luminance here and what sets its hue: a pack color (its index, and its luminance at the peak), whose
+  // hue is read once all the light here is added up, or a fixed hue (white streaks, bridges; color -1).
+  float lum[MAX_LIGHTS];
+  int col[MAX_LIGHTS];
+  float peak[MAX_LIGHTS];
+  vec3 fixedHue[MAX_LIGHTS];
+  float coreLum[MAX_LIGHTS];
+  float total = 0.0;
+  // Light added after the shoulder: white streaks' cores, which reach white at their peak, and lead streaks' cores in
+  // their own color (Meta Blue toward a lighter blue, white only at the hottest point).
   vec3 hot = vec3(0.0);
   for (int i = 0; i < MAX_LIGHTS; i++) {
     if (i >= uLights) break;
+    lum[i] = 0.0;
+    col[i] = -1;
+    peak[i] = 1.0;
+    fixedHue[i] = vec3(1.0);
+    coreLum[i] = 0.0;
     vec4 A = uLA[i];
     vec4 B = uLB[i];
     vec4 C = uLC[i];
@@ -110,10 +123,14 @@ vec3 radiance(vec2 uv, vec2 p) {
     // The streak's dim skirt: its light reaching across the room beside it, each side at its own level, in the darkest
     // color of its dim path (navy, deep red, Forest, Slate), so the room between streaks is dimly lit, not black.
     float skirt = (s0 < 0.0 ? H.x : H.y) * exp(-abs(s0) / max(A.y * H.z, 1e-4));
-    vec3 skirtLight = skirt > 1e-6 ? dimHue(int(E.w + 0.5), skirt) * C.x * skirt * fadeIn * fadeOut : vec3(0.0);
+    float skirtLum = C.x * skirt * fadeIn * fadeOut;
+    int k = int(E.w + 0.5);
+    col[i] = k;
+    peak[i] = C.x;
+    lum[i] = skirtLum;
     float wide = A.y * (1.0 + A.z) * exp(abs(B.x) + 0.8 * abs(G.x)) * sqrt(7.0 / max(G.y, 0.3)) + 0.5 * max(B.z, B.w) + Dl.y;
     if (abs(s0) > wide) {
-      sum += skirtLight;
+      total += skirtLum;
       continue;
     }
     float s = s0 - Dl.y * valueNoise(vec2(u * 1.3, fi * 4.7), uSeed + 31 + i);
@@ -123,40 +140,51 @@ vec3 radiance(vec2 uv, vec2 p) {
     float sideScale = exp(s < 0.0 ? B.x : -B.x) * (1.0 + B.y * valueNoise(vec2(u * 5.5, fi * 4.1 + (s < 0.0 ? 1.0 : 2.0)), uSeed + 71 + i));
     float x = s / max(halfW * sideScale, 1e-4);
     float ta = max(u, 0.0) / max(reach, 1.0);
-    float env = fadeIn * fadeOut * max(0.0, 1.0 + C.y * valueNoise(vec2(u * 1.05 + 11.0, fi * 6.1), uSeed + 83 + i)) / (1.0 + 0.3 * ta * ta);
+    // Along its length a streak's light rises in bright patches and dips only a little between them, so a light color
+    // brightens toward white rather than dimming toward olive.
+    float swing = valueNoise(vec2(u * 1.6 + 11.0, fi * 6.1), uSeed + 83 + i);
+    float env = fadeIn * fadeOut * max(0.0, 1.0 + C.y * (swing > 0.0 ? swing : 0.35 * swing)) / (1.0 + 0.3 * ta * ta);
     if (env < 1e-4) {
-      sum += skirtLight;
+      total += skirtLum;
       continue;
     }
     if (C.w > 1.5) {
-      // A seam where two streaks touch: their overlap, hot enough to go white at its pointed peak. Each side of its
-      // glow is the light of the streak on that side (E.w low side, G.w high side; -1 a white streak), dimming along
-      // its own path, so the meeting goes from one color through white to the other, never through a mix.
-      float glow = exp(-G.y * abs(x));
-      float k = s < 0.0 ? E.w : G.w;
-      vec3 side = k < -0.5 ? vec3(1.0) : dimHue(int(k + 0.5), glow);
-      vec3 seamHue = mix(side, vec3(1.0), glow * glow);
-      hot += seamHue / max(luminance(seamHue), 1e-5) * C.x * glow * env;
+      // A bridge where two streaks meet: their overlap, a broad soft body under the shoulder whose middle goes white
+      // as wide and soft as the bridge, with no line on top. Each side of its glow is the light of the streak on that
+      // side (E.w low side, G.w high side; -1 a white streak), dimming along its own path, so the meeting goes from one
+      // color through white to the other.
+      float glow = exp(-G.y * x * x);
+      float sideColor = s < 0.0 ? E.w : G.w;
+      vec3 side = sideColor < -0.5 ? vec3(1.0) : dimHue(int(sideColor + 0.5), glow);
+      // White in the middle: the shoulders keep their own hue and whiten the way hot light does in the tone curve
+      // (Orange-red through yellow, not into peach).
+      col[i] = -1;
+      fixedHue[i] = mix(side, vec3(1.0), 0.85 * pow(glow, 6.0));
+      lum[i] = C.x * glow * env;
+      total += lum[i];
       continue;
     }
-    // A streak: a body falling off to its skirt at its edges (softer in a wide band), and a hot core.
-    float body = exp(-G.y * x * x);
+    // A streak: a body falling off to its skirt at its edges (softer in a wide band), and a hot core. Every color but
+    // the lead (Meta Blue, which dims softly into navy) keeps a broad bright top and falls steeply at its sides, so it
+    // never sits at mid lightness over a wide area (Lime would read olive, Tan grey-brown).
+    float x2 = x * x;
+    float body = exp(-G.y * (F.w > 0.5 ? 0.4 * x2 + 0.9 * x2 * x2 : x2));
     float cx = (s / max(halfW, 1e-4) - F.z) / A.w;
     float coreShape = exp(-0.5 * cx * cx);
-    float profile = body * (1.0 + (C.w > 0.5 ? 0.0 : C.z) * coreShape);
+    float profile = body;
     // Fine streaks along the motion at three scales, gathered in patches, mostly added light.
     float Fq = Dl.w;
     float patchy = 0.5 + 0.5 * valueNoise(vec2(u * 0.9 + 2.0, s * 3.0 + fi), uSeed + 91 + i);
     float streaks = 0.5 * gradientNoise(vec2(s * Fq, u * Fq / 14.0), uSeed + 101 + i)
                   + 0.32 * gradientNoise(vec2(s * Fq * 2.3, u * Fq * 2.3 / 11.0), uSeed + 103 + i)
                   + 0.18 * gradientNoise(vec2(s * Fq * 5.0, u * Fq * 5.0 / 9.0), uSeed + 107 + i);
-    float tex = 0.85 + 1.8 * Dl.z * (0.3 + 0.7 * patchy) * max(streaks + 0.2, 0.0);
+    float tex = 0.95 + 1.8 * Dl.z * (0.3 + 0.7 * patchy) * max(streaks + 0.1, 0.0);
     float grad = exp(Dl.x * clamp(x, -1.0, 1.0));
     // The layout's luminance, whatever the colors.
     float luminanceHere = C.x * profile * env * tex * grad;
-    // The hue: the streak's color, turning as it dims below its peak; a white streak's colors as fringes.
-    float level = clamp(profile / (1.0 + C.z) * sqrt(min(env, 1.0)), 0.0, 1.0);
-    vec3 hue = vec3(0.0);
+    lum[i] = luminanceHere + skirtLum;
+    total += lum[i];
+    // A white streak's colors as fringes; a colored streak's hue is read after the loop.
     if (C.w > 0.5) {
       // White in the middle, and on each side one color running into it (Cyan on one side and Yellow on the other in
       // Bold), so the two edge colors never overlap into mint or aqua. Each edge color dims along its own path.
@@ -165,21 +193,48 @@ vec3 radiance(vec2 uv, vec2 p) {
       float oc = o / max(0.5 * D, 1e-4);
       float coreW = exp(-0.5 * oc * oc);
       vec3 edge = vec3(1.0);
-      for (int k = 0; k < 4; k++) {
-        if (k >= uComps) break;
-        if ((o < 0.0 && uSpectrum[k] < 0.25) || (o >= 0.0 && uSpectrum[k] > 0.75)) edge = dimHue(k, clamp(body, 0.0, 1.0));
+      for (int j = 0; j < 4; j++) {
+        if (j >= uComps) break;
+        if ((o < 0.0 && uSpectrum[j] < 0.25) || (o >= 0.0 && uSpectrum[j] > 0.75)) edge = dimHue(j, clamp(body, 0.0, 1.0));
       }
-      hue = mix(edge, vec3(1.0), coreW);
+      col[i] = -1;
+      fixedHue[i] = mix(edge, vec3(1.0), 0.85 * coreW);
       // Its hot core: white light that reaches white at the peak.
       hot += vec3(C.x * C.z * body * coreShape * env);
-    } else {
-      hue = dimHue(int(E.w + 0.5), level);
+    } else if (C.z > 0.0) {
+      // A lead streak's core in its own color, hottest at one place along it (H.w) and on its bright side, so the
+      // light goes toward a lighter blue and white only at the hottest point.
+      float along = (u - H.w) / (0.6 * reach);
+      coreLum[i] = C.x * C.z * coreShape * body * env * grad * exp(-along * along);
     }
-    sum += hue / max(luminance(hue), 1e-5) * luminanceHere + skirtLight;
   }
+  // Where lights overlap, the overlap is their light added up, lighter than each alone. Its hue is the stronger
+  // light's (each counts by its luminance to the eighth power, so two hues never mix into a third), and a pack color
+  // is read at the light here: bright where lights overlap, dimming along its own path (Lime into Forest) only where
+  // the light really falls.
+  vec3 leadSum = vec3(0.0);
+  float leadW = 0.0;
+  for (int i = 0; i < MAX_LIGHTS; i++) {
+    if (i >= uLights) break;
+    if (lum[i] <= 1e-7) continue;
+    vec3 h = col[i] >= 0 ? dimHue(col[i], clamp(total / max(peak[i], 1e-4), 0.0, 1.0)) : fixedHue[i];
+    // A lead streak's core shines where its light leads, so it never lays blue over Orange-red (pink).
+    if (coreLum[i] > 0.0) {
+      vec3 own = compColor(col[i]);
+      float share = lum[i] / max(total, 1e-5);
+      share *= share;
+      hot += own / max(luminance(own), 1e-5) * coreLum[i] * share * share;
+    }
+    float w = lum[i] * lum[i] * 30.0;
+    w *= w;
+    w *= w;
+    leadSum += h / max(luminance(h), 1e-5) * w;
+    leadW += w;
+  }
+  vec3 leadHue = leadW > 0.0 ? leadSum / leadW : vec3(1.0);
+  vec3 sum = leadHue / max(luminance(leadHue), 1e-5) * total;
   // A soft shoulder on the streaks' light, below the level where the tone curve turns a near-white color (Ice) flat
-  // white, while saturated colors still whiten at their cores. The seams and white cores come on top and reach white.
-  float total = luminance(sum);
+  // white, while saturated colors still whiten at their cores. White streaks' cores come on top and reach white.
   float shoulder = total < 0.5 ? total : 0.5 + 0.4 * (1.0 - exp(-(total - 0.5) / 0.4));
   sum *= shoulder / max(total, 1e-5);
   return uGround + (sum + hot) * shadow(p);

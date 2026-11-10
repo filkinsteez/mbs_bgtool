@@ -4,6 +4,8 @@ import { MAX_LIGHTS } from './split-shader'
 
 /** Line pieces per streak, across the part of the run the frame sees. */
 const PIECES = 6
+/** Where a streak's dim flank parts run: half-widths out from its middle. */
+const FLANK = 1.6
 
 type Params = Readonly<Record<string, ParamValue>>
 
@@ -50,21 +52,21 @@ export function rushParts(params: Params, aspect: number): StagePart[] {
   }
   // One group per streak (its pieces and its core are one light with one color), lead streaks first, so the first
   // group, which the stage gives the lead color, is a lead streak.
-  // Seams (place -2), the white lines where two streaks meet, are no parts: they take no color.
-  const isSeam = (i: number) => lf[4 * i + 3] < -1.5
+  // A bridge (place -2), where two streaks meet in wide soft white, asks for a bright color along its middle (Lime in
+  // Elemental, at about Lime's own lightness) and has no core spot. Bridges come after the streaks' groups.
+  const isBridge = (i: number) => lf[4 * i + 3] < -1.5
   const isLead = (i: number) => lf[4 * i + 3] >= 0 && lf[4 * i + 3] < 0.5
-  const order = [...Array(lights).keys()].filter((i) => !isSeam(i)).sort((a, b) => Number(isLead(b)) - Number(isLead(a)) || a - b)
+  const order = [...Array(lights).keys()].sort((a, b) => Number(isBridge(a)) - Number(isBridge(b)) || Number(isLead(b)) - Number(isLead(a)) || a - b)
   const groupOf = new Map(order.map((i, rank) => [i, rank]))
   const parts: StagePart[] = []
   for (let i = 0; i < lights; i++) {
-    if (isSeam(i)) continue
     const group = groupOf.get(i) ?? i
     const [center, half, , coreWidth] = la.slice(4 * i, 4 * i + 4)
     const [fadeIn, fadeLen] = le.slice(4 * i, 4 * i + 2)
     const [drift, bow, corePlace, place] = lf.slice(4 * i, 4 * i + 4)
     const taper = lg[4 * i] ?? 0
     const taperAt = (u: number) => Math.exp(taper * (Math.min(1.3, Math.max(-0.3, u / reach)) - 0.5))
-    const want = wantOf(place)
+    const want: { line?: FieldWant; core?: FieldWant } = isBridge(i) ? { line: 'bright' } : wantOf(place)
     const acrossAt = (u: number, offset = 0) => {
       const scale = Math.max(1 + fan * Math.min(1.5, Math.max(-0.3, u / reach)), 0.25)
       return { across: (center + offset * half + u * (drift + u * bow)) * scale, scale }
@@ -77,6 +79,7 @@ export function rushParts(params: Params, aspect: number): StagePart[] {
       const width = Math.round(2 * half * taperAt(0.5 * (ua + ub)) * 0.5 * (a.scale + b.scale) * 1e4) / 1e4
       parts.push({ kind: 'line', from: toFrame(ua, a.across), to: toFrame(ub, b.across), width, group, ...(want.line ? { want: want.line } : {}) })
     }
+    if (isBridge(i)) continue
     // The hottest place along the streak the frame sees: where it has fully faded in, or the frame's near edge.
     const uHot = Math.min(u1, Math.max(u0 + 0.1 * (u1 - u0), fadeIn + fadeLen))
     const hot = acrossAt(uHot, corePlace)
@@ -92,6 +95,20 @@ export function rushParts(params: Params, aspect: number): StagePart[] {
       group,
       ...(want.core ? { want: want.core } : {}),
     })
+    if (place < 0) continue
+    // Where a colored streak's light falls off on each side (1.2 to 2 half-widths out, at about 25% down to 5%), its
+    // dim end asks for a dark color (Forest, Plum, Slate, Near-black), in a group of its own after the streaks' and
+    // bridges' groups, so a dark color is the dim end of this light, never a slab or a blob in the black.
+    for (const side of [-1, 1]) {
+      for (let k = 0; k < PIECES; k++) {
+        const ua = u0 + ((u1 - u0) * k) / PIECES
+        const ub = u0 + ((u1 - u0) * (k + 1)) / PIECES
+        const a = acrossAt(ua, side * FLANK)
+        const b = acrossAt(ub, side * FLANK)
+        const width = Math.round(0.8 * half * taperAt(0.5 * (ua + ub)) * 0.5 * (a.scale + b.scale) * 1e4) / 1e4
+        parts.push({ kind: 'line', from: toFrame(ua, a.across), to: toFrame(ub, b.across), width, group: lights + i, want: 'dark' })
+      }
+    }
   }
   return parts
 }

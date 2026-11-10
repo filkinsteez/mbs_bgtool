@@ -28,9 +28,12 @@ const designOf = (params: Record<string, ParamValue>) =>
       .filter(([key]) => !COLOR_KEYS.has(key))
       .map(([key, value]) => [key, (key === 'le' || key === 'lg') && Array.isArray(value) ? value.filter((_, i) => i % 4 !== 3) : value]),
   )
-// Streaks that are parts for the color stage: all but the seams (place -2).
+// Streaks with a core spot for the color stage: all but the bridges (place -2), which are line pieces only.
 const streaksOf = (params: Record<string, ParamValue>) =>
   (params.lf as number[]).filter((place, i) => i % 4 === 3 && i < 4 * (params.lights as number) && place > -1.5).length
+// Colored streaks (not white, not a bridge), which add dim flank parts asking for a dark color.
+const coloredOf = (params: Record<string, ParamValue>) =>
+  (params.lf as number[]).flatMap((place, i) => (i % 4 === 3 && i < 4 * (params.lights as number) && place >= 0 ? [(i - 3) / 4] : []))
 
 describe('Rush split', () => {
   it("uses only the pack's own colors, and black for no light", () => {
@@ -90,16 +93,17 @@ describe('Rush split', () => {
     expect(steps(hexesOf('atmospheric'), 1)).toHaveLength(3)
   })
 
-  it('puts each streak in its own group of parts, lead streaks first', () => {
+  it('puts each streak in its own group of parts, lead streaks first, and its dim flanks in a dark group after them', () => {
     for (const seed of SEEDS.slice(0, 12)) {
       const { params } = composeRushSplit(hexesOf('bold'), CONTROLS, seed, 16 / 9)
       const parts = rushParts(params, 16 / 9)
+      const lights = params.lights as number
       const groups = [...new Set(parts.map((p) => (p.kind === 'horizon' ? -1 : p.group)))].sort((a, b) => (a ?? 0) - (b ?? 0))
-      expect(groups).toEqual([...Array(streaksOf(params)).keys()])
-      const lf = params.lf as number[]
-      const first = parts.findIndex((p) => p.kind !== 'horizon' && p.group === 0)
-      const place = lf[4 * Math.floor(first / 7) + 3]
-      expect(place >= 0 && place < 0.5, `s${seed}`).toBe(true)
+      expect(groups).toEqual([...Array(lights).keys(), ...coloredOf(params).map((i) => lights + i)])
+      // A lead streak's parts ask for nothing (the stage gives the first group the lead color).
+      const lightParts = parts.flatMap((p) => (p.kind === 'horizon' ? [] : [p]))
+      expect(lightParts.filter((p) => p.group === 0).every((p) => p.want === undefined), `s${seed}`).toBe(true)
+      expect(lightParts.filter((p) => (p.group ?? 0) >= lights).every((p) => p.want === 'dark')).toBe(true)
     }
   })
 
@@ -109,9 +113,8 @@ describe('Rush split', () => {
         for (const drag of LINES) {
           const { params } = composeRushSplit(hexesOf('bold'), { ...CONTROLS, drag }, seed, aspect)
           const parts = rushParts(params, aspect)
-          const streaks = streaksOf(params)
-          expect(parts.filter((p) => p.kind === 'line')).toHaveLength(6 * streaks)
-          expect(parts.filter((p) => p.kind === 'spot')).toHaveLength(streaks)
+          expect(parts.filter((p) => p.kind === 'line')).toHaveLength(6 * (params.lights as number) + 12 * coloredOf(params).length)
+          expect(parts.filter((p) => p.kind === 'spot')).toHaveLength(streaksOf(params))
           for (const part of parts) {
             if (part.kind === 'line') {
               expect([...part.from, ...part.to, part.width].every(Number.isFinite)).toBe(true)
