@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { curveLightUniforms, type CurveLightLayout, type EmitterSettings, type LightSettings } from './curveLight'
+import { curveLightUniforms, outlinePieces, type CurveLightLayout, type EmitterSettings, type LightSettings } from './curveLight'
 import { segment } from './shapes'
 
 const layout: CurveLightLayout = { emitters: 2, primitives: 8, near: 1, far: 1 }
@@ -24,5 +24,19 @@ describe('curveLightUniforms', () => {
     expect(emit[1]).toBeCloseTo(0.75, 6)
     expect(emit[2]).toBe(0)
     expect(emit[row + 2]).toBeGreaterThan(0)
+  })
+
+  it('lets a fade take away only part of the light (its depth); without one it goes fully dark', () => {
+    const darkest = (depth?: number) => {
+      const pieces = outlinePieces({
+        shape: { contours: [{ primitives: [segment([-1, 0], [1, 0])], closed: false }] },
+        stops: [{ t: 0, color: [1, 1, 1], gain: 1 }],
+        fades: [{ contour: 0, t: 0.5, dark: 0.2, fade: 0.1, ...(depth === undefined ? {} : { depth }) }],
+      })
+      return Math.min(...pieces.filter((p) => p.kind !== 3).flatMap((p) => [p.e0[0], p.e1[0]]))
+    }
+    expect(darkest()).toBeCloseTo(0, 6)
+    expect(darkest(0.5)).toBeCloseTo(0.5, 6)
+    expect(darkest(0)).toBeCloseTo(1, 6)
   })
 })

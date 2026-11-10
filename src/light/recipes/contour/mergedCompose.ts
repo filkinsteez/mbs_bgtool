@@ -524,14 +524,19 @@ const BETWEEN = 0.25
 /** Emitter units in the recipe (merged.ts UNITS). */
 const MERGED_UNITS = 3
 /** The second light along its edge: stop offsets (times its half length) and levels (times its peak). */
-const SECOND_SHAPE = [-1, -0.6, -0.3, 0, 0.3, 0.6, 1]
-const SECOND_LEVEL = [0, 0.15, 0.55, 1, 0.55, 0.15, 0]
+const SECOND_SHAPE = [-1, -0.65, -0.3, 0, 0.3, 0.65, 1]
+const SECOND_LEVEL = [0, 0.35, 0.8, 1, 0.8, 0.35, 0]
+/** The second light's colors' Oklab lightness, the same in every pack. */
+const SECOND_L = 0.75
+/** How far past the second light's ends the main light's line stays dark, and over how long it comes back. */
+const SECOND_GAP = 0.12
+const SECOND_GAP_FADE = 0.25
 /** How far the second light keeps from the frame's sides (short sides). */
 const SECOND_MARGIN = 0.12
 /** The second light's core line and its wide light (haze, face), against the main light's: a smaller light whose
  * core turns white only at its peak. */
-const SECOND_CORE = 0.25
-const SECOND_FAR = 0.35
+const SECOND_CORE = 0.35
+const SECOND_FAR = 0.6
 /** Red over blue in sRGB: above zero for warm colors. */
 const warmthOf = (hex: string) => parseInt(hex.slice(1, 3), 16) - parseInt(hex.slice(5, 7), 16)
 
@@ -697,8 +702,9 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     })
   })
 
-  // The second light: a smaller, dimmer light of another color from another side, on the other edge in the crop when
-  // one shows, else on the far stretch of the light's own edge. It is placed from the seed's place for the main light,
+  // The second light: a light of its own from another side, on the other edge in the crop when one shows, else on the
+  // far stretch of the light's own edge: a fifth to a third of the visible edge long, at half to three quarters of
+  // the main light, with its own hot core, glow and face light. It is placed from the seed's place for the main light,
   // not the dragged one, so a drag never moves it in a jump, and it fades out as the main light comes near it.
   const runLength = (r: Vec2[]) => r.slice(1).reduce((s, p, i) => s + Math.hypot(p[0] - r[i][0], p[1] - r[i][1]), 0)
   // The seed's own place for the main light, without the controls, so nothing a drag moves can move the second light.
@@ -706,66 +712,84 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const homeContour = nearestOnContours(drawn, anchorR, seedHome).contour
   const shown = runs.filter((r) => r.length > 3).map((r) => ({ r, contour: nearestOnContours(drawn, anchorR, r[Math.floor(r.length / 2)]).contour }))
   const other = shown.filter((x) => x.contour !== homeContour && runLength(x.r) > 0.4).sort((a, b) => runLength(b.r) - runLength(a.r))[0]
+  const homeRun = shown.filter((x) => x.contour === homeContour).map((x) => x.r).sort((a, b) => Math.min(...a.map((p) => dist2(p, seedHome))) - Math.min(...b.map((p) => dist2(p, seedHome))))[0] ?? run
+  const halfLength = Math.min(0.45, Math.max(0.12, 0.5 * lerp(0.2, 0.33, design.secondWidth) * runLength(homeRun))) * (def.wash ? 1.3 : 1)
+  const keepOff = Math.max(0.45, halfLength + 0.3)
   // Kept inside the frame (SECOND_MARGIN from its sides), so its hot core shows.
   const inFrame = (p: Vec2) => Math.abs(p[0]) <= fw / 2 - SECOND_MARGIN && Math.abs(p[1]) <= fh / 2 - SECOND_MARGIN
   const insideRun = (r: Vec2[]) => r.filter(inFrame)
-  let secondPoint: Vec2 | null = null
   const otherIn = other ? insideRun(other.r) : []
-  if (otherIn.length > 3 && design.secondSide < 0.65) secondPoint = pointAlong(otherIn, lerp(0.3, 0.7, design.secondAt))
-  else {
-    const homeRun = shown.filter((x) => x.contour === homeContour).map((x) => x.r).sort((a, b) => Math.min(...a.map((p) => dist2(p, seedHome))) - Math.min(...b.map((p) => dist2(p, seedHome))))[0] ?? run
-    const i0 = homeRun.reduce((best, p, i) => (dist2(p, seedHome) < dist2(homeRun[best], seedHome) ? i : best), 0)
-    const arms = [homeRun.slice(0, i0 + 1).reverse(), homeRun.slice(i0)].map(insideRun).sort((a, b) => runLength(b) - runLength(a))
-    // The longer arm first, then the shorter one, then the other edge: the first place far enough from the main light.
-    const tries = [
-      arms[0].length > 3 ? pointAlong(arms[0], lerp(0.45, 0.8, design.secondAt)) : null,
-      arms[1].length > 3 ? pointAlong(arms[1], lerp(0.6, 0.9, design.secondAt)) : null,
-      otherIn.length > 3 ? pointAlong(otherIn, lerp(0.3, 0.7, design.secondAt)) : null,
-    ]
-    secondPoint = tries.find((p): p is Vec2 => !!p && Math.sqrt(dist2(p, seedHome)) >= 0.3) ?? null
-  }
-  if (secondPoint && Math.sqrt(dist2(secondPoint, seedHome)) < 0.3) secondPoint = null
+  const i0 = homeRun.reduce((best, p, i) => (dist2(p, seedHome) < dist2(homeRun[best], seedHome) ? i : best), 0)
+  const arms = [homeRun.slice(0, i0 + 1).reverse(), homeRun.slice(i0)].map(insideRun).sort((a, b) => runLength(b) - runLength(a))
+  // A wash's glow sits far from the arc's hot core, at the far end of its longer arm.
+  const tries = def.wash
+    ? [arms[0].length > 3 ? pointAlong(arms[0], lerp(0.85, 0.95, design.secondAt)) : null]
+    : [
+        otherIn.length > 3 && design.secondSide < 0.65 ? pointAlong(otherIn, lerp(0.3, 0.7, design.secondAt)) : null,
+        arms[0].length > 3 ? pointAlong(arms[0], lerp(0.6, 0.85, design.secondAt)) : null,
+        arms[1].length > 3 ? pointAlong(arms[1], lerp(0.65, 0.9, design.secondAt)) : null,
+        otherIn.length > 3 ? pointAlong(otherIn, lerp(0.3, 0.7, design.secondAt)) : null,
+      ]
+  const secondPoint = tries.find((p): p is Vec2 => !!p && Math.sqrt(dist2(p, seedHome)) >= keepOff) ?? null
   const host = plan.second >= 0 ? plan.second : plan.units.length < MERGED_UNITS ? plan.units.length : -1
   const secondParams: Record<string, ParamValue> = { secondUnit: 0, secondAt: [-40, -40] }
   if (secondPoint && host >= 0) {
     const on2 = nearestOnContours(drawn, anchorR, secondPoint)
-    const halfLength = lerp(0.1, 0.2, design.secondWidth) * (def.wash ? 2.2 : 1)
     const tSpan = halfLength / (contourLength(drawn.contours[on2.contour]) || 1)
-    const peak = lerp(0.5, 0.8, design.secondGain) * smooth01(0.2, 0.4, Math.sqrt(dist2(hot, secondPoint)))
+    const near = smooth01(0.3, 0.55, Math.sqrt(dist2(hot, secondPoint)))
+    const peak = lerp(0.5, 0.75, design.secondGain) * near
     const at = SECOND_SHAPE.map((o) => round4(Math.min(0.999, Math.max(0.001, on2.ts[on2.contour] + o * tSpan))))
     const gains = SECOND_LEVEL.map((g) => round4(g * peak))
-    // The unit's warmest color (Orange-red rather than the Yellow it dims through).
-    const warmest = (members: number[]) => members.reduce((a, b) => (warmthOf(colors[b]) > warmthOf(colors[a]) ? b : a))
-    const own = slotOf(plan.second >= 0 ? warmest(plan.units[plan.second].colors) : plan.key)
+    // The pack's warm or bright color: the unit's warmest (Orange-red) along the stretch and its brightest at the core
+    // (Yellow); a wash's glow takes the brightest, like the poster's yellow glow in the blue.
+    const members = plan.second >= 0 ? plan.units[plan.second].colors : [plan.key]
+    const warmest = slotOf(members.reduce((a, b) => (warmthOf(colors[b]) > warmthOf(colors[a]) ? b : a)))
+    const brightest = slotOf(members.reduce((a, b) => (L(colors[b]) > L(colors[a]) ? b : a)))
+    const side = def.wash ? brightest : warmest
     const e = host + 1
     delete unitParams[`e${e}Drift`]
     delete unitParams[`e${e}DriftShape`]
+    // As it dims it follows its color's own dim path inside the pack (Lime through Forest, Ice through Steel), which
+    // still reads as that color, not olive or grey.
+    const sideHex = colors[side - 2]
+    const dimTo = dimPartner(sideHex, colors.filter((_, i) => shares[i] > 0.001))
+    // (Not a wash's glow, which takes the key's color: there a dim path would change the design between packs.)
+    if (dimTo && !def.wash) Object.assign(unitParams, { [`e${e}Drift`]: driftRatios(sideHex, dimTo), [`e${e}DriftShape`]: [0.75, 3] })
     Object.assign(unitParams, {
       [`e${e}On`]: true,
-      [`e${e}Own`]: own,
+      [`e${e}Own`]: side,
       [`e${e}Rest`]: 1,
       [`e${e}Stops`]: SECOND_SHAPE.length,
       [`e${e}StopAt`]: at.slice(0, 4),
       [`e${e}StopAt2`]: [...at.slice(4), 1],
-      [`e${e}StopColor`]: [own, own, own, own],
-      [`e${e}StopColor2`]: [own, own, own, 1],
+      [`e${e}StopColor`]: [side, side, side, brightest],
+      [`e${e}StopColor2`]: [side, side, side, 1],
       [`e${e}StopGain`]: gains.slice(0, 4),
       [`e${e}StopGain2`]: [...gains.slice(4), 0],
       [`e${e}StopContour`]: on2.contour,
+      // A wash's glow takes the key's color, so its own stays at the stand-in's lightness (pushed brighter, a saturated
+      // color clips in one channel and the design changes between packs over the glow's wide area).
+      [`e${e}Level`]: def.wash ? 0 : SECOND_L,
     })
     Object.assign(secondParams, {
       secondUnit: e,
       secondAt: [round4(secondPoint[0] - anchorR[0]), round4(secondPoint[1] - anchorR[1])],
       secondCore: SECOND_CORE,
+      // Between the two lit stretches the main light's line goes dark, well past the second light's ends, so their
+      // face light never overlaps and the colors never mix into pink or mauve.
       gapAt: round4(on2.ts[on2.contour]),
       gapContour: on2.contour,
-      gapDark: round4(0.35 * halfLength),
-      gapFade: round4(0.9 * halfLength),
-      // In a wash it is a soft glow inside the gradient, as wide as the main light's. Its haze and face take the key's
-      // color at the same luminance, so its own color stays on its stretch of the edge (over the key's light it read
-      // purple or olive) and the color stage colors the glow from its part.
+      // The gap fades out with the second light as a dragged main light comes near, so the main light is never cut;
+      // its length stays (shrinking it left a sharp notch on the main light that flickered as it moved).
+      gapDark: round4(halfLength + SECOND_GAP),
+      gapFade: SECOND_GAP_FADE,
+      gapDepth: round4(near),
+      // Its own soft light on the nearby face, in its own color; a wash's is a wide soft glow, at a third of the wash's
+      // own fill so the frame keeps its blue.
+      // A wash's glow takes the key's color at the same luminance (in its own color it read green, teal or mauve), and
+      // the color stage colors it from its warm part.
       secondFar: def.wash ? 0.8 : SECOND_FAR,
-      secondPale: 1,
+      secondPale: def.wash ? 1 : 0,
     })
   }
   // Into the face at the light (for the color stage's parts): the side of the edge the face is on.

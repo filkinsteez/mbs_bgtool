@@ -754,6 +754,8 @@ export interface EmissionFade {
   t: number
   dark: number
   fade: number
+  /** How much of the light the fade takes away at its darkest, 0..1 (default 1: all of it). */
+  depth?: number
 }
 
 export interface EmitterSettings {
@@ -917,7 +919,8 @@ function fadeAt(fades: readonly EmissionFade[], closed: boolean, total: number, 
   for (const f of fades) {
     const apart = Math.abs(t - f.t)
     const d = (closed ? Math.min(apart, 1 - apart) : apart) * total
-    share *= f.fade > 0 ? Math.min(1, Math.max(0, (d - f.dark) / f.fade)) : d > f.dark ? 1 : 0
+    const left = f.fade > 0 ? Math.min(1, Math.max(0, (d - f.dark) / f.fade)) : d > f.dark ? 1 : 0
+    share *= f.depth === undefined ? left : 1 - f.depth * (1 - left)
   }
   return share
 }
