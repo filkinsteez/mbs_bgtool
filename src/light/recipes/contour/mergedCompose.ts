@@ -202,7 +202,10 @@ export function seedDesign(seed: number) {
   // The second light: which side it takes (the other edge when one shows, else the far stretch), where along it, how
   // strong and how long.
   const second = { secondSide: rand(), secondAt: rand(), secondGain: rand(), secondWidth: rand() }
-  return { layout: (((s - 1) % LAYOUTS.length) + LAYOUTS.length) % LAYOUTS.length, jitter, ...draws, ...face, ...second }
+  // Whether the second light asks for a warm color (Yellow, Tan) or a cool one (Cyan, Ice, Steel), where its glow stays
+  // off the main light's face.
+  const edge = { edgeWarm: rand() < 0.5 }
+  return { layout: (((s - 1) % LAYOUTS.length) + LAYOUTS.length) % LAYOUTS.length, jitter, ...draws, ...face, ...second, ...edge }
 }
 
 /** Index into MERGED_SHAPES of the seed's shape. */
@@ -526,6 +529,37 @@ const MERGED_UNITS = 3
 /** The second light along its edge: stop offsets (times its half length) and levels (times its peak). */
 const SECOND_SHAPE = [-1, -0.65, -0.3, 0, 0.3, 0.65, 1]
 const SECOND_LEVEL = [0, 0.35, 0.8, 1, 0.8, 0.35, 0]
+/** Outside a wash the second light fades in and out along the outline over a third of its length at each end, so it
+ * reads as the outline's light changing color: stop offsets (times its half length) and levels. On the main edge it is
+ * this much longer than it was. */
+const FADE_SHAPE = [-1, -0.67, -0.33, 0, 0.33, 0.67, 1]
+const FADE_LEVEL = [0, 0.25, 0.75, 1, 0.75, 0.25, 0]
+const SECOND_LONGER = 1.35
+/** A warm and a cool second light's peak range, times the main light's level. */
+const WARM_PEAK = [0.65, 0.9]
+const COOL_PEAK = [0.38, 0.5]
+/** The dark colors keep clear of the second light's brighter middle only (this share of its half length), since its
+ * ends fade to black. */
+const DARK_SECOND_SHARE = 0.7
+/** Outside a wash its haze and face light against the main light's: its own glow carries its color, and a wide dim
+ * halo around it would take the main light's color through the stage. */
+const STRETCH_FAR = 0.2
+/** Another edge's own light: its half length (this share of its visible length, within these bounds), how far its
+ * hottest place keeps from the main light, and its core line (times the main one). */
+const EDGE_SHARE = 0.33
+const EDGE_HALF_MIN = 0.25
+const EDGE_HALF_MAX = 0.8
+const EDGE_KEEP_OFF = 0.45
+/** How far inside the frame's sides another edge's light has its hottest place (short sides). */
+const EDGE_MARGIN = 0.04
+const EDGE_CORE = 0.6
+/** Its glow's width against the main glow's, and its strength. */
+const EDGE_GLOW = 1.2
+const EDGE_GLOW_WEIGHT = 1.4
+/** How far (short sides) another edge's light keeps from the main edge everywhere along it to take a warm color, and
+ * the most a layout may be out of focus for it (further out, its glow spreads over the main light's face). */
+const WARM_CLEAR = 0.3
+const WARM_BLUR = 1.5
 /** The second light's colors' Oklab lightness, the same in every pack. */
 const SECOND_L = 0.75
 /** A part that is not in this frame (off it, so its field is empty). */
@@ -539,15 +573,18 @@ const EDGE_PART_WIDTH = 0.1
 const WARM_PART_WIDTH = 0.05
 /** The dark colors' stretches of outline (short sides): half their length; how far from the seed's place for the main
  * light, past the second light's ends and from the far stretch's middle they keep; how far apart the two are; how far
- * inside the frame's sides; places tried per contour; the parts' width. */
+ * inside the frame's sides; places tried per contour; the parts' width. The second is a little longer and wider: with
+ * the second light's own glow in the frame, its color needs more of the outline to show. */
 const DARK_HALF = 0.15
 const DARK_FROM_MAIN = 0.4
 const DARK_CLEAR = 0.1
 const DARK_COOL_CLEAR = 0.3
-const DARK_APART = 0.3
+const DARK_APART = 0.34
 const DARK_MARGIN = 0.06
 const DARK_SAMPLES = 160
 const DARK_PART_WIDTH = 0.035
+const DARK2_HALF = 0.19
+const DARK2_PART_WIDTH = 0.042
 /** How far into the face the main light's part sits from the light. */
 const LEAD_INTO = 0.15
 /** How far past the second light's ends the main light's line stays dark, and over how long it comes back. */
@@ -555,10 +592,8 @@ const SECOND_GAP = 0.12
 const SECOND_GAP_FADE = 0.25
 /** How far the second light keeps from the frame's sides (short sides). */
 const SECOND_MARGIN = 0.12
-/** The second light's core line and its wide light (haze, face), against the main light's: a smaller light whose
- * core turns white only at its peak. */
+/** The second light's core line against the main light's: a smaller light whose core turns white only at its peak. */
 const SECOND_CORE = 0.35
-const SECOND_FAR = 0.6
 /** The main light's glow: wider and stronger, so Meta Blue's own light is the brightest and widest and its brightest
  * part reaches its own color's lightness. The second light keeps the glow strength it had (SECOND_GLOW_WEIGHT, at
  * the base width): wider, its own color reached into the main light's face and mixed to indigo or mauve. */
@@ -739,42 +774,68 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const seedHome = pointAlong(clearRun.length > 1 ? clearRun : run, Math.min(0.75, Math.max(0.25, def.hotAt + design.hotShift))) ?? anchor
   const homeContour = nearestOnContours(drawn, anchorR, seedHome).contour
   const shown = runs.filter((r) => r.length > 3).map((r) => ({ r, contour: nearestOnContours(drawn, anchorR, r[Math.floor(r.length / 2)]).contour }))
-  const other = shown.filter((x) => x.contour !== homeContour && runLength(x.r) > 0.4).sort((a, b) => runLength(b.r) - runLength(a.r))[0]
   const homeRun = shown.filter((x) => x.contour === homeContour).map((x) => x.r).sort((a, b) => Math.min(...a.map((p) => dist2(p, seedHome))) - Math.min(...b.map((p) => dist2(p, seedHome))))[0] ?? run
-  const halfLength = Math.min(0.45, Math.max(0.12, 0.5 * lerp(0.2, 0.33, design.secondWidth) * runLength(homeRun))) * (def.wash ? 1.3 : 1)
-  const keepOff = Math.max(0.45, halfLength + 0.3)
+  // Another edge: the longest other visible run, of another contour or of the main one (a ribbon's other side).
+  const other = shown.filter((x) => x.r !== homeRun && runLength(x.r) > 0.4).sort((a, b) => runLength(b.r) - runLength(a.r))[0]
+  const baseHalf = Math.min(0.45, Math.max(0.12, 0.5 * lerp(0.2, 0.33, design.secondWidth) * runLength(homeRun))) * (def.wash ? 1.3 : 1)
+  const stretchHalf = baseHalf * (def.wash ? 1 : SECOND_LONGER)
+  const keepOff = Math.max(0.45, baseHalf + 0.3)
   // Kept inside the frame (SECOND_MARGIN from its sides), so its hot core shows.
   const inFrame = (p: Vec2) => Math.abs(p[0]) <= fw / 2 - SECOND_MARGIN && Math.abs(p[1]) <= fh / 2 - SECOND_MARGIN
   const insideRun = (r: Vec2[]) => r.filter(inFrame)
-  const otherIn = other ? insideRun(other.r) : []
+  // Another edge in the frame is a light of its own, like a ring: lit over most of its visible length, hottest at a
+  // seeded place inside the frame and far enough from the main light.
+  const otherIn = other ? other.r.filter((p) => Math.abs(p[0]) <= fw / 2 - EDGE_MARGIN && Math.abs(p[1]) <= fh / 2 - EDGE_MARGIN) : []
+  const otherPoint = !def.wash && otherIn.length > 3 ? pointAlong(otherIn, lerp(0.3, 0.7, design.secondAt)) : null
+  const edgeLight = !!otherPoint && Math.sqrt(dist2(otherPoint, seedHome)) >= EDGE_KEEP_OFF
+  const halfLength = edgeLight ? Math.min(EDGE_HALF_MAX, Math.max(EDGE_HALF_MIN, EDGE_SHARE * runLength(otherIn))) : stretchHalf
   const i0 = homeRun.reduce((best, p, i) => (dist2(p, seedHome) < dist2(homeRun[best], seedHome) ? i : best), 0)
   const arms = [homeRun.slice(0, i0 + 1).reverse(), homeRun.slice(i0)].map(insideRun).sort((a, b) => runLength(b) - runLength(a))
   // A wash's glow sits far from the arc's hot core, at the far end of its longer arm.
   const tries = def.wash
     ? [arms[0].length > 3 ? pointAlong(arms[0], lerp(0.85, 0.95, design.secondAt)) : null]
     : [
-        otherIn.length > 3 && design.secondSide < 0.65 ? pointAlong(otherIn, lerp(0.3, 0.7, design.secondAt)) : null,
         arms[0].length > 3 ? pointAlong(arms[0], lerp(0.6, 0.85, design.secondAt)) : null,
         arms[1].length > 3 ? pointAlong(arms[1], lerp(0.65, 0.9, design.secondAt)) : null,
-        otherIn.length > 3 ? pointAlong(otherIn, lerp(0.3, 0.7, design.secondAt)) : null,
       ]
-  const secondPoint = tries.find((p): p is Vec2 => !!p && Math.sqrt(dist2(p, seedHome)) >= keepOff) ?? null
+  const secondPoint = edgeLight ? otherPoint : (tries.find((p): p is Vec2 => !!p && Math.sqrt(dist2(p, seedHome)) >= keepOff) ?? null)
   const host = plan.second >= 0 ? plan.second : plan.units.length < MERGED_UNITS ? plan.units.length : -1
   const secondParams: Record<string, ParamValue> = { secondUnit: 0, secondAt: [-40, -40] }
   let secondOn: { contour: number; t: number; tSpan: number; near: number } | null = null
+  // A warm second light only where its glow stays off the main light's face (over it the two blend into violet): in
+  // focus, on the main edge, where the main light goes dark along it, or on another edge that keeps clear of the main
+  // edge.
+  let edgeWarm = false
   if (secondPoint && host >= 0) {
     const on2 = nearestOnContours(drawn, anchorR, secondPoint)
     const tSpan = halfLength / (contourLength(drawn.contours[on2.contour]) || 1)
     const near = smooth01(0.3, 0.55, Math.sqrt(dist2(hot, secondPoint)))
     secondOn = { contour: on2.contour, t: on2.ts[on2.contour], tSpan, near }
-    const peak = lerp(0.5, 0.75, design.secondGain) * near
-    const at = SECOND_SHAPE.map((o) => round4(Math.min(0.999, Math.max(0.001, on2.ts[on2.contour] + o * tSpan))))
-    const gains = SECOND_LEVEL.map((g) => round4(g * peak))
+    const stretchPoints = [-1, -0.5, 0, 0.5, 1].map((k) => {
+      const c = drawn.contours[on2.contour]
+      const t = on2.ts[on2.contour] + k * tSpan
+      const q = contourPoint(c, c.closed ? t - Math.floor(t) : Math.min(1, Math.max(0, t))).point
+      return [q[0] + anchorR[0], q[1] + anchorR[1]] as Vec2
+    })
+    const clearOfMain = stretchPoints.every((p) => homeRun.every((q) => dist2(p, q) >= WARM_CLEAR * WARM_CLEAR))
+    edgeWarm = !def.wash && blur <= WARM_BLUR && design.edgeWarm && (!edgeLight || clearOfMain)
+    // A cool light stays dimmer than the main light's glow: through the stage only its hottest part takes its color
+    // and the rest of it is Meta Blue, which would then be Meta Blue's brightest light, lit only beside another color.
+    const peak = (def.wash ? lerp(0.5, 0.75, design.secondGain) : edgeWarm ? lerp(WARM_PEAK[0], WARM_PEAK[1], design.secondGain) : lerp(COOL_PEAK[0], COOL_PEAK[1], design.secondGain)) * near
+    const at = (def.wash ? SECOND_SHAPE : FADE_SHAPE).map((o) => round4(Math.min(0.999, Math.max(0.001, on2.ts[on2.contour] + o * tSpan))))
+    const gains = (def.wash ? SECOND_LEVEL : FADE_LEVEL).map((g) => round4(g * peak))
     // The pack's warm or bright color: the unit's warmest (Orange-red) along the stretch and its brightest at the core
     // (Yellow); a wash's glow takes the brightest, like the poster's yellow glow in the blue.
     const members = plan.second >= 0 ? plan.units[plan.second].colors : [plan.key]
-    const warmest = slotOf(members.reduce((a, b) => (warmthOf(colors[b]) > warmthOf(colors[a]) ? b : a)))
-    const brightest = slotOf(members.reduce((a, b) => (L(colors[b]) > L(colors[a]) ? b : a)))
+    // A cool one takes the pack's lightest light color that isn't warm (Cyan, Ice), or the key's where there is none
+    // (Elemental), as the stage colors it.
+    const coolest = colors
+      .map((_, i) => i)
+      .filter((i) => i !== plan.key && shares[i] > 0.001 && L(colors[i]) >= LIGHT_L && !(chroma(colors[i]) > 0.04 && hue(colors[i]) >= 20 && hue(colors[i]) <= 140))
+      .sort((a, b) => L(colors[b]) - L(colors[a]))[0] ?? plan.key
+    const cool = !def.wash && !edgeWarm
+    const warmest = slotOf(cool ? coolest : members.reduce((a, b) => (warmthOf(colors[b]) > warmthOf(colors[a]) ? b : a)))
+    const brightest = slotOf(cool ? coolest : members.reduce((a, b) => (L(colors[b]) > L(colors[a]) ? b : a)))
     const side = def.wash ? brightest : warmest
     const e = host + 1
     delete unitParams[`e${e}Drift`]
@@ -804,9 +865,14 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     Object.assign(secondParams, {
       secondUnit: e,
       secondAt: [round4(secondPoint[0] - anchorR[0]), round4(secondPoint[1] - anchorR[1])],
-      secondCore: SECOND_CORE,
-      secondGlow: round4(1 / MAIN_GLOW),
-      secondGlowWeight: round4(SECOND_GLOW_WEIGHT / MAIN_GLOW_WEIGHT),
+      // An edge's own light turns near white where it is hottest, like a ring's.
+      secondCore: edgeLight ? EDGE_CORE : SECOND_CORE,
+      // A cool one's glow is a little wider than the main one's, so its color reads in it; a warm one keeps the narrow
+      // glow: wider, its color reached the main light's and mixed to mauve or indigo.
+      secondGlow: round4(def.wash || edgeWarm ? 1 / MAIN_GLOW : EDGE_GLOW),
+      secondGlowWeight: round4((def.wash || edgeWarm ? SECOND_GLOW_WEIGHT : EDGE_GLOW_WEIGHT) / MAIN_GLOW_WEIGHT),
+      // Its glow lies on both sides of its line.
+      secondGlowSide: def.wash ? -1 : 0,
       // Between the two lit stretches the main light's line goes dark, well past the second light's ends, so their
       // face light never overlaps and the colors never mix into pink or mauve.
       gapAt: round4(on2.ts[on2.contour]),
@@ -820,7 +886,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
       // own fill so the frame keeps its blue.
       // A wash's glow takes the key's color at the same luminance (in its own color it read green, teal or mauve), and
       // the color stage colors it from its warm part.
-      secondFar: def.wash ? 0.8 : SECOND_FAR,
+      secondFar: def.wash ? 0.8 : STRETCH_FAR,
       secondPale: def.wash ? 1 : 0,
     })
   }
@@ -873,11 +939,11 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     const p = contourPoint(c, c.closed ? t - Math.floor(t) : Math.min(1, Math.max(0, t))).point
     return [p[0] + anchorR[0], p[1] + anchorR[1]]
   }
-  const partParams: Record<string, ParamValue> = { partWarm: PART_OFF, partWarm2: PART_OFF, partBright: PART_OFF }
+  const partParams: Record<string, ParamValue> = { partWarm: PART_OFF, partWarm2: PART_OFF, partWarmFade: 0, partEdgeWarm: 0 }
   if (secondOn && Number(secondParams.secondUnit) > 0) {
     const { contour, t, tSpan, near } = secondOn
     const [a, b, c] = [-1, 0, 1].map((k) => framePoint(pointOn(contour, t + k * tSpan)))
-    Object.assign(partParams, { partWarm: [...a, ...b], partWarm2: [...b, ...c], partBright: [...b, round4(Math.max(0.05, 0.35 * halfLength)), round4(near)] })
+    Object.assign(partParams, { partWarm: [...a, ...b], partWarm2: [...b, ...c], partWarmFade: round4(near), partEdgeWarm: edgeWarm ? 1 : 0 })
   }
   const onHome = nearestOnContours(drawn, anchorR, seedHome)
   const tHome = onHome.ts[onHome.contour]
@@ -915,7 +981,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     Math.abs(p[0]) <= fw / 2 - DARK_MARGIN &&
     Math.abs(p[1]) <= fh / 2 - DARK_MARGIN &&
     Math.sqrt(dist2(p, seedHome)) >= DARK_FROM_MAIN &&
-    (!secondMiddle || Math.sqrt(dist2(p, secondMiddle)) >= halfLength + DARK_CLEAR) &&
+    (!secondMiddle || Math.sqrt(dist2(p, secondMiddle)) >= (def.wash ? 1 : DARK_SECOND_SHARE) * halfLength + DARK_CLEAR) &&
     Math.sqrt(dist2(p, coolMiddle)) >= DARK_COOL_CLEAR
   const darkSamples = merged.contours.flatMap((c, ci) => {
     const length = contourLength(c) || 1
@@ -928,8 +994,8 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     darkSamples
       .filter((s) => !keepFrom || Math.sqrt(dist2(s.p, keepFrom)) >= DARK_APART)
       .reduce<(typeof darkSamples)[number] | null>((best, s) => (!best || dist2(s.p, seedHome) < dist2(best.p, seedHome) ? s : best), null)
-  const darkAt = (s: (typeof darkSamples)[number] | null) =>
-    s ? [...framePoint(onMerged(s.ci, s.t - DARK_HALF / s.length)), ...framePoint(onMerged(s.ci, s.t + DARK_HALF / s.length))] : PART_OFF
+  const darkAt = (s: (typeof darkSamples)[number] | null, half = DARK_HALF) =>
+    s ? [...framePoint(onMerged(s.ci, s.t - half / s.length)), ...framePoint(onMerged(s.ci, s.t + half / s.length))] : PART_OFF
   const dark1 = nearestDark(null)
   // With no clear place for the second, it continues the first along the outline, on the side away from the main
   // light, so the dim stretch changes from one dark color to the other along its length.
@@ -938,7 +1004,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     return dist2(sides[0].p, seedHome) >= dist2(sides[1].p, seedHome) ? sides[0] : sides[1]
   }
   partParams.partDark = darkAt(dark1)
-  partParams.partDark2 = darkAt(nearestDark(dark1 ? dark1.p : null) ?? (dark1 ? beside(dark1) : null))
+  partParams.partDark2 = darkAt(nearestDark(dark1 ? dark1.p : null) ?? (dark1 ? beside(dark1) : null), DARK2_HALF)
   // The main light with the face near it: from the light, a little into the face the seed's light faces.
   const lead: Vec2 = [hot[0] + homeSign * homeNormal[0] * LEAD_INTO, hot[1] + homeSign * homeNormal[1] * LEAD_INTO]
   partParams.partLead = [...framePoint(lead), 0.3, 0]
@@ -1026,16 +1092,17 @@ const vec = (params: Readonly<Record<string, ParamValue>>, key: string, fallback
 }
 
 /**
- * Where the merged look's light is, from its params, always eight parts in this order: the main light with the face
- * near it (the lead color); the second light's stretch of edge (warm: Yellow over Orange-red, Tan, or the brightest
- * left, Atmospheric's Steel) in two pieces, and its core (bright: Lime); the main light's far stretch of edge, dimmer
- * than its brightest (cool: Cyan, Ice) in two pieces; two dim stretches of the outline, on the other edge or the main
- * edge away from the far stretch, and past the far stretch (dark: Forest and Plum, Slate and Near-black). A part not
- * in the frame sits off it. Nothing here reads the colors.
+ * Where the merged look's light is, from its params, always seven parts in this order: the main light with the face
+ * near it (the lead color); the second light's stretch of edge in two pieces, asking for a warm color (Yellow over
+ * Orange-red, Tan, or in a pack with no warm color its brightest left, Atmospheric's Steel or Ice) or a cool one (Cyan,
+ * Ice or Steel) as the seed picks; the main light's far stretch of edge, dimmer than its brightest (cool) in two
+ * pieces; two dim stretches of the outline (dark: Forest and Plum, Slate and Near-black). A part not in the frame sits
+ * off it. Nothing here reads the colors.
  */
 export function mergedParts(params: Readonly<Record<string, ParamValue>>): StagePart[] {
-  // The second light's parts fade with it as a dragged main light comes near (its strength, partBright's fourth value).
-  const fading = Math.min(1, Math.max(0, vec(params, 'partBright', PART_OFF)[3]))
+  // The second light's parts fade with it as a dragged main light comes near.
+  const fading = Math.min(1, Math.max(0, Number(params.partWarmFade ?? 0)))
+  const edge: FieldWant = Number(params.partEdgeWarm ?? 0) > 0.5 ? 'warm' : 'cool'
   const line = (key: string, want: FieldWant, strength = 1, width = EDGE_PART_WIDTH): StagePart => {
     const v = vec(params, key, PART_OFF)
     return { kind: 'line', from: [v[0], v[1]], to: [v[2], v[3]], width, want, strength }
@@ -1046,12 +1113,11 @@ export function mergedParts(params: Readonly<Record<string, ParamValue>>): Stage
   }
   return [
     spot('partLead', 'any'),
-    line('partWarm', 'warm', fading, WARM_PART_WIDTH),
-    line('partWarm2', 'warm', fading, WARM_PART_WIDTH),
-    spot('partBright', 'bright', fading),
+    line('partWarm', edge, fading, WARM_PART_WIDTH),
+    line('partWarm2', edge, fading, WARM_PART_WIDTH),
     line('partCool', 'cool'),
     line('partCool2', 'cool'),
     line('partDark', 'dark', 1, DARK_PART_WIDTH),
-    line('partDark2', 'dark', 1, DARK_PART_WIDTH),
+    line('partDark2', 'dark', 1, DARK2_PART_WIDTH),
   ]
 }

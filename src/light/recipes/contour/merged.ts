@@ -90,7 +90,8 @@ const params: ParamSpec[] = [
   { kind: 'vector', key: 'partLead', label: 'Color stage: main light with the face near it (place, radius)', min: -9, max: 9, step: 0.0001, default: [-9, -9, -9, -9] },
   { kind: 'vector', key: 'partWarm', label: 'Color stage: second light, first half of its stretch (frame units)', min: -9, max: 9, step: 0.0001, default: [-9, -9, -9, -9] },
   { kind: 'vector', key: 'partWarm2', label: 'Color stage: second light, second half of its stretch', min: -9, max: 9, step: 0.0001, default: [-9, -9, -9, -9] },
-  { kind: 'vector', key: 'partBright', label: 'Color stage: second light core (place, radius, strength)', min: -9, max: 9, step: 0.0001, default: [-9, -9, -9, -9] },
+  { kind: 'number', key: 'partWarmFade', label: 'Color stage: second light strength', min: 0, max: 1, step: 0.0001, default: 0 },
+  { kind: 'number', key: 'partEdgeWarm', label: 'Color stage: second light asks a warm color (1) or a cool one (0)', min: 0, max: 1, step: 1, default: 0 },
   { kind: 'vector', key: 'partCool', label: 'Color stage: main light far stretch, first piece', min: -9, max: 9, step: 0.0001, default: [-9, -9, -9, -9] },
   { kind: 'vector', key: 'partCool2', label: 'Color stage: main light far stretch, second piece', min: -9, max: 9, step: 0.0001, default: [-9, -9, -9, -9] },
   { kind: 'vector', key: 'partDark', label: 'Color stage: dim stretch of outline on the other edge (or the main edge)', min: -9, max: 9, step: 0.0001, default: [-9, -9, -9, -9] },
@@ -107,6 +108,7 @@ const params: ParamSpec[] = [
   { kind: 'number', key: 'secondFar', label: 'Second light haze and face (times the main ones, reach halved)', min: 0, max: 2, step: 0.01, default: 1 },
   { kind: 'number', key: 'secondGlow', label: 'Second light glow width (times the main one)', min: 0.1, max: 8, step: 0.0001, default: 1 },
   { kind: 'number', key: 'secondGlowWeight', label: 'Second light glow strength (times the main one)', min: 0, max: 4, step: 0.0001, default: 1 },
+  { kind: 'number', key: 'secondGlowSide', label: 'Second light glow side (-1 as the main one, 0 both, 1 inside, 2 outside)', min: -1, max: 2, step: 1, default: -1 },
   { kind: 'number', key: 'gain', label: 'Overall gain', min: 0, max: 20, step: 0.001, default: 1 },
   { kind: 'number', key: 'soften', label: 'Overall width', min: 0.05, max: 16, step: 0.001, default: 1 },
 ]
@@ -224,7 +226,12 @@ export function mergedEmitters(ctx: RecipeContext): EmitterSettings[] {
           second && n === 1
             ? { ...read, weight: read.weight * ctx.num('secondCore') }
             : second && n === 2
-              ? { ...read, weight: read.weight * ctx.num('secondGlowWeight'), sigma: read.sigma * ctx.num('secondGlow') }
+              ? {
+                  ...read,
+                  weight: read.weight * ctx.num('secondGlowWeight'),
+                  sigma: read.sigma * ctx.num('secondGlow'),
+                  ...(ctx.num('secondGlowSide') >= 0 ? { side: ctx.num('secondGlowSide') } : {}),
+                }
               : read
         return accent ? { ...part, pale: nearPale[n - 1] } : part
       }),
