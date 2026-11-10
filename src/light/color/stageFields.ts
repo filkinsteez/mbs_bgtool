@@ -72,6 +72,11 @@ export interface StageField {
   name: string
   want: FieldWant
   values: Float32Array
+  /**
+   * An asked field before it fades out with the design's light (partFields): for a color whose dim version is a clean
+   * color (Cyan, and Orange-red where Yellow dims), which keeps its share down to black at the light that is there.
+   */
+  reach?: Float32Array
 }
 
 export function isSunrise(recipe: RecipeId): boolean {
@@ -360,6 +365,7 @@ function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number
   const warpOf = (want: FieldWant) => warps.get(want) ?? warps.get('lead')!
   const lead = new Float32Array(w * h)
   const wants = new Map<FieldWant, Float32Array>(PART_WANTS.map((want) => [want, new Float32Array(w * h)]))
+  const reaches = new Map<FieldWant, Float32Array>(PART_WANTS.map((want) => [want, new Float32Array(w * h)]))
   const groupWant = new Map<number, FieldWant>()
   const darkSpots: Float32Array[] = []
   // Where the asked parts reach, before their colors fade with the design's light.
@@ -381,9 +387,11 @@ function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number
     if (want === 'lead' || want === 'any') maxInto(lead, values)
     else if (want === 'dark') darkSpots.push(values)
     else {
-      // An asked color sits where its part's light is, and fades out with the design's light, never over a dim face.
+      // An asked color sits where its part's light is, and fades out with the design's light, never over a dim face;
+      // the field before that fade is kept as its reach.
       wanted.add(want)
       maxInto(asked, values)
+      const unfaded = Float32Array.from(values)
       for (let i = 0; i < w * h; i++) values[i] *= smooth(0.3, 0.55, L[i])
       // A hot core inside a ring (a halo round the light) is that halo's light at its hottest: it takes the halo's
       // color, which goes toward white there, instead of a dot of another color, handing over smoothly as it leaves.
@@ -392,14 +400,23 @@ function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number
       for (const [ringWant, share] of shares) {
         const held = wants.get(ringWant)
         if (held) maxInto(held, values.map((v) => v * share))
+        const reach = reaches.get(ringWant)
+        if (reach) maxInto(reach, unfaded.map((v) => v * share))
         rest -= share
       }
       const held = wants.get(want)
       if (held) maxInto(held, rest < 1 ? values.map((v) => v * rest) : values)
+      const reach = reaches.get(want)
+      if (reach) maxInto(reach, rest < 1 ? unfaded.map((v) => v * rest) : unfaded)
     }
   }
-  // The lead's own parts (Meta Blue's face) stay its own: an asked color gives way on them.
+  // The lead's own parts (Meta Blue's face) stay its own: an asked color gives way on them. Its reach goes past the
+  // dim fade only where no lead part is, so where Meta Blue's part asks too the share splits as usual.
   for (const values of wants.values()) for (let i = 0; i < w * h; i++) values[i] *= 1 - 0.6 * lead[i]
+  for (const [want, reach] of reaches) {
+    const values = wants.get(want)
+    if (values) for (let i = 0; i < w * h; i++) reach[i] = values[i] + (reach[i] * (1 - 0.6 * lead[i]) - values[i]) * (1 - lead[i])
+  }
   const darks = [new Float32Array(w * h), new Float32Array(w * h)]
   darkSpots.forEach((values, s) => maxInto(darks[s % 2], values))
   // The lead's light reaches everywhere no part claims, and into the look's own dim room at LEAD_FLOOR of that, so a
@@ -413,7 +430,7 @@ function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number
     lead[i] = Math.max(lead[i], LEAD_BASE * (1 - (1 - LEAD_FLOOR) * dark) * (1 - meet[i]))
   }
   const fields: StageField[] = [{ name: 'lead', want: 'lead', values: lead }]
-  for (const [want, values] of wants) if (wanted.has(want)) fields.push({ name: want, want, values })
+  for (const [want, values] of wants) if (wanted.has(want)) fields.push({ name: want, want, values, reach: reaches.get(want) })
   darks.forEach((values, i) => fields.push({ name: `dark${i + 1}`, want: 'dark', values }))
   return fields
 }

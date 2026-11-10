@@ -53,6 +53,10 @@ export interface StageColor {
   fade: [number, number]
   /** Where the color Yellow dims into (Orange-red) is in the list of colors that are on, else -1. */
   neighborIndex: number
+  /** A light color whose dim version is a clean color (Cyan), so it neither fades nor turns (in a look colored by its parts). */
+  clean?: boolean
+  /** Whether the color takes its field before the dim fade (StageField.reach), keeping its share down to black. */
+  keepsDark?: boolean
   /** Its share in the pack's default mix, for handing out fields. */
   defaultShare: number
   /** The asked share, of the colors that are on. */
@@ -97,7 +101,11 @@ export function stageColors(pack: ColorPack, mix: ColorMix, byParts = false): St
       c.brightOnly && c.group === 'warm'
         ? base.filter((o) => o !== c && !o.brightOnly && o.group === 'warm' && o.lightness < c.lightness && hueGap(o.hue, c.hue) <= 60).sort((x, y) => hueGap(x.hue, c.hue) - hueGap(y.hue, c.hue))[0]
         : undefined
-    const kind = c.group === 'dark' ? KIND_DARK : fire ? KIND_TO_NEIGHBOR : c.brightOnly ? KIND_BRIGHT : KIND_PLAIN
+    // In a look colored by its parts a light cool color whose dim version is a clean color (Cyan: teal) needs no fade
+    // and no turn: it keeps its share down to black at the light that is there, using its field before the dim fade
+    // (StageField.reach), as Yellow does, whose dim light is Orange-red.
+    const clean = byParts && c.brightOnly && c.group === 'cool' && c.chroma >= 0.04
+    const kind = c.group === 'dark' ? KIND_DARK : fire ? KIND_TO_NEIGHBOR : c.brightOnly && !clean ? KIND_BRIGHT : KIND_PLAIN
     // In a look colored by its parts Lime, whose dim version is olive, turns into the dark color of a near hue (Forest)
     // where its light falls into that color's own place, over a wide, soft blend; elsewhere it fades as before, so
     // Meta Blue keeps the dim corners (dimEnd, pairedMasks).
@@ -114,6 +122,8 @@ export function stageColors(pack: ColorPack, mix: ColorMix, byParts = false): St
       turn: kind === KIND_TO_NEIGHBOR ? (byParts ? [0.06, 0.14] : [0.08, 0.12]) : dim ? DIM_TURN : [0, 0],
       fade: kind === KIND_DARK ? [0, 0.1] : kind === KIND_BRIGHT ? [0, 0.2] : [0, 0],
       neighborIndex: fire ? base.indexOf(fire) : dim ? base.indexOf(dim) : -1,
+      clean,
+      keepsDark: clean,
       defaultShare: c.defaultShare,
       share: c.share,
     }
@@ -233,9 +243,9 @@ export function assignFields(colors: readonly StageColor[], fields: readonly Sta
         case 'lead':
           return c === colors[ranked[0]]
         case 'bright':
-          return c.kind === KIND_TO_NEIGHBOR || c.kind === KIND_BRIGHT
+          return c.kind === KIND_TO_NEIGHBOR || c.kind === KIND_BRIGHT || c.clean === true
         case 'pale':
-          return c.kind === KIND_BRIGHT && !(c.group === 'warm' && c.hue < 100)
+          return (c.kind === KIND_BRIGHT || c.clean === true) && !(c.group === 'warm' && c.hue < 100)
         case 'warm':
         case 'cool':
         case 'dark':
@@ -286,7 +296,7 @@ export function assignFields(colors: readonly StageColor[], fields: readonly Sta
  * and not a dim neighbor's brown.
  */
 export function colorFields(fields: readonly StageField[], assignment: readonly number[], colors: readonly StageColor[]): Float32Array[] {
-  const out = assignment.map((f) => (f >= 0 ? fields[f].values : new Float32Array(fields[0]?.values.length ?? 0)))
+  const out = assignment.map((f, k) => (f >= 0 ? ((colors[k].keepsDark && fields[f].reach) || fields[f].values) : new Float32Array(fields[0]?.values.length ?? 0)))
   const taken = new Set(assignment)
   const spare = fields.filter((field, i) => field.want === 'dark' && !taken.has(i))
   const darks = colors.flatMap((c, k) => (c.kind === KIND_DARK && assignment[k] >= 0 ? [k] : []))
@@ -475,7 +485,8 @@ const SOFT_LEVELS = [0.5, 1, 2, 4]
  * where the light is nearly even, a short way at a rim or a fast falloff. So a color changes into the next as
  * gradually as the light does, never as a firm outline round a part on even light. In the dim a lit color's blend
  * with navy reads as neither, so there it changes over at most a cell; a dark color is the dim end of a light and
- * comes in over the whole falloff, up to DARK_SOFT_REACH cells. The shader draws these shares as they are,
+ * comes in over the whole falloff, up to DARK_SOFT_REACH cells, and so does a color that keeps its share down to
+ * black (Cyan's glow falling to black). The shader draws these shares as they are,
  * sharpening only where far hues meet at mid lightness.
  */
 export function softFields(grid: StageGrid, values: readonly Float32Array[], colors: readonly StageColor[], weights: readonly number[], sharpness = STAGE_SHARPNESS): Float32Array[] {
@@ -511,7 +522,7 @@ export function softFields(grid: StageGrid, values: readonly Float32Array[], col
     }
   const sigmas = [blurGrid(reach, w, h, 2), blurGrid(darkReach, w, h, 2)]
   return shares.map((share, k) => {
-    const sigma = sigmas[colors[k].kind === KIND_DARK ? 1 : 0]
+    const sigma = sigmas[colors[k].kind === KIND_DARK || colors[k].keepsDark ? 1 : 0]
     const blurred = SOFT_LEVELS.map((s) => blurGrid(share, w, h, s))
     const out = new Float32Array(n)
     for (let i = 0; i < n; i++) {
