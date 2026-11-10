@@ -18,7 +18,7 @@ import { useHistory } from './history/useHistory'
 import { MixControl } from './MixControl'
 import { FilterPicker, FormatPicker, MoodPicker, PackPicker } from './panelPickers'
 import { Preview } from './Preview'
-import { customMix, isMoodId, mixForPack, parseQuery, randomSeed, sceneLook, toQuery, type LinkLook, type SearchParams } from './state'
+import { customMix, isMoodId, mixForPack, parseQuery, randomSeed, sceneLook, toQuery, type SearchParams } from './state'
 import { ToolPanel } from './ToolPanel'
 
 const EXPORT_LABEL = 'Export'
@@ -63,8 +63,6 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const panelFilter = useSyncExternalStore(subscribePanel, readPanelFilter, readNoMood)
   const chosenFilter = readChoice(panelFilter ?? start.filter)
   const [exportStatus, setExportStatus] = useState<ExportStatus>('idle')
-  // The look a link or a history entry set, which holds while its mood and seed are shown.
-  const [link, setLink] = useState<LinkLook>(start)
   const [drag, setDrag] = useState(start.drag)
   const [dragging, setDragging] = useState(false)
   // The drag hint shows on every page load until the first drag or the first use of a control in the panel
@@ -82,13 +80,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const config = useMemo(() => buildDialConfig(start, exportLabel, chosenFilter), [start, exportLabel, chosenFilter])
   const dial = useDialKitController(PANEL_NAME, config, { id: PANEL_ID, onAction: (action) => handleAction(action) })
   const { setValue } = dial
-  // The seed picks the look; the link's own look holds at the link's mood and seed.
-  const state = {
-    ...readToolState(dial.values, mood, link, start.colormix),
-    drag,
-    ...(start.sunrise ? { sunrise: start.sunrise } : {}),
-    ...(start.contour ? { contour: start.contour } : {}),
-  }
+  const state = { ...readToolState(dial.values, mood, start.colormix), drag }
   const query = toQuery(state)
   const { look, pack, seed, format, filter, strength, colormix, mix } = state
   const drawn = sceneLook(state)
@@ -171,14 +163,13 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   }, [sceneKey])
 
   /**
-   * Shows a state from the history: the panel's values, the line and the look it had, with no mood change clearing the
-   * line and no scene change moving it. Returns the query the tool reads back for it.
+   * Shows a state from the history: the panel's values and the line it had, with no mood change clearing the line and
+   * no scene change moving it. Returns the query the tool reads back for it.
    */
   function showState(target: string): string {
     const next = parseQuery(new URLSearchParams(target))
     panelMoodRef.current = next.mood
     sceneKeyRef.current = `${next.look}|${next.pack}|${next.seed}|${next.format}`
-    setLink({ mood: next.mood, seed: next.seed, look: next.look })
     placeDrag(next.drag)
     setDragHint(false)
     applyPanelValues(PANEL_ID, panelValues(buildDialConfig(next, exportLabel, next.filter)))

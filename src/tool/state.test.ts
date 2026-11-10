@@ -5,6 +5,8 @@ import {
   customMix,
   DEFAULT_STATE,
   mixForPack,
+  MOOD_IDS,
+  MOOD_LOOKS,
   parseDrag,
   parsePoint,
   parseQuery,
@@ -13,7 +15,6 @@ import {
   SEED_MAX,
   SEED_MIN,
   sceneLook,
-  shownLook,
   toQuery,
   type ToolState,
 } from './state'
@@ -31,7 +32,7 @@ describe('tool state in the URL', () => {
   it('round-trips a state through the query', () => {
     const state: ToolState = {
       mood: 'contour',
-      look: 'contour.beam',
+      look: 'contour.merged',
       pack: 'atmospheric',
       seed: 43,
       format: '4:5',
@@ -41,7 +42,7 @@ describe('tool state in the URL', () => {
       strength: 0.5,
     }
     const query = toQuery(state)
-    expect(query).toBe('mood=contour&look=beam&pack=atmospheric&seed=43&format=4x5')
+    expect(query).toBe('mood=contour&look=merged&pack=atmospheric&seed=43&format=4x5')
     expect(parseQuery(new URLSearchParams(query))).toEqual(state)
   })
 
@@ -49,7 +50,7 @@ describe('tool state in the URL', () => {
     const old = parseQuery(new URLSearchParams('mood=contour&look=beam&pack=bold&intensity=0.7&seed=15&format=16x9'))
     expect(old).toEqual(parseQuery(new URLSearchParams('mood=contour&look=beam&pack=bold&seed=15&format=16x9')))
     expect(old).not.toHaveProperty('intensity')
-    expect(toQuery(old)).toBe('mood=contour&look=beam&pack=bold&seed=15&format=16x9')
+    expect(toQuery(old)).toBe('mood=contour&look=merged&pack=bold&seed=15&format=16x9')
   })
 
   it("ignores the removed sample headline's headline=1 in an old link and does not write it back", () => {
@@ -61,23 +62,23 @@ describe('tool state in the URL', () => {
   it('writes the filter last, only when one is on', () => {
     const state: ToolState = { ...DEFAULT_STATE, filter: 'grain', strength: 0.35 }
     const query = toQuery(state)
-    expect(query).toBe('mood=sunset&look=bands&pack=bold&seed=1&format=16x9&filter=grain&strength=0.35')
+    expect(query).toBe('mood=sunset&look=merged&pack=bold&seed=1&format=16x9&filter=grain&strength=0.35')
     expect(parseQuery(new URLSearchParams(query))).toEqual(state)
     expect(toQuery(DEFAULT_STATE)).not.toContain('filter')
   })
 
   it("ignores old links' Softness, Horizon and Light position, and no longer writes them", () => {
     const old = parseQuery(new URLSearchParams('mood=sunset&look=ramp&seed=7&softness=0.3&horizon=0.7'))
-    expect(old).toEqual({ ...DEFAULT_STATE, look: 'sunset.ramp', seed: 7 })
-    expect(toQuery(old)).toBe('mood=sunset&look=ramp&pack=bold&seed=7&format=16x9')
+    expect(old).toEqual({ ...DEFAULT_STATE, seed: 7 })
+    expect(toQuery(old)).toBe('mood=sunset&look=merged&pack=bold&seed=7&format=16x9')
     const contour = parseQuery(new URLSearchParams('mood=contour&look=beam&light=0.9'))
-    expect(contour).toMatchObject({ mood: 'contour', look: 'contour.beam' })
+    expect(contour).toMatchObject({ mood: 'contour', look: 'contour.merged' })
     expect(toQuery(contour)).not.toMatch(/softness|horizon|light/)
   })
 
   it('fixes looks from another mood and clamps values', () => {
     const state = parseQuery({ mood: 'sunset', look: 'rim', seed: '0', format: '2:1', pack: 'neon' })
-    expect(state.look).toBe('sunset.bands')
+    expect(state.look).toBe('sunset.merged')
     expect(state.seed).toBe(1)
     expect(state.format).toBe('16:9')
     expect(state.pack).toBe('bold')
@@ -91,12 +92,12 @@ describe('the color mix in the URL', () => {
     expect(parseQuery({ pack: 'elemental' })).toMatchObject({ colormix: false, mix: defaultMix(elemental) })
     const on = parseQuery(new URLSearchParams('mood=sunset&look=bands&pack=bold&colormix=1&seed=1&format=16x9'))
     expect(on).toEqual({ ...DEFAULT_STATE, colormix: true })
-    expect(toQuery(on)).toBe('mood=sunset&look=bands&pack=bold&colormix=1&seed=1&format=16x9')
+    expect(toQuery(on)).toBe('mood=sunset&look=merged&pack=bold&colormix=1&seed=1&format=16x9')
     for (const value of ['0', 'true', 'yes', '']) expect(parseQuery({ colormix: value }).colormix, value).toBe(false)
   })
 
   it('round-trips a mix in whole percents after the pack, with its commas as they are', () => {
-    const query = 'mood=contour&look=beam&pack=bold&colormix=1&mix=20,10,10,60&from=0.3,0.7&to=0.7,0.3&seed=4&format=9x16&filter=grain&strength=0.4'
+    const query = 'mood=contour&look=merged&pack=bold&colormix=1&mix=20,10,10,60&from=0.3,0.7&to=0.7,0.3&seed=4&format=9x16&filter=grain&strength=0.4'
     const state = parseQuery(new URLSearchParams(query))
     expect(state.mix).toEqual(custom)
     expect(toQuery(state)).toBe(query)
@@ -107,7 +108,7 @@ describe('the color mix in the URL', () => {
   it('ignores mix= without colormix=1, so old links open and read back as before', () => {
     const old = parseQuery(new URLSearchParams('mood=sunset&look=bands&pack=bold&mix=20,10,10,60&seed=1&format=16x9'))
     expect(old).toEqual(DEFAULT_STATE)
-    expect(toQuery(old)).toBe('mood=sunset&look=bands&pack=bold&seed=1&format=16x9')
+    expect(toQuery(old)).toBe('mood=sunset&look=merged&pack=bold&seed=1&format=16x9')
   })
 
   it("takes the pack's default mix for a mix= it cannot read or that doesn't fit the pack", () => {
@@ -141,29 +142,31 @@ describe('a new pack', () => {
 })
 
 describe('the look in the URL', () => {
-  it('is the look the seed picks when the link has none, or one from another mood', () => {
-    expect(parseQuery({ mood: 'sunset', seed: '2' }).look).toBe('sunset.ramp')
-    expect(parseQuery({ mood: 'sunset', seed: '6' }).look).toBe('sunset.blooms')
-    expect(parseQuery({ mood: 'contour', seed: '6' }).look).toBe('contour.rim')
-    expect(parseQuery({ mood: 'contour', look: 'bands', seed: '3' }).look).toBe('contour.beam')
-    expect(parseQuery({ mood: 'sunset', look: 'rim', seed: '2' }).look).toBe('sunset.ramp')
+  it("is the mood's merged look at every seed, and the picture draws it", () => {
+    expect(MOOD_LOOKS).toEqual({ sunset: 'sunset.merged', contour: 'contour.merged', rush: 'rush.split' })
+    for (const mood of MOOD_IDS) {
+      for (const seed of [SEED_MIN, 2, 3, 4, 5, 6, 7, 57, SEED_MAX]) {
+        const state = parseQuery({ mood, seed: String(seed) })
+        expect(state.look, `${mood} seed ${seed}`).toBe(MOOD_LOOKS[mood])
+        expect(sceneLook(state), `${mood} seed ${seed}`).toBe(MOOD_LOOKS[mood])
+      }
+    }
+    expect(toQuery(parseQuery({ mood: 'sunset', seed: '7' }))).toBe('mood=sunset&look=merged&pack=bold&seed=7&format=16x9')
+    expect(toQuery(parseQuery({ mood: 'contour', seed: '7' }))).toBe('mood=contour&look=merged&pack=bold&seed=7&format=16x9')
   })
 
-  it("keeps an old link's own look, and writes the look it shows", () => {
-    const old = parseQuery(new URLSearchParams('mood=sunset&look=ramp&seed=7'))
-    expect(old.look).toBe('sunset.ramp')
-    expect(toQuery(old)).toContain('look=ramp')
-    expect(toQuery({ ...DEFAULT_STATE, seed: 3, look: 'sunset.blooms' })).toContain('look=blooms')
-  })
-
-  it("shows the link's look at the link's mood and seed, and the seed's look anywhere else", () => {
-    const link = { mood: 'sunset', seed: 7, look: 'sunset.ramp' } as const
-    expect(shownLook('sunset', 7, link)).toBe('sunset.ramp')
-    expect(shownLook('sunset', 8, link)).toBe('sunset.ramp')
-    expect(shownLook('sunset', 9, link)).toBe('sunset.blooms')
-    expect(shownLook('sunset', 10, link)).toBe('sunset.bands')
-    expect(shownLook('contour', 7, link)).toBe('contour.beam')
-    expect(shownLook('sunset', 7)).toBe('sunset.bands')
+  it("opens old links and history rows that name an old look on the mood's merged look", () => {
+    for (const look of ['bands', 'ramp', 'blooms', 'sunset.bands', 'rim', 'merged', 'split', 'nonsense']) {
+      expect(parseQuery({ mood: 'sunset', look, seed: '7' }).look, look).toBe('sunset.merged')
+    }
+    for (const look of ['halo', 'rim', 'beam', 'streaks', 'contour.beam', 'bands', 'merged']) {
+      expect(parseQuery({ mood: 'contour', look, seed: '7' }).look, look).toBe('contour.merged')
+    }
+    const row = 'mood=contour&look=halo&pack=elemental&from=0.3,0.7&to=0.7,0.3&seed=12&format=9x16&filter=grain&strength=0.4'
+    expect(toQuery(parseQuery(new URLSearchParams(row)))).toBe(row.replace('look=halo', 'look=merged'))
+    expect(toQuery(parseQuery(new URLSearchParams('mood=sunset&look=sunset.bands&pack=bold&seed=3&format=16x9')))).toBe(
+      'mood=sunset&look=merged&pack=bold&seed=3&format=16x9',
+    )
   })
 })
 
@@ -224,7 +227,7 @@ describe('seed', () => {
 describe('dragged line in the URL', () => {
   const dragged: ToolState = {
     mood: 'sunset',
-    look: 'sunset.bands',
+    look: 'sunset.merged',
     pack: 'elemental',
     seed: 77,
     format: '9:16',
@@ -237,14 +240,14 @@ describe('dragged line in the URL', () => {
 
   it('round-trips a line, written after the pack with its commas as they are', () => {
     const query = toQuery(dragged)
-    expect(query).toBe('mood=sunset&look=bands&pack=elemental&from=0.312,0.681&to=0.75,0.2&seed=77&format=9x16')
+    expect(query).toBe('mood=sunset&look=merged&pack=elemental&from=0.312,0.681&to=0.75,0.2&seed=77&format=9x16')
     expect(parseQuery(new URLSearchParams(query))).toEqual(dragged)
     expect(parseQuery({ ...Object.fromEntries(new URLSearchParams(query)) })).toEqual(dragged)
     expect(parseQuery(new URLSearchParams(toQuery({ ...dragged, filter: 'grain', strength: 0.4 })))).toEqual({ ...dragged, filter: 'grain', strength: 0.4 })
   })
 
   it('keeps line ends past the frame edges within the drag reach', () => {
-    const state = { ...dragged, mood: 'contour', look: 'contour.halo', drag: { from: [-0.5, 1.5], to: [1.5, -0.5] } } as const
+    const state = { ...dragged, mood: 'contour', look: 'contour.merged', drag: { from: [-0.5, 1.5], to: [1.5, -0.5] } } as const
     expect(parseQuery(new URLSearchParams(toQuery(state)))).toEqual(state)
     expect(parseQuery({ from: '-3,9', to: '0.5,0.5' }).drag).toEqual({ from: [-0.5, 1.5], to: [0.5, 0.5] })
     expect(parseQuery({ from: '0.12345,0.98765', to: '0.5,0.5' }).drag).toEqual({ from: [0.123, 0.988], to: [0.5, 0.5] })
@@ -254,7 +257,7 @@ describe('dragged line in the URL', () => {
     const old = 'mood=contour&look=beam&pack=atmospheric&intensity=0.8&softness=0.25&light=0.1&seed=43&format=4x5'
     const state = parseQuery(new URLSearchParams(old))
     expect(state).not.toHaveProperty('drag')
-    expect(toQuery(state)).toBe('mood=contour&look=beam&pack=atmospheric&seed=43&format=4x5')
+    expect(toQuery(state)).toBe('mood=contour&look=merged&pack=atmospheric&seed=43&format=4x5')
     expect(parseQuery(new URLSearchParams(`${old}&point=0.3,0.6`))).toEqual(state)
   })
 
@@ -271,21 +274,27 @@ describe('dragged line in the URL', () => {
   })
 })
 
-describe('the merged Sunrise look behind sunrise=merged', () => {
-  it('draws the merged look in Sunrise while the link has sunrise=merged, and keeps the switch in the link', () => {
-    const on = parseQuery(new URLSearchParams('mood=sunset&look=bands&pack=bold&sunrise=merged&seed=3&format=16x9'))
-    expect(on.look).toBe('sunset.bands')
-    expect(sceneLook(on)).toBe('sunset.merged')
-    expect(toQuery(on)).toBe('mood=sunset&look=bands&pack=bold&sunrise=merged&seed=3&format=16x9')
-    expect(sceneLook({ ...on, mood: 'contour', look: 'contour.rim' })).toBe('contour.rim')
+describe('the old switches sunrise=merged and contour=merged', () => {
+  it('open on the merged look, as every link does now, and the link drops them', () => {
+    const sunrise = parseQuery(new URLSearchParams('mood=sunset&look=bands&pack=bold&sunrise=merged&seed=3&format=16x9'))
+    expect(sunrise).toEqual(parseQuery(new URLSearchParams('mood=sunset&pack=bold&seed=3&format=16x9')))
+    expect(sunrise).not.toHaveProperty('sunrise')
+    expect(sceneLook(sunrise)).toBe('sunset.merged')
+    expect(toQuery(sunrise)).toBe('mood=sunset&look=merged&pack=bold&seed=3&format=16x9')
+    const contour = parseQuery(new URLSearchParams('mood=contour&look=rim&pack=bold&contour=merged&seed=7&format=16x9'))
+    expect(contour).not.toHaveProperty('contour')
+    expect(sceneLook(contour)).toBe('contour.merged')
+    expect(toQuery(contour)).toBe('mood=contour&look=merged&pack=bold&seed=7&format=16x9')
   })
 
-  it("is off by default: without it a link opens as before, and look=merged alone opens the seed's look", () => {
-    const plain = parseQuery(new URLSearchParams('mood=sunset&pack=bold&seed=3&format=16x9'))
-    expect(plain).not.toHaveProperty('sunrise')
-    expect(sceneLook(plain)).toBe(plain.look)
-    expect(parseQuery(new URLSearchParams('mood=sunset&look=merged&pack=bold&seed=3&format=16x9'))).toEqual(plain)
-    for (const value of ['1', 'Merged', 'bands', '']) expect(parseQuery({ sunrise: value }), value).not.toHaveProperty('sunrise')
+  it("keep the link's mood, and any other value changes nothing", () => {
+    expect(parseQuery(new URLSearchParams('mood=contour&sunrise=merged&seed=3')).look).toBe('contour.merged')
+    expect(parseQuery(new URLSearchParams('mood=sunset&contour=merged&seed=3')).look).toBe('sunset.merged')
+    const query = { mood: 'contour', pack: 'elemental', seed: '5', format: '9x16' }
+    for (const value of ['1', 'Merged', 'bands', '']) {
+      expect(parseQuery({ ...query, sunrise: value }), value).toEqual(parseQuery(query))
+      expect(parseQuery({ ...query, contour: value }), value).toEqual(parseQuery(query))
+    }
   })
 })
 
@@ -297,7 +306,7 @@ describe('Rush, the third mood', () => {
     expect(sceneLook(rush)).toBe('rush.split')
     expect(toQuery(rush)).toBe('mood=rush&look=split&pack=elemental&seed=5&format=9x16')
     expect(parseQuery(new URLSearchParams(toQuery(rush)))).toEqual(rush)
-    for (const seed of [SEED_MIN, 2, 3, 4, 57, SEED_MAX]) expect(shownLook('rush', seed), `seed ${seed}`).toBe('rush.split')
+    for (const seed of [SEED_MIN, 2, 3, 4, 57, SEED_MAX]) expect(parseQuery({ mood: 'rush', seed: String(seed) }).look, `seed ${seed}`).toBe('rush.split')
   })
 
   it('opens old links with rush=split in Rush, whatever their mood, and leaves the switch out of the link', () => {
@@ -308,7 +317,7 @@ describe('Rush, the third mood', () => {
     expect(parseQuery({ rush: 'split' }).mood).toBe('rush')
   })
 
-  it("ignores other rush values, and look=split in another mood opens that mood's seed look", () => {
+  it("ignores other rush values, and look=split in another mood opens that mood's own look", () => {
     const query = { mood: 'contour', pack: 'elemental', seed: '5', format: '9x16' }
     const plain = parseQuery(query)
     for (const value of ['1', 'Split', 'merged', '']) expect(parseQuery({ ...query, rush: value }), value).toEqual(plain)

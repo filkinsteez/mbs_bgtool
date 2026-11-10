@@ -1,6 +1,7 @@
 // Renders the small pictures on the tool panel's Mood buttons into public/panel/ (Filter and Format show icons and
-// shapes drawn in the page). Each shows the mood's first look, the one seed 1 opens on, in one pack at fixed settings;
-// the panel shows the same pictures whichever pack is picked, and they are not live. Run again after a look changes a lot:
+// shapes drawn in the page). Each shows the mood's one look (MOOD_LOOKS) in one pack, at the tool's fixed controls and
+// no drag; the panel shows the same pictures whichever pack is picked, and they are not live. Run again after a look
+// changes a lot:
 //   node scripts/light/panel-pictures.mjs [--out public/panel] [--seed n] [--sheet file.jpg]
 // --seed renders every picture at that seed (to compare seeds); --sheet also writes a contact sheet of the results.
 import { mkdir } from 'node:fs/promises'
@@ -17,8 +18,8 @@ const PACK_ID = 'atmospheric'
 const MOODS = ['sunset', 'contour', 'rush']
 /** The seed each picture uses, by look; 1 if not listed. */
 const SEEDS = {
-  'sunset.bands': 1,
-  'contour.halo': 1,
+  'sunset.merged': 1,
+  'contour.merged': 1,
   'rush.split': 1,
 }
 
@@ -35,15 +36,14 @@ const harness = await startHarness()
 const written = []
 try {
   const { PACKS } = await harness.ssr('/src/light/color/packs.ts')
-  const { DEFAULT_CONTROLS } = await harness.ssr('/src/light/scene.ts')
-  const { moodLooks } = await harness.ssr('/src/tool/seedLook.ts')
-  const { buildScene } = await harness.ssr('/src/tool/controls.ts')
+  const { MOOD_LOOKS } = await harness.ssr('/src/tool/state.ts')
+  const { buildScene, toolControls } = await harness.ssr('/src/tool/controls.ts')
   const { withFilter } = await harness.ssr('/src/tool/filterControl.ts')
   const pack = PACKS.find((p) => p.id === PACK_ID)
   for (const mood of MOODS) {
-    const look = moodLooks(mood)[0]
+    const look = MOOD_LOOKS[mood]
     const seed = seedOverride ? Number(seedOverride) : (SEEDS[look] ?? 1)
-    const scene = withFilter(buildScene(look, pack, seed, DEFAULT_CONTROLS, 16 / 9), { filter: 'none', strength: 0 })
+    const scene = withFilter(buildScene(look, pack, seed, toolControls(look, pack, seed, 16 / 9), 16 / 9), { filter: 'none', strength: 0 })
     const image = await harness.render({ scene, ...LOOK_SIZE, supersample: 2 })
     const file = path.join(outDir, `${fileName(look)}.webp`)
     await raw(image).webp({ quality: 82 }).toFile(file)

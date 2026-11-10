@@ -147,10 +147,10 @@ describe('contour.merged', () => {
     expect(recipesForMood('contour').map((r) => r.id)).not.toContain('contour.merged')
   })
 
-  it('shows in the tool only behind contour=merged in Contour, and keeps the switch in the link', () => {
+  it('is the look Contour draws in the tool; an old link with contour=merged opens on it and drops the switch', () => {
     const on = parseQuery(new URLSearchParams('mood=contour&look=rim&pack=bold&contour=merged&seed=7&format=16x9'))
     expect(sceneLook(on)).toBe('contour.merged')
-    expect(toQuery(on)).toBe('mood=contour&look=rim&pack=bold&contour=merged&seed=7&format=16x9')
+    expect(toQuery(on)).toBe('mood=contour&look=merged&pack=bold&seed=7&format=16x9')
     const off = parseQuery(new URLSearchParams('mood=contour&look=rim&pack=bold&seed=7&format=16x9'))
     expect(off).not.toHaveProperty('contour')
     expect(sceneLook(off)).toBe(off.look)

@@ -2,7 +2,7 @@ import type { DialConfig } from 'dialkit'
 import { EXPORT_ASPECTS, getPack, isPackId, PACKS, type ColorPack, type MoodId } from '@/light'
 import { defaultMix, mixFromShares, type ColorMix } from '@/light/color/mix'
 import { filterDials, readFilter, STRENGTH_DIAL_KEYS, type FilterChoice } from './filterControl'
-import { DEFAULT_STATE, isExportAspect, readSeed, SEED_MAX, SEED_MIN, shownLook, type LinkLook, type ToolState } from './state'
+import { DEFAULT_STATE, isExportAspect, MOOD_LOOKS, readSeed, SEED_MAX, SEED_MIN, type ToolState } from './state'
 
 export const PANEL_ID = 'tool'
 export const PANEL_NAME = 'Background'
@@ -61,17 +61,17 @@ export function buildDialConfig(initial: ToolState, exportLabel: string, filter:
 
 /**
  * Tool state from the panel's live values; anything missing or out of place falls back to a valid value. The look is
- * the link's own look at the link's mood and seed, else the look the seed picks (`shownLook`). The mix is the panel's
- * while the page has the color mix control on (`colormix`, from its link), else the pack's default.
+ * the mood's one look (`MOOD_LOOKS`). The mix is the panel's while the page has the color mix control on (`colormix`,
+ * from its link), else the pack's default.
  */
-export function readToolState(values: Readonly<Record<string, unknown>>, mood: MoodId, link?: LinkLook, colormix = false): ToolState {
+export function readToolState(values: Readonly<Record<string, unknown>>, mood: MoodId, colormix = false): ToolState {
   const packValue = values[PACK_DIAL_KEY]
   const pack = typeof packValue === 'string' && isPackId(packValue) ? packValue : DEFAULT_STATE.pack
   const format = values.format
   const seed = readSeed(values[SEED_DIAL_KEY], DEFAULT_STATE.seed)
   return {
     mood,
-    look: shownLook(mood, seed, link),
+    look: MOOD_LOOKS[mood],
     pack,
     seed,
     format: isExportAspect(format) ? format : DEFAULT_STATE.format,

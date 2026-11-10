@@ -1,12 +1,12 @@
-import { EXPORT_ASPECTS, getPack, isPackId, isRecipeId, type ColorPack, type ExportAspect, type MoodId, type PackId, type RecipeId } from '@/light'
+import { EXPORT_ASPECTS, getPack, isPackId, type ColorPack, type ExportAspect, type MoodId, type PackId, type RecipeId } from '@/light'
 import { defaultMix, formatMix, isMetaBlueOn, metaBlueIndex, mixPercents, parseMix, setMetaBlue, type ColorMix } from '@/light/color/mix'
 import { clampDrag, clampPoint, type LightDrag, type LightPoint } from './controls'
 import { DEFAULT_FILTER, filterQuery, parseFilterQuery, type FilterChoice } from './filterControl'
-import { lookForSeed, moodLooks } from './seedLook'
 
 /** What the panel and the URL set. Intensity, softness and the mood control are fixed per mood (`FIXED_CONTROLS`). */
 export interface ToolState {
   mood: MoodId
+  /** The mood's one look (`MOOD_LOOKS`), which the link names (`look=merged`). */
   look: RecipeId
   pack: PackId
   seed: number
@@ -20,19 +20,26 @@ export interface ToolState {
   /** The surface filter (`filter=grain` in the URL), none by default, and its strength 0..1 (`strength=0.5`). */
   filter: FilterChoice
   strength: number
-  /** `sunrise=merged` in the URL: Sunrise shows the merged look in place of the seed's look. Missing (off) by default. */
-  sunrise?: 'merged'
-  /** `contour=merged` in the URL: Contour shows the merged look in place of the seed's look. Missing (off) by default. */
-  contour?: 'merged'
 }
 
 export const MOOD_IDS: readonly MoodId[] = ['sunset', 'contour', 'rush']
 export const SEED_MIN = 1
 export const SEED_MAX = 100
 
+/**
+ * The one look each mood draws, at every seed (owner, 2026-11-10 8:33 AM: the merged Sunrise and Contour looks are
+ * the default). The old looks keep their ids and still render by id in the lab and the checks; a link or a history row
+ * that names one opens on its mood's look.
+ */
+export const MOOD_LOOKS: Readonly<Record<MoodId, RecipeId>> = {
+  sunset: 'sunset.merged',
+  contour: 'contour.merged',
+  rush: 'rush.split',
+}
+
 export const DEFAULT_STATE: ToolState = {
   mood: 'sunset',
-  look: 'sunset.bands',
+  look: MOOD_LOOKS.sunset,
   pack: 'bold',
   seed: 1,
   format: '16:9',
@@ -49,31 +56,9 @@ export function isExportAspect(value: unknown): value is ExportAspect {
   return typeof value === 'string' && (EXPORT_ASPECTS as readonly string[]).includes(value)
 }
 
-/** The look if it is one of the looks the mood shows (`moodLooks`), else the look the seed picks for the mood. */
-export function fixLook(mood: MoodId, look: unknown, seed: number): RecipeId {
-  if (typeof look === 'string' && isRecipeId(look) && moodLooks(mood).includes(look)) return look
-  return lookForSeed(mood, seed)
-}
-
-/**
- * The look the picture draws: the merged Sunrise look while `sunrise=merged` is on in Sunrise, the merged Contour look
- * while `contour=merged` is on in Contour, else the state's look.
- */
-export function sceneLook(state: Pick<ToolState, 'mood' | 'look' | 'sunrise' | 'contour'>): RecipeId {
-  if (state.sunrise === 'merged' && state.mood === 'sunset') return 'sunset.merged'
-  if (state.contour === 'merged' && state.mood === 'contour') return 'contour.merged'
-  return state.look
-}
-
-/** The mood, seed and look a page opened with. */
-export type LinkLook = Pick<ToolState, 'mood' | 'seed' | 'look'>
-
-/**
- * The look the tool shows: the link's own look while the mood and seed are the link's, so a link keeps opening the
- * same picture when the seed's looks change; else the look the seed picks for the mood.
- */
-export function shownLook(mood: MoodId, seed: number, link?: LinkLook): RecipeId {
-  return link && link.mood === mood && link.seed === seed ? link.look : lookForSeed(mood, seed)
+/** The look the picture draws: the mood's one look. */
+export function sceneLook(state: Pick<ToolState, 'mood'>): RecipeId {
+  return MOOD_LOOKS[state.mood]
 }
 
 /**
@@ -139,15 +124,15 @@ const shortLook = (look: RecipeId) => look.slice(look.indexOf('.') + 1)
 const formatToQuery = (format: ExportAspect) => format.replace(':', 'x')
 
 /**
- * Reads the tool state from a URL query; missing or invalid values take the defaults. A missing look, or one from
- * another mood, is the look the seed picks. Old links' `intensity`, `softness`, `horizon` and `light` are ignored, as
- * the panel no longer sets them, and old links with `rush=split` open in Rush, whatever their mood. `mix` counts only
- * with `colormix=1`.
+ * Reads the tool state from a URL query; missing or invalid values take the defaults. The look is always the mood's
+ * own (`MOOD_LOOKS`): an old link's look (`look=bands`, `look=rim` and the others) and its `sunrise=merged` or
+ * `contour=merged` open on the mood's merged look, and an old link with `rush=split` opens in Rush, whatever its mood.
+ * Old links' `intensity`, `softness`, `horizon` and `light` are ignored, as the panel no longer sets them. `mix` counts
+ * only with `colormix=1`.
  */
 export function parseQuery(query: QueryInput): ToolState {
   const moodParam = readParam(query, 'mood')
   const mood = readParam(query, 'rush') === 'split' ? 'rush' : isMoodId(moodParam) ? moodParam : DEFAULT_STATE.mood
-  const lookParam = readParam(query, 'look')
   const packParam = readParam(query, 'pack')
   const pack = packParam && isPackId(packParam) ? packParam : DEFAULT_STATE.pack
   const colormix = readParam(query, 'colormix') === '1'
@@ -156,7 +141,7 @@ export function parseQuery(query: QueryInput): ToolState {
   const drag = parseDrag(readParam(query, 'from'), readParam(query, 'to'))
   return {
     mood,
-    look: fixLook(mood, lookParam && !lookParam.includes('.') ? `${mood}.${lookParam}` : lookParam, seed),
+    look: MOOD_LOOKS[mood],
     pack,
     seed,
     format: isExportAspect(format) ? format : DEFAULT_STATE.format,
@@ -164,8 +149,6 @@ export function parseQuery(query: QueryInput): ToolState {
     mix: colormix ? parseMix(getPack(pack), readParam(query, 'mix')) : defaultMix(getPack(pack)),
     ...(drag ? { drag } : {}),
     ...parseFilterQuery(query),
-    ...(readParam(query, 'sunrise') === 'merged' ? { sunrise: 'merged' as const } : {}),
-    ...(readParam(query, 'contour') === 'merged' ? { contour: 'merged' as const } : {}),
   }
 }
 
@@ -181,13 +164,11 @@ export function toQuery(state: ToolState): string {
   ]).toString()
   const mix = customMix(state)
   const color = state.colormix ? `colormix=1${mix ? `&mix=${mix.join(',')}` : ''}` : null
-  const trial = state.sunrise ? `sunrise=${state.sunrise}` : null
-  const contourTrial = state.contour ? `contour=${state.contour}` : null
   const drag = state.drag ? clampDrag(state.drag) : undefined
   const line = drag ? `from=${drag.from.join(',')}&to=${drag.to.join(',')}` : null
   const tail = new URLSearchParams([
     ['seed', String(state.seed)],
     ['format', formatToQuery(state.format)],
   ]).toString()
-  return [head, color, trial, contourTrial, line, tail, filterQuery(state)].filter(Boolean).join('&')
+  return [head, color, line, tail, filterQuery(state)].filter(Boolean).join('&')
 }

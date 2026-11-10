@@ -56,32 +56,30 @@ describe('the color mix in the panel', () => {
     const linked = parseQuery({ pack: 'bold', colormix: '1', mix: '20,10,10,60' })
     DialStore.registerPanel(id, 'Check', buildDialConfig(linked, 'Export', 'none'))
     expect(DialStore.getValue(id, MIX_DIAL_KEY)).toBe(mixPanelValue(linked.mix))
-    expect(readToolState(DialStore.getValues(id), 'sunset', undefined, true)).toMatchObject({ colormix: true, mix: near(linked.mix) })
+    expect(readToolState(DialStore.getValues(id), 'sunset', true)).toMatchObject({ colormix: true, mix: near(linked.mix) })
     expect(readToolState(DialStore.getValues(id), 'sunset')).toMatchObject({ colormix: false, mix: defaultMix(bold) })
 
     const moved = setShare(bold, linked.mix, 1, 0.35)
     DialStore.updateValue(id, MIX_DIAL_KEY, mixPanelValue(moved))
-    expect(readToolState(DialStore.getValues(id), 'sunset', undefined, true).mix).toEqual(near(moved))
+    expect(readToolState(DialStore.getValues(id), 'sunset', true).mix).toEqual(near(moved))
     expect(moved.shares.map((share) => share * 100)).not.toEqual(mixPercents(moved))
     DialStore.unregisterPanel(id)
   })
 
   it("falls back to the pack's default for a mix that is missing, unreadable or another pack's", () => {
-    expect(readToolState({}, 'sunset', undefined, true).mix).toEqual(defaultMix(bold))
-    expect(readToolState({ [MIX_DIAL_KEY]: 'abc' }, 'sunset', undefined, true).mix).toEqual(defaultMix(bold))
-    expect(readToolState({ [MIX_DIAL_KEY]: 0.4 }, 'sunset', undefined, true).mix).toEqual(defaultMix(bold))
-    expect(readToolState({ colors: 'elemental', [MIX_DIAL_KEY]: mixPanelValue(defaultMix(bold)) }, 'sunset', undefined, true).mix).toEqual(defaultMix(elemental))
+    expect(readToolState({}, 'sunset', true).mix).toEqual(defaultMix(bold))
+    expect(readToolState({ [MIX_DIAL_KEY]: 'abc' }, 'sunset', true).mix).toEqual(defaultMix(bold))
+    expect(readToolState({ [MIX_DIAL_KEY]: 0.4 }, 'sunset', true).mix).toEqual(defaultMix(bold))
+    expect(readToolState({ colors: 'elemental', [MIX_DIAL_KEY]: mixPanelValue(defaultMix(bold)) }, 'sunset', true).mix).toEqual(defaultMix(elemental))
   })
 })
 
 describe('the look in the tool state', () => {
-  it('is the look the seed picks, and the link look at the link mood and seed', () => {
-    expect(readToolState({ seed: 1 }, 'sunset').look).toBe('sunset.bands')
-    expect(readToolState({ seed: 2 }, 'sunset').look).toBe('sunset.ramp')
-    expect(readToolState({ seed: 6 }, 'contour').look).toBe('contour.rim')
-    const link = parseQuery({ mood: 'sunset', look: 'blooms', seed: '7' })
-    expect(readToolState({ seed: 7 }, 'sunset', link).look).toBe('sunset.blooms')
-    expect(readToolState({ seed: 8 }, 'sunset', link).look).toBe('sunset.ramp')
-    expect(readToolState({ seed: 7 }, 'contour', link).look).toBe('contour.beam')
+  it("is the mood's one look at every seed", () => {
+    for (const seed of [1, 2, 3, 6, 7, 100]) {
+      expect(readToolState({ seed }, 'sunset').look, `seed ${seed}`).toBe('sunset.merged')
+      expect(readToolState({ seed }, 'contour').look, `seed ${seed}`).toBe('contour.merged')
+      expect(readToolState({ seed }, 'rush').look, `seed ${seed}`).toBe('rush.split')
+    }
   })
 })

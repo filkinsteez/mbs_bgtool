@@ -18,7 +18,7 @@ describe('panel tiles', () => {
 
   it('have a picture for every mood', () => {
     const pictures = MOOD_IDS.map((mood) => moodPicture(mood))
-    expect(pictures).toEqual(['/panel/sunset-bands.webp', '/panel/contour-halo.webp', '/panel/rush-split.webp'])
+    expect(pictures).toEqual(['/panel/sunset-merged.webp', '/panel/contour-merged.webp', '/panel/rush-split.webp'])
     expect(pictures.filter((src) => !existsSync(path.join(process.cwd(), 'public', src)))).toEqual([])
   })
 })
