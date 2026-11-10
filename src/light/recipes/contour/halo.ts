@@ -456,8 +456,6 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
       halation: round4(lerp(0.04, 0.2, controls.intensity)),
       halationRadius: round4(0.035 * soften),
       halationTint: light.hex,
-      // Film halation spreads red farthest, which rings a white-hot band in red; only a warm light keeps that.
-      ...(warmTail(light.hex) ? {} : { halationSpread: 0 }),
     },
     output: { grain: 0, toe: warmToe(light.hex) },
   }

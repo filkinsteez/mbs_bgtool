@@ -553,6 +553,12 @@ export interface ProductionLight {
   fan?: number
   /** Colors split across the line: red and blue glow offset to opposite sides by this much. */
   spread?: number
+  /**
+   * The core line at HOT_CORE times the light's level where the light is strongest, following the light along the
+   * edge as its haze does, so it overexposes to white in every pack and the light's color shows in the falloff beside
+   * it. The look's halation then needs about a third of its strength for the same halo.
+   */
+  hotCore?: boolean
 }
 
 /**
@@ -567,14 +573,14 @@ export interface ProductionLight {
 export function productionParts(prefix: string, light: ProductionLight): Record<string, number | number[]> {
   const spread = light.spread ?? 0
   const parts: Record<string, number | number[]> = {
-    n1Weight: 1.1,
+    n1Weight: light.hotCore ? HOT_CORE : 1.1,
     n1Width: round6(0.0014 / light.soften ** 0.7),
     n1Shape: 8,
     n1Side: 0,
     n1Light: 1,
-    // The core line fades more slowly than the glow, so it shows along the whole edge (the rim-edge reference's
-    // 1 px line is all that is left at its far end).
-    n1LightGamma: 0.5,
+    // Without the hot core, the core line fades more slowly than the glow, so it shows along the whole edge (the
+    // rim-edge reference's 1 px line is all that is left at its far end).
+    n1LightGamma: light.hotCore ? 1 : 0.5,
     // The edge's light landing on the face beside it, at a grazing angle: Lambert's cosine and the inverse square from
     // every point of the edge, a light FACE_HEIGHT above the face's plane, is flat for about the height and then falls
     // as 1 / distance^2. p = 2 has the same half width and falls as 1 / distance^4 past it, which keeps the part's
@@ -617,6 +623,8 @@ export function productionParts(prefix: string, light: ProductionLight): Record<
   return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
 }
 
+/** Level of a rim's hot core line where its light is strongest, times the light's own level (productionParts). */
+const HOT_CORE = 8
 /** Height of a rim's light above the face's plane, short sides (the grazing light on the face, productionParts). */
 const FACE_HEIGHT = 0.006
 /** Half width of the p = 2 near kernel across a straight emitter, in units of its width: 2 sqrt(sqrt(2) - 1). */

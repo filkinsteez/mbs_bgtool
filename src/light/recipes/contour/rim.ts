@@ -587,6 +587,7 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
       face: layout.oneSided ? 0.035 : 0,
       glow: line ? 0.006 : 0.005,
       fan: line ? 4 : 1.5,
+      hotCore: true,
     }),
     // A line's glow widens steadily toward its bright end, following the slow light along it, with a small hot core
     // and little haze, so the end opens as a cone rather than a cloud.
@@ -694,7 +695,9 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     params,
     lens: {
       bloom: 0,
-      halation: round4(lerp(0.04, 0.2, controls.intensity)),
+      // The hot core (productionParts) feeds the halo about three times as much as a core at the light's own level
+      // did, so a third of the strength keeps the halo as strong as it was.
+      halation: round4(lerp(0.04, 0.2, controls.intensity) / 3),
       halationRadius: round4(0.035 * soften),
       halationTint: light.hex,
     },
