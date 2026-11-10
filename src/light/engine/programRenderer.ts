@@ -296,7 +296,7 @@ export class ProgramRenderer {
 
     const lensUniforms: UniformMap = {
       uBloomMix: lens.bloom ? spreadMix : 0,
-      uVeil: lens.veil ? resolved.lens.veil : 0,
+      uLensVeil: lens.veil ? resolved.lens.veil : 0,
       uHalation: lens.halation ? resolved.lens.halation : 0,
       uHalationLevel: halationLevel(resolved.lens),
       uHalationDriftColor: halationDriftColor(resolved.lens),
@@ -307,8 +307,8 @@ export class ProgramRenderer {
     }
     const lensTextures: Record<string, Target> = {
       uBloomTex: lens.bloom ?? this.black,
-      uVeilTex: lens.veil ?? this.black,
-      uLeadTex: lens.lead ?? this.black,
+      uLensVeilTex: lens.veil ?? this.black,
+      uLensLeadTex: lens.lead ?? this.black,
       uHalationTex: lens.halation ?? this.black,
       uHalationSurround: lens.surround ?? this.black,
     }

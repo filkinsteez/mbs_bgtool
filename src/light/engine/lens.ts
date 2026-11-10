@@ -476,9 +476,9 @@ const GLOW_DIM_SHADER =
   CHUNK_LIBRARY +
   /* glsl */ `
 uniform sampler2D uBase;
-uniform sampler2D uVeilTex;
-uniform sampler2D uLeadTex;
-uniform float uVeil;
+uniform sampler2D uLensVeilTex;
+uniform sampler2D uLensLeadTex;
+uniform float uLensVeil;
 uniform float uExposureScale;
 uniform vec4 uGlowDimBase[${GLOW_DIM_COLORS}]; // each path's pack color at luminance 1 (glowDimUniforms)
 uniform vec4 uGlowDimStep[${GLOW_DIM_COLORS * GLOW_DIM_STEPS}]; // its darker colors at luminance 1, w the level below which each takes over
@@ -517,14 +517,14 @@ vec3 glowDimmed(vec3 hue, float level) {
 // The veil's lead color at each base pixel, dimmed along its pack color's path by the level of the light there
 // against the light around it (the composite's fill, at the base's size), stored as the color and weight 1.
 void main() {
-  vec2 uv = gl_FragCoord.xy / vec2(textureSize(uLeadTex, 0));
-  vec4 lead = texture(uLeadTex, uv);
+  vec2 uv = gl_FragCoord.xy / vec2(textureSize(uLensLeadTex, 0));
+  vec4 lead = texture(uLensLeadTex, uv);
   vec3 hue = lead.a > 0.0 ? lead.rgb / lead.a : vec3(1.0);
   hue /= max(luminance(hue), 1e-6);
   float own = luminance(texture(uBase, uv).rgb) * uExposureScale;
-  float around = luminance(texture(uVeilTex, uv).rgb) * uExposureScale;
+  float around = luminance(texture(uLensVeilTex, uv).rgb) * uExposureScale;
   float x = around > 0.0 ? max(1.0 - own / around, 0.0) : 0.0;
-  float level = around > 0.0 ? (own + uVeil * around * x * x * x) / around : 1.0;
+  float level = around > 0.0 ? (own + uLensVeil * around * x * x * x) / around : 1.0;
   fragColor = vec4(glowDimmed(hue, level), 1.0);
 }
 `
@@ -539,12 +539,12 @@ export const LENS_COMPOSITE_GLSL =
   TONE_CURVE_GLSL +
   /* glsl */ `
 uniform sampler2D uBloomTex;
-uniform sampler2D uLeadTex;
+uniform sampler2D uLensLeadTex;
 uniform sampler2D uHalationTex;
 uniform sampler2D uHalationSurround;
 uniform float uBloomMix;
-uniform sampler2D uVeilTex;
-uniform float uVeil; // the veil's strength, 0 off
+uniform sampler2D uLensVeilTex;
+uniform float uLensVeil; // the veil's strength, 0 off
 uniform float uHalation;
 uniform vec2 uHalationLevel; // the light's own luminance and largest channel (halationTint)
 uniform vec3 uHalationDriftColor; // halationDriftTint at luminance 1
@@ -596,13 +596,13 @@ vec3 lensAndTone(vec3 radiance, vec2 uv) {
   float exposure = exp2(uExposure);
   c = max(c, vec3(0.0)) * exposure;
   if (uBloomMix > 0.0) c = mix(c, sampleSmooth(uBloomTex, uv) * exposure, uBloomMix);
-  if (uVeil > 0.0) {
+  if (uLensVeil > 0.0) {
     // The light around this pixel through the veil's falloff; where it is brighter than the pixel, part of the
     // difference comes in as glow (veilFill), in the color of the light that brings the most of it here.
-    float around = luminance(sampleSmooth(uVeilTex, uv)) * exposure;
+    float around = luminance(sampleSmooth(uLensVeilTex, uv)) * exposure;
     float x = around > 0.0 ? max(1.0 - luminance(c) / around, 0.0) : 0.0;
-    float lift = uVeil * around * x * x * x;
-    vec4 lead = sampleSmooth4(uLeadTex, uv);
+    float lift = uLensVeil * around * x * x * x;
+    vec4 lead = sampleSmooth4(uLensLeadTex, uv);
     if (lift > 0.0) c = leadMix(c, vec3(lift), lead, ${SPREAD_LEAD_POWER.toFixed(1)});
   }
   if (uHalation > 0.0) {
@@ -745,9 +745,9 @@ export function runLens(gpu: Gpu, base: Target, lens: LensSettings, exposure: nu
     if (Number(dim.uGlowDimColors ?? 0) > 0) {
       const dimmed = gpu.acquire(lead.width, lead.height)
       gpu.draw(gpu.program(GLOW_DIM_SHADER), dimmed, {
-        textures: { uBase: base, uVeilTex: veil, uLeadTex: lead },
+        textures: { uBase: base, uLensVeilTex: veil, uLensLeadTex: lead },
         uniforms: {
-          uVeil: lens.veil,
+          uLensVeil: lens.veil,
           uExposureScale: 2 ** exposure,
           uGlowDimBase: dim.uGlowDimBase,
           uGlowDimStep: dim.uGlowDimStep,
