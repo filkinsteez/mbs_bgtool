@@ -13,6 +13,11 @@ import {
   halationLevel,
   halationLevelFactors,
   halationStart,
+  GLOW_DIM_COLORS,
+  GLOW_DIM_STEPS,
+  type GlowDimPath,
+  glowDimmed,
+  glowDimUniforms,
   hueApart,
   leadMix,
   lensBaseSize,
@@ -374,6 +379,44 @@ describe('veil', () => {
   })
 })
 
+describe('veil dim paths', () => {
+  const yellow = hexToLinear('#FFD61E')
+  const orange = hexToLinear('#FF4F00')
+  const deepRed = orange.map((v) => v * 0.3) as [number, number, number]
+  const blue = hexToLinear('#0064E0')
+  const fire: GlowDimPath = { color: yellow, steps: [{ color: orange, below: 0.5 }, { color: deepRed, below: 0.25 }] }
+  const at1 = (c: readonly number[]) => c.map((v) => v / luminance(c))
+  const near = (a: readonly number[], b: readonly number[]) => a.forEach((v, i) => expect(v).toBeCloseTo(b[i], 6))
+
+  it('is off until paths are given, and packs them at luminance 1 with their levels', () => {
+    expect(glowDimUniforms([]).uGlowDimColors).toBe(0)
+    const u = glowDimUniforms([fire, { color: blue, steps: [] }])
+    expect(u.uGlowDimColors).toBe(2)
+    const base = u.uGlowDimBase as Float32Array
+    const steps = u.uGlowDimStep as Float32Array
+    expect(base.length).toBe(GLOW_DIM_COLORS * 4)
+    near(Array.from(base.slice(0, 3)), at1(yellow))
+    expect(steps[3]).toBeCloseTo(0.5, 6)
+    expect(steps[7]).toBeCloseTo(0.25, 6)
+    expect(steps[GLOW_DIM_STEPS * 4 + 3]).toBe(0)
+  })
+
+  it("dims a glow along its pack color's path, like fire, and leaves other colors as they are", () => {
+    near(glowDimmed(yellow, 1, [fire]), at1(yellow))
+    near(glowDimmed(yellow, 0.5, [fire]), at1(orange))
+    near(glowDimmed(yellow, 0.1, [fire]), at1(deepRed))
+    // Between steps it passes smoothly from one color to the next, with no jump.
+    let last = glowDimmed(yellow, 1, [fire])
+    for (let level = 0.99; level > 0.05; level -= 0.01) {
+      const now = glowDimmed(yellow, level, [fire])
+      expect(Math.hypot(now[0] - last[0], now[1] - last[1], now[2] - last[2])).toBeLessThan(0.25)
+      last = now
+    }
+    near(glowDimmed(blue, 0.1, [fire]), at1(blue))
+    near(glowDimmed(yellow, 0.1, []), at1(yellow))
+  })
+})
+
 describe('flow blur', () => {
   it('draws the directions from the GLSL that gives the flow, with no recipe needed, and blurs with one shared pass', () => {
     const glsl = 'uniform vec2 uWind;\nvec2 flowDirection(vec2 p) { return uWind; }\n'
@@ -512,6 +555,18 @@ describe('radiance scale', () => {
     }
     const bySoftness = { ...base, radianceScale: (c: RecipeContext) => (c.num('soft') > 0.5 ? 0.5 : 1) }
     expect(radianceScaleFor(bySoftness, ctx(bySoftness))).toBe(0.5)
+  })
+
+  it('draws at full size where the reduced texture would be smaller than the recipe asks, and nowhere else', () => {
+    const half = { ...base, radianceScale: 0.5 }
+    const thin = { ...half, radianceMinShort: 1080 }
+    // A settled preview (1212 render pixels on the short side), a moving one (606), the 4K export at 2x (4320).
+    for (const renderShort of [606, 1212, 4320]) expect(radianceScaleFor(half, ctx(half), renderShort), String(renderShort)).toBe(0.5)
+    expect(radianceScaleFor(thin, ctx(thin), 606)).toBe(1)
+    expect(radianceScaleFor(thin, ctx(thin), 1212)).toBe(1)
+    expect(radianceScaleFor(thin, ctx(thin), 2160)).toBe(0.5)
+    expect(radianceScaleFor(thin, ctx(thin), 4320)).toBe(0.5)
+    expect(radianceScaleFor({ ...base, radianceMinShort: 1080 }, ctx(base), 606)).toBe(1)
   })
 })
 

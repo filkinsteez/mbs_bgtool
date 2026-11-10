@@ -95,11 +95,15 @@ function recipeShaderModes(program: RecipeProgram): RecipeShaderMode[] {
   return ['composite', 'radiance', ...(sources.has('radiance') ? (['source'] as const) : []), ...(sources.has('aux') ? (['aux'] as const) : [])]
 }
 
-/** The recipe's radianceScale for this scene, snapped to 1, 0.5 or 0.25. */
-export function radianceScaleFor(program: RecipeProgram, ctx: RecipeContext): number {
+/**
+ * The recipe's radianceScale for this scene, snapped to 1, 0.5 or 0.25; with a render short side, 1 where the
+ * reduced texture would have fewer pixels on its short side than the recipe's radianceMinShort.
+ */
+export function radianceScaleFor(program: RecipeProgram, ctx: RecipeContext, renderShort = Infinity): number {
   const asked = typeof program.radianceScale === 'function' ? program.radianceScale(ctx) : (program.radianceScale ?? 1)
   if (!Number.isFinite(asked) || asked >= 0.75) return 1
-  return asked >= 0.375 ? 0.5 : 0.25
+  const scale = asked >= 0.375 ? 0.5 : 0.25
+  return scale * renderShort < (program.radianceMinShort ?? 0) ? 1 : scale
 }
 
 /** Short side, in render pixels, of the frame the color stage reads a design from. */
@@ -234,12 +238,12 @@ export class ProgramRenderer {
     // except on frames lensBaseFromFrame picks, where the composite's own samples (one per render pixel) are drawn
     // first and also make the base, so the recipe runs once per pixel instead of a second time for the base.
     const usesPost = Boolean(program.post && program.post.length > 0)
-    const radianceScale = radianceScaleFor(program, ctx)
+    const renderShort = Math.min(renderWidth, renderHeight)
+    const radianceScale = radianceScaleFor(program, ctx, renderShort)
     const usesTexture = usesPost || radianceScale < 1
     const baseSize = lensBaseSize(width, height)
     const spreadMix = lensSpread(resolved.lens).mix
     const lensOn = spreadMix > 0 || resolved.lens.halation > 0 || (resolved.lens.veil ?? 0) > 0
-    const renderShort = Math.min(renderWidth, renderHeight)
     const reuse = lensOn && !usesTexture && lensBaseFromFrame(renderWidth, renderHeight, factor)
     const base = lensOn ? gpu.acquire(baseSize.width, baseSize.height, 'rgba16f', !usesTexture && resolved.lens.halation > 0 ? 2 : 1) : null
     let postScene: Target | null = null
@@ -287,7 +291,7 @@ export class ProgramRenderer {
       })
       mark.mark('lens base', base)
     }
-    const lens = base ? runLens(gpu, base, resolved.lens, resolved.output.exposure, mark) : { bloom: null, veil: null, lead: null, halation: null, surround: null }
+    const lens = base ? runLens(gpu, base, resolved.lens, resolved.output.exposure, mark, stageUniforms) : { bloom: null, veil: null, lead: null, halation: null, surround: null }
     gpu.release(base)
 
     const lensUniforms: UniformMap = {

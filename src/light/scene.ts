@@ -390,6 +390,12 @@ export interface RecipeProgram {
    * 2 / scale render pixels get soft. A function can pick it per scene.
    */
   radianceScale?: number | ((ctx: RecipeContext) => number)
+  /**
+   * For looks with thin lines: a reduced radiance texture keeps at least this many pixels on its short side, and a
+   * frame where it would have fewer draws its radiance at full size instead. Rebuilt from a coarse texture, a line a
+   * few texels wide comes out in stair steps; at a 4K export the reduced texture is large enough and stays cheap.
+   */
+  radianceMinShort?: number
   post?: readonly PostPass[]
   lens?: Partial<LensSettings>
   output?: Partial<OutputSettings>

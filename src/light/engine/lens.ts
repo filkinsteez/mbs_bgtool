@@ -1,5 +1,5 @@
 import { hexToLinear, type Rgb } from '../color/srgb'
-import type { LensSettings } from '../scene'
+import type { LensSettings, UniformMap } from '../scene'
 import type { Gpu, Target } from './gl'
 import { CHUNK_LIBRARY, GLSL_HEADER } from './glsl'
 import { TONE_CURVE_GLSL } from './output'
@@ -147,6 +147,79 @@ export function veilFill(own: number, around: number, veil: number): number {
   if (!(around > 0)) return 0
   const x = Math.max(1 - own / around, 0)
   return veil * around * x * x * x
+}
+
+/** Most pack colors the veil's dim paths hold, and the darker colors along each path. */
+export const GLOW_DIM_COLORS = 8
+export const GLOW_DIM_STEPS = 3
+
+/**
+ * A pack color's dim path for the veil's glow: the color, then up to GLOW_DIM_STEPS darker colors, each taking over
+ * below a level of the glow's light (the pixel's light against the light around it, 0..1, highest first), as Yellow
+ * dims like fire to Orange-red below 0.5 and to deep red below 0.25. Colors in linear RGB, at any brightness.
+ */
+export interface GlowDimPath {
+  color: readonly number[]
+  steps: readonly { color: readonly number[]; below: number }[]
+}
+
+const atLuminance1 = (c: readonly number[]): Rgb => {
+  const y = c[0] * LUMA[0] + c[1] * LUMA[1] + c[2] * LUMA[2]
+  return y > 1e-9 ? [c[0] / y, c[1] / y, c[2] / y] : [1, 1, 1]
+}
+
+/**
+ * The composite's uniforms for the veil's dim paths (the color stage passes them with its own uniforms). With none,
+ * the glow keeps the color of the light it came from at every level.
+ */
+export function glowDimUniforms(paths: readonly GlowDimPath[]): UniformMap {
+  const base = new Float32Array(GLOW_DIM_COLORS * 4)
+  const steps = new Float32Array(GLOW_DIM_COLORS * GLOW_DIM_STEPS * 4)
+  const count = Math.min(GLOW_DIM_COLORS, paths.length)
+  for (let k = 0; k < count; k++) {
+    base.set([...atLuminance1(paths[k].color), 1], k * 4)
+    paths[k].steps.slice(0, GLOW_DIM_STEPS).forEach((step, j) => steps.set([...atLuminance1(step.color), step.below], (k * GLOW_DIM_STEPS + j) * 4))
+  }
+  return { uGlowDimBase: base, uGlowDimStep: steps, uGlowDimColors: count }
+}
+
+/** Glows whose color is within this cosine (round white) of a path's color take that path. */
+export const GLOW_DIM_MATCH = 0.85
+
+/**
+ * CPU twin of the composite's glowDimmed: the glow's color (`hue`, any brightness) at a level of its light, dimmed
+ * along the path of the pack color nearest it, or unchanged where no path's color is near. Returns luminance 1.
+ */
+export function glowDimmed(hue: readonly number[], level: number, paths: readonly GlowDimPath[]): Rgb {
+  const h = atLuminance1(hue)
+  const ch = h.map((v) => v - 1)
+  const nh = Math.hypot(ch[0], ch[1], ch[2])
+  if (nh < 1e-3) return h
+  let best = -1
+  let bestCos = GLOW_DIM_MATCH
+  paths.slice(0, GLOW_DIM_COLORS).forEach((path, k) => {
+    const ck = atLuminance1(path.color).map((v) => v - 1)
+    const cos = (ch[0] * ck[0] + ch[1] * ck[1] + ch[2] * ck[2]) / Math.max(nh * Math.hypot(ck[0], ck[1], ck[2]), 1e-6)
+    if (cos > bestCos) {
+      bestCos = cos
+      best = k
+    }
+  })
+  if (best < 0) return h
+  let above: Rgb = h
+  let aboveAt = 1
+  for (const step of paths[best].steps.slice(0, GLOW_DIM_STEPS)) {
+    if (!(step.below > 0)) break
+    const color = atLuminance1(step.color)
+    if (level >= step.below) {
+      const t = Math.min(1, Math.max(0, (level - step.below) / (Math.min(aboveAt, 2 * step.below) - step.below)))
+      const s = t * t * (3 - 2 * t)
+      return color.map((v, i) => v + (above[i] - v) * s) as Rgb
+    }
+    above = color
+    aboveAt = step.below
+  }
+  return above
 }
 
 /**
@@ -398,6 +471,64 @@ void main() {
 }
 `
 
+const GLOW_DIM_SHADER =
+  GLSL_HEADER +
+  CHUNK_LIBRARY +
+  /* glsl */ `
+uniform sampler2D uBase;
+uniform sampler2D uVeilTex;
+uniform sampler2D uLeadTex;
+uniform float uVeil;
+uniform float uExposureScale;
+uniform vec4 uGlowDimBase[${GLOW_DIM_COLORS}]; // each path's pack color at luminance 1 (glowDimUniforms)
+uniform vec4 uGlowDimStep[${GLOW_DIM_COLORS * GLOW_DIM_STEPS}]; // its darker colors at luminance 1, w the level below which each takes over
+uniform int uGlowDimColors;
+out vec4 fragColor;
+// The glow's color (at luminance 1) at a level of its light, dimmed along the path of the pack color nearest it
+// (glowDimmed in lens.ts), or unchanged where no path's color is near.
+vec3 glowDimmed(vec3 hue, float level) {
+  vec3 ch = hue - 1.0;
+  float nh = length(ch);
+  if (nh < 1e-3) return hue;
+  int best = -1;
+  float bestCos = ${GLOW_DIM_MATCH};
+  for (int k = 0; k < ${GLOW_DIM_COLORS}; k++) {
+    if (k >= uGlowDimColors) break;
+    vec3 ck = uGlowDimBase[k].xyz - 1.0;
+    float cosine = dot(ch, ck) / max(nh * length(ck), 1e-6);
+    if (cosine > bestCos) {
+      bestCos = cosine;
+      best = k;
+    }
+  }
+  if (best < 0) return hue;
+  vec3 above = hue;
+  float aboveAt = 1.0;
+  for (int j = 0; j < ${GLOW_DIM_STEPS}; j++) {
+    vec4 st = uGlowDimStep[best * ${GLOW_DIM_STEPS} + j];
+    if (st.w <= 0.0) break;
+    if (level >= st.w) return mix(st.xyz, above, smoothstep(st.w, min(aboveAt, 2.0 * st.w), level));
+    above = st.xyz;
+    aboveAt = st.w;
+  }
+  return above;
+}
+
+// The veil's lead color at each base pixel, dimmed along its pack color's path by the level of the light there
+// against the light around it (the composite's fill, at the base's size), stored as the color and weight 1.
+void main() {
+  vec2 uv = gl_FragCoord.xy / vec2(textureSize(uLeadTex, 0));
+  vec4 lead = texture(uLeadTex, uv);
+  vec3 hue = lead.a > 0.0 ? lead.rgb / lead.a : vec3(1.0);
+  hue /= max(luminance(hue), 1e-6);
+  float own = luminance(texture(uBase, uv).rgb) * uExposureScale;
+  float around = luminance(texture(uVeilTex, uv).rgb) * uExposureScale;
+  float x = around > 0.0 ? max(1.0 - own / around, 0.0) : 0.0;
+  float level = around > 0.0 ? (own + uVeil * around * x * x * x) / around : 1.0;
+  fragColor = vec4(glowDimmed(hue, level), 1.0);
+}
+`
+
 /**
  * Lens composite, all in exposed light: exposure, energy-conserving bloom mix,
  * halation (each light's own blurred light above the light's luminance, in its
@@ -597,7 +728,7 @@ export interface LensOutput {
  * (base.second); otherwise it is taken from the averaged base. Caller
  * releases the returned targets.
  */
-export function runLens(gpu: Gpu, base: Target, lens: LensSettings, exposure: number, profiler: Profiler = NO_PROFILE): LensOutput {
+export function runLens(gpu: Gpu, base: Target, lens: LensSettings, exposure: number, profiler: Profiler = NO_PROFILE, dim: UniformMap = {}): LensOutput {
   const spread = lensSpread(lens)
   const bloom = spread.mix > 0 ? pyramid(gpu, base, spread.factors) : null
   if (bloom) profiler.mark('lens bloom', bloom)
@@ -610,6 +741,22 @@ export function runLens(gpu: Gpu, base: Target, lens: LensSettings, exposure: nu
     gpu.draw(gpu.program(LEAD_FEED_SHADER), feed, { textures: { uSrc: base } })
     lead = pyramid(gpu, feed, spreadLeadFactors(veilWeights).map((w) => [w, w, w, w]))
     gpu.release(feed)
+    // With the color stage's dim paths (glowDimUniforms), the lead color dims along its pack color's path.
+    if (Number(dim.uGlowDimColors ?? 0) > 0) {
+      const dimmed = gpu.acquire(lead.width, lead.height)
+      gpu.draw(gpu.program(GLOW_DIM_SHADER), dimmed, {
+        textures: { uBase: base, uVeilTex: veil, uLeadTex: lead },
+        uniforms: {
+          uVeil: lens.veil,
+          uExposureScale: 2 ** exposure,
+          uGlowDimBase: dim.uGlowDimBase,
+          uGlowDimStep: dim.uGlowDimStep,
+          uGlowDimColors: dim.uGlowDimColors,
+        },
+      })
+      gpu.release(lead)
+      lead = dimmed
+    }
     profiler.mark('lens veil', lead)
   }
   let halation: Target | null = null
