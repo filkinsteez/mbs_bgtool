@@ -532,14 +532,17 @@ export function mergedParts(params: Record<string, unknown>, aspect: number): St
   // side (Plum, Near-black), placed by smooth weights so they glide as a line moves.
   const corners = [-0.5, 0.5].flatMap((x) => [-0.5, 0.5].map((y) => [x * frameW, y * frameH]))
   if (params.ground) {
-    // The lit hills or a plain sky's dim band: its lit side under the ridge toward the light, then the whole band,
-    // weaker so the lit side keeps its color, for the shadow away from the light and down. Thin where the horizon
-    // sits low, so they fade instead of vanishing.
+    // The lit hills or a plain sky's dim band: its lit side under the ridge toward the light, and beside it, at about
+    // the same depth, the shadow side, weaker so the lit side keeps its color, toward the end of the frame farther
+    // from the light and tilted a little against it, so the two sit side by side instead of stacking into bands. It
+    // moves smoothly to the other end as the light crosses the middle. Thin where the horizon sits low, so they fade
+    // instead of vanishing.
     const depth = Math.max(0, ...corners.map((c) => -((c[0] - glowAt[0]) * up[0] + (c[1] - glowAt[1]) * up[1])))
     const middle = -(glowAt[0] * side[0] + glowAt[1] * side[1])
     const width = 0.5 * (Math.abs(frameW * side[0]) + Math.abs(frameH * side[1]))
-    parts.push(spot(at(0, -0.3 * depth), 0.6, 0.3 * depth, 'dark', turnOf(1, horizonSlope)))
-    parts.push(spot(at(middle, -0.6 * depth), width, 0.6 * depth, 'dark', turnOf(1, horizonSlope), 0.75))
+    const awaySide = Math.tanh(middle / 0.25)
+    parts.push(spot(at(0, -0.35 * depth), 0.6, 0.35 * depth, 'dark', turnOf(1, horizonSlope)))
+    parts.push(spot(at(middle + 0.45 * width * awaySide, -0.5 * depth), 0.8 * width, 0.5 * depth, 'dark', turnOf(1, horizonSlope) + 8 * awaySide, 0.75))
   } else {
     // The dim far sky: its lit edge on the way to the seed's far corner, then that corner; both fade as a line brings
     // the light near that corner.
