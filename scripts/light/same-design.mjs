@@ -20,6 +20,7 @@ const DRAGS = {
   side: { from: [0.9, 0.5], to: [0.1, 0.5] },
 }
 const FORMATS = { '16x9': [16, 9], '9x16': [9, 16], '1x1': [1, 1], '4x5': [4, 5] }
+const META_BLUE = '#0064E0'
 // Frames render this long on their long side (2x supersampled) and are compared this long on their short side.
 const RENDER_LONG = 320
 const MAP_SHORT = 72
@@ -44,7 +45,7 @@ const T = {
 const args = parseArgs()
 const lookArg = list(args.look)
 if (!lookArg.length) {
-  console.error('usage: node scripts/light/same-design.mjs --look <contour.beam|beam|...|all> [--seeds 1-8] [--drag default,owner|all] [--format 16x9,9x16] [--colors 1FCDF0,FFD61E,FF4F00] [--out dir]')
+  console.error('usage: node scripts/light/same-design.mjs --look <contour.beam|beam|...|all> [--seeds 1-8] [--drag default,owner|all] [--format 16x9,9x16] [--colors 1FCDF0,FFD61E,FF4F00] [--mix [default,blue-off,Cyan:0.6]] [--out dir]')
   process.exit(2)
 }
 const looks = lookArg.includes('all') ? LOOKS : lookArg.map((l) => (l.includes('.') ? l : LOOKS.find((id) => id.endsWith(`.${l}`)) ?? l))
@@ -60,6 +61,7 @@ for (const v of views) if (v !== 'default' && !(v in DRAGS)) throw new Error(`Un
 const formats = (list(args.format ?? args.formats).length ? list(args.format ?? args.formats) : ['16x9']).map((f) => f.replace(':', 'x'))
 for (const f of formats) if (!(f in FORMATS)) throw new Error(`Unknown format ${f}: give ${Object.keys(FORMATS).join(', ')}`)
 const intensity = args.intensity === undefined ? null : Number(args.intensity)
+const mixArg = args.mix === undefined ? null : list(args.mix)
 // --from <dir>: judge renders kept by an earlier run (--keep) instead of rendering.
 const fromDir = typeof args.from === 'string' ? path.resolve(args.from) : null
 const keep = Boolean(args.keep)
@@ -161,6 +163,18 @@ function compare(a, b, limits) {
   return { ...m, differs: m.layout > limits.layout || m.light > limits.light, score: +score.toFixed(3) }
 }
 
+// A mix by name, from src/light/color/mix.ts: `default`, `blue-off` (Meta Blue at 0%), or `<color>:<share>` such as
+// `Cyan:0.6`, set on the default mix with the others keeping their ratios; null when the pack has no such color.
+function mixByName(mixes, pack, name) {
+  if (name === 'default') return mixes.defaultMix(pack)
+  if (name === 'blue-off') return mixes.setMetaBlue(pack, mixes.defaultMix(pack), false)
+  const [color, share] = name.split(':')
+  const index = pack.colors.findIndex((c) => c.name.toLowerCase() === color.toLowerCase())
+  if (index < 0 || !(Number(share) >= 0)) return null
+  return mixes.setShare(pack, mixes.defaultMix(pack), index, Number(share))
+}
+const mixLabel = (name) => (name === 'default' ? 'default mix' : name === 'blue-off' ? 'Meta Blue off' : `${name.split(':')[0]} ${Math.round(Number(name.split(':')[1]) * 100)}%`)
+
 // --- render and compare ---
 
 const harness = await startHarness()
@@ -182,6 +196,25 @@ try {
     if (!source) throw new Error(`--colors ${raw}: give colors of one pack (packs never mix)`)
     const colors = hexes.map((h) => source.colors.find((c) => c.hex.toUpperCase() === h))
     variants.push({ key: `${source.id}-${hexes.map((h) => h.slice(1)).join('-')}`, label: `${source.name}: ${colors.map((c) => c.name).join(', ')}`, pack: { ...source, colors }, list: hexes })
+  }
+  // --mix: the shared color stage on (src/light/color/stage.ts), every design drawn in the stage's design pack and
+  // given each pack's colors at each mix: by default the default mix, Meta Blue off and the pack's first other color
+  // at 60%. The packs are compared at the default mix, and each pack's other mixes against its default.
+  let stage = null
+  let mixes = null
+  if (mixArg) {
+    stage = await harness.ssr('/src/light/color/stage.ts').catch(() => null)
+    if (!stage?.withColorMix || !stage.COLOR_DESIGN_PACK) throw new Error('--mix: this checkout has no color stage yet (src/light/color/stage.ts with withColorMix and COLOR_DESIGN_PACK)')
+    mixes = await harness.ssr('/src/light/color/mix.ts')
+    variants.length = 0
+    for (const id of PACK_IDS) {
+      const pack = getPack(id)
+      const other = pack.colors.find((c) => c.hex.toUpperCase() !== META_BLUE)
+      for (const name of mixArg.length ? mixArg : ['default', 'blue-off', `${other.name}:0.6`]) {
+        const mix = mixByName(mixes, pack, name)
+        if (mix) variants.push({ key: `${id}-${name.replace(/[^A-Za-z0-9]+/g, '')}`, label: `${pack.name} ${mixLabel(name)}`, pack, mix, mixName: name, design: getPack(stage.COLOR_DESIGN_PACK) })
+      }
+    }
   }
   for (const v of variants) labels.set(v.key, v.label)
   const packHexes = new Set(PACKS.flatMap((p) => p.colors.map((c) => c.hex.toUpperCase())))
@@ -216,7 +249,8 @@ try {
               // out (its own table, or Meta Blue as the first color); the list is skipped for that look.
               let scene
               try {
-                scene = tool.buildScene(look, variant.pack, seed, controlsFor(look, variant, seed, fw / fh, view), fw / fh)
+                if (stage) scene = stage.withColorMix(tool.buildScene(look, variant.design, seed, controlsFor(look, { pack: variant.design }, seed, fw / fh, view), fw / fh), variant.pack, variant.mix)
+                else scene = tool.buildScene(look, variant.pack, seed, controlsFor(look, variant, seed, fw / fh, view), fw / fh)
               } catch (error) {
                 if (!variant.list) throw error
                 skipped.set(variant.key, `${look}, ${variant.label}: skipped, the look doesn't take a color list yet (${String(error.message ?? error).split('\n')[0]})`)
@@ -238,8 +272,11 @@ try {
             frames.push({ variant, png, maps: mapsOf(small, mw, mh) })
           }
           const pairs = []
+          const wanted = (a, b) => !stage || (a.mixName === 'default' && b.mixName === 'default') || (a.pack.id === b.pack.id && (a.mixName === 'default' || b.mixName === 'default'))
           for (let i = 0; i < frames.length; i++) {
-            for (let j = i + 1; j < frames.length; j++) pairs.push({ frames: [frames[i].variant.key, frames[j].variant.key], ...compare(frames[i].maps, frames[j].maps, limits) })
+            for (let j = i + 1; j < frames.length; j++) {
+              if (wanted(frames[i].variant, frames[j].variant)) pairs.push({ frames: [frames[i].variant.key, frames[j].variant.key], ...compare(frames[i].maps, frames[j].maps, limits) })
+            }
           }
           results.push({ look, seed, format, view, limits, pairs, differs: pairs.some((p) => p.differs), score: Math.max(0, ...pairs.map((p) => p.score)), frames })
         }
@@ -260,7 +297,7 @@ const viewText = (v) => (v === 'default' ? 'default view' : `drag ${v}`)
 const pairText = (p) => `${p.frames.map(nameOf).join(' / ')} (layout ${p.layout}, light ${p.light})`
 const limitText = Object.entries(T.limits).map(([mood, l]) => `${mood === 'sunset' ? 'Sunrise' : 'Contour'}: layout over ${l.layout} or light over ${l.light}`).join('; ')
 const lines = [
-  '# Same design in every pack',
+  mixArg ? '# Same design in every pack and mix (color stage on)' : '# Same design in every pack',
   '',
   `Seeds ${seeds.join(', ')}; ${formats.map((f) => f.replace('x', ':')).join(' and ')}; ${views.map(viewText).join(', ')}; ${results.reduce((s, r) => s + r.frames.length, 0)} frames in ${seconds} s. Two frames differ in design when (${limitText}).`,
   '',
@@ -298,7 +335,7 @@ for (const look of looks) {
   const failing = mine.filter((r) => r.differs)
   const shown = sheetAll ? mine : [...failing.slice(0, 40), ...mine.filter((r) => !r.differs).slice(0, 6)]
   if (!shown.length) continue
-  const W = 1240
+  const W = Math.max(1240, ...shown.map((r) => 8 + r.frames.length * (Math.round((110 * FORMATS[r.format][0]) / FORMATS[r.format][1]) + 8) + 420))
   const comp = [{ input: text(`${look}: ${failing.length} differ in design (red), worst first${sheetAll ? '' : '; then the passing ones closest to the limits'}. Frames above, their lightness stretched to its own range below.`, W, 14, '#fff'), left: 8, top: 6 }]
   let top = 30
   for (const r of shown) {

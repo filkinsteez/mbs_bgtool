@@ -174,6 +174,16 @@ function defaultAsked(pack) {
   const others = pack.colors.filter((c) => c.hex.toUpperCase() !== META_BLUE)
   return Object.fromEntries(pack.colors.map((c) => [c.name, c.hex.toUpperCase() === META_BLUE ? 0.5 : 0.5 / others.length]))
 }
+// A mix by name, from src/light/color/mix.ts: `default`, `blue-off` (Meta Blue at 0%), or `<color>:<share>` such as
+// `Cyan:0.6`, set on the default mix with the others keeping their ratios; null when the pack has no such color.
+function mixByName(mixes, pack, name) {
+  if (name === 'default') return mixes.defaultMix(pack)
+  if (name === 'blue-off') return mixes.setMetaBlue(pack, mixes.defaultMix(pack), false)
+  const [color, share] = name.split(':')
+  const index = pack.colors.findIndex((c) => c.name.toLowerCase() === color.toLowerCase())
+  if (index < 0 || !(Number(share) >= 0)) return null
+  return mixes.setShare(pack, mixes.defaultMix(pack), index, Number(share))
+}
 // Flags at the default mix: Meta Blue under 45% of the lit pixels, or any pack color under 5%.
 function flagsOf(pack, shares) {
   const flags = []
@@ -322,12 +332,26 @@ async function looksRun(harness, rulesById, getPack) {
   const formats = (list(args.format ?? args.formats).length ? list(args.format ?? args.formats) : ['16x9']).map((f) => f.replace(':', 'x'))
   const tool = await harness.ssr('/src/tool/controls.ts')
   const { getRecipe } = await harness.ssr('/src/light/recipes/index.ts')
+  // --mix <name>: the shared color stage on at that mix (src/light/color/stage.ts): the design is drawn in the
+  // stage's design pack and the stage gives it the picked pack's colors.
+  const mixName = typeof args.mix === 'string' ? args.mix : null
+  let stage = null
+  let mixes = null
+  if (mixName) {
+    stage = await harness.ssr('/src/light/color/stage.ts').catch(() => null)
+    if (!stage?.withColorMix || !stage.COLOR_DESIGN_PACK) throw new Error('--mix: this checkout has no color stage yet (src/light/color/stage.ts with withColorMix and COLOR_DESIGN_PACK)')
+    mixes = await harness.ssr('/src/light/color/mix.ts')
+  }
   const frames = []
   const started = Date.now()
   for (const look of looks) {
     const items = []
     for (const packId of PACK_IDS) {
       const pack = getPack(packId)
+      const mix = mixName ? mixByName(mixes, pack, mixName) : null
+      if (mixName && !mix) continue
+      const asked = mix ? Object.fromEntries(pack.colors.map((c, i) => [c.name, mix.shares[i]])) : defaultAsked(pack)
+      const design = stage ? getPack(stage.COLOR_DESIGN_PACK) : pack
       for (const format of formats) {
         const [fw, fh] = FORMATS[format]
         const [width, height] = fw >= fh ? [RENDER_LONG, Math.round((RENDER_LONG * fh) / fw)] : [Math.round((RENDER_LONG * fw) / fh), RENDER_LONG]
@@ -335,13 +359,14 @@ async function looksRun(harness, rulesById, getPack) {
           for (const seed of seeds) {
             const fixed = tool.FIXED_CONTROLS?.[getRecipe(look).mood] ?? {}
             const base = { intensity: 0.5, softness: 0.5, mood: 0.5, ...fixed }
-            const controls = view === 'default' ? base : tool.controlsForDrag(look, pack, seed, base, fw / fh, tool.clampDrag(DRAGS[view]))
-            const scene = tool.buildScene(look, pack, seed, controls, fw / fh)
+            const controls = view === 'default' ? base : tool.controlsForDrag(look, design, seed, base, fw / fh, tool.clampDrag(DRAGS[view]))
+            const built = tool.buildScene(look, design, seed, controls, fw / fh)
+            const scene = stage ? stage.withColorMix(built, pack, mix) : built
             const image = await harness.render({ scene, width, height, supersample: 2 })
             const rgb = await sharp(image.data, { raw: { width, height, channels: 4 } }).removeAlpha().raw().toBuffer()
             const r = sharesOf(rulesById[packId], rgb, width * height, Boolean(args.maps))
-            const flags = flagsOf(pack, r.shares)
-            frames.push({ look, pack: packId, seed, format, view, lit: +r.lit.toFixed(4), shares: round(r.shares), flags })
+            const flags = !mixName || mixName === 'default' ? flagsOf(pack, r.shares) : []
+            frames.push({ look, pack: packId, seed, format, view, lit: +r.lit.toFixed(4), asked: round(asked), shares: round(r.shares), flags })
             if (args.maps) items.push({ title: `${packId} s${seed} ${format.replace('x', ':')} ${view}`, png: await sharp(rgb, { raw: { width, height, channels: 3 } }).png().toBuffer(), labels: r.labels, rules: rulesById[packId], shares: r.shares, flags, w: width, h: height })
           }
         }
@@ -349,23 +374,25 @@ async function looksRun(harness, rulesById, getPack) {
     }
     if (args.maps) for (let i = 0; i < items.length; i += 24) await drawSheet(items.slice(i, i + 24), path.join(outDir, `${look}-${String(i / 24 + 1).padStart(2, '0')}.jpg`), `${look}: frames and what each pixel reads as (grey: grey or pale bridge; magenta: another color; black: none); orange title: flagged at the default mix`)
   }
-  await fs.writeFile(path.join(outDir, 'shares.json'), JSON.stringify({ rules: T, seeds, formats, views, frames }, null, 1))
-  await fs.writeFile(path.join(outDir, 'summary.md'), summaryOf(frames, looks, formats, views, seeds, getPack, rulesById, Math.round((Date.now() - started) / 1000)))
+  await fs.writeFile(path.join(outDir, 'shares.json'), JSON.stringify({ rules: T, mix: mixName, seeds, formats, views, frames }, null, 1))
+  await fs.writeFile(path.join(outDir, 'summary.md'), summaryOf(frames, looks, formats, views, seeds, getPack, rulesById, mixName, Math.round((Date.now() - started) / 1000)))
   const flagged = frames.filter((f) => f.flags.length).length
-  console.log(`${frames.length} frames in ${Math.round((Date.now() - started) / 1000)} s; ${flagged} flagged at the default mix; summary: ${path.relative(process.cwd(), path.join(outDir, 'summary.md'))}`)
+  console.log(`${frames.length} frames in ${Math.round((Date.now() - started) / 1000)} s${mixName && mixName !== 'default' ? '' : `; ${flagged} flagged at the default mix`}; summary: ${path.relative(process.cwd(), path.join(outDir, 'summary.md'))}`)
 }
 
 // Per look, pack, format and view: the median share of each entry over the seeds (with its range), next to the
-// asked default shares, and the seeds flagged.
-function summaryOf(frames, looks, formats, views, seeds, getPack, rulesById, seconds) {
-  const lines = ['# Color shares', '', `Seeds ${seeds[0]}-${seeds.at(-1)}; ${formats.map((f) => f.replace('x', ':')).join(' and ')}; ${views.join(', ')}; ${frames.length} frames in ${seconds} s. Each cell: the median share of the visibly lit pixels (Oklab L ${T.visible} and up) over the seeds, with the lowest and highest in brackets. Asked at the default mix: Meta Blue 50%, the other pack colors even. Flagged: Meta Blue under 45% or a pack color under 5%.`, '']
+// asked shares, and the seeds flagged.
+function summaryOf(frames, looks, formats, views, seeds, getPack, rulesById, mixName, seconds) {
+  const source = mixName ? `the color stage on at the mix \`${mixName}\`; asked: that mix's shares` : "today's coloring (no color stage); asked: the default mix, Meta Blue 50% and the other pack colors even"
+  const lines = ['# Color shares', '', `Seeds ${seeds[0]}-${seeds.at(-1)}; ${formats.map((f) => f.replace('x', ':')).join(' and ')}; ${views.join(', ')}; ${source}; ${frames.length} frames in ${seconds} s. Each cell: the median share of the visibly lit pixels (Oklab L ${T.visible} and up) over the seeds, with the lowest and highest in brackets.${!mixName || mixName === 'default' ? ' Flagged: Meta Blue under 45% or a pack color under 5%.' : ''}`, '']
   const median = (v) => [...v].sort((a, b) => a - b)[Math.floor((v.length - 1) / 2)]
   for (const look of looks) {
     lines.push(`## ${look}`, '')
     for (const packId of PACK_IDS) {
       const pack = getPack(packId)
       const keys = LABELS(rulesById[packId])
-      const asked = defaultAsked(pack)
+      const asked = frames.find((f) => f.look === look && f.pack === packId)?.asked
+      if (!asked) continue
       lines.push(`| ${pack.name} | ${keys.map((k) => `${k}${asked[k] !== undefined ? ` (${pct(asked[k])})` : ''}`).join(' | ')} | lit | flagged |`, `| --- | ${keys.map(() => '---').join(' | ')} | --- | --- |`)
       for (const format of formats) {
         for (const view of views) {
