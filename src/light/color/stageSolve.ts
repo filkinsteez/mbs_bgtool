@@ -372,7 +372,7 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
 const LIGHT_STEP = 0.08
 
 /** The shortest and longest distance, in grid cells, over which a color changes into the next (soft blend). */
-const SOFT_RANGE = [0.5, 2] as const
+const SOFT_RANGE = [1, 2] as const
 
 /** Blur widths, in grid cells, that the soft blend interpolates between. */
 const SOFT_LEVELS = [0.5, 1, 2]
