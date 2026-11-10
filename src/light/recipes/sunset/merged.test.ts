@@ -41,7 +41,11 @@ describe('merged Sunrise', () => {
         for (const drag of [undefined, OWNER_LINE]) {
           const { params } = composeMerged({ pack: PACKS[0], controls: { ...CONTROLS, drag }, seed, aspect })
           const glow = mergedParts(params, aspect).find((part) => part.kind === 'spot' && part.want === 'bright')
-          if (glow?.kind !== 'spot') throw new Error('no glow')
+          if (!glow) {
+            expect(params.kind, `s${seed}: only a plain sky has no glow`).toBe(3)
+            continue
+          }
+          if (glow.kind !== 'spot') throw new Error('no glow')
           for (const v of glow.at) expect(v, `s${seed} ${aspect.toFixed(2)} ${drag ? 'line' : 'default'}`).toBeGreaterThanOrEqual(-0.06)
           for (const v of glow.at) expect(v, `s${seed} ${aspect.toFixed(2)} ${drag ? 'line' : 'default'}`).toBeLessThanOrEqual(1.06)
         }
