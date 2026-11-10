@@ -2,7 +2,9 @@
 // with colormix=1 (the design in the stage's design pack, the stage giving it the picked pack's colors at a mix), and
 // once more without the stage: that render's lightness is the light the colors should follow. Four faults fail a
 // frame: a firm color edge where the light is soft, a flat fill, a small dot of one color inside another, and a thin
-// seam of one color between two others. Usage and how the thresholds were set: scripts/light/README.md, "Color edges".
+// seam of one color between two others. With `--stage off` each frame is drawn as the tool draws it without
+// colormix (the look in the picked pack), and the frame's own lightness is the light. Usage and how the thresholds
+// were set: scripts/light/README.md, "Color edges".
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
@@ -442,7 +444,7 @@ async function drawSheet(items, file, title) {
 // --- main ---
 
 const lookArg = list(args.look)
-if (!lookArg.length) throw new Error('usage: color-edges.mjs --look <sunset.merged|contour.merged|rush.split|merged|all|...> [--pack bold,...] [--seeds 1-8] [--format 16x9,9x16] [--drag default,owner] [--mix default] [--maps] [--out dir]')
+if (!lookArg.length) throw new Error('usage: color-edges.mjs --look <sunset.merged|contour.merged|rush.split|merged|all|...> [--pack bold,...] [--seeds 1-8] [--format 16x9,9x16] [--drag default,owner] [--mix default | --stage off] [--maps] [--out dir]')
 const looks = [...new Set(lookArg.flatMap((l) => (l === 'all' ? LOOKS : l === 'merged' ? MERGED : [l.includes('.') ? l : LOOKS.find((id) => id.endsWith(`.${l}`)) ?? l])))]
 for (const look of looks) if (!LOOKS.includes(look) && !MERGED.includes(look)) throw new Error(`Unknown look ${look}`)
 const packIds = list(args.pack).length ? list(args.pack) : PACK_IDS
@@ -455,6 +457,8 @@ const viewArg = list(args.drag ?? args.drags).map((v) => (v === 'none' ? 'defaul
 const views = !viewArg.length ? ['default', 'owner'] : viewArg.includes('all') ? ['default', ...Object.keys(DRAGS)] : [...new Set(viewArg)]
 for (const v of views) if (v !== 'default' && !(v in DRAGS)) throw new Error(`Unknown drag ${v}`)
 const mixName = typeof args.mix === 'string' ? args.mix : 'default'
+const stageOff = args.stage === 'off'
+const source = stageOff ? 'color stage off (the look in each pack, judged against its own lightness)' : `color stage on at the mix ${mixName}`
 
 await fs.mkdir(outDir, { recursive: true })
 if (args.maps) await fs.mkdir(path.join(outDir, 'maps'), { recursive: true })
@@ -482,12 +486,14 @@ try {
           for (const seed of seeds) {
             const fixed = tool.FIXED_CONTROLS?.[getRecipe(look).mood] ?? {}
             const base = { intensity: 0.5, softness: 0.5, mood: 0.5, ...fixed }
-            const controls = view === 'default' ? base : tool.controlsForDrag(look, design, seed, base, fw / fh, tool.clampDrag(DRAGS[view]))
-            const scene = stage.withColorMix(tool.buildScene(look, design, seed, controls, fw / fh), pack, mix)
+            const drawn = stageOff ? pack : design
+            const controls = view === 'default' ? base : tool.controlsForDrag(look, drawn, seed, base, fw / fh, tool.clampDrag(DRAGS[view]))
+            const built = tool.buildScene(look, drawn, seed, controls, fw / fh)
+            const scene = stageOff ? built : stage.withColorMix(built, pack, mix)
             const { colorMix: _, ...lightScene } = scene
             const rgbOf = async (s) => sharp((await harness.render({ scene: s, width: w, height: h, supersample: 2 })).data, { raw: { width: w, height: h, channels: 4 } }).removeAlpha().raw().toBuffer()
             const rgb = await rgbOf(scene)
-            const result = analyse(rules, packId, rgb, await rgbOf(lightScene), w, h)
+            const result = analyse(rules, packId, rgb, stageOff ? rgb : await rgbOf(lightScene), w, h)
             const f = { look, pack: packId, seed, format, view, reasons: result.reasons, ...result.measures }
             frames.push(f)
             const name = `${look.replace('.', '-')}-${packId}-s${seed}-${format}-${view}`
@@ -497,7 +503,7 @@ try {
         }
       }
     }
-    for (let i = 0; i < items.length; i += 24) await drawSheet(items.slice(i, i + 24), path.join(outDir, `${look.replace('.', '-')}-${String(i / 24 + 1).padStart(2, '0')}.jpg`), `${look}, color stage on at the mix ${mixName}: picture, light, map; orange title: fails`)
+    for (let i = 0; i < items.length; i += 24) await drawSheet(items.slice(i, i + 24), path.join(outDir, `${look.replace('.', '-')}-${String(i / 24 + 1).padStart(2, '0')}.jpg`), `${look}, ${source}: picture, light, map; orange title: fails`)
     const set = frames.filter((f) => f.look === look)
     console.log(`${look}: ${set.filter((f) => f.reasons.length).length} of ${set.length} fail`)
   }
@@ -513,7 +519,7 @@ if (frames.some((f) => f.reasons.length)) process.exitCode = 1
 // Per look and pack: frames failing, by reason, and the failing frames with their reasons.
 function summaryOf(seconds) {
   const KINDS = ['firm color edge', 'flat fill', 'dot', 'seam']
-  const lines = ['# Color edges', '', `Color stage on at the mix \`${mixName}\`; seeds ${seeds[0]}-${seeds.at(-1)}; ${formats.map((f) => f.replace('x', ':')).join(' and ')}; ${views.join(' and ')}; ${frames.length} frames in ${seconds} s.`, '', '| Look | Pack | Fail | Firm color edge | Flat fill | Dot | Seam |', '| --- | --- | --- | --- | --- | --- | --- |']
+  const lines = ['# Color edges', '', `${source[0].toUpperCase()}${source.slice(1)}; seeds ${seeds[0]}-${seeds.at(-1)}; ${formats.map((f) => f.replace('x', ':')).join(' and ')}; ${views.join(' and ')}; ${frames.length} frames in ${seconds} s.`, '', '| Look | Pack | Fail | Firm color edge | Flat fill | Dot | Seam |', '| --- | --- | --- | --- | --- | --- | --- |']
   for (const look of looks)
     for (const packId of packIds) {
       const set = frames.filter((f) => f.look === look && f.pack === packId)
