@@ -164,7 +164,7 @@ export function mergedEmitters(ctx: RecipeContext): EmitterSettings[] {
     const farPale = [0.5, 0.8, 1]
     // Its wide glow mostly too, so an accent shows as a colored core on the edge, and its dim tail over the key's
     // face never mixes to a third hue.
-    const nearPale = [0, 0.6, 0]
+    const nearPale = [0, 0.75, 0]
     return {
       shape,
       anchor: at,
