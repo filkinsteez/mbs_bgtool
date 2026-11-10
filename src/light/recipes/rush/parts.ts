@@ -48,8 +48,14 @@ export function rushParts(params: Params, aspect: number): StagePart[] {
     const y = fy + u * dir[1] + v * nrm[1]
     return [Math.round((x / (2 * hx) + 0.5) * 1e4) / 1e4, Math.round((y / (2 * hy) + 0.5) * 1e4) / 1e4]
   }
+  // One group per streak (its pieces and its core are one light with one color), lead streaks first, so the first
+  // group, which the stage gives the lead color, is a lead streak.
+  const isLead = (i: number) => lf[4 * i + 3] >= 0 && lf[4 * i + 3] < 0.5
+  const order = [...Array(lights).keys()].sort((a, b) => Number(isLead(b)) - Number(isLead(a)) || a - b)
+  const groupOf = new Map(order.map((i, rank) => [i, rank]))
   const parts: StagePart[] = []
   for (let i = 0; i < lights; i++) {
+    const group = groupOf.get(i) ?? i
     const [center, half, , coreWidth] = la.slice(4 * i, 4 * i + 4)
     const [fadeIn, fadeLen] = le.slice(4 * i, 4 * i + 2)
     const [drift, bow, corePlace, place] = lf.slice(4 * i, 4 * i + 4)
@@ -66,7 +72,7 @@ export function rushParts(params: Params, aspect: number): StagePart[] {
       const a = acrossAt(ua)
       const b = acrossAt(ub)
       const width = Math.round(2 * half * taperAt(0.5 * (ua + ub)) * 0.5 * (a.scale + b.scale) * 1e4) / 1e4
-      parts.push({ kind: 'line', from: toFrame(ua, a.across), to: toFrame(ub, b.across), width, ...(want.line ? { want: want.line } : {}) })
+      parts.push({ kind: 'line', from: toFrame(ua, a.across), to: toFrame(ub, b.across), width, group, ...(want.line ? { want: want.line } : {}) })
     }
     // The hottest place along the streak the frame sees: where it has fully faded in, or the frame's near edge.
     const uHot = Math.min(u1, Math.max(u0 + 0.1 * (u1 - u0), fadeIn + fadeLen))
@@ -80,6 +86,7 @@ export function rushParts(params: Params, aspect: number): StagePart[] {
       radius: Math.round(Math.max(2.5 * coreWidth * half * hot.scale * taperAt(uHot), 0.02) * 1e4) / 1e4,
       stretch: 3,
       angle: Math.round(((Math.atan2((q[1] - p[1]) * 2 * hy, (q[0] - p[0]) * 2 * hx) * 180) / Math.PI) * 100) / 100,
+      group,
       ...(want.core ? { want: want.core } : {}),
     })
   }

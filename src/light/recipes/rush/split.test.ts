@@ -19,8 +19,8 @@ const LINES: ControlValues['drag'][] = [
 ]
 
 // The params the colors set: which color each streak takes (every fourth number of `le`), a white streak's color
-// places and levels, how each color turns as it dims, how many colors there are and how lit the ground is.
-const COLOR_KEYS = new Set(['spectrum', 'fringe', 'dim', 'comps', 'groundLevel'])
+// places and levels, each color's dim path, how many colors there are and how lit the ground is.
+const COLOR_KEYS = new Set(['spectrum', 'fringe', 'ramp', 'comps', 'groundLevel'])
 const designOf = (params: Record<string, ParamValue>) =>
   Object.fromEntries(
     Object.entries(params)
@@ -62,6 +62,40 @@ describe('Rush split', () => {
     expect(rushColors(hexesOf('bold')).spectrum).toEqual([0, 0.3333, 0.6667, 1])
     expect(rushColors(hexesOf('elemental')).spectrum.slice(0, 3)).toEqual([0, 1, 0.5])
     expect(rushColors(hexesOf('atmospheric')).spectrum.slice(0, 3)).toEqual([0, 0.5, 1])
+  })
+
+  it('dims each color through darker colors of its own pack, and keeps Meta Blue and Tan as they are', () => {
+    // Color k's dim path: per step, the step color's RGB at luminance 1 and the level where it takes over.
+    const steps = (hexes: string[], k: number) => {
+      const ramp = rushColors(hexes).ramp.slice(12 * k, 12 * k + 12)
+      return [0, 1, 2].map((j) => ramp.slice(4 * j, 4 * j + 4)).filter((s) => s[3] > 0)
+    }
+    const bold = hexesOf('bold')
+    expect(steps(bold, 0)).toHaveLength(0)
+    expect(steps(bold, 1)).toHaveLength(1)
+    expect(steps(bold, 2)).toHaveLength(2)
+    expect(steps(bold, 3)).toHaveLength(1)
+    // Yellow's first step is Orange-red's hue (red over green), Cyan's is Meta Blue's (blue over green).
+    expect(steps(bold, 2)[0][0]).toBeGreaterThan(steps(bold, 2)[0][1] * 5)
+    expect(steps(bold, 1)[0][2]).toBeGreaterThan(steps(bold, 1)[0][1] * 3)
+    const elemental = hexesOf('elemental')
+    expect(steps(elemental, 0)).toHaveLength(0)
+    expect(steps(elemental, 1)).toHaveLength(1)
+    expect(steps(elemental, 2)).toHaveLength(0)
+    expect(steps(hexesOf('atmospheric'), 1)).toHaveLength(3)
+  })
+
+  it('puts each streak in its own group of parts, lead streaks first', () => {
+    for (const seed of SEEDS.slice(0, 12)) {
+      const { params } = composeRushSplit(hexesOf('bold'), CONTROLS, seed, 16 / 9)
+      const parts = rushParts(params, 16 / 9)
+      const groups = [...new Set(parts.map((p) => (p.kind === 'horizon' ? -1 : p.group)))].sort((a, b) => (a ?? 0) - (b ?? 0))
+      expect(groups).toEqual([...Array(params.lights as number).keys()])
+      const lf = params.lf as number[]
+      const first = parts.findIndex((p) => p.kind !== 'horizon' && p.group === 0)
+      const place = lf[4 * Math.floor(first / 7) + 3]
+      expect(place >= 0 && place < 0.5, `s${seed}`).toBe(true)
+    }
   })
 
   it('gives the color stage each streak as line pieces and its hot core as a spot, its angle in degrees', () => {

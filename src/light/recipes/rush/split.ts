@@ -31,7 +31,7 @@ export const rushSplit: RecipeDefinition = {
     number('lights', 'Streaks', MAX_LIGHTS),
     vector('spectrum', 'Color places', 4),
     vector('fringe', 'White fringe levels', 4),
-    vector('dim', 'Dimming per channel', 12),
+    vector('ramp', 'Dim path per color', 48),
     number('comps', 'Colors', 4),
     number('groundLevel', 'Ground level', 4),
     vector('tongue', 'Shadow tongues', 4 * MAX_TONGUES),
@@ -40,7 +40,6 @@ export const rushSplit: RecipeDefinition = {
   ],
   fragment: RUSH_SPLIT_GLSL,
   uniforms: (ctx) => {
-    const dim = ctx.vec('dim')
     const ground = ctx.color('ground')
     const level = ctx.num('groundLevel')
     return {
@@ -59,10 +58,7 @@ export const rushSplit: RecipeDefinition = {
       uC1: ctx.color('c1'),
       uC2: ctx.color('c2'),
       uC3: ctx.color('c3'),
-      uDim0: dim.slice(0, 3),
-      uDim1: dim.slice(3, 6),
-      uDim2: dim.slice(6, 9),
-      uDim3: dim.slice(9, 12),
+      uRamp: new Float32Array(ctx.vec('ramp')),
       uSpectrum: ctx.vec('spectrum'),
       uFringe: ctx.vec('fringe'),
       uComps: Math.round(ctx.num('comps')),
@@ -73,7 +69,7 @@ export const rushSplit: RecipeDefinition = {
     }
   },
   radianceScale: 0.5,
-  lens: { bloom: 0.08, bloomLevels: [1, 0.7, 0.45, 0.25, 0.12, 0.05, 0, 0], halation: 0, glare: 0.02 },
+  lens: { bloom: 0.04, bloomLevels: [1, 0.7, 0.45, 0.25, 0.12, 0.05, 0, 0], halation: 0, glare: 0.01 },
   fromPack: rushSlotsFromPack,
   compose: composeRush,
 }

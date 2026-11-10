@@ -25,16 +25,13 @@ uniform vec4 uLC[MAX_LIGHTS];       // luminance (layout's), brightness variatio
 uniform vec4 uLD[MAX_LIGHTS];       // across gradient (log of hot side / other side), wander, streak amount, streak frequency
 uniform vec4 uLE[MAX_LIGHTS];       // fade in at (along), fade length, fade out at, color (index into the list)
 uniform vec4 uLF[MAX_LIGHTS];       // drift across per unit along, bow per unit along squared, core place (half-widths), role (for the color stage's parts)
-uniform vec4 uLG[MAX_LIGHTS];       // taper (log of the width at the reach over the width at the start), falloff (exponent of the body), unused, unused
+uniform vec4 uLG[MAX_LIGHTS];       // taper (log of the width at the reach over the width at the start), falloff (exponent of the body), a white streak's color order (-1 reversed), unused
 uniform int uLights;
 uniform vec3 uC0;
 uniform vec3 uC1;
 uniform vec3 uC2;
 uniform vec3 uC3;
-uniform vec3 uDim0;                 // per-channel exponents of each color's light below its peak
-uniform vec3 uDim1;
-uniform vec3 uDim2;
-uniform vec3 uDim3;
+uniform vec4 uRamp[12];             // each color's dim path, three steps: a darker pack color's hue at luminance 1, and the level where it takes over (0: none)
 uniform vec4 uSpectrum;             // each color's place in the spectrum (for a white streak's fringes)
 uniform vec4 uFringe;               // each color's level in a white streak
 uniform int uComps;
@@ -44,7 +41,20 @@ uniform vec4 uTongueLook;           // edge softness, depth, wander, unused
 uniform int uTongues;
 
 vec3 compColor(int k) { return k == 0 ? uC0 : k == 1 ? uC1 : k == 2 ? uC2 : uC3; }
-vec3 compDim(int k) { return k == 0 ? uDim0 : k == 1 ? uDim1 : k == 2 ? uDim2 : uDim3; }
+// A color's hue (at luminance 1) at a level of its light: its own at the peak, then each step of its dim path in turn.
+vec3 dimHue(int k, float level) {
+  vec3 c = compColor(k);
+  vec3 above = c / max(luminance(c), 1e-5);
+  float aboveAt = 1.0;
+  for (int j = 0; j < 3; j++) {
+    vec4 st = uRamp[k * 3 + j];
+    if (st.w <= 0.0) break;
+    if (level >= st.w) return mix(st.xyz, above, smoothstep(st.w, aboveAt, level));
+    above = st.xyz;
+    aboveAt = st.w;
+  }
+  return above;
+}
 
 // Soft tongues of shadow rising from the frame's bottom edge, narrowing to their tips.
 float shadow(vec2 p) {
@@ -128,20 +138,14 @@ vec3 radiance(vec2 uv, vec2 p) {
       float sigma = 0.5 * halfW;
       for (int k = 0; k < 4; k++) {
         if (k >= uComps) break;
-        float o = (s - (uSpectrum[k] - 0.5) * D) / (sigma * (abs(uSpectrum[k] - 0.5) < 0.01 ? 0.5 : 1.0));
-        vec3 cc = compColor(k);
-        vec3 e = compDim(k);
-        float eMain = cc.r >= max(cc.g, cc.b) ? e.r : (cc.g >= cc.b ? e.g : e.b);
-        // Each color turns by how bright the streak is there, as a colored streak does: none in the bright middle, so
-      // it stays white, and fully at the dim edges, so dim Lime goes toward Forest and doesn't read olive. Only the
-      // brightness across the streak counts, so a streak dimmed along its length keeps a white middle.
-      float across = clamp(profile / (1.0 + C.z), 0.0, 1.0);
-      vec3 turn = min(pow(vec3(max(across, 1e-4)), e / max(eMain, 1e-3) - 1.0), vec3(4.0));
-        hue += uFringe[k] * cc * exp(-0.5 * o * o) * turn;
+        float o = (s - (G.z < 0.0 ? -1.0 : 1.0) * (uSpectrum[k] - 0.5) * D) / (sigma * (abs(uSpectrum[k] - 0.5) < 0.01 ? 0.5 : 1.0));
+        // Each color follows its dim path by how bright the streak is across: its own hue in the bright middle, so the
+        // middle stays white, and its darker pack colors at the dim edges (Lime toward Forest, not olive).
+        float across = clamp(profile / (1.0 + C.z), 0.0, 1.0);
+        hue += uFringe[k] * luminance(compColor(k)) * exp(-0.5 * o * o) * dimHue(k, across);
       }
     } else {
-      int k = int(E.w + 0.5);
-      hue = compColor(k) * pow(vec3(max(level, 1e-4)), compDim(k));
+      hue = dimHue(int(E.w + 0.5), level);
     }
     sum += hue / max(luminance(hue), 1e-5) * luminanceHere;
   }

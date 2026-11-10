@@ -13,13 +13,14 @@ const FRINGE_RANGE: readonly [number, number] = [0.55, 1.15]
 
 /** The ground: the list's first dark color (or a deep shade of the first light), barely lit. */
 const DARK_GROUND = 0.08
-const SHADE_GROUND = 0.012
+const SHADE_GROUND = 0.003
 
-/** How much faster a warm color's light falls below its peak than another color's (an exponent factor). */
-const WARM_FALL = 1.3
+/** Deep red, the last step of a fire's dim path (Yellow, Orange-red, deep red), and its luminance for placing the step. */
+const DEEP_RED: Rgb = [1, 0.02, 0]
+const DEEP_RED_Y = 0.04
 
-/** Exponent of a pale warm color with no darker neighbour of its hue (Tan): it falls off fast, keeping its own hue. */
-const TAN_FALL = 2.2
+/** Steps on a color's dim path, at most. */
+export const DIM_STEPS = 3
 
 /**
  * Fixed stand-in colors per role, by place in the spectrum: the layout's luminance comes from these, whatever the list,
@@ -43,8 +44,11 @@ export interface RushColors {
   spectrum: number[]
   /** A white streak's level for each color (FRINGE_RANGE). */
   fringe: number[]
-  /** Per-channel exponents per color below its peak (12 numbers): how the color changes as it dims. */
-  dim: number[]
+  /**
+   * Each color's dim path, DIM_STEPS steps per color (48 numbers): a darker pack color's hue at luminance 1, then the
+   * level of the light below which that hue takes over (0 for no step).
+   */
+  ramp: number[]
   groundLevel: number
 }
 
@@ -70,29 +74,37 @@ function infoOf(hex: string): Info {
 
 const isWarm = (c: Info) => c.C > 0.08 && c.h >= 20 && c.h < 105
 
+const grey = (c: Info) => c.C < 0.05
+/** A muted warm color (Tan): dim, it reads brown, so it is never a step on another color's dim path. */
+const mutedWarm = (c: Info) => c.h >= 20 && c.h < 105 && c.C > 0.03 && c.C <= 0.12
+const unitLuminance = (c: readonly number[]): Rgb => {
+  const y = Math.max(luminance(c), 1e-6)
+  return [c[0] / y, c[1] / y, c[2] / y]
+}
+
 /**
- * Per-channel exponents of a color's light below its peak (light ~ level^exponent per channel), so the color dims the
- * way light of that color does: toward its darker list neighbour when that one is close in hue or grey (Yellow to
- * Orange-red, Lime to Forest, Ice to Steel, Steel to Slate); a warm color without one toward deep red, like a flame; a
- * pale warm color without one (Tan) falls off fast; any other color keeps its own hue.
+ * A color's dim path: how its light turns as it dims, through darker colors of the same pack, so it never goes muddy.
+ * Each step is the lightest pack color darker than the last of a near hue (within 70 degrees, not grey and not muted
+ * warm) or, from a grey, the next darker grey: Yellow into Orange-red, Cyan into Meta Blue, Lime into Forest, Ice into
+ * Steel, Slate and Near-black. A saturated warm color with nowhere darker to go ends in deep red, as fire does. Meta
+ * Blue and Tan have no steps and keep their own hue (Tan reads brown dim, so its bands fall off steeply instead). A
+ * step takes over below the level where the light is as dark as that color, well before it (fifth root), so Lime
+ * turns toward Forest before it reads olive.
  */
-const dimPartner = (c: Info, next: Info | undefined) => (next && next.L < c.L && (hueGap(c.h, next.h) < 70 || next.C < 0.04) ? next : undefined)
-
-/** A muted warm color (Oklab chroma 0.03 to 0.12) with no darker neighbour of its hue (Tan): dim, it reads brown. */
-const dimsBrown = (c: Info, next: Info | undefined) => c.h >= 20 && c.h < 105 && c.C > 0.03 && c.C <= 0.12 && !dimPartner(c, next)
-
-function dimExponents(c: Info, next: Info | undefined): [number, number, number] {
-  const partner = dimPartner(c, next)
-  const target = partner ? partner.lin : isWarm(c) && c.C > 0.12 ? ([1, 0.02, 0] as Rgb) : null
-  const faster = isWarm(c) ? WARM_FALL : 1
-  if (!target) return isWarm(c) ? [TAN_FALL, TAN_FALL, TAN_FALL] : [1, 1, 1]
-  const top = (v: readonly number[]) => Math.max(...v, 1e-6)
-  const own = c.lin.map((v) => v / top(c.lin))
-  const to = target.map((v) => v / top(target))
-  return [0, 1, 2].map((i) => {
-    const keep = ((to[i] + 0.02) / (own[i] + 0.02)) ** 0.25
-    return round4(faster * clamp(1 + 2.5 * Math.log(1 / keep), 0.6, 2.5))
-  }) as [number, number, number]
+function dimPath(c: Info, all: readonly Info[]): { hue: Rgb; at: number }[] {
+  const near = (from: Info, d: Info) => (grey(from) ? grey(d) : d.C >= 0.04 && !mutedWarm(d) && hueGap(from.h, d.h) < 70)
+  const stepAt = (y: number) => clamp((y / Math.max(c.Y, 1e-6)) ** 0.2, 0.15, 0.88)
+  const steps: { hue: Rgb; at: number }[] = []
+  let from = c
+  while (steps.length < DIM_STEPS) {
+    const last = from
+    const next = all.filter((d) => d !== last && d.L < last.L - 0.04 && near(last, d)).sort((a, b) => b.L - a.L)[0]
+    if (!next) break
+    steps.push({ hue: unitLuminance(next.lin), at: stepAt(next.Y) })
+    from = next
+  }
+  if (steps.length < DIM_STEPS && isWarm(from) && from.C > 0.12) steps.push({ hue: unitLuminance(DEEP_RED), at: stepAt(DEEP_RED_Y) })
+  return steps
 }
 
 /** Each color's level so that all of them together are as neutral a white as they can be. */
@@ -155,9 +167,15 @@ export function rushColors(hexes: readonly string[], shares?: readonly number[])
     cellEnd[k] = round4(at / total)
   })
   const fringe = whiteLevels(lights)
-  const dim: number[] = []
-  for (let k = 0; k < 4; k++) dim.push(...(lights[k] ? dimExponents(lights[k], all[all.indexOf(lights[k]) + 1]) : [1, 1, 1]))
-  const brown = lights.map((c) => dimsBrown(c, all[all.indexOf(c) + 1]))
+  const paths = lights.map((c) => dimPath(c, all))
+  const ramp: number[] = []
+  for (let k = 0; k < 4; k++)
+    for (let j = 0; j < DIM_STEPS; j++) {
+      const step = paths[k]?.[j]
+      ramp.push(...(step ? [...step.hue.map(round4), round4(step.at)] : [0, 0, 0, 0]))
+    }
+  // A muted warm color with no dim path (Tan) sits only in a white streak's middle.
+  const brown = lights.map((c, k) => mutedWarm(c) && paths[k].length === 0)
   const edgeColors = brown.filter((b) => !b).length
   let edgeAt = 0
   const places = brown.map((b) => (b || edgeColors < 2 ? 0.5 : edgeAt++ / (edgeColors - 1)))
@@ -169,7 +187,7 @@ export function rushColors(hexes: readonly string[], shares?: readonly number[])
     cellEnd,
     spectrum: [0, 1, 2, 3].map((k) => (k < count ? round4(places[k]) : 0)),
     fringe: [0, 1, 2, 3].map((k) => round4(fringe[k] ?? 0)),
-    dim,
+    ramp,
     groundLevel: darks[0] ? DARK_GROUND : SHADE_GROUND,
   }
 }

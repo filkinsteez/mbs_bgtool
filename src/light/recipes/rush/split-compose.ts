@@ -27,17 +27,6 @@ function seededRandom(seed: number, salt: number): () => number {
   return next
 }
 
-/** Uneven positions in [0, 1], sorted, at least `gap` apart where possible. */
-function spread(random: () => number, n: number, gap: number): number[] {
-  const out: number[] = []
-  for (let tries = 0; out.length < n && tries < 400; tries++) {
-    const v = random()
-    if (out.every((p) => Math.abs(p - v) >= gap)) out.push(v)
-  }
-  while (out.length < n) out.push(random())
-  return out.sort((a, b) => a - b)
-}
-
 /**
  * A streak's role, as a place in the spectrum the color list fills: lead (the first color; Meta Blue at the default
  * mix), cool, warm (Yellow's place in Bold, so a warm streak's core is Yellow and it dims into Orange-red) and deep
@@ -73,6 +62,8 @@ interface Band {
   taper: number
   /** Exponent of the body's falloff across: low for a wide soft band, higher for a thin streak. */
   falloff: number
+  /** A white streak's color order across it: 1 puts the first color (the lead) on its low side, -1 on its high side. */
+  fringeDir?: number
 }
 
 export interface RushLayout {
@@ -89,20 +80,16 @@ export interface RushLayout {
 
 const frameHalves = (aspect: number): [number, number] => (aspect >= 1 ? [aspect / 2, 0.5] : [0.5, 0.5 / aspect])
 
-/** Widest half-width (short sides, halfway along the run) of a wide band and of a thin streak. */
-const MAX_WIDE_HALF = 0.26
-const MAX_THIN_HALF = 0.1
-
 /** How far out, in half-widths, a body with this falloff is down to a share of its peak (0.12: 12%). */
 const reachTo = (share: number, falloff: number) => Math.sqrt(Math.log(1 / share) / falloff)
 
 /**
  * The layout from the seed, the dragged line and the format only. The line runs from where the light is strongest and
  * still together (`from`) toward where it has split into its colors (`to`); without a line the seed lays it along one
- * side of the frame, tilted, starting just past an edge. Streaks fill the frame across the line, 3 to 7 of them: one or
- * two wide soft bands (one of them in the lead color) and thinner streaks, most of them nearly meeting, with dark as
- * narrow gaps and, in some seeds, a wide black gap or two. Every streak's luminance comes from the layout, so the light
- * and dark layout is the same whatever the colors.
+ * side of the frame, tilted, starting just past an edge. Bands fill the frame across the line, 3 to 6 of them, each
+ * a broad soft peak of light 15-35% of the short side wide, meeting through soft lit troughs; they drift, bow and taper
+ * each their own way, fan out in some seeds and cross in others. Half the seeds add one or two thin bright streaks as
+ * accents. Every streak's luminance comes from the layout, so the light and dark layout is the same whatever the colors.
  */
 export function rushLayout(seed: number, aspect: number, drag?: ControlValues['drag']): RushLayout {
   const random = seededRandom(seed, 0x52a9)
@@ -132,7 +119,8 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
   // A big sweep that bends more and more toward the far end in some seeds, a near-straight flow in others.
   const curvy = random() < 0.4
   const hook: [number, number] = [either(random) * (curvy ? lerp(0.2, 0.45, random()) : lerp(0, 0.08, random())), curvy ? either(random) * lerp(0.05, 0.2, random()) : 0]
-  const fan = lerp(-0.25, 0.8, random())
+  // A third of the seeds fan out strongly, as from a point behind the start, off the frame.
+  const fan = random() < 0.35 ? lerp(0.8, 1.5, random()) : lerp(-0.2, 0.6, random())
   // Where the frame lies across a flow (with the bend and the fan) and along it, over a grid of points. The stack
   // spans most of it, not the far corners, so no streak sits only in a corner.
   const measure = (f: readonly number[], d: readonly number[], nr: readonly number[], r: number) => {
@@ -166,7 +154,12 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
   // As many streaks as the frame has room for across. About 40% are lead streaks, never two side by side; the others
   // are accents that between them take every other role, and a white streak in some seeds when at least two accents
   // are left (white looks alike in every pack, so the accents carry the pack).
-  const n = Math.max(3, Math.min(MAX_LIGHTS, Math.round((seedFrame.hi - seedFrame.lo) / lerp(0.2, 0.34, random()))))
+  // Each seed is one of three kinds, so seeds stay distinct: a few broad bands, more and narrower ones, or one dominant
+  // lead band with narrower ones beside it and thin white accents over it.
+  const kindDraw = random()
+  const kind = kindDraw < 0.35 ? 'broad' : kindDraw < 0.7 ? 'narrow' : 'dominant'
+  const spacing = kind === 'broad' ? lerp(0.34, 0.44, random()) : kind === 'narrow' ? lerp(0.17, 0.24, random()) : lerp(0.24, 0.32, random())
+  const n = Math.max(3, Math.min(MAX_LIGHTS - 2, Math.round((seedFrame.hi - seedFrame.lo) / spacing)))
   const whiteDraw = random()
   const leads = Math.max(1, Math.round(n * lerp(0.3, 0.42, random())))
   const hasWhite = whiteDraw < 0.4 && n - leads >= 3
@@ -186,91 +179,132 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
   const roles: Role[] = []
   others.forEach((r, k) => roles.push(...(leadSlots.has(k) ? (['lead', r] as Role[]) : [r])))
   if (leadSlots.has(others.length)) roles.push('lead')
-  // One or two wide soft bands, one of them a lead streak (so the lead color carries a broad light with its own
-  // gradient and core) and the other a cool or warm accent (a wide deep band is Tan in Elemental, which reads
-  // grey-brown when it covers that much); the rest are thin streaks.
-  const leadAt = roles.flatMap((r, i) => (r === 'lead' ? [i] : []))
-  const accentAt = roles.flatMap((r, i) => (r === 'cool' || r === 'warm' ? [i] : []))
-  const wideAt = new Set([leadAt[Math.floor(random() * leadAt.length)]])
-  if (n >= 4 && accentAt.length > 0 && random() < 0.5) wideAt.add(accentAt[Math.floor(random() * accentAt.length)])
-  const widths = roles.map((r, i) => (wideAt.has(i) ? lerp(2.2, 3.4, random()) : r === 'white' ? lerp(1.2, 1.8, random()) : lerp(0.9, 1.7, random())))
-  // Most neighbours nearly meet across a narrow dark gap; a quarter of the seeds open one or two wide black gaps.
-  const darkSeed = random() < 0.25
-  const gaps = roles.slice(1).map(() => 0.03 + 0.45 * random() ** 2)
-  if (darkSeed && gaps.length > 0) for (let k = 0; k < 1 + Math.floor(random() * 2); k++) gaps[Math.floor(random() * gaps.length)] = lerp(0.8, 1.8, random())
+  // Bands, each 15-35% of the short side wide (where its light is at 30% of its peak), each carrying its own light
+  // across its width: a broad soft peak, leaning to one side, with no core line. Neighbours meet through soft troughs
+  // that stay lit, reaching black only in a few places; where two colors would add to a hue outside the pack (Meta
+  // Blue and Orange-red to mauve, Lime and Tan to khaki) the trough is a little deeper.
+  // Any two different roles: a lead and a cool band are Meta Blue and Lime in Elemental, which mix teal-olive.
+  const clashes = (a: Role, b: Role) => a !== b
+  // Widths by the seed's kind. A deep band (Tan in Elemental, which reads brown at half its light) is narrower and
+  // firmer than the others.
+  const scale = kind === 'broad' ? 1.25 : kind === 'narrow' ? 0.7 : 0.85
+  const dominantAt = kind === 'dominant' ? roles.indexOf('lead') : -1
+  const widths = roles.map((r, i) =>
+    i === dominantAt
+      ? lerp(0.45, 0.6, random())
+      : scale * (r === 'lead' ? lerp(0.22, 0.32, random()) : r === 'white' ? lerp(0.16, 0.24, random()) : r === 'deep' ? lerp(0.09, 0.14, random()) : lerp(0.16, 0.26, random())),
+  )
+  const gaps = roles.slice(1).map((r, i) => (random() < 0.15 ? lerp(0.18, 0.3, random()) : clashes(roles[i], r) ? lerp(0.04, 0.1, random()) : lerp(-0.02, 0.05, random())))
   const total = widths.reduce((a, w) => a + w, 0) + gaps.reduce((a, g) => a + g, 0)
   const unit = across / total
   const bands: Band[] = []
   let at = extent[0]
-  // Neighbours taper opposite ways: one widens along the flow as the next narrows, so the edge between them moves
-  // across the flow and no two neighbouring edges run parallel, while the two still nearly meet.
+  // Neighbours taper opposite ways: one widens along the flow as the next narrows.
   const taperSign = either(random)
   for (let i = 0; i < roles.length; i++) {
     const role = roles[i]
-    const room = 0.5 * widths[i] * unit
-    const center = at + room
-    at += widths[i] * unit + (gaps[i] ?? 0) * unit
-    const lead = role === 'lead'
+    const width = widths[i] * unit
+    const center = at + 0.5 * width
+    at += width + (gaps[i] ?? 0) * unit
     const white = role === 'white'
-    const wide = wideAt.has(i)
-    const falloff = wide ? lerp(0.8, 1.2, random()) : lerp(1.2, 1.7, random())
-    const taper = (i % 2 === 0 ? taperSign : -taperSign) * lerp(0.4, 1, random())
-    // A streak's edge, where its light is down to 12% (with a white streak's fringes), reaches about to its room's
-    // edge halfway along, so neighbours nearly meet.
-    const half = Math.min(room / (reachTo(0.12, falloff) * Math.exp(0.25 * Math.abs(taper)) * (white ? 1.2 : 1)), wide ? MAX_WIDE_HALF : MAX_THIN_HALF)
+    const falloff = role === 'deep' ? lerp(2, 2.8, random()) : lerp(0.75, 1.1, random())
+    const half = (0.5 * width) / reachTo(0.3, falloff)
     const split1 = white ? half * lerp(1, 1.3, random()) : 0
     bands.push({
       role,
       center,
       half,
-      widthVary: lerp(0.1, 0.25, random()),
-      // No razor-thin cores: a core is at least 0.02 of the short side wide.
-      coreWidth: Math.max(wide ? lerp(0.22, 0.38, random()) : lerp(0.25, 0.4, random()), 0.02 / Math.max(half, 1e-3)),
-      asym: either(random) * lerp(0, 0.3, random()),
-      rag: lerp(0.03, 0.08, random()),
+      widthVary: lerp(0.08, 0.2, random()),
+      // A lead band's light is its own: the hottest core in its area, broad, whitening at its peak.
+      coreWidth: role === 'lead' ? lerp(0.35, 0.5, random()) : 0.5,
+      asym: either(random) * lerp(0, 0.25, random()),
+      rag: lerp(0.02, 0.06, random()),
       split0: split1 * lerp(0.4, 0.7, random()),
       split1,
       luminance: white
-        ? STAND_IN_WHITE * lerp(0.7, 0.95, random())
-        : standInLuminance(PLACE[role]) * (lead ? lerp(1, 1.4, random()) : role === 'cool' ? lerp(0.7, 1, random()) : role === 'warm' ? lerp(0.7, 0.95, random()) : lerp(0.9, 1.3, random())),
-      brightVary: lerp(0.2, 0.4, random()),
-      // Pale roles (Ice in Atmospheric) get smaller cores, so no core clips to a flat white band.
-      coreGain: white ? 0.3 : wide ? (lead ? lerp(0.9, 1.6, random()) : lerp(0.6, 1.1, random())) : lead ? lerp(0.8, 1.6, random()) : role === 'deep' ? lerp(0.6, 1.2, random()) : lerp(0.4, 0.9, random()),
-      gradient: wide ? either(random) * lerp(0.4, 0.9, random()) : (random() * 2 - 1) * 0.3,
-      wander: lerp(0.005, 0.015, random()),
-      texture: lerp(0.08, 0.18, random()),
-      textureFreq: lerp(30, 60, random()),
+        ? STAND_IN_WHITE * lerp(0.7, 0.9, random())
+        : // Cool and warm bands near their color's own lightness (Lime, Ice), so they never read dim (olive, grey).
+          standInLuminance(PLACE[role]) * (role === 'lead' ? lerp(1.1, 1.5, random()) : role === 'cool' ? lerp(1.2, 1.5, random()) : role === 'warm' ? lerp(1, 1.2, random()) : lerp(1.4, 1.8, random())),
+      brightVary: lerp(0.15, 0.35, random()),
+      coreGain: role === 'lead' ? lerp(1.2, 2.2, random()) : 0,
+      gradient: either(random) * lerp(0.15, 0.5, random()),
+      wander: lerp(0.004, 0.012, random()),
+      texture: lerp(0.05, 0.1, random()),
+      textureFreq: lerp(25, 50, random()),
       fadeIn: lerp(-0.3, 0.05, random()) * reach,
       fadeLen: lerp(0.1, 0.25, random()) * reach,
       // A short dragged line still has its streaks cross the whole frame.
       fadeOut: Math.max(lerp(1, 1.6, random()) * reach, drag ? uFar + 0.15 : 0),
-      drift: either(random) * lerp(0.005, 0.035, random()),
-      bow: (either(random) * lerp(0, 0.04, random())) / Math.max(reach, 1),
-      corePlace: (random() * 2 - 1) * 0.35,
-      taper,
+      drift: either(random) * lerp(0.02, 0.09, random()),
+      bow: (either(random) * lerp(0.02, 0.1, random())) / Math.max(reach, 1),
+      corePlace: role === 'lead' ? (random() * 2 - 1) * 0.25 : 0,
+      taper: (i % 2 === 0 ? taperSign : -taperSign) * lerp(0.3, 0.8, random()),
       falloff,
     })
   }
-  // Neighbouring streaks of different roles keep a narrow dark gap everywhere in the frame, since their colors would
-  // add to a hue outside the pack (Meta Blue and Orange-red to pink or, dim, mauve; Lime and Tan to khaki): their edges
-  // meet where each is down to 4% of its light. A lead and a cool streak (Meta Blue and Cyan or Ice) blend cleanly and
-  // meet at 10%; streaks of one role may touch. Where they would meet sooner, both get narrower.
-  const edge = (b: Band, side: 1 | -1, t: number, share: number) =>
-    b.half * Math.exp(b.taper * t - side * b.asym) * (1 + 0.5 * b.widthVary) * reachTo(share, b.falloff) + 0.45 * Math.max(b.split0, b.split1) + b.wander
+  // Where two colors would mix outside the pack, one band's light fills the trough (a lead band's, else the one before)
+  // and the other falls off steeply on that side, so the trough reads as one color dimming (navy, deep red), not a mix.
+  const steepLeft = bands.map(() => false)
+  const steepRight = bands.map(() => false)
+  for (let i = 0; i + 1 < bands.length; i++) {
+    if (!clashes(bands[i].role, bands[i + 1].role)) continue
+    if (bands[i + 1].role === 'lead') steepRight[i] = true
+    else steepLeft[i + 1] = true
+  }
+  // A white streak turns its lead-color side toward a lead neighbour, so its last color's fringe (Orange-red in Bold)
+  // never meets Meta Blue.
+  bands.forEach((b, i) => {
+    if (b.role === 'white') b.fringeDir = bands[i + 1]?.role === 'lead' && bands[i - 1]?.role !== 'lead' ? -1 : 1
+  })
+  bands.forEach((b, i) => {
+    if (steepLeft[i] && steepRight[i]) {
+      b.half *= 0.72
+      b.asym = 0
+    } else if (steepLeft[i]) b.asym = -1.2
+    else if (steepRight[i]) b.asym = 1.2
+  })
+  // Each band drifts and bows its own way, so no two run as one family of parallel curves. A band never closes in on
+  // its neighbour to less than 60% of their distance (they would merge into one), except in a quarter of the seeds,
+  // where one pair that blends cleanly crosses within the frame.
+  const clean = bands.slice(1).flatMap((b, i) => (clashes(bands[i].role, b.role) ? [] : [i]))
+  const crossAt = clean.length > 0 && random() < 0.25 ? clean[Math.floor(random() * clean.length)] : -1
   for (let i = 0; i + 1 < bands.length; i++) {
     const a = bands[i]
     const b = bands[i + 1]
-    const pair = new Set([a.role, b.role])
-    const share = pair.size === 1 || (pair.has('lead') && pair.has('cool')) ? 0.1 : 0.04
+    const apart = b.center - a.center
+    if (i === crossAt) {
+      b.drift = a.drift - (1.6 * apart) / Math.max(uFar - Math.max(uNear, 0), 0.5)
+      b.bow = a.bow
+      continue
+    }
+    let closest = 0
+    for (let k = 0; k <= 8; k++) {
+      const u = lerp(uNear, uFar, k / 8)
+      closest = Math.min(closest, u * (b.drift - a.drift) + u * u * (b.bow - a.bow))
+    }
+    const f = closest < -0.4 * apart ? (0.4 * apart) / -closest : 1
+    b.drift = a.drift + f * (b.drift - a.drift)
+    b.bow = a.bow + f * (b.bow - a.bow)
+  }
+  // Where a band that dims through blue (lead, cool) meets one that dims through red (warm, deep, a white streak's
+  // last fringe), their light would add to pink or mauve: the trough between them reaches black, as their edges meet
+  // only where each is down to 3% of its light. Where they would meet sooner, both get narrower.
+  const blueSide = (r: Role) => r === 'lead' || r === 'cool'
+  const edge3 = (b: Band, side: 1 | -1, t: number) =>
+    b.half * Math.exp(b.taper * t - side * b.asym) * (1 + 0.5 * b.widthVary) * reachTo(0.03, b.falloff) + 0.45 * Math.max(b.split0, b.split1) + b.wander
+  for (let i = 0; i + 1 < bands.length; i++) {
+    const a = bands[i]
+    const b = bands[i + 1]
+    if (i === crossAt || blueSide(a.role) === blueSide(b.role)) continue
     let worst = 0
     for (let k = 0; k <= 8; k++) {
       const u = lerp(uNear, uFar, k / 8)
       const t = Math.min(1.3, Math.max(-0.3, u / reach)) - 0.5
       const apart = b.center + u * (b.drift + u * b.bow) - (a.center + u * (a.drift + u * a.bow))
-      worst = Math.max(worst, (edge(a, 1, t, share) + edge(b, -1, t, share)) / Math.max(apart * (a.role === b.role ? 1.25 : 1), 1e-6))
+      worst = Math.max(worst, (edge3(a, 1, t) + edge3(b, -1, t)) / Math.max(apart, 1e-6))
     }
     if (worst > 1) {
-      const k = Math.max(0.4, 1 / worst)
+      const k = Math.max(0.5, 1 / worst)
       for (const c of [a, b]) {
         c.half *= k
         c.split0 *= k
@@ -278,17 +312,43 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
       }
     }
   }
-  // Soft tongues of shadow rising from the frame's bottom edge, as a seed amount (its own stream).
-  const flame = seededRandom(seed, 0x52a8)
-  const amount = flame() < 0.35 ? 0 : lerp(0.3, 1, flame())
-  // One to three, each its own size, height and lean, so they never read as a row of teeth.
-  const tongueCount = amount > 0 ? Math.min(MAX_TONGUES, 1 + Math.round(amount * 2)) : 0
-  const places = spread(flame, tongueCount, 0.6 / Math.max(tongueCount, 1))
-  const tongues: number[] = []
-  for (let j = 0; j < tongueCount; j++) {
-    tongues.push((places[j] - 0.5) * 1.7 * hx, lerp(0.03, 0.12, flame()) * (0.6 + amount), lerp(0.15, 0.6, flame()) * 2 * hy * (0.6 + 0.4 * amount), either(flame) * lerp(0.05, 0.35, flame()))
+  // A dominant band carries one or two thin hot streaks of its own lead color as accents, over it near its edges,
+  // drifting with it, whitening at their peak (a white streak's colored fringes read pink over Meta Blue in Bold).
+  if (dominantAt >= 0) {
+    const d = bands[dominantAt]
+    const count = Math.min(1 + Math.floor(random() * 2), MAX_LIGHTS - bands.length)
+    const side = either(random)
+    for (let k = 0; k < count; k++) {
+      const half = lerp(0.012, 0.02, random())
+      bands.push({
+        role: 'lead',
+        center: d.center + (k === 0 ? side : -side) * lerp(0.35, 0.65, random()) * d.half,
+        half,
+        widthVary: 0.1,
+        coreWidth: 0.6,
+        asym: 0,
+        rag: 0.03,
+        split0: 0,
+        split1: 0,
+        luminance: standInLuminance(PLACE.lead) * lerp(1.3, 1.7, random()),
+        brightVary: lerp(0.2, 0.4, random()),
+        coreGain: lerp(1.5, 2.5, random()),
+        gradient: 0,
+        wander: lerp(0.003, 0.008, random()),
+        texture: 0.05,
+        textureFreq: 40,
+        fadeIn: lerp(-0.3, 0.05, random()) * reach,
+        fadeLen: lerp(0.1, 0.25, random()) * reach,
+        fadeOut: Math.max(lerp(1, 1.6, random()) * reach, drag ? uFar + 0.15 : 0),
+        drift: d.drift,
+        bow: d.bow,
+        corePlace: 0,
+        taper: 0,
+        falloff: 1.6,
+      })
+    }
   }
-  while (tongues.length < 4 * MAX_TONGUES) tongues.push(0)
+  // No shadow tongues: on a lit frame they read as smudges.
   return {
     from,
     angle: Math.atan2(dir[1], dir[0]),
@@ -296,9 +356,9 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
     hook,
     stack,
     bands,
-    tongues,
-    tongueLook: [lerp(0.025, 0.05, flame()), lerp(0.6, 0.85, flame()), lerp(0.01, 0.03, flame()), 0],
-    tongueCount,
+    tongues: new Array(4 * MAX_TONGUES).fill(0),
+    tongueLook: [0, 0, 0, 0],
+    tongueCount: 0,
   }
 }
 
@@ -320,11 +380,11 @@ export function composeRushSplit(hexes: readonly string[], controls: ControlValu
     ld: pad(B.flatMap((b) => [b.gradient, b.wander, b.texture, b.textureFreq]), 4 * MAX_LIGHTS),
     le: pad(B.flatMap((b) => [b.fadeIn, b.fadeLen, b.fadeOut, b.role === 'white' ? 0 : colorAt(colors, PLACE[b.role as Exclude<Role, 'white'>])]), 4 * MAX_LIGHTS),
     lf: pad(B.flatMap((b) => [b.drift, b.bow, b.corePlace, b.role === 'white' ? -1 : PLACE[b.role]]), 4 * MAX_LIGHTS),
-    lg: pad(B.flatMap((b) => [b.taper, b.falloff, 0, 0]), 4 * MAX_LIGHTS),
+    lg: pad(B.flatMap((b) => [b.taper, b.falloff, b.fringeDir ?? 1, 0]), 4 * MAX_LIGHTS),
     lights: B.length,
     spectrum: colors.spectrum,
     fringe: colors.fringe,
-    dim: colors.dim,
+    ramp: colors.ramp,
     comps: colors.count,
     groundLevel: colors.groundLevel,
     tongue: pad(layout.tongues, 4 * MAX_TONGUES),
@@ -334,8 +394,8 @@ export function composeRushSplit(hexes: readonly string[], controls: ControlValu
   return {
     colors: colors.slots,
     params,
-    // A third of the default glare: its haze mixes every light in the frame, and Meta Blue with Orange-red reads mauve.
-    lens: { bloom: 0.08, bloomLevels: [1, 0.7, 0.45, 0.25, 0.12, 0.05, 0, 0], halation: 0, glare: 0.02 },
+    // Little bloom and glare: in a frame that is mostly lit, their haze carries warm light into blue troughs (mauve).
+    lens: { bloom: 0.04, bloomLevels: [1, 0.7, 0.45, 0.25, 0.12, 0.05, 0, 0], halation: 0, glare: 0.01 },
     output: { grain: 0 },
   }
 }
