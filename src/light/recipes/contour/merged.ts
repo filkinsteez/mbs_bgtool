@@ -1,0 +1,275 @@
+import { linearToOklab } from '../../color/oklab'
+import type { ColorPack } from '../../color/packs'
+import { hexToLinear } from '../../color/srgb'
+import type { ParamSpec, RecipeContext, RecipeDefinition } from '../../scene'
+import { frameSize, paleBridge } from './curveCompose'
+import {
+  airParams,
+  curveLightGlsl,
+  curveLightUniforms,
+  driftParams,
+  farParams,
+  farScatter,
+  lightParams,
+  nearParams,
+  readAir,
+  readDrift,
+  readFar,
+  readLights,
+  readNear,
+  slotColor,
+  type CurveLightLayout,
+  type EmissionStop,
+  type EmitterSettings,
+} from './curveLight'
+import { composeMergedLook, mergedShape, startedShape } from './mergedCompose'
+import { MERGED_SHAPE_KINDS } from './mergedShapes'
+import type { Vec2 } from './shapes'
+
+const COLORS = 8
+const UNITS = 3
+const STOPS = 8
+// Three emitters (one per group of colors that dim together) of up to 64 pieces each, as Halo's rings: far pieces of a
+// large shape are merged into chords, and only the contour the light is on is cut at the color stops.
+export const MERGED_LAYOUT: CurveLightLayout = { emitters: UNITS, primitives: 64, near: 3, far: 3 }
+
+const unitParams = (i: number): ParamSpec[] => [
+  { kind: 'boolean', key: `e${i}On`, label: `Unit ${i} on`, default: false },
+  { kind: 'number', key: `e${i}Own`, label: `Unit ${i} own color slot`, min: 1, max: COLORS, step: 1, default: 2 },
+  { kind: 'number', key: `e${i}Rest`, label: `Unit ${i} color on the other contours (slot, 1 none)`, min: 1, max: COLORS, step: 1, default: 1 },
+  { kind: 'number', key: `e${i}Stops`, label: `Unit ${i} stops`, min: 1, max: STOPS, step: 1, default: 1 },
+  { kind: 'vector', key: `e${i}StopAt`, label: `Unit ${i} stops 1-4 along the curve`, min: 0, max: 1, step: 0.0001, default: [0.5, 1, 1, 1] },
+  { kind: 'vector', key: `e${i}StopAt2`, label: `Unit ${i} stops 5-8 along the curve`, min: 0, max: 1, step: 0.0001, default: [1, 1, 1, 1] },
+  { kind: 'vector', key: `e${i}StopColor`, label: `Unit ${i} stops 1-4 slot (1 none, 10a+b bridge)`, min: 1, max: 99, step: 1, default: [2, 1, 1, 1] },
+  { kind: 'vector', key: `e${i}StopColor2`, label: `Unit ${i} stops 5-8 slot`, min: 1, max: 99, step: 1, default: [1, 1, 1, 1] },
+  ...driftParams(`e${i}Drift`, `Unit ${i} dim light`),
+]
+
+const params: ParamSpec[] = [
+  { kind: 'number', key: 'shape', label: 'Shape (1 logo, 2 rounded square, 3 ring)', min: 1, max: 3, step: 1, default: 2 },
+  { kind: 'vector', key: 'at', label: 'Shape origin', min: -8, max: 9, step: 0.0001, default: [0.5, 0.5] },
+  { kind: 'number', key: 'size', label: 'Size', min: 0, max: 40, step: 0.0001, default: 1 },
+  { kind: 'number', key: 'radius', label: 'Corner radius', min: 0, max: 6, step: 0.0001, default: 0.3 },
+  { kind: 'number', key: 'rotate', label: 'Rotation', min: -360, max: 360, step: 0.01, default: 0 },
+  { kind: 'boolean', key: 'flip', label: 'Mirror', default: false },
+  { kind: 'vector', key: 'starts', label: 'Contour starts 1-3', min: -2, max: 2, step: 0.0001, default: [0, 0, 0] },
+  { kind: 'number', key: 'stopContour', label: 'Contour the light is on', min: 0, max: 8, step: 1, default: 0 },
+  { kind: 'number', key: 'keySlot', label: 'The key color slot (the light along the edge)', min: 1, max: COLORS, step: 1, default: 2 },
+  ...[1, 2, 3].flatMap(unitParams),
+  ...nearParams('n1', 'Core', { Weight: 2.5, Width: 0.0008, Shape: 8, Light: 2 }),
+  ...nearParams('n2', 'Glow', { Weight: 0.7, Width: 0.004, Shape: 3, Side: 1, Light: 1, Grow: 2, GrowBy: [1.5, 2] }),
+  ...nearParams('n3', 'Near part 3'),
+  ...farParams('f1', 'Haze', { Weight: 0.2, Width: 0.016, Side: 1, Light: 1 }),
+  ...farParams('f2', 'Halo', { Weight: 0.03, Width: 0.02, Light: 1 }),
+  ...farParams('f3', 'Face', { Weight: 0.025, Width: 0.22, Side: 1, Light: 1, LightGamma: 0.5 }),
+  { kind: 'number', key: 'farWidth', label: 'Narrowest scatter blur', min: 0.002, max: 0.2, step: 0.0005, default: 0.008 },
+  { kind: 'number', key: 'farStep', label: 'Scatter blur step', min: 1.5, max: 5, step: 0.01, default: 2.5 },
+  ...lightParams({ light1Kind: 5, light2Kind: 1 }),
+  ...airParams(COLORS),
+  { kind: 'number', key: 'groundNear', label: 'Room color near the light (slot, 1 black)', min: 1, max: COLORS, step: 1, default: 1 },
+  { kind: 'number', key: 'groundFar', label: 'Room color away from the light (slot)', min: 1, max: COLORS, step: 1, default: 1 },
+  { kind: 'number', key: 'groundL', label: 'Room lightness (Oklab L)', min: 0, max: 0.4, step: 0.001, default: 0.05 },
+  { kind: 'vector', key: 'groundDir', label: 'Room direction x, y, from, to', min: -4, max: 4, step: 0.0001, default: [1, 0, -0.5, 0.7] },
+  { kind: 'boolean', key: 'rayOn', label: 'Rays from behind the edge', default: false },
+  { kind: 'vector', key: 'rayAt', label: 'Rays from (frame)', min: -2, max: 3, step: 0.0001, default: [0.5, 0.8] },
+  { kind: 'vector', key: 'rayShape', label: 'Rays: count, contrast, phase, sky softness', min: 0, max: 100, step: 0.0001, default: [30, 0.6, 0, 1] },
+  { kind: 'number', key: 'rayLevel', label: 'Rays level', min: 0, max: 8, step: 0.001, default: 0.9 },
+  { kind: 'number', key: 'rayReach', label: 'Rays reach (short sides)', min: 0.05, max: 3, step: 0.001, default: 0.5 },
+  { kind: 'number', key: 'rayUnit', label: 'Rays take this unit color', min: 1, max: UNITS, step: 1, default: 1 },
+  { kind: 'number', key: 'gain', label: 'Overall gain', min: 0, max: 20, step: 0.001, default: 1 },
+  { kind: 'number', key: 'soften', label: 'Overall width', min: 0.05, max: 16, step: 0.001, default: 1 },
+]
+
+const lum = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+const oklabL = (c: readonly number[]) => linearToOklab([c[0], c[1], c[2]])[0]
+
+/** The lightness every light stands at (Meta Blue's, the default lead), so the light and dark layout never follows the colors. */
+const STAND_IN_L = oklabL(hexToLinear('#0064E0'))
+
+/** A color lighter than the stand-in is put under less light, so it shows at the stand-in's lightness (as Bands does). */
+function underStandIn(c: readonly number[]): number[] {
+  const own = oklabL(c)
+  const scale = own > STAND_IN_L ? (STAND_IN_L / own) ** 3 : 1
+  return c.map((v) => v * scale)
+}
+
+/** Whether two linear colors' light mixes to a third hue or grey: both colored and more than 70 degrees apart in Oklab hue. */
+function mixesToThird(a: readonly number[], b: readonly number[]): boolean {
+  const la = linearToOklab([a[0], a[1], a[2]])
+  const lb = linearToOklab([b[0], b[1], b[2]])
+  if (Math.hypot(la[1], la[2]) < 0.05 || Math.hypot(lb[1], lb[2]) < 0.05) return false
+  const d = Math.abs(Math.atan2(la[2], la[1]) - Math.atan2(lb[2], lb[1])) * (180 / Math.PI)
+  return Math.min(d, 360 - d) > 70
+}
+
+/**
+ * Where two colors meet: pale light at the brighter one's luminance (no lighter, so no bead), mostly grey where the two
+ * would mix to a third hue, else their pale mix.
+ */
+function bridge(a: readonly number[], b: readonly number[]): number[] {
+  const level = Math.max(lum(a), lum(b))
+  const tint = paleBridge(a, b)
+  const t = lum(tint) > 1e-9 ? level / lum(tint) : 0
+  const keep = mixesToThird(a, b) ? 0.3 : 0.7
+  return tint.map((v) => level + (v * t - level) * keep)
+}
+
+/** A slot's color under the stand-in's lightness. */
+const litSlot = (ctx: RecipeContext, slot: number) => underStandIn(slotColor(ctx, slot))
+
+function unitStops(ctx: RecipeContext, i: number): EmissionStop[] {
+  const count = Math.round(ctx.num(`e${i}Stops`))
+  const at = [...ctx.vec(`e${i}StopAt`), ...ctx.vec(`e${i}StopAt2`)]
+  const slots = [...ctx.vec(`e${i}StopColor`), ...ctx.vec(`e${i}StopColor2`)].map(Math.round)
+  return Array.from({ length: count }, (_, k) => {
+    const s = slots[k]
+    const color = s >= 10 ? bridge(litSlot(ctx, Math.floor(s / 10)), litSlot(ctx, s % 10)) : litSlot(ctx, s)
+    return { t: at[k], color, gain: 1 }
+  })
+}
+
+export function mergedEmitters(ctx: RecipeContext): EmitterSettings[] {
+  const gain = ctx.num('gain')
+  const soften = ctx.num('soften')
+  const [fw, fh] = frameSize(ctx.aspect)
+  const at = ctx.vec('at')
+  const anchor: Vec2 = [(at[0] - 0.5) * fw, (at[1] - 0.5) * fh]
+  const spec = {
+    kind: MERGED_SHAPE_KINDS[Math.min(MERGED_SHAPE_KINDS.length - 1, Math.max(0, Math.round(ctx.num('shape')) - 1))],
+    size: ctx.num('size'),
+    radius: ctx.num('radius'),
+    rotate: ctx.num('rotate'),
+    flip: ctx.bool('flip'),
+  }
+  const shape = startedShape(mergedShape(spec, anchor, ctx.aspect), ctx.vec('starts'))
+  const stopContour = Math.round(ctx.num('stopContour'))
+  const keySlot = ctx.num('keySlot')
+  return Array.from({ length: UNITS }, (_, k) => {
+    const i = k + 1
+    // A unit that is off still draws its outline, unlit: an emitter with no shape before a lit one blacks out the
+    // whole picture.
+    const on = ctx.bool(`e${i}On`)
+    const dark: EmissionStop[] = [{ t: 0, color: [0, 0, 0], gain: 1 }]
+    // An accent's wide light (its haze and the face it lights) takes the key's color at the same luminance, so the
+    // face and the far haze read as the key's light instead of a mix of every color, and no brightness changes.
+    const accent = Math.round(ctx.num(`e${i}Own`)) !== Math.round(keySlot) && Math.round(ctx.num(`e${i}Rest`)) === 1
+    const farPale = [0.5, 0.8, 1]
+    // Its wide glow mostly too, so an accent shows as a colored core on the edge, and its dim tail over the key's
+    // face never mixes to a third hue.
+    const nearPale = [0, 0.6, 0]
+    return {
+      shape,
+      anchor: at,
+      stops: on ? unitStops(ctx, i) : dark,
+      stopContour,
+      restStops: on ? [{ t: 0, color: litSlot(ctx, ctx.num(`e${i}Rest`)), gain: 1 }] : dark,
+      // The drift measures the light against the color's own level, so a color under the stand-in's lightness dims
+      // through its darker neighbour where its light is low.
+      own: slotColor(ctx, ctx.num(`e${i}Own`)),
+      near: [1, 2, 3].map((n) => {
+        const part = readNear(ctx, `n${n}`, soften, gain)
+        return accent ? { ...part, pale: nearPale[n - 1] } : part
+      }),
+      far: [1, 2, 3].map((n) => {
+        const f = readFar(ctx, `f${n}`, soften, gain)
+        return accent ? { ...f, pale: farPale[n - 1] } : f
+      }),
+      maskShift: [0, 0],
+      maskGrow: 0,
+      drift: readDrift(ctx, `e${i}Drift`),
+      ...(accent ? { pale: litSlot(ctx, keySlot) } : {}),
+    }
+  })
+}
+
+function groundColor(ctx: RecipeContext, slot: number): number[] {
+  const c = slotColor(ctx, slot)
+  const own = oklabL(c)
+  return own > 1e-4 ? c.map((v) => v * (ctx.num('groundL') / own) ** 3) : [0, 0, 0]
+}
+
+/**
+ * Contour, merged: one light along a pre-made shape (crops of the Meta symbol's curves, a rounded square, a cropped
+ * ring; up close and out of focus; behind a horizon with rays; a wide soft wash). Up to three emitters share the shape,
+ * one per group of colors that dim together, each with its own dim drift. Every color stands at one lightness, so the
+ * light and dark layout is the same for any colors.
+ */
+export const contourMerged: RecipeDefinition = {
+  id: 'contour.merged',
+  mood: 'contour',
+  label: 'Merged',
+  colorSlots: Array.from({ length: COLORS }, (_, i) => ({ key: `c${i + 1}`, label: `Color ${i + 1}` })),
+  defaultColors: ['#000000', '#0064E0', '#1FCDF0', '#FFD61E', '#FF4F00', '#000000', '#000000', '#000000'],
+  params,
+  fragment: /* glsl */ `
+${curveLightGlsl(MERGED_LAYOUT)}
+uniform vec3 uGroundNear;
+uniform vec3 uGroundFar;
+uniform vec4 uGroundDir;
+uniform vec4 uRay;
+uniform vec4 uRayShape;
+uniform vec3 uRayColor;
+uniform float uRayUnit;
+uniform float uRayReach;
+float rayHash(float i) { return fract(sin(i * 127.1 + 311.7) * 43758.5453); }
+float rayNoise(float x) {
+  float i = floor(x);
+  float f = fract(x);
+  return mix(rayHash(i), rayHash(i + 1.0), f * f * (3.0 - 2.0 * f));
+}
+vec3 radiance(vec2 uv, vec2 p) { return vec3(0.0); }
+vec3 auxRadiance(vec2 uv, vec2 p) { return clAux(p, true); }
+vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 b0, vec3 b1, vec3 b2, vec3 b3) {
+  vec3 color = light + curveLight(p, b0, b1, b2, b3, true);
+  color += mix(uGroundNear, uGroundFar, smoothstep(uGroundDir.z, uGroundDir.w, dot(p, uGroundDir.xy)));
+  if (uRay.w > 0.5) {
+    // Light from behind the edge seen through haze: brightest at its source, in rays, only above the edge.
+    vec2 d = p - uRay.xy;
+    float r = length(d);
+    float x = atan(d.y, d.x) / TAU * uRayShape.x + uRayShape.z;
+    float n = 0.6 * rayNoise(x) + 0.4 * rayNoise(2.37 * x + 5.1);
+    float pattern = mix(1.0, 0.2 + 1.6 * n, uRayShape.y);
+    float glow = uRay.z * exp(-r / uRayReach) * (0.08 / (r + 0.08));
+    int e = int(uRayUnit + 0.5);
+    float sd = clEmitterMask(e, p - clAnchor(e));
+    float sky = smoothstep(-0.004, 0.02 + 0.03 * uRayShape.w, sd);
+    color += clDrift(uRayColor * (glow * pattern * sky), uClEmit[e * 5 + 2].rgb, uClEmit[e * 5 + 3], uClEmit[e * 5 + 4].x);
+  }
+  return color;
+}
+`,
+  uniforms: (ctx) => {
+    const [fw, fh] = frameSize(ctx.aspect)
+    const rayAt = ctx.vec('rayAt')
+    const rayUnit = Math.round(ctx.num('rayUnit'))
+    // An off-frame light's glow at the frame's edge stands at the stand-in's lightness too.
+    const air = readAir(ctx, ctx.num('gain')).map((g) => ({ ...g, color: underStandIn(g.color) }))
+    return {
+      ...curveLightUniforms(
+        MERGED_LAYOUT,
+        mergedEmitters(ctx),
+        readLights(ctx),
+        [0, 0, 0],
+        ctx.num('farWidth') * ctx.num('soften'),
+        ctx.num('farStep'),
+        ctx.aspect,
+        air,
+      ),
+      uGroundNear: groundColor(ctx, ctx.num('groundNear')),
+      uGroundFar: groundColor(ctx, ctx.num('groundFar')),
+      uGroundDir: ctx.vec('groundDir'),
+      uRay: [(rayAt[0] - 0.5) * fw, (rayAt[1] - 0.5) * fh, ctx.num('rayLevel') * ctx.num('gain'), ctx.bool('rayOn') ? 1 : 0],
+      uRayShape: ctx.vec('rayShape'),
+      uRayColor: litSlot(ctx, ctx.num(`e${rayUnit}Own`)),
+      uRayUnit: rayUnit - 1,
+      uRayReach: ctx.num('rayReach'),
+    }
+  },
+  scatter: farScatter(
+    (ctx) => ctx.num('farWidth') * ctx.num('soften'),
+    (ctx) => ctx.num('farStep'),
+  ),
+  lens: { bloom: 0 },
+  fromPack: (pack: ColorPack) => ['#000000', ...pack.colors.map((c) => c.hex), '#000000', '#000000', '#000000'].slice(0, COLORS),
+  compose: composeMergedLook,
+}

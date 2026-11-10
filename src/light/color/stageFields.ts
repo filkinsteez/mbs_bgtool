@@ -1,3 +1,4 @@
+import { mergedParts as contourMergedParts } from '../recipes/contour/mergedCompose'
 import { mergedParts } from '../recipes/sunset/merged'
 import type { ParamValue, RecipeId } from '../scene'
 
@@ -111,6 +112,8 @@ export function lookParts(recipe: RecipeId, params: Readonly<Record<string, Para
       return []
     case 'sunset.merged':
       return mergedParts(params, aspect)
+    case 'contour.merged':
+      return contourMergedParts(params, aspect)
     default: {
       const unknown: never = recipe
       throw new Error(`No parts for ${String(unknown)}`)

@@ -83,7 +83,12 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const dial = useDialKitController(PANEL_NAME, config, { id: PANEL_ID, onAction: (action) => handleAction(action) })
   const { setValue } = dial
   // The seed picks the look; the link's own look holds at the link's mood and seed.
-  const state = { ...readToolState(dial.values, mood, link, start.colormix), drag, ...(start.sunrise ? { sunrise: start.sunrise } : {}) }
+  const state = {
+    ...readToolState(dial.values, mood, link, start.colormix),
+    drag,
+    ...(start.sunrise ? { sunrise: start.sunrise } : {}),
+    ...(start.contour ? { contour: start.contour } : {}),
+  }
   const query = toQuery(state)
   const { look, pack, seed, format, filter, strength, colormix, mix } = state
   const drawn = sceneLook(state)

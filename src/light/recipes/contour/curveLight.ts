@@ -772,6 +772,12 @@ export interface EmitterSettings {
   own?: readonly number[]
   /** Linear color that near parts with a `pale` share take on (another pack color for the light's pale side). */
   pale?: readonly number[]
+  /**
+   * When set, the stops cut and color only this contour (its index in the shape); every other contour takes
+   * `restStops` whole, so moving the stops never adds or removes pieces on the other contours.
+   */
+  stopContour?: number
+  restStops?: readonly EmissionStop[]
 }
 
 /**
@@ -925,17 +931,27 @@ function fadeCuts(fades: readonly EmissionFade[], closed: boolean, total: number
     .filter((t) => t > 0 && t < 1)
 }
 
-function packShape(shape: Shape, stops: readonly EmissionStop[], facing?: FacingSettings, fades: readonly EmissionFade[] = []): PackedPrimitive[] {
+function packShape(
+  shape: Shape,
+  allStops: readonly EmissionStop[],
+  facing?: FacingSettings,
+  fades: readonly EmissionFade[] = [],
+  stopContour?: number,
+  restStops?: readonly EmissionStop[],
+): PackedPrimitive[] {
   const split = splitArcs(shape, ARC_PIECE)
   const out: PackedPrimitive[] = []
-  const stopTimes = stops
-    .map((s) => s.t)
-    .filter((t) => t > 0 && t < 1)
-    .sort((a, b) => a - b)
+  const timesOf = (stops: readonly EmissionStop[]) =>
+    stops
+      .map((s) => s.t)
+      .filter((t) => t > 0 && t < 1)
+      .sort((a, b) => a - b)
   const contours = split.contours.filter((c) => c.primitives.length > 0)
   const closures = contours.map((c) => (c.closed ? [] : closingSegments(c)))
   const maskPrimitives = contours.flatMap((c, i) => [...c.primitives, ...closures[i]])
   for (const [index, contour] of contours.entries()) {
+    const stops = stopContour === undefined || index === stopContour ? allStops : (restStops ?? allStops.slice(0, 1))
+    const stopTimes = timesOf(stops)
     const total = contourLength(contour)
     const inside = filledSide(contour, maskPrimitives)
     const own = fades.filter((f) => f.contour === index)
@@ -1016,8 +1032,8 @@ function rayDirection(boxes: readonly number[], aspect: number, anchor: readonly
 }
 
 /** Every primitive of a shape as packed for the shader (contours whole, open ones closed far away), before the layout's limit. */
-export function outlinePieces(settings: Pick<EmitterSettings, 'shape' | 'stops' | 'facing' | 'fades'>): readonly PackedPrimitive[] {
-  return settings.shape ? packShape(settings.shape, settings.stops, settings.facing, settings.fades) : []
+export function outlinePieces(settings: Pick<EmitterSettings, 'shape' | 'stops' | 'facing' | 'fades' | 'stopContour' | 'restStops'>): readonly PackedPrimitive[] {
+  return settings.shape ? packShape(settings.shape, settings.stops, settings.facing, settings.fades, settings.stopContour, settings.restStops) : []
 }
 
 /** Points that bound a primitive: its ends and, for arcs, the extreme points inside its sweep. */
@@ -1081,7 +1097,7 @@ export function curveLightUniforms(
     const own = settings.own ?? stopAt(settings.stops, 0)
     // Past this distance from the edge every side mask is fully on or off (4 softness widths), so only the inside test matters.
     const maskReach = Math.max(0, ...sided.map((c) => Math.abs(c.maskInset) + 4 * Math.max(c.maskSoft, MIN_MASK_SOFT))) + Math.abs(settings.maskGrow) + 1e-3
-    const packed = fitOutlines(packShape(settings.shape, settings.stops, settings.facing, settings.fades), layout.primitives)
+    const packed = fitOutlines(packShape(settings.shape, settings.stops, settings.facing, settings.fades, settings.stopContour, settings.restStops), layout.primitives)
     const brightest = Math.max(1e-6, ...packed.flatMap((entry) => [...entry.e0, ...entry.e1]))
     packed.forEach((entry, i) => {
       const o = (e * layout.primitives + i) * PRIM_VEC4 * 4

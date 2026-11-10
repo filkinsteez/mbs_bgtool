@@ -119,8 +119,9 @@ export function lightPlace(scene: Scene, aspect: number): LightPoint | null {
     case 'sunset.merged':
       return null
     case 'contour.rim':
-    case 'contour.halo': {
-      const anchor = pairOf(params[scene.recipe === 'contour.rim' ? 'at' : 'ring1At'])
+    case 'contour.halo':
+    case 'contour.merged': {
+      const anchor = pairOf(params[scene.recipe === 'contour.halo' ? 'ring1At' : 'at'])
       const offset = pairOf(params.light1At)
       return anchor && offset ? [anchor[0] + offset[0] / fw, anchor[1] + offset[1] / fh] : null
     }

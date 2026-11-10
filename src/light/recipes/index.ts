@@ -1,6 +1,7 @@
 import { RECIPE_IDS, type MoodId, type RecipeDefinition, type RecipeId } from '../scene'
 import { contourBeam } from './contour/beam'
 import { contourHalo } from './contour/halo'
+import { contourMerged } from './contour/merged'
 import { contourRim } from './contour/rim'
 import { contourStreaks } from './contour/streaks'
 import { sunsetBands } from './sunset/bands'
@@ -17,6 +18,7 @@ export const RECIPES: Readonly<Record<RecipeId, RecipeDefinition>> = {
   'contour.beam': contourBeam,
   'contour.halo': contourHalo,
   'contour.streaks': contourStreaks,
+  'contour.merged': contourMerged,
 }
 
 export const RECIPE_LIST: readonly RecipeDefinition[] = RECIPE_IDS.map((id) => RECIPES[id])
