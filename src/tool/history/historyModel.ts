@@ -98,6 +98,23 @@ function move(history: History, from: 'back' | 'forward', newId: string): Histor
   return { history: from === 'back' ? { ...placed, back: rest, forward: other } : { ...placed, back: other, forward: rest }, query }
 }
 
+/**
+ * The history without entry `id`: its design also leaves the steps, so Cmd/Ctrl+Z doesn't bring it back, and when it
+ * was the shown entry none is shown.
+ */
+export function remove(history: History, id: string): History {
+  const entry = history.entries.find((item) => item.id === id)
+  if (!entry) return history
+  const design = designOf(entry.query)
+  const others = (steps: readonly string[]) => steps.filter((step) => designOf(step) !== design)
+  return {
+    entries: history.entries.filter((item) => item !== entry),
+    current: history.current === id ? null : history.current,
+    back: others(history.back),
+    forward: others(history.forward),
+  }
+}
+
 /** Cmd/Ctrl+Z: the state before the last change, or null when there is none. */
 export const undo = (history: History, newId: string) => move(history, 'back', newId)
 

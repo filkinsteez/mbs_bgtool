@@ -1,6 +1,15 @@
 import { useEffect, useLayoutEffect, useState, useSyncExternalStore, type RefObject } from 'react'
 import type { Scene } from '@/light'
-import { record, redo as redoMove, restore as restoreMove, setQuery, undo as undoMove, type History, type HistoryMove } from './historyModel'
+import {
+  record,
+  redo as redoMove,
+  remove as removeEntry,
+  restore as restoreMove,
+  setQuery,
+  undo as undoMove,
+  type History,
+  type HistoryMove,
+} from './historyModel'
 import { readHistory, readServerHistory, subscribeHistory, writeHistory } from './historyStore'
 
 /** A state goes in the history once it has been drawn and left unchanged this long. */
@@ -19,21 +28,31 @@ class Recorder {
   private pending: { query: string; thumb: string } | null = null
   private dragging = false
   private pressed = false
+  /** A shown state taken out of the history: it isn't recorded again until the state changes. */
+  private removed: string | null = null
   private timer: ReturnType<typeof setTimeout> | undefined
 
   see(query: string, scene: Scene): void {
     if (query !== this.query) {
       this.changed = performance.now()
       this.pending = null
+      this.removed = null
     }
     this.query = query
     this.scene = scene
   }
 
   settled(scene: Scene, thumb: string): void {
-    if (scene !== this.scene) return
+    if (scene !== this.scene || this.query === this.removed) return
     this.pending = { query: this.query, thumb }
     this.tryCommit()
+  }
+
+  /** The shown state was taken out of the history: a redraw of it, after a resize say, doesn't put it back. */
+  forget(): void {
+    clearTimeout(this.timer)
+    this.pending = null
+    this.removed = this.query
   }
 
   hold(kind: 'dragging' | 'pressed', on: boolean): void {
@@ -85,6 +104,8 @@ export interface HistoryControls {
   onSettle: (scene: Scene, thumb: string) => void
   /** Shows entry `id`. */
   restore: (id: string) => void
+  /** Takes entry `id` out of the history; the image stays as it is. */
+  remove: (id: string) => void
   /** Cmd/Ctrl+Z; false when there is nothing to go back to. */
   undo: () => boolean
   /** Shift+Cmd/Ctrl+Z; false when there is nothing to go forward to. */
@@ -106,6 +127,14 @@ class HistoryActions {
   readonly restore = (id: string): void => {
     this.recorder.flush()
     this.go(restoreMove(readHistory(), id))
+  }
+
+  readonly remove = (id: string): void => {
+    this.recorder.flush()
+    const now = readHistory()
+    const shown = now.entries.find((entry) => entry.id === now.current)
+    if (shown?.id === id && shown.query === this.recorder.query) this.recorder.forget()
+    writeHistory(removeEntry(now, id))
   }
 
   readonly undo = (): boolean => this.step(true)
@@ -136,7 +165,7 @@ export function useHistory({ query, scene, dragging, panelRef, show }: HistoryOp
   const history = useSyncExternalStore(subscribeHistory, readHistory, readServerHistory)
   const [recorder] = useState(() => new Recorder())
   const [actions] = useState(() => new HistoryActions(recorder))
-  const { onSettle, restore, undo, redo } = actions
+  const { onSettle, restore, remove, undo, redo } = actions
 
   useLayoutEffect(() => actions.setShow(show))
   useLayoutEffect(() => recorder.see(query, scene), [recorder, query, scene])
@@ -157,5 +186,5 @@ export function useHistory({ query, scene, dragging, panelRef, show }: HistoryOp
     }
   }, [recorder, panelRef])
 
-  return { history, onSettle, restore, undo, redo }
+  return { history, onSettle, restore, remove, undo, redo }
 }

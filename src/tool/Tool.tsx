@@ -250,7 +250,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
           onReset={resetLight}
           onSettle={history.onSettle}
         />
-        <HistoryStrip history={history.history} onRestore={history.restore} />
+        <HistoryStrip history={history.history} onRestore={history.restore} onRemove={history.remove} />
       </div>
       <aside
         ref={panelRef}

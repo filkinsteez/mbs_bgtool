@@ -8,6 +8,7 @@ import {
   parsePlace,
   record,
   redo,
+  remove,
   restore,
   setQuery,
   STEP_LIMIT,
@@ -131,6 +132,29 @@ describe('history', () => {
     for (let move = redo(end, newId()); move; move = redo(end, newId())) end = move.history
     expect(shown(end)).toBe(query(last))
     expect(end.back).toHaveLength(last - 1)
+  })
+
+  it('takes out an entry with its steps, so Cmd+Z skips it, and shows none when it was the shown one', () => {
+    const elemental = query(3).replace('pack=bold', 'pack=elemental')
+    const history = add(add(add(add(EMPTY_HISTORY, query(1)), query(2)), query(3)), elemental)
+    const [third, second] = history.entries
+    expect(history.back).toEqual([query(1), query(2), query(3)])
+
+    const withoutSecond = remove(history, second.id)
+    expect(queries(withoutSecond)).toEqual([elemental, query(1)])
+    expect(withoutSecond.current).toBe(third.id)
+    expect(withoutSecond.back).toEqual([query(1), query(3)])
+
+    const withoutShown = remove(history, third.id)
+    expect(queries(withoutShown)).toEqual([query(2), query(1)])
+    expect(withoutShown.current).toBeNull()
+    expect(withoutShown.back).toEqual([query(1), query(2)])
+    const back = undo(withoutShown, newId())!
+    expect(back.query).toBe(query(2))
+    expect(back.history.forward).toEqual([])
+    expect(queries(back.history)).toEqual([query(2), query(1)])
+
+    expect(remove(history, 'gone')).toBe(history)
   })
 
   it('keeps at most STEP_LIMIT steps back', () => {
