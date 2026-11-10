@@ -1,4 +1,4 @@
-import { PAIR_GAP, PAIR_PRESENT, PAIR_THIN, PAIR_WIDTH } from './stageSolve'
+import { DIM_TURN, PAIR_GAP, PAIR_PRESENT, PAIR_THIN, PAIR_WIDTH } from './stageSolve'
 
 /**
  * The color stage in GLSL: `vec3 colorStage(vec2 uv, vec3 radiance)` keeps each pixel's luminance exactly and gives it
@@ -50,14 +50,16 @@ vec3 mixRamp(int k, float y) {
   return c / max(dot(c, LUMA), 1e-6);
 }
 
-vec3 mixColorAt(int k, float L, float y) {
+// A color that dims into its neighbor turns into it below its edge; a light color with a dim end (Lime's Forest) does so
+// only where that dim end is present (near, 0 to 1), over the wide turn DIM_TURN.
+vec3 mixColorAt(int k, float L, float y, float near) {
   vec3 c = mixRamp(k, y);
-  if (uMixColor[k].a > 0.5 && uMixColor[k].a < 1.5 && uMixTurn[k].x > -0.5) {
-    float edge = uMixTurn[k].y;
-    float t = 1.0 - smoothstep(edge - uMixTurn[k].w, edge + uMixTurn[k].z, L);
-    c = mix(c, mixRamp(int(uMixTurn[k].x + 0.5), y), t);
-  }
-  return c;
+  if (uMixTurn[k].x < -0.5) return c;
+  float edge = uMixTurn[k].y;
+  float t = 0.0;
+  if (uMixColor[k].a > 0.5 && uMixColor[k].a < 1.5) t = 1.0 - smoothstep(edge - uMixTurn[k].w, edge + uMixTurn[k].z, L);
+  else if (uMixColor[k].a > 1.5 && uMixColor[k].a < 2.5) t = near * (1.0 - smoothstep(edge - ${DIM_TURN[1].toFixed(4)}, edge + ${DIM_TURN[0].toFixed(4)}, L));
+  return mix(c, mixRamp(int(uMixTurn[k].x + 0.5), y), t);
 }
 
 vec3 colorStage(vec2 uv, vec3 radiance) {
@@ -79,10 +81,20 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
   // the light changes per grid cell), their masks meet at the lightness between the fades (pairedMasks in
   // stageSolve), so they hand over directly along the light with no strip of a third color.
   float pairMask[5];
-  for (int k = 0; k < 5; k++) pairMask[k] = 0.0;
+  float near[5];
+  for (int k = 0; k < 5; k++) {
+    pairMask[k] = 0.0;
+    near[k] = 0.0;
+  }
   if (uMixSoft > 0.5) {
     for (int j = 0; j < 5; j++) {
       if (j >= uMixCount || uMixColor[j].a < 1.5 || uMixColor[j].a > 2.5) continue;
+      // A light color with a dim end keeps its light down its falloff where the dim end is present.
+      if (uMixTurn[j].x > -0.5) {
+        int n = int(uMixTurn[j].x + 0.5);
+        near[j] = smoothstep(${PAIR_PRESENT[0].toFixed(4)}, ${PAIR_PRESENT[1].toFixed(4)}, mixFieldValue(int(uMixField[n].x + 0.5), fa, fb));
+        pairMask[j] = near[j];
+      }
       float low = uMixTurn[j].y - uMixTurn[j].w;
       float presentJ = smoothstep(${PAIR_PRESENT[0].toFixed(4)}, ${PAIR_PRESENT[1].toFixed(4)}, mixFieldValue(int(uMixField[j].x + 0.5), fa, fb));
       for (int k = 0; k < 5; k++) {
@@ -148,7 +160,7 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
     float q = uMixSoft > 0.5 ? p[k] : p[k] * p[k];
     s2 += q;
     pp += p[k] * p[k];
-    m += q * mixColorAt(k, L, yE);
+    m += q * mixColorAt(k, L, yE, near[k]);
   }
   m /= max(s2, 1e-6);
   // In a look colored by its parts (uMixNarrow) the neutral line where far hues meet is narrower (shares squared).

@@ -98,9 +98,10 @@ export function stageColors(pack: ColorPack, mix: ColorMix, byParts = false): St
         ? base.filter((o) => o !== c && !o.brightOnly && o.group === 'warm' && o.lightness < c.lightness && hueGap(o.hue, c.hue) <= 60).sort((x, y) => hueGap(x.hue, c.hue) - hueGap(y.hue, c.hue))[0]
         : undefined
     const kind = c.group === 'dark' ? KIND_DARK : fire ? KIND_TO_NEIGHBOR : c.brightOnly ? KIND_BRIGHT : KIND_PLAIN
-    // In a look colored by its parts, light colors fade over more of the light, so they cross into the dark colors
-    // below them as the light falls off, with no gap where a third color shows as a thin line; Yellow hands over to
-    // Orange-red a little higher, so Orange-red has more than a rim.
+    // In a look colored by its parts Lime, whose dim version is olive, turns into the dark color of a near hue (Forest)
+    // where its light falls into that color's own place, over a wide, soft blend; elsewhere it fades as before, so
+    // Meta Blue keeps the dim corners (dimEnd, pairedMasks).
+    const dim = byParts && kind === KIND_BRIGHT ? dimEnd(c, base) : undefined
     return {
       hex: c.hex,
       unit: c.unit,
@@ -110,13 +111,31 @@ export function stageColors(pack: ColorPack, mix: ColorMix, byParts = false): St
       group: c.group,
       kind,
       edge: kind === KIND_DARK ? c.lightness + (byParts ? DARK_REACH : 0) : kind === KIND_BRIGHT ? c.lightness - 0.1 : c.lightness - (byParts ? 0.12 : 0.16),
-      turn: kind === KIND_TO_NEIGHBOR ? (byParts ? [0.06, 0.14] : [0.08, 0.12]) : [0, 0],
+      turn: kind === KIND_TO_NEIGHBOR ? (byParts ? [0.06, 0.14] : [0.08, 0.12]) : dim ? DIM_TURN : [0, 0],
       fade: kind === KIND_DARK ? [0, 0.1] : kind === KIND_BRIGHT ? [0, 0.2] : [0, 0],
-      neighborIndex: fire ? base.indexOf(fire) : -1,
+      neighborIndex: fire ? base.indexOf(fire) : dim ? base.indexOf(dim) : -1,
       defaultShare: c.defaultShare,
       share: c.share,
     }
   })
+}
+
+/**
+ * Lightness above and below a light color's edge over which it turns into its dim end where that color is present:
+ * wide, so the light keeps its color well down its falloff and the change is a soft blend of near hues.
+ */
+export const DIM_TURN: [number, number] = [0.06, 0.3]
+
+/**
+ * The dark pack color a light color dims into where its light falls into that color's place: the one nearest in hue
+ * within 60 degrees (Lime's Forest). Tan has none (Forest and Plum are both about 100 degrees away), nor has a
+ * near-neutral color (Ice).
+ */
+function dimEnd<T extends { chroma: number; hue: number; group: string }>(c: T, colors: readonly T[]): T | undefined {
+  if (c.chroma < 0.02) return undefined
+  return colors
+    .filter((o) => o !== c && o.group === 'dark' && hueGap(o.hue, c.hue) <= 60)
+    .sort((x, y) => hueGap(x.hue, c.hue) - hueGap(y.hue, c.hue))[0]
 }
 
 const smooth = (e0: number, e1: number, x: number) => {
@@ -124,10 +143,18 @@ const smooth = (e0: number, e1: number, x: number) => {
   return t * t * (3 - 2 * t)
 }
 
-/** How much of a color reads as itself at a lightness: a bright-only color only above its turn, as the shader turns it. */
-function itself(c: StageColor, lightness: number): number {
-  return c.kind === KIND_TO_NEIGHBOR ? smooth(c.edge - c.turn[1], c.edge + c.turn[0], lightness) : 1
+/**
+ * How much of a color reads as itself at a lightness, as the shader turns it: a color that dims into its neighbor only
+ * above its turn; a light color with a dim end only above its turn where that dim end is present (`near`, 0 to 1).
+ */
+function itself(c: StageColor, lightness: number, near = 0): number {
+  if (c.kind === KIND_TO_NEIGHBOR) return smooth(c.edge - c.turn[1], c.edge + c.turn[0], lightness)
+  if (c.kind === KIND_BRIGHT && c.neighborIndex >= 0) return 1 - near * (1 - smooth(c.edge - c.turn[1], c.edge + c.turn[0], lightness))
+  return 1
 }
+
+/** How much a color counts as present in a cell from its field there (pairedMasks, dim ends). */
+const presence = (field: number) => smooth(PAIR_PRESENT[0], PAIR_PRESENT[1], field)
 
 /** How much a color may show at a lightness: a dark color only at or below its own; the others anywhere. */
 export function colorMask(c: StageColor, lightness: number): number {
@@ -167,6 +194,8 @@ export function pairedMasks(colors: readonly StageColor[], present: readonly num
   const out = colors.map((c) => colorMask(c, lightness))
   colors.forEach((a, j) => {
     if (a.kind !== KIND_BRIGHT) return
+    // A light color with a dim end keeps its light down its falloff where the dim end is present (it turns into it).
+    if (a.neighborIndex >= 0) out[j] = Math.max(out[j], presence(present[a.neighborIndex]))
     colors.forEach((b, k) => {
       if (b.kind !== KIND_DARK) return
       const low = a.edge - a.fade[1]
@@ -342,7 +371,7 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
     visible.forEach((i, j) => {
       const l = Math.max(S[i], VISIBLE)
       const seen = 1 - smooth(0.95, 1.1, l)
-      const self = itself(c, l)
+      const self = itself(c, l, c.neighborIndex >= 0 ? presence(F[c.neighborIndex][i]) : 0)
       own[j] = seen * self
       down[j] = c.neighborIndex >= 0 ? seen * (1 - self) * colorMask(colors[c.neighborIndex], l) : 0
     })
