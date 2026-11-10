@@ -537,15 +537,17 @@ const EDGE_PART_WIDTH = 0.1
 /** The second light's parts hug its glow on the edge, so its color stays on its light and not on the main light's
  * face beside it. */
 const WARM_PART_WIDTH = 0.05
-/** The dark colors' stretches (short sides): from and to past the second light's end toward the main light; from and
- * to along the main edge from the seed's place for the light, on the side with no second light and past the far
- * stretch; how far into the face; the parts' width. */
-const DARK_FROM = 0.02
-const DARK_TO = 0.17
-const DARK_MAIN = [0.45, 0.65]
-const DARK_FAR = [1.1, 1.3]
-const DARK_IN = 0.05
-const DARK_PART_WIDTH = 0.06
+/** The dark colors' stretches of outline (short sides): half their length; how far from the seed's place for the main
+ * light, past the second light's ends and from the far stretch's middle they keep; how far apart the two are; how far
+ * inside the frame's sides; places tried per contour; the parts' width. */
+const DARK_HALF = 0.15
+const DARK_FROM_MAIN = 0.4
+const DARK_CLEAR = 0.1
+const DARK_COOL_CLEAR = 0.3
+const DARK_APART = 0.3
+const DARK_MARGIN = 0.06
+const DARK_SAMPLES = 160
+const DARK_PART_WIDTH = 0.035
 /** How far into the face the main light's part sits from the light. */
 const LEAD_INTO = 0.15
 /** How far past the second light's ends the main light's line stays dark, and over how long it comes back. */
@@ -560,8 +562,8 @@ const SECOND_FAR = 0.6
 /** The main light's glow: wider and stronger, so Meta Blue's own light is the brightest and widest and its brightest
  * part reaches its own color's lightness. The second light keeps the glow strength it had (SECOND_GLOW_WEIGHT, at
  * the base width): wider, its own color reached into the main light's face and mixed to indigo or mauve. */
-const MAIN_GLOW = 2
-const MAIN_GLOW_WEIGHT = 1.5
+const MAIN_GLOW = 2.2
+const MAIN_GLOW_WEIGHT = 1.65
 const SECOND_GLOW_WEIGHT = 1.1
 /** Red over blue in sRGB: above zero for warm colors. */
 const warmthOf = (hex: string) => parseInt(hex.slice(1, 3), 16) - parseInt(hex.slice(5, 7), 16)
@@ -898,38 +900,45 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   // edge nearest the light switched, or the light's nearest point on the edge flipped sides).
   const [c1, c2, c3] = COOL_AT.map((d) => framePoint(pointOn(onHome.contour, tHome + (away * d) / homeLength)))
   Object.assign(partParams, { partCool: [...c1, ...c2], partCool2: [...c2, ...c3] })
-  // The dark colors are the dim ends of lights, a little into the lit face, never out where the design has no light:
-  // one in the dip between the second light and the main light (the main light's line dark, the second light not yet
-  // risen), so the two hand over through dark; one where the main light's far stretch fades out. With no second light,
-  // the main light's dim end on its other side. From the seed, so a drag never moves them.
-  const intoFace = (contour: number, t: number): Vec2 => {
-    const c = drawn.contours[contour]
-    const tangent = contourPoint(c, c.closed ? t - Math.floor(t) : Math.min(1, Math.max(0, t))).tangent
-    const normal: Vec2 = [-tangent[1], tangent[0]]
-    const p = pointOn(contour, t)
-    const probeAt: Vec2 = [p[0] - anchorR[0] + 0.02 * normal[0], p[1] - anchorR[1] + 0.02 * normal[1]]
-    const inside = Math.abs(windingNumber(drawn.contours.flatMap((k) => k.primitives), probeAt)) > 0.5
-    const sign = (inside ? 1 : -1) * (def.outside && !def.wash ? -1 : 1)
-    return [sign * normal[0], sign * normal[1]]
+  // The dark colors are dim stretches of the outline itself: inside the frame, clear of the main light's core, the
+  // second light and the far stretch, and as near the main light as that allows, so its falloff still lights them
+  // dimly and they are never out in the black. Narrow, so a dark color glows faintly along the line and the face stays
+  // dark. Found on the seed's shape (the same for any drag), so a drag never moves them.
+  const onMerged = (ci: number, t: number): Vec2 => {
+    const c = merged.contours[ci]
+    const q = contourPoint(c, c.closed ? t - Math.floor(t) : Math.min(1, Math.max(0, t))).point
+    return [q[0] + anchorR[0], q[1] + anchorR[1]]
   }
-  const stretchIn = (contour: number, a: number, b: number): number[] => {
-    const n = intoFace(contour, (a + b) / 2)
-    const at = (u: number) => {
-      const p = pointOn(contour, u)
-      return framePoint([p[0] + DARK_IN * n[0], p[1] + DARK_IN * n[1]])
-    }
-    return [...at(a), ...at(b)]
+  const secondMiddle = secondOn ? pointOn(secondOn.contour, secondOn.t) : null
+  const coolMiddle = pointOn(onHome.contour, tHome + (away * COOL_AT[1]) / homeLength)
+  const clearOf = (p: Vec2) =>
+    Math.abs(p[0]) <= fw / 2 - DARK_MARGIN &&
+    Math.abs(p[1]) <= fh / 2 - DARK_MARGIN &&
+    Math.sqrt(dist2(p, seedHome)) >= DARK_FROM_MAIN &&
+    (!secondMiddle || Math.sqrt(dist2(p, secondMiddle)) >= halfLength + DARK_CLEAR) &&
+    Math.sqrt(dist2(p, coolMiddle)) >= DARK_COOL_CLEAR
+  const darkSamples = merged.contours.flatMap((c, ci) => {
+    const length = contourLength(c) || 1
+    return Array.from({ length: DARK_SAMPLES }, (_, k) => {
+      const t = (k + 0.5) / DARK_SAMPLES
+      return { ci, t, length, p: onMerged(ci, t) }
+    }).filter((s) => clearOf(s.p))
+  })
+  const nearestDark = (keepFrom: Vec2 | null) =>
+    darkSamples
+      .filter((s) => !keepFrom || Math.sqrt(dist2(s.p, keepFrom)) >= DARK_APART)
+      .reduce<(typeof darkSamples)[number] | null>((best, s) => (!best || dist2(s.p, seedHome) < dist2(best.p, seedHome) ? s : best), null)
+  const darkAt = (s: (typeof darkSamples)[number] | null) =>
+    s ? [...framePoint(onMerged(s.ci, s.t - DARK_HALF / s.length)), ...framePoint(onMerged(s.ci, s.t + DARK_HALF / s.length))] : PART_OFF
+  const dark1 = nearestDark(null)
+  // With no clear place for the second, it continues the first along the outline, on the side away from the main
+  // light, so the dim stretch changes from one dark color to the other along its length.
+  const beside = (s: NonNullable<typeof dark1>) => {
+    const sides = [-1, 1].map((k) => ({ ...s, t: s.t + (2 * k * DARK_HALF) / s.length, p: onMerged(s.ci, s.t + (2 * k * DARK_HALF) / s.length) }))
+    return dist2(sides[0].p, seedHome) >= dist2(sides[1].p, seedHome) ? sides[0] : sides[1]
   }
-  const mainEnd = (sign: number, [from, to]: readonly number[]) =>
-    stretchIn(onHome.contour, tHome + (sign * from) / homeLength, tHome + (sign * to) / homeLength)
-  if (secondOn) {
-    const { contour, t, tSpan } = secondOn
-    const length = contourLength(drawn.contours[contour]) || 1
-    const ends = [-1, 1].map((k) => pointOn(contour, t + k * tSpan))
-    const toward = dist2(ends[0], seedHome) <= dist2(ends[1], seedHome) ? -1 : 1
-    partParams.partDark = stretchIn(contour, t + toward * (tSpan + DARK_FROM / length), t + toward * (tSpan + DARK_TO / length))
-  } else partParams.partDark = mainEnd(-away, DARK_MAIN)
-  partParams.partDark2 = mainEnd(away, DARK_FAR)
+  partParams.partDark = darkAt(dark1)
+  partParams.partDark2 = darkAt(nearestDark(dark1 ? dark1.p : null) ?? (dark1 ? beside(dark1) : null))
   // The main light with the face near it: from the light, a little into the face the seed's light faces.
   const lead: Vec2 = [hot[0] + homeSign * homeNormal[0] * LEAD_INTO, hot[1] + homeSign * homeNormal[1] * LEAD_INTO]
   partParams.partLead = [...framePoint(lead), 0.3, 0]
@@ -1020,9 +1029,9 @@ const vec = (params: Readonly<Record<string, ParamValue>>, key: string, fallback
  * Where the merged look's light is, from its params, always eight parts in this order: the main light with the face
  * near it (the lead color); the second light's stretch of edge (warm: Yellow over Orange-red, Tan, or the brightest
  * left, Atmospheric's Steel) in two pieces, and its core (bright: Lime); the main light's far stretch of edge, dimmer
- * than its brightest (cool: Cyan, Ice) in two pieces; two dim ends of lights a little into the lit face, in the dip
- * between the second light and the main light and where the far stretch fades (dark: Forest and Plum, Slate and
- * Near-black). A part not in the frame sits off it. Nothing here reads the colors.
+ * than its brightest (cool: Cyan, Ice) in two pieces; two dim stretches of the outline, on the other edge or the main
+ * edge away from the far stretch, and past the far stretch (dark: Forest and Plum, Slate and Near-black). A part not
+ * in the frame sits off it. Nothing here reads the colors.
  */
 export function mergedParts(params: Readonly<Record<string, ParamValue>>): StagePart[] {
   // The second light's parts fade with it as a dragged main light comes near (its strength, partBright's fourth value).
