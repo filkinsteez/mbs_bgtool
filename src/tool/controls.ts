@@ -15,12 +15,12 @@ import { placeHorizon } from '@/light/recipes/sunset/horizon'
 export { DEFAULT_CONTROLS, type ControlValues } from '@/light'
 
 /**
- * The Softness and mood control the tool sends for each mood: the panel has no sliders for them (owner, 2026-11-09).
- * A dragged line still sets the mood control from its start (`toolControls`).
+ * The intensity, softness and mood control the tool sends for each mood: the panel has no sliders for them (owner,
+ * 2026-11-09). A dragged line still sets the mood control from its start (`toolControls`).
  */
-export const FIXED_CONTROLS: Readonly<Record<MoodId, Pick<ControlValues, 'softness' | 'mood'>>> = {
-  sunset: { softness: 0.5, mood: 0.5 },
-  contour: { softness: 0.5, mood: 0.5 },
+export const FIXED_CONTROLS: Readonly<Record<MoodId, Omit<ControlValues, 'drag'>>> = {
+  sunset: { intensity: 0.5, softness: 0.5, mood: 0.5 },
+  contour: { intensity: 0.5, softness: 0.5, mood: 0.5 },
 }
 
 export interface RecipeMapping {
@@ -361,10 +361,10 @@ export function controlsForDrag(
 }
 
 /**
- * The controls the tool sends for a look: the panel's Intensity, the mood's fixed Softness and mood control, and the
- * dragged line, with the mood control set from the line's start as `controlsForDrag` sets it.
+ * The controls the tool sends for a look: the mood's fixed intensity, softness and mood control, and the dragged line,
+ * with the mood control set from the line's start as `controlsForDrag` sets it.
  */
-export function toolControls(recipeId: RecipeId, pack: ColorPack, seed: number, aspect: number, intensity: number, drag?: LightDrag): ControlValues {
-  const controls = { intensity, ...FIXED_CONTROLS[moodOf(recipeId)] }
+export function toolControls(recipeId: RecipeId, pack: ColorPack, seed: number, aspect: number, drag?: LightDrag): ControlValues {
+  const controls = { ...FIXED_CONTROLS[moodOf(recipeId)] }
   return drag ? controlsForDrag(recipeId, pack, seed, controls, aspect, drag) : controls
 }

@@ -12,24 +12,21 @@ export interface ExportOutcome {
 }
 
 /**
- * The control values an export's file name carries: the ones the user sets. Softness and the mood control are fixed
- * per mood, and with a line the mood control follows from the line.
+ * The control values an export's file name carries: the ones the user sets. Intensity, softness and the mood control
+ * are fixed per mood, and with a line the mood control follows from the line.
  */
-export type NamedControls = Pick<ControlValues, 'intensity' | 'drag'>
+export type NamedControls = Pick<ControlValues, 'drag'>
 
-const percent = (value: number) => String(Math.round(value * 100))
 /** Line ends are kept to 0.001 of the frame, so tenths of a percent tell any two lines apart. */
 const framePercent = (value: number) => String(Math.round(value * 1000) / 10)
 
 /**
- * File name parts for the controls, at the precision the URL keeps them: `i50` (Intensity in percent) and, when the
- * user dragged a line, `from20,80-to75,30` (its ends in percent of the frame's width and height).
+ * File name parts for the controls, at the precision the URL keeps them: when the user dragged a line,
+ * `from20,80-to75,30` (its ends in percent of the frame's width and height); none without one.
  */
 export function controlNameParts(controls: NamedControls): string[] {
-  const parts = [`i${percent(controls.intensity)}`]
   const line = controls.drag ? clampDrag(controls.drag) : undefined
-  if (line) parts.push(`from${line.from.map(framePercent).join(',')}`, `to${line.to.map(framePercent).join(',')}`)
-  return parts
+  return line ? [`from${line.from.map(framePercent).join(',')}`, `to${line.to.map(framePercent).join(',')}`] : []
 }
 
 function download(blob: Blob, fileName: string): void {

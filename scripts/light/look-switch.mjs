@@ -26,8 +26,8 @@ const outDir = path.resolve(ROOT, typeof args.out === 'string' ? args.out : 'art
 const start = args.start === 'contour' ? 'contour' : 'sunset'
 const START =
   start === 'contour'
-    ? '/?mood=contour&look=halo&pack=bold&intensity=0.5&seed=1&format=16x9'
-    : '/?mood=sunset&look=bands&pack=bold&intensity=0.5&seed=1&format=16x9'
+    ? '/?mood=contour&look=halo&pack=bold&seed=1&format=16x9'
+    : '/?mood=sunset&look=bands&pack=bold&seed=1&format=16x9'
 
 /**
  * Each step: Shuffle to a seed, or a key on the Mood tiles, and the look it lands on. A seed's look is look number

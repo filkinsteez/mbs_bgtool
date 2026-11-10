@@ -1,14 +1,13 @@
 import { EXPORT_ASPECTS, getRecipe, isPackId, isRecipeId, type ExportAspect, type MoodId, type PackId, type RecipeId } from '@/light'
-import { clampDrag, clampPoint, DEFAULT_CONTROLS, type LightDrag, type LightPoint } from './controls'
+import { clampDrag, clampPoint, type LightDrag, type LightPoint } from './controls'
 import { DEFAULT_FILTER, filterQuery, parseFilterQuery, type FilterChoice } from './filterControl'
 import { lookForSeed } from './seedLook'
 
-/** What the panel and the URL set. Softness and the mood control are fixed per mood (`FIXED_CONTROLS`). */
+/** What the panel and the URL set. Intensity, softness and the mood control are fixed per mood (`FIXED_CONTROLS`). */
 export interface ToolState {
   mood: MoodId
   look: RecipeId
   pack: PackId
-  intensity: number
   seed: number
   format: ExportAspect
   /** The line the user dragged on the image, in frame units (`from=x,y&to=x,y` in the URL). Missing until they drag. */
@@ -26,7 +25,6 @@ export const DEFAULT_STATE: ToolState = {
   mood: 'sunset',
   look: 'sunset.bands',
   pack: 'bold',
-  intensity: DEFAULT_CONTROLS.intensity,
   seed: 1,
   format: '16:9',
   ...DEFAULT_FILTER,
@@ -55,12 +53,6 @@ export type LinkLook = Pick<ToolState, 'mood' | 'seed' | 'look'>
  */
 export function shownLook(mood: MoodId, seed: number, link?: LinkLook): RecipeId {
   return link && link.mood === mood && link.seed === seed ? link.look : lookForSeed(mood, seed)
-}
-
-export function clampUnit(value: unknown, fallback: number): number {
-  const n = typeof value === 'number' ? value : typeof value === 'string' ? Number.parseFloat(value) : Number.NaN
-  if (!Number.isFinite(n)) return fallback
-  return Math.round(Math.min(1, Math.max(0, n)) * 100) / 100
 }
 
 /**
@@ -110,12 +102,11 @@ function readParam(query: QueryInput, key: string): string | undefined {
 
 const shortLook = (look: RecipeId) => look.slice(look.indexOf('.') + 1)
 const formatToQuery = (format: ExportAspect) => format.replace(':', 'x')
-const unitToQuery = (value: number) => String(Math.round(value * 100) / 100)
 
 /**
  * Reads the tool state from a URL query; missing or invalid values take the defaults. A missing look, or one from
- * another mood, is the look the seed picks. Old links' `softness`, `horizon` and `light` are ignored, as the panel no
- * longer sets them.
+ * another mood, is the look the seed picks. Old links' `intensity`, `softness`, `horizon` and `light` are ignored, as
+ * the panel no longer sets them.
  */
 export function parseQuery(query: QueryInput): ToolState {
   const moodParam = readParam(query, 'mood')
@@ -129,7 +120,6 @@ export function parseQuery(query: QueryInput): ToolState {
     mood,
     look: fixLook(mood, lookParam && !lookParam.includes('.') ? `${mood}.${lookParam}` : lookParam, seed),
     pack: pack && isPackId(pack) ? pack : DEFAULT_STATE.pack,
-    intensity: clampUnit(readParam(query, 'intensity'), DEFAULT_STATE.intensity),
     seed,
     format: isExportAspect(format) ? format : DEFAULT_STATE.format,
     ...(drag ? { drag } : {}),
@@ -146,7 +136,6 @@ export function toQuery(state: ToolState): string {
     ['mood', state.mood],
     ['look', shortLook(state.look)],
     ['pack', state.pack],
-    ['intensity', unitToQuery(state.intensity)],
   ]).toString()
   const drag = state.drag ? clampDrag(state.drag) : undefined
   const line = drag ? `from=${drag.from.join(',')}&to=${drag.to.join(',')}` : null

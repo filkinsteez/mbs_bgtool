@@ -122,8 +122,8 @@ function placeOf(element: Element, label: string): Where {
 
 /**
  * The entry for each element, from the place the element shows. With several panels DialKit puts each in a folder
- * named after the panel; with one it does not. Elements that show the same place (two sliders labelled "Strength")
- * take that place's entries in panel order, the order DialKit draws them in.
+ * named after the panel; with one it does not. Elements that show the same place (two sliders with one label) take
+ * that place's entries in panel order, the order DialKit draws them in.
  */
 export function matchByPlace<T extends { panelName: string; where: Where }>(places: readonly Where[], entries: readonly T[]): (T | undefined)[] {
   const byPlace = new Map<Where, T[]>()

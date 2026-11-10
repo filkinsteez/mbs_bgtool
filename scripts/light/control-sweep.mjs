@@ -494,7 +494,7 @@ const harness = await startHarness()
 let failed = false
 try {
   const info = await harness.info()
-  const { buildScene, clampDrag, controlsForDrag, moodForPoint, moveDragWithMood } = await harness.ssr('/src/tool/controls.ts')
+  const { buildScene, clampDrag, controlsForDrag, moodForPoint, moveDragWithMood, toolControls } = await harness.ssr('/src/tool/controls.ts')
   const { getPack } = await harness.ssr('/src/light/color/packs.ts')
   const { EXPORT_SIZES } = await harness.ssr('/src/light/engine/frame.ts')
   const { linearToOklab } = await harness.ssr('/src/light/color/oklab.ts')
@@ -752,7 +752,9 @@ try {
 
   /**
    * The tool's settled canvas for a few frames of the first sweep next to the harness render of the same scene. The
-   * drag hint, which shows over the canvas on every page load until the first drag, is hidden.
+   * tool reads only the line from the URL and sends its own fixed intensity, softness and mood control (`toolControls`),
+   * so the harness renders those, and a sweep without a line gives one page, checked once. The drag hint, which shows
+   * over the canvas on every page load until the first drag, is hidden.
    */
   const toolCheck = async (url, sweep) => {
     const browser = harness.page.context().browser()
@@ -760,27 +762,29 @@ try {
     await page.addInitScript(() =>
       document.addEventListener('DOMContentLoaded', () => document.head.append(Object.assign(document.createElement('style'), { textContent: '.tool-hint{display:none!important}' }))),
     )
+    const checked = new Set()
     try {
       for (const value of [sweep.values[0], sweep.values[sweep.values.length >> 1], sweep.values.at(-1)]) {
-        const controlValues = controlsFor(sweep, value)
+        const line = controlsFor(sweep, value).drag
         const [mood, look] = sweep.look.split('.')
         const query = new URLSearchParams({
           mood,
           look,
           pack: sweep.pack,
-          intensity: String(controlValues.intensity),
-          softness: String(controlValues.softness),
-          [controlName(sweep.look, 'mood')]: String(controlValues.mood),
-          ...(controlValues.drag ? { from: controlValues.drag.from.join(','), to: controlValues.drag.to.join(',') } : {}),
+          ...(line ? { from: line.from.join(','), to: line.to.join(',') } : {}),
           seed: String(sweep.seed),
           format: sweep.format,
         })
+        if (checked.has(String(query))) continue
+        checked.add(String(query))
         await page.goto(`${url}/?${query}`, { waitUntil: 'load', timeout: 180_000 })
         await page.waitForFunction(() => document.querySelector('canvas')?.dataset.settled === 'true', null, { timeout: 120_000 })
         const canvas = page.locator('canvas').first()
         const size = await canvas.evaluate((element) => ({ width: element.width, height: element.height }))
         const shot = await sharp(await canvas.screenshot()).resize(size.width, size.height, { fit: 'fill' }).ensureAlpha().raw().toBuffer()
-        const render = await renderFrame(sweep, value, size)
+        const { aspect } = frameOf(sweep.format)
+        const scene = buildScene(sweep.look, getPack(sweep.pack), sweep.seed, toolControls(sweep.look, getPack(sweep.pack), sweep.seed, aspect, line), aspect)
+        const render = await harness.render({ scene, width: size.width, height: size.height, supersample: 2 })
         const factor = Math.max(1, Math.floor(Math.min(size.width, size.height) / frameOf(sweep.format).thumb[size.width >= size.height ? 'height' : 'width']))
         const tool = labThumb({ ...size, data: shot }, factor)
         const ours = labThumb(render, factor)

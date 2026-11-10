@@ -35,7 +35,7 @@ describe('tool panel layout', () => {
     DialStore.registerPanel(id, 'Check', buildDialConfig(DEFAULT_STATE, 'Export', 'none'))
     const offBlocks = panelLayout(paths(), SLOTS)
     expect(shows(paths(), offBlocks)).toEqual([
-      { card: 'colors', shows: ['colors', 'intensity'] },
+      { card: 'colors', shows: ['colors'] },
       { card: 'mood', shows: ['mood', 'seed'] },
       { card: 'filter', shows: ['filter'] },
       { card: undefined, shows: ['format'] },
@@ -43,7 +43,7 @@ describe('tool panel layout', () => {
     ])
     const off = panelSteps(offBlocks, SLOTS)
     expect(stepShows(paths(), off)).toEqual([
-      { title: '1. Pick a color pack', shows: ['colors', 'intensity'] },
+      { title: '1. Pick a color pack', shows: ['colors'] },
       { title: '2. Pick a mood', shows: ['mood', 'seed'] },
       { title: '3. Apply a filter', shows: ['filter'] },
       { title: '4. Export', shows: ['format', 'export'] },
@@ -82,12 +82,11 @@ describe('tool panel layout', () => {
     ])
   })
 
-  it('shows the light and filter sliders as Strength with their keys kept, and every other label as DialKit makes it', () => {
+  it('shows the filter slider as Strength with its key kept, and every other label as DialKit makes it', () => {
     const id = 'labels-check'
     DialStore.registerPanel(id, 'Check', buildDialConfig(DEFAULT_STATE, 'Export', 'grain'))
     const controls = withLabels(DialStore.getPanel(id)!.controls, PANEL_LABELS)
     expect(controls.filter((control) => control.type === 'slider').map((control) => [control.path, control.label])).toEqual([
-      ['intensity', 'Strength'],
       ['seed', 'Seed'],
       ['density', 'Strength'],
     ])

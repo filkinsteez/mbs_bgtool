@@ -77,12 +77,12 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   // The seed picks the look; the link's own look holds at the link's mood and seed.
   const state = { ...readToolState(dial.values, mood, start), drag }
   const query = toQuery(state)
-  const { look, pack, seed, intensity, format, filter, strength } = state
+  const { look, pack, seed, format, filter, strength } = state
   const scene = useMemo(() => {
     const aspect = frameAspect(format)
-    const controls = toolControls(look, getPack(pack), seed, aspect, intensity, drag)
+    const controls = toolControls(look, getPack(pack), seed, aspect, drag)
     return withFilter(buildScene(look, getPack(pack), seed, controls, aspect), { filter, strength })
-  }, [look, pack, seed, intensity, drag, format, filter, strength])
+  }, [look, pack, seed, drag, format, filter, strength])
 
   const access = useMemo(
     () => panelAccessFor(PANEL_ID, PANEL_NAME, config, { busy: exportStatus === 'busy' ? [EXPORTING_LABEL] : [], labels: PANEL_LABELS }),
@@ -198,7 +198,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     setExportStatus('busy')
     try {
       await nextPaint()
-      const outcome = await exportImage(scene, pack, format, { intensity, drag })
+      const outcome = await exportImage(scene, pack, format, { drag })
       console.info('Exported', outcome)
       setExportStatus('idle')
     } catch (error) {

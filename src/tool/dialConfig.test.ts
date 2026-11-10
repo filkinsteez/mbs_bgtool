@@ -25,13 +25,13 @@ describe('seed slider in the panel', () => {
 })
 
 describe('panel controls', () => {
-  it('run in step order: the pack and Strength, the mood and Shuffle, the filter, the format and Export, with no Look', () => {
+  it('run in step order: the pack, the mood and Shuffle, the filter, the format and Export, with no Look or light Strength', () => {
     const id = 'order-check'
     const paths = () => DialStore.getPanel(id)!.controls.map((control) => control.path)
     DialStore.registerPanel(id, 'Check', buildDialConfig(DEFAULT_STATE, 'Export', 'grain'))
-    expect(paths()).toEqual(['colors', 'intensity', 'mood', 'seed', 'filter', 'density', 'format', 'export'])
+    expect(paths()).toEqual(['colors', 'mood', 'seed', 'filter', 'density', 'format', 'export'])
     DialStore.updatePanel(id, 'Check', buildDialConfig(DEFAULT_STATE, 'Export', 'none'))
-    expect(paths()).toEqual(['colors', 'intensity', 'mood', 'seed', 'filter', 'format', 'export'])
+    expect(paths()).toEqual(['colors', 'mood', 'seed', 'filter', 'format', 'export'])
     DialStore.unregisterPanel(id)
   })
 

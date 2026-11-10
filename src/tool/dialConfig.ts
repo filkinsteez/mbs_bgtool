@@ -1,7 +1,7 @@
 import type { DialConfig } from 'dialkit'
 import { EXPORT_ASPECTS, isPackId, PACKS, type MoodId } from '@/light'
 import { filterDials, readFilter, STRENGTH_DIAL_KEYS, type FilterChoice } from './filterControl'
-import { clampUnit, DEFAULT_STATE, isExportAspect, readSeed, SEED_MAX, SEED_MIN, shownLook, type LinkLook, type ToolState } from './state'
+import { DEFAULT_STATE, isExportAspect, readSeed, SEED_MAX, SEED_MIN, shownLook, type LinkLook, type ToolState } from './state'
 
 export const PANEL_ID = 'tool'
 export const PANEL_NAME = 'Background'
@@ -11,13 +11,10 @@ export const SEED_DIAL_KEY = 'seed'
 export const PACK_DIAL_KEY = 'colors'
 
 /**
- * Labels the panel shows in place of DialKit's, which come from the keys: the light's Intensity and the filter's slider
- * both read "Strength" (owner, 2026-11-06). Keys and URL names stay `intensity` and `density`, `strength=`.
+ * Labels the panel shows in place of DialKit's, which come from the keys: the filter's slider reads "Strength" (owner,
+ * 2026-11-06). Its key stays `density` and its URL name `strength=`.
  */
-export const PANEL_LABELS: Readonly<Record<string, string>> = Object.fromEntries([
-  ['intensity', 'Strength'],
-  ...Object.values(STRENGTH_DIAL_KEYS).map((key) => [key, 'Strength']),
-])
+export const PANEL_LABELS: Readonly<Record<string, string>> = Object.fromEntries(Object.values(STRENGTH_DIAL_KEYS).map((key) => [key, 'Strength']))
 
 /** The moods the panel offers, by the names the user sees; the code ids stay (`sunset` is Sunrise). */
 export const MOOD_OPTIONS = [
@@ -30,7 +27,7 @@ export const PACK_OPTIONS = PACKS.map((pack) => ({ value: pack.id, label: pack.n
 export const FORMAT_OPTIONS = EXPORT_ASPECTS.map((aspect) => ({ value: aspect, label: aspect }))
 
 /**
- * The panel config, in panel order: the pack and Intensity, the mood and the seed (Shuffle), the filter, the format
+ * The panel config, in panel order: the pack, the mood and the seed (Shuffle), the filter, the format
  * and Export. Defaults come from the state the page loaded with (the URL), so DialKit's first values already match the
  * link. The Density slider under Filter follows the filter chosen in the panel, none while no filter is; DialKit keeps
  * the other values and resets controls whose old value no longer fits.
@@ -38,7 +35,6 @@ export const FORMAT_OPTIONS = EXPORT_ASPECTS.map((aspect) => ({ value: aspect, l
 export function buildDialConfig(initial: ToolState, exportLabel: string, filter: FilterChoice): DialConfig {
   return {
     [PACK_DIAL_KEY]: { type: 'select', options: PACK_OPTIONS, default: initial.pack },
-    intensity: [initial.intensity, 0, 1, 0.01],
     mood: { type: 'select', options: MOOD_OPTIONS, default: initial.mood },
     [SEED_DIAL_KEY]: [initial.seed, SEED_MIN, SEED_MAX, 1],
     ...filterDials(initial, filter),
@@ -59,7 +55,6 @@ export function readToolState(values: Readonly<Record<string, unknown>>, mood: M
     mood,
     look: shownLook(mood, seed, link),
     pack: typeof pack === 'string' && isPackId(pack) ? pack : DEFAULT_STATE.pack,
-    intensity: clampUnit(values.intensity, DEFAULT_STATE.intensity),
     seed,
     format: isExportAspect(format) ? format : DEFAULT_STATE.format,
     ...readFilter(values),

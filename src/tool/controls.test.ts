@@ -283,18 +283,21 @@ describe('dragging the light', () => {
   })
 
   describe('the controls the tool sends', () => {
-    it("are the panel's Intensity and the mood's fixed Softness and mood control without a line", () => {
+    it("are the mood's fixed intensity, softness and mood control without a line", () => {
       for (const id of RECIPE_IDS) {
-        const fixed = FIXED_CONTROLS[getRecipe(id).mood]
-        expect(toolControls(id, PACKS[0], 5, 16 / 9, 0.73), id).toEqual({ intensity: 0.73, softness: fixed.softness, mood: fixed.mood })
+        expect(toolControls(id, PACKS[0], 5, 16 / 9), id).toEqual(FIXED_CONTROLS[getRecipe(id).mood])
       }
+    })
+
+    it('send intensity 0.5 in every mood', () => {
+      expect(Object.values(FIXED_CONTROLS).map((fixed) => fixed.intensity)).toEqual([0.5, 0.5])
     })
 
     it('set the mood control from the start of a line, as controlsForDrag does', () => {
       const drag: LightDrag = { from: [0.3, 0.62], to: [0.75, 0.2] }
       for (const id of RECIPE_IDS) {
-        const fixed = { intensity: 0.4, ...FIXED_CONTROLS[getRecipe(id).mood] }
-        expect(toolControls(id, PACKS[1], 6, 9 / 16, 0.4, drag), id).toEqual(controlsForDrag(id, PACKS[1], 6, fixed, 9 / 16, drag))
+        const fixed = FIXED_CONTROLS[getRecipe(id).mood]
+        expect(toolControls(id, PACKS[1], 6, 9 / 16, drag), id).toEqual(controlsForDrag(id, PACKS[1], 6, fixed, 9 / 16, drag))
       }
     })
   })
