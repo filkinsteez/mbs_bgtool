@@ -200,6 +200,24 @@ Two frames differ in design when, in Contour, layout is over 0.12 or light over 
 
 `--drag` takes `default` (no drag; used when `--drag` is left out), the palette check's test drags `owner`, `mirror`, `above` and `side`, or `all` for the default and all four. `--colors` adds a frame with only those colors of one pack (Bold without Meta Blue: `--colors 1FCDF0,FFD61E,FF4F00`; repeat the flag for more lists) and compares it with each pack. Until the looks take a color list, a look that throws on one or still uses a pack color the list leaves out is skipped for that list, with a note. `--intensity` overrides the light's fixed value (the tool's `FIXED_CONTROLS`, otherwise 0.5). It writes `summary.md` (per look the seeds that differ, by format and view, with each failing pair's two numbers), `same-design.json` (every pair) and a sheet per look, `<look>.jpg`: the seeds that differ, worst first, then the six passing ones closest to the limits, each frame above its stretched lightness. `--keep` keeps the renders, `--from <dir>` judges kept renders again, and `--sheet all` shows every seed. It exits 1 when any pair differs. Run it from a frozen copy of HEAD with your change applied, as for the palette check; one look at seeds 1-8 in one format and view takes about 20 s, most of it starting the browser.
 
+### Color shares
+
+```sh
+node scripts/light/color-shares.mjs --look <contour.beam|beam|...|all>[,...] [--seeds 1-8] [--drag default,owner|all]
+  [--format 16x9,9x16] [--maps] [--out dir]
+node scripts/light/color-shares.mjs --files <dir> [--pack bold|elemental|atmospheric] [--maps] [--out dir]
+node scripts/light/color-shares.mjs --swatches [--out dir]
+```
+
+What the picture shows, for checking the color mix (owner, 2026-11-09: at the default mix every picture shows all of its pack's colors, Meta Blue at least half). For each frame it gives the share of the visibly lit pixels (Oklab L 0.15 and up; darker is black and counts as none) that read as each pack color, with `grey` (pale bridges, white and greys) and `other` (colors outside the pack: pink, teal, olive, brown, violet) as entries of their own. A color's own dim and bright shades count as that color only while they still read as it:
+
+- Each chromatic pack color has a hue window reaching halfway to the next pack color, at most 25 degrees, and Meta Blue at most 12 toward violet. Between Meta Blue and Cyan a pale blue passes for Cyan below hue 232 at L 0.8 and 227 from L 0.9 (the palette check's pale-side rule), so a pale blue that passes for Cyan is not Meta Blue; in a pack without Cyan it is no pack color.
+- In its window a pixel reads as the color while it keeps half of the color's own chroma at its lightness (the hex dimmed in linear light, or mixed toward white above it), and from chroma 0.035 (0.05 from L 0.6; in the dark, also from 0.12 times the lightness, so a pack color's own dim shade counts). A greyer blue is grey; a greyer warm color is brown, khaki or olive, `other`.
+- Yellow, Lime and Tan count only down to 1 stop under their hex (dim, they read olive or brown), and more than 0.1 darker than their hex only while nearly as pure as the hex dimmed (85% of its chroma for its lightness); warm colors darker than their hex turn at most 5 degrees away from red. So deep red counts as Orange-red, rust and brick don't, and Yellow dimming like fire counts as whatever it reads as: Orange-red, deep red, or nothing. From L 0.75, hues under 35 are pink or salmon, not Orange-red. Forest and Plum count up to 1 stop over their hex.
+- Atmospheric's Ice, Steel, Slate and Near-black are told apart by lightness, each up to halfway to the next, and greyed blues go to them by lightness too.
+
+Set by eye on swatches (`--swatches`: Oklab hue against lightness at five chromas, with each swatch's label) and on label maps of HEAD frames and the Color agent's prototype tiles (`artifacts/compare/rounds/23/`). `--maps` draws each frame next to its label map (each pixel in the color it reads as; grey for grey, magenta for other, black for none) and its share bar. With `--look` it renders the tool's scene for each look, pack, seed, format and view and writes `summary.md` (per look, pack, format and view: each entry's median share over the seeds, with the range, next to the default mix's asked shares, Meta Blue 50% and the other colors even) and `shares.json` (every frame, with its flags: Meta Blue under 45% or a pack color under 5%). With `--files` it judges images in a folder, each in the pack named in its file name. All seven looks, seeds 1-8, two formats and two views (672 frames) take about 40 s.
+
 ## Metrics (`metrics.json`)
 
 All ΔE values are plain Euclidean Oklab distances (L on 0..1; about 0.02 is one just-noticeable difference). The roadmap's starting targets are mean under 0.03 and p95 under 0.06. Ignore rects and rounded corners are masked everywhere.
