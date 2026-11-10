@@ -384,6 +384,8 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
    * color gets no more than the dim cells it may take, and in a look colored by its parts no color gets more than its
    * part's light; the rest goes to Meta Blue.
    */
+  /** Whether the color may lead no more than `most` of the light. */
+  const isLimited = (k: number) => capped[k] || colors[k].kind === KIND_DARK || colors[k].kind === KIND_BRIGHT
   const plan = (m: ReturnType<typeof measure>): number[] => {
     const readsAsItself = m.area.map((a, k) => (a > 1e-4 ? Math.min(1, Math.max(0.1, m.own[k] / a)) : 1))
     const need = (k: number, share: number) => Math.max(0, share - m.incoming[k]) / readsAsItself[k]
@@ -394,16 +396,19 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
       pool -= out[lead]
     }
     const rest = colors.map((_, k) => k).filter((k) => k !== lead)
-    const floor = rest.map((k) => (target[k] >= 0.1 ? need(k, SHOW_FLOOR) : 0))
+    // In a look colored by its parts no color is planned more light than it may take, so a color that reads as itself
+    // in little of its light doesn't take the other colors' part of the floor only to hand it on to Meta Blue.
+    const limit = (k: number, v: number) => (byParts && isLimited(k) ? Math.min(v, most[k] * 0.97) : v)
+    const floor = rest.map((k) => (target[k] >= 0.1 ? limit(k, need(k, SHOW_FLOOR)) : 0))
     const floorSum = floor.reduce((a, b) => a + b, 0)
-    const extra = rest.map((k, r) => Math.max(0, need(k, target[k]) - floor[r]))
+    const extra = rest.map((k, r) => Math.max(0, limit(k, need(k, target[k])) - floor[r]))
     const extraSum = extra.reduce((a, b) => a + b, 0)
     rest.forEach((k, r) => {
       if (floorSum >= pool) out[k] = (pool * floor[r]) / Math.max(floorSum, 1e-9)
       else out[k] = floor[r] + (pool - floorSum) * (extraSum > 1e-9 ? extra[r] / extraSum : target[k] / Math.max(1e-9, 1 - (lead >= 0 ? target[lead] : 0)))
     })
     for (let k = 0; k < K; k++) {
-      if ((!capped[k] && colors[k].kind !== KIND_DARK && colors[k].kind !== KIND_BRIGHT) || out[k] <= most[k] * 0.97) continue
+      if (!isLimited(k) || out[k] <= most[k] * 0.97) continue
       const excess = out[k] - most[k] * 0.97
       out[k] -= excess
       if (lead >= 0) out[lead] += excess
