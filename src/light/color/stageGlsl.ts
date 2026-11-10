@@ -1,3 +1,5 @@
+import { PAIR_GAP, PAIR_PRESENT, PAIR_WIDTH } from './stageSolve'
+
 /**
  * The color stage in GLSL: `vec3 colorStage(vec2 uv, vec3 radiance)` keeps each pixel's luminance exactly and gives it
  * the colors of the color fields (two textures of four fields on the stage grid, one per color), weighted and added like
@@ -72,12 +74,34 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
   float s = 0.0;
   float bestValue = -1.0;
   int best = 0;
+  // With the soft blend, where a light color that fades out below its own lightness and a dark color are both
+  // present and their fades nearly meet, their masks meet at the lightness between the fades (pairedMasks in
+  // stageSolve), so they hand over directly along the light with no gap for a third color.
+  float pairMask[5];
+  for (int k = 0; k < 5; k++) pairMask[k] = 0.0;
+  if (uMixSoft > 0.5) {
+    for (int j = 0; j < 5; j++) {
+      if (j >= uMixCount || uMixColor[j].a < 1.5 || uMixColor[j].a > 2.5) continue;
+      float low = uMixTurn[j].y - uMixTurn[j].w;
+      float presentJ = smoothstep(${PAIR_PRESENT[0].toFixed(4)}, ${PAIR_PRESENT[1].toFixed(4)}, mixFieldValue(int(uMixField[j].x + 0.5), fa, fb));
+      for (int k = 0; k < 5; k++) {
+        if (k >= uMixCount || uMixColor[k].a < 2.5) continue;
+        float high = uMixTurn[k].y + uMixTurn[k].z;
+        if (low - high > ${PAIR_GAP.toFixed(4)}) continue;
+        float presentK = smoothstep(${PAIR_PRESENT[0].toFixed(4)}, ${PAIR_PRESENT[1].toFixed(4)}, mixFieldValue(int(uMixField[k].x + 0.5), fa, fb));
+        float at = 0.5 * (low + high);
+        float above = smoothstep(at - ${PAIR_WIDTH.toFixed(4)}, at + ${PAIR_WIDTH.toFixed(4)}, L);
+        pairMask[j] = max(pairMask[j], presentK * above);
+        pairMask[k] = max(pairMask[k], presentJ * (1.0 - above));
+      }
+    }
+  }
   for (int k = 0; k < 5; k++) {
     p[k] = 0.0;
     if (k >= uMixCount) continue;
     // The soft blend's shares already keep each color to its lightness on the grid; here a color only drops out
     // where it can't show at all (a thin bright line in a dim cell), so its own share isn't thinned.
-    float mask = mixMask(k, L);
+    float mask = max(mixMask(k, L), pairMask[k]);
     float f = max(mixFieldValue(int(uMixField[k].x + 0.5), fa, fb), 0.0) * (uMixSoft > 0.5 ? smoothstep(0.0, 0.25, mask) : mask);
     if (f > bestValue) {
       bestValue = f;

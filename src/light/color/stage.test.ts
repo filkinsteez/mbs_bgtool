@@ -8,7 +8,7 @@ import { getPack } from './packs'
 import { COLOR_DESIGN_PACK, colorRamp, RAMP_STEPS, withColorMix } from './stage'
 import { buildFields, gridSize, lookParts, type StageField, type StageGrid, type StagePart } from './stageFields'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
-import { assignFields, colorFields, KIND_BRIGHT, KIND_DARK, KIND_PLAIN, KIND_TO_NEIGHBOR, solveWeights, stageColors } from './stageSolve'
+import { assignFields, colorFields, colorMask, KIND_BRIGHT, KIND_DARK, KIND_PLAIN, KIND_TO_NEIGHBOR, pairedMasks, solveWeights, stageColors } from './stageSolve'
 
 const CONTROLS = { intensity: 0.5, softness: 0.5, mood: 0.5 }
 
@@ -154,6 +154,25 @@ describe('color stage', () => {
       const values = colorFields(fields, assignFields(colors, fields, 3), colors)
       expect(values[colors.findIndex((c) => c.hex === '#0064E0')][0]).toBeCloseTo(packId === 'bold' ? 0.9 : 0.2)
     }
+  })
+
+  it('hands a light color over to a dark color directly where both are present, with no gap between their fades', () => {
+    const elemental = getPack('elemental')
+    const colors = stageColors(elemental, defaultMix(elemental), true)
+    const tan = colors.findIndex((c) => c.hex === '#B8996E')
+    const forest = colors.findIndex((c) => c.hex === '#0F3D33')
+    expect(colors[tan].kind).toBe(KIND_BRIGHT)
+    expect(colors[forest].kind).toBe(KIND_DARK)
+    const both = colors.map((_, k) => (k === tan || k === forest ? 1 : 0))
+    for (let l = 0.3; l <= 0.5; l += 0.005) {
+      const masks = pairedMasks(colors, both, l)
+      expect(Math.max(masks[tan], masks[forest])).toBeGreaterThan(0.45)
+    }
+    // A color's mask reaches past its own fade only where the other one is present.
+    const onlyTan = pairedMasks(colors, colors.map((_, k) => (k === tan ? 1 : 0)), 0.4)
+    expect(onlyTan[tan]).toBeCloseTo(colorMask(colors[tan], 0.4), 6)
+    const onlyForest = pairedMasks(colors, colors.map((_, k) => (k === forest ? 1 : 0)), 0.38)
+    expect(onlyForest[forest]).toBeCloseTo(colorMask(colors[forest], 0.38), 6)
   })
 
   it('solves the weights so each color leads its share of the lit area, the same way every time', () => {
