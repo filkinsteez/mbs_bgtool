@@ -597,6 +597,8 @@ const OWN_WATER_BAND = 0.4
  */
 const LAND_LIFT = 0.25
 const END_LIFT = 0.1
+/** The least width (short sides) of the fade where a lifted glow's lower side ends over land. */
+const LAND_END_SOFT = 0.1
 /** How far (short sides) the start goes below the horizon before the sun's own light dims by e. */
 const SINK_FADE = 0.6
 /** How far (short sides) the start goes below the horizon before the twilight glow's size shrinks by e. */
@@ -988,7 +990,9 @@ export function composeRamp(colors: readonly string[], controls: ControlValues, 
   // Where the glow's lower side ends above the horizon, the sky under it comes back as the glow
   // fades, fully once the end lies END_LIFT above an open sky's horizon or LAND_LIFT above the land.
   const follow = !line ? 0 : land ? landLift / LAND_LIFT : ground ? 0 : smoothstep(0, END_LIFT, glowRise - glowReach)
-  const glowEnd = line && !ground ? [glowReach, 0.5 * glowReach, follow] : landLift > 0 ? [glowRise - landLift, 0.6 * landLift, follow] : [0, 0.1, 0]
+  // The fade over land is never narrower than LAND_END_SOFT: a lift just starting would otherwise cut
+  // the glow in a hard line that appears all at once as it rises past the ridge's low points.
+  const glowEnd = line && !ground ? [glowReach, 0.5 * glowReach, follow] : landLift > 0 ? [glowRise - landLift, Math.max(0.6 * landLift, LAND_END_SOFT), follow] : [0, 0.1, 0]
 
   // The least height above the horizon along the top edge: the sky's edges and the sun's light
   // stay below it, so the top of the frame is the zenith's color. Under a dragged line the sky
