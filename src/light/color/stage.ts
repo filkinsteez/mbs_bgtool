@@ -138,9 +138,17 @@ function readDesign(input: ColorStageInput): StageGrid | null {
   return { width: w, height: h, lightness, coverage, peak }
 }
 
-function designKey(input: ColorStageInput): string {
+function designKey(input: Pick<ColorStageInput, 'program' | 'ctx' | 'exposureScale'>): string {
   const { program, ctx } = input
   return [program.id, ctx.seed, ctx.aspect.toFixed(5), input.exposureScale, ctx.hex.join(','), JSON.stringify(ctx.params)].join('|')
+}
+
+/**
+ * Whether the stage still has to read this design: false while it keeps it (the same look, seed, drag and format, as
+ * when only the mix changes), so the renderer can leave out the scattered light for the design frame.
+ */
+export function colorStageNeedsDesign(program: RecipeProgram, ctx: RecipeContext, exposureScale: number): boolean {
+  return !designs.has(designKey({ program, ctx, exposureScale }))
 }
 
 /** The stage for one render: reads the design once per seed, drag and format, and solves the weights once per mix. */

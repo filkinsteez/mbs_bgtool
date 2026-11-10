@@ -19,7 +19,7 @@ import { createProfiler, NO_PROFILE } from './profile'
 import { buildRecipeShader, type RecipeShaderMode } from './recipeShader'
 import { recipeContext, resolveScene, type SceneInput } from './resolve'
 import { runScatter, type EngineUniforms } from './scatter'
-import { prepareColorStage, type PreparedColorStage } from '../color/stage'
+import { colorStageNeedsDesign, prepareColorStage, type PreparedColorStage } from '../color/stage'
 
 export interface RenderOptions {
   /** Output size in pixels. */
@@ -109,9 +109,13 @@ export function designFrame(aspect: number): { size: [number, number]; inShorts:
 function prepareStage(gpu: Gpu, program: RecipeProgram, ctx: RecipeContext, settings: ColorMixSettings, engine: EngineUniforms, exposure: number): PreparedColorStage | null {
   const { size, inShorts } = designFrame(ctx.aspect)
   const designEngine: EngineUniforms = (w, h, origin, pixel, subsamples) => ({ ...engine(w, h, origin, pixel, subsamples), uFrameAspect: inShorts })
+  const exposureScale = 2 ** exposure
+  // A design the stage already keeps is not read again, so it needs no scattered light.
+  if (!colorStageNeedsDesign(program, ctx, exposureScale))
+    return prepareColorStage({ gpu, program, ctx, settings, engine: designEngine, scatterUniforms: {}, scatterTextures: {}, exposureScale })
   const scatter = runScatter(gpu, program, ctx, size[0], size[1], designEngine, NO_PROFILE)
   try {
-    return prepareColorStage({ gpu, program, ctx, settings, engine: designEngine, scatterUniforms: scatter.uniforms, scatterTextures: scatter.textures, exposureScale: 2 ** exposure })
+    return prepareColorStage({ gpu, program, ctx, settings, engine: designEngine, scatterUniforms: scatter.uniforms, scatterTextures: scatter.textures, exposureScale })
   } finally {
     scatter.release()
   }
