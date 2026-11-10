@@ -17,7 +17,7 @@ import {
   levelForRadius,
 } from './lens'
 import { paperToeInverse, TONE_CROSSTALK, TONE_TIE_BAND, toneCurve } from './output'
-import { radianceScaleFor } from './programRenderer'
+import { designFrame, radianceScaleFor } from './programRenderer'
 import { coerceParam, recipeContext, resolveScene } from './resolve'
 
 const luminance = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
@@ -424,6 +424,20 @@ describe('frame aspect', () => {
         }
       }
     }
+  })
+
+  it('gives the color stage one frame to read a design from for every size of a format', () => {
+    for (const aspect of EXPORT_ASPECTS) {
+      const size = EXPORT_SIZES[aspect]
+      const exported = designFrame(frameAspect(size.width, size.height))
+      for (const [stageWidth, stageHeight] of [[1280, 720], [1440, 900], [911, 1187], [390, 844]]) {
+        for (const pixelRatio of [1, 2]) {
+          const preview = previewSize(aspect, stageWidth, stageHeight, pixelRatio)
+          expect(designFrame(frameAspect(preview.width, preview.height)), `${aspect} at ${preview.width}x${preview.height}`).toEqual(exported)
+        }
+      }
+    }
+    expect(designFrame(frameAspect(1076, 606))).toEqual({ size: [910, 512], inShorts: [16 / 9, 1] })
   })
 
   it('keeps the ratio of frames that are not a format', () => {

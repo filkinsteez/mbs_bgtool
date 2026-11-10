@@ -1,4 +1,4 @@
-import type { RecipeContext, RecipeProgram, UniformMap } from '../scene'
+import type { ColorMixSettings, RecipeContext, RecipeProgram, UniformMap } from '../scene'
 import { frameAspect } from './frame'
 import { CONTEXT_LOST_MESSAGE, Gpu, LightEngineError, type Target } from './gl'
 import {
@@ -18,8 +18,8 @@ import { AREA_RESAMPLE_SHADER, POST_MAX_SHORT_SIDE, runPostPasses } from './pass
 import { createProfiler, NO_PROFILE } from './profile'
 import { buildRecipeShader, type RecipeShaderMode } from './recipeShader'
 import { recipeContext, resolveScene, type SceneInput } from './resolve'
-import { runScatter } from './scatter'
-import { prepareColorStage } from '../color/stage'
+import { runScatter, type EngineUniforms } from './scatter'
+import { prepareColorStage, type PreparedColorStage } from '../color/stage'
 
 export interface RenderOptions {
   /** Output size in pixels. */
@@ -87,6 +87,34 @@ export function radianceScaleFor(program: RecipeProgram, ctx: RecipeContext): nu
   const asked = typeof program.radianceScale === 'function' ? program.radianceScale(ctx) : (program.radianceScale ?? 1)
   if (!Number.isFinite(asked) || asked >= 0.75) return 1
   return asked >= 0.375 ? 0.5 : 0.25
+}
+
+/** Short side, in render pixels, of the frame the color stage reads a design from. */
+const DESIGN_SHORT_SIDE = 512
+
+/**
+ * The frame the color stage reads a design from: the format's own shape (`ctx.aspect`, which `frameAspect` snaps to
+ * the nearest export format) at DESIGN_SHORT_SIDE, as [width, height] in render pixels and in short sides.
+ */
+export function designFrame(aspect: number): { size: [number, number]; inShorts: [number, number] } {
+  const inShorts: [number, number] = aspect >= 1 ? [aspect, 1] : [1, 1 / aspect]
+  return { size: [Math.round(DESIGN_SHORT_SIDE * inShorts[0]), Math.round(DESIGN_SHORT_SIDE * inShorts[1])], inShorts }
+}
+
+/**
+ * The color stage for a render. The stage reads the design once per seed, drag and format and keeps it, so it reads
+ * it from designFrame, with the scattered light drawn for that frame, never from the output: every size of a format
+ * (the preview's canvas, an export, a check) then gets the same colors, whichever size was drawn first.
+ */
+function prepareStage(gpu: Gpu, program: RecipeProgram, ctx: RecipeContext, settings: ColorMixSettings, engine: EngineUniforms, exposure: number): PreparedColorStage | null {
+  const { size, inShorts } = designFrame(ctx.aspect)
+  const designEngine: EngineUniforms = (w, h, origin, pixel, subsamples) => ({ ...engine(w, h, origin, pixel, subsamples), uFrameAspect: inShorts })
+  const scatter = runScatter(gpu, program, ctx, size[0], size[1], designEngine, NO_PROFILE)
+  try {
+    return prepareColorStage({ gpu, program, ctx, settings, engine: designEngine, scatterUniforms: scatter.uniforms, scatterTextures: scatter.textures, exposureScale: 2 ** exposure })
+  } finally {
+    scatter.release()
+  }
 }
 
 /**
@@ -178,9 +206,7 @@ export class ProgramRenderer {
     // Scattered light first: blurred copies of the recipe's light that its combine function reads.
     const scatter = runScatter(gpu, program, ctx, renderWidth, renderHeight, engine, mark)
     // The shared color stage (scene.colorMix): recolors the scene radiance before post passes and the lens.
-    const stage = scene.colorMix
-      ? prepareColorStage({ gpu, program, ctx, settings: scene.colorMix, engine, scatterUniforms: scatter.uniforms, scatterTextures: scatter.textures, exposureScale: 2 ** resolved.output.exposure })
-      : null
+    const stage = scene.colorMix ? prepareStage(gpu, program, ctx, scene.colorMix, engine, resolved.output.exposure) : null
     if (stage) stageUniforms = stage.uniforms
     const recipeTextures = stage ? { ...scatter.textures, ...stage.textures } : scatter.textures
 
