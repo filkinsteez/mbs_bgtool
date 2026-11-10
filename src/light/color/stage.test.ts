@@ -6,7 +6,7 @@ import { RECIPE_IDS, type RecipeId, type Scene } from '../scene'
 import { defaultMix, mixFromShares, setMetaBlue, setShare } from './mix'
 import { getPack } from './packs'
 import { COLOR_DESIGN_PACK, withColorMix } from './stage'
-import { buildFields, gridSize, lookParts, type StageField, type StageGrid } from './stageFields'
+import { buildFields, gridSize, lookParts, type StageField, type StageGrid, type StagePart } from './stageFields'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
 import { assignFields, colorFields, KIND_DARK, KIND_PLAIN, KIND_TO_NEIGHBOR, KIND_TO_NEUTRAL, solveWeights, stageColors } from './stageSolve'
 
@@ -73,6 +73,21 @@ describe('color stage', () => {
     expect(names('elemental')).toMatchObject({ '#0064E0': 'sky', '#D6F26C': 'glow', '#B8996E': 'low' })
     expect(['ground', 'dark1']).toContain(names('elemental')['#0F3D33'])
     expect(names('atmospheric')).toMatchObject({ '#0064E0': 'sky', '#F2F4F7': 'glow', '#6A7788': 'low' })
+  })
+
+  it('gives each group of parts one field, ahead of the stage own, the lead color taking the first', () => {
+    const grid = flatGrid()
+    const streak = (group: number, y: number): StagePart[] => [
+      { kind: 'line', from: [0.1, y], to: [0.5, y], width: 0.05, group },
+      { kind: 'line', from: [0.5, y], to: [0.9, y], width: 0.05, group },
+      { kind: 'spot', at: [0.5, y], radius: 0.1, stretch: 3, angle: 0, group },
+    ]
+    const fields = buildFields('contour.streaks', [...streak(1, 0.3), ...streak(2, 0.7)], grid, 2, 16 / 9)
+    expect(fields.slice(0, 2).map((f) => f.name)).toEqual(['group1', 'group2'])
+    expect(fields.some((f) => f.name.startsWith('part'))).toBe(false)
+    const pack = getPack('bold')
+    const colors = stageColors(pack, defaultMix(pack))
+    expect(assignFields(colors, fields, 2)[colors.findIndex((c) => c.hex === '#0064E0')]).toBe(0)
   })
 
   it('gives Meta Blue the dark fields no color takes in a pack with no dark color', () => {
