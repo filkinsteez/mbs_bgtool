@@ -11,10 +11,12 @@ import { buildDialConfig, PACK_DIAL_KEY, PANEL_ID, PANEL_LABELS, PANEL_NAME, rea
 import { exportImage } from './exportImage'
 import { FILTER_DIAL_KEY, readChoice, withFilter } from './filterControl'
 import { panelAccessFor, usePanelAccess } from './panelAccess'
+import { HistoryStrip } from './history/HistoryStrip'
+import { applyPanelValues, panelValues } from './history/panelValues'
+import { useHistory } from './history/useHistory'
 import { FilterPicker, FormatPicker, MoodPicker, PackPicker } from './panelPickers'
 import { Preview } from './Preview'
-import { EMPTY_SEED_HISTORY, recordSeedChange, stepBack, stepForward, type SeedStep } from './seedHistory'
-import { isMoodId, parseQuery, randomSeed, readSeed, toQuery, type SearchParams } from './state'
+import { isMoodId, parseQuery, randomSeed, toQuery, type LinkLook, type SearchParams } from './state'
 import { ToolPanel } from './ToolPanel'
 
 const EXPORT_LABEL = 'Export'
@@ -55,7 +57,8 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const panelFilter = useSyncExternalStore(subscribePanel, readPanelFilter, readNoMood)
   const chosenFilter = readChoice(panelFilter ?? start.filter)
   const [exportStatus, setExportStatus] = useState<ExportStatus>('idle')
-  const [seedHistory, setSeedHistory] = useState(EMPTY_SEED_HISTORY)
+  // The look a link or a history entry set, which holds while its mood and seed are shown.
+  const [link, setLink] = useState<LinkLook>(start)
   const [drag, setDrag] = useState(start.drag)
   const [dragging, setDragging] = useState(false)
   // The drag hint shows on every page load until the first drag or the first use of a control in the panel
@@ -63,10 +66,9 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const [dragHint, setDragHint] = useState(true)
   const exportingRef = useRef(false)
   const panelRef = useRef<HTMLElement>(null)
-  // The line, the seed and the mood as this component last set or saw them. The panel store calls back before React
-  // renders, so these tell a change by the user from this component's own updates.
+  // The line and the mood as this component last set or saw them. The panel store calls back before React renders, so
+  // these tell a change by the user from this component's own updates.
   const dragRef = useRef(start.drag)
-  const seedRef = useRef(start.seed)
   const panelMoodRef = useRef(start.mood)
   const dragEndedRef = useRef(false)
 
@@ -75,7 +77,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const dial = useDialKitController(PANEL_NAME, config, { id: PANEL_ID, onAction: (action) => handleAction(action) })
   const { setValue } = dial
   // The seed picks the look; the link's own look holds at the link's mood and seed.
-  const state = { ...readToolState(dial.values, mood, start), drag }
+  const state = { ...readToolState(dial.values, mood, link), drag }
   const query = toQuery(state)
   const { look, pack, seed, format, filter, strength } = state
   const scene = useMemo(() => {
@@ -152,34 +154,30 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     followScene()
   }, [sceneKey])
 
-  // Every Shuffle goes in the history, so Cmd/Ctrl+Z can return to the seed before it.
-  const onSeedChange = useEffectEvent(() => {
-    const previous = seedRef.current
-    const next = readSeed(DialStore.getValue(PANEL_ID, SEED_DIAL_KEY), previous)
-    if (next === previous) return
-    seedRef.current = next
-    setSeedHistory((history) => recordSeedChange(history, previous))
-  })
-
-  useEffect(() => DialStore.subscribe(PANEL_ID, () => onSeedChange()), [])
-
-  function shuffle() {
-    setValue(SEED_DIAL_KEY, randomSeed(seedRef.current))
+  /**
+   * Shows a state from the history: the panel's values, the line and the look it had, with no mood change clearing the
+   * line and no scene change moving it. Returns the query the tool reads back for it.
+   */
+  function showState(target: string): string {
+    const next = parseQuery(new URLSearchParams(target))
+    panelMoodRef.current = next.mood
+    sceneKeyRef.current = `${next.look}|${next.pack}|${next.seed}|${next.format}`
+    setLink({ mood: next.mood, seed: next.seed, look: next.look })
+    placeDrag(next.drag)
+    setDragHint(false)
+    applyPanelValues(PANEL_ID, panelValues(buildDialConfig(next, exportLabel, next.filter)))
+    return toQuery(next)
   }
 
-  /** Back and forward set the history themselves, so the seed they set doesn't go in again. */
-  function travel(step: SeedStep | null): boolean {
-    if (!step) return false
-    setSeedHistory(step.history)
-    seedRef.current = step.seed
-    setValue(SEED_DIAL_KEY, step.seed)
-    return true
+  const history = useHistory({ query, scene, dragging, panelRef, show: showState })
+
+  function shuffle() {
+    setValue(SEED_DIAL_KEY, randomSeed(seed))
   }
 
   const onUndoKey = useEffectEvent((event: KeyboardEvent) => {
     if (!(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== 'z' || isTextField(event.target)) return
-    const step = event.shiftKey ? stepForward(seedHistory, seed) : stepBack(seedHistory, seed)
-    if (travel(step)) event.preventDefault()
+    if (event.shiftKey ? history.redo() : history.undo()) event.preventDefault()
   })
 
   useEffect(() => {
@@ -218,15 +216,19 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
 
   return (
     <main className="tool">
-      <Preview
-        scene={scene}
-        aspect={format}
-        paused={exportStatus === 'busy'}
-        hint={dragHint}
-        onDrag={dragLine}
-        onDragging={handleDragging}
-        onReset={resetLight}
-      />
+      <div className="tool-view">
+        <Preview
+          scene={scene}
+          aspect={format}
+          paused={exportStatus === 'busy'}
+          hint={dragHint}
+          onDrag={dragLine}
+          onDragging={handleDragging}
+          onReset={resetLight}
+          onSettle={history.onSettle}
+        />
+        <HistoryStrip history={history.history} onRestore={history.restore} />
+      </div>
       <aside
         ref={panelRef}
         className="tool-panel dial-column"
