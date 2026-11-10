@@ -32,8 +32,11 @@ export function exportSize(request: ExportRequest): { width: number; height: num
   return { width: Math.round(request.width), height: Math.round(request.height), label: `${Math.round(request.width)}x${Math.round(request.height)}` }
 }
 
-/** JPEG quality of exports. At 0.92 and below, smooth dark gradients show 8 px blocks and stepped bands once their contrast is raised. */
-export const JPEG_QUALITY = 0.95
+/**
+ * JPEG quality of exports. Below 1 the browser's encoder drops the dither in dark gradients, which come back as 8 px
+ * blocks and stepped bands once their contrast is raised (0.95 and 0.98 too); at 1 a 4K export is about 4 MB.
+ */
+export const JPEG_QUALITY = 1
 
 /**
  * `<recipe>-<pack or reference id>-<aspect>-seed<seed>.jpg`. Name parts follow the seed, and a filter that is on

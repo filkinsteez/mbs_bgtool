@@ -683,7 +683,7 @@ describe('export', () => {
     expect(calls).toEqual([
       ['getContext', '2d', { alpha: false }],
       ['putImageData', 2, 1, 0, 0],
-      ['convertToBlob', { type: 'image/jpeg', quality: 0.95 }],
+      ['convertToBlob', { type: 'image/jpeg', quality: 1 }],
     ])
   })
 })
