@@ -529,8 +529,15 @@ export function mergedParts(params: Record<string, unknown>, aspect: number): St
     const edgeAt = [glowAt[0] + 0.8 * toCorner[0], glowAt[1] + 0.8 * toCorner[1]]
     const cornerTurn = (Math.atan2(toCorner[1], toCorner[0]) * 180) / Math.PI + 90 - angle
     const size = Math.max(0.15, 0.8 * (1 - deepStart) * span)
-    parts.push(spot([0.9 * edgeAt[0], 0.9 * edgeAt[1]], 1.5 * size, 0.5 * size, 'dark', cornerTurn))
-    parts.push(spot([0.88 * corner[0], 0.88 * corner[1]], 1.1 * size, 0.8 * size, 'dark', cornerTurn))
+    // With the light near the middle every corner is about as far, the way to the corner has no clear direction and
+    // its angle swings while the light barely moves: the spots go round there instead of pointing.
+    const t = Math.min(1, Math.max(0, (Math.hypot(toCorner[0], toCorner[1]) / (0.5 * Math.hypot(frameW, frameH)) - 0.1) / 0.2))
+    const pointed = t * t * (3 - 2 * t)
+    const shaped = (along: number, across: number) => [Math.sqrt(along * across) * (along / across) ** (pointed / 2), Math.sqrt(along * across) * (across / along) ** (pointed / 2)] as const
+    const [edgeAlong, edgeAcross] = shaped(1.5 * size, 0.5 * size)
+    const [cornerAlong, cornerAcross] = shaped(1.1 * size, 0.8 * size)
+    parts.push(spot([0.9 * edgeAt[0], 0.9 * edgeAt[1]], edgeAlong, edgeAcross, 'dark', cornerTurn))
+    parts.push(spot([0.88 * corner[0], 0.88 * corner[1]], cornerAlong, cornerAcross, 'dark', cornerTurn))
   }
   return parts
 }
