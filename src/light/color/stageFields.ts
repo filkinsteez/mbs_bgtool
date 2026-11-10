@@ -142,6 +142,11 @@ function hashText(text: string): number {
   return h
 }
 
+/** A fixed number in 0..1 for a grid cell and a seeded salt (0..1), the same however many cells are lit. */
+function cellHash(cell: number, salt: number): number {
+  return mulberry32(Math.imul(cell + 1, 0x9e3779b1) ^ Math.floor(salt * 4294967296))()
+}
+
 /** Smooth seeded value noise over the frame in short-side units, about one bump per 0.6. Returns -1..1. */
 function makeNoise(rng: () => number, fw: number, fh: number): (u: number, v: number) => number {
   const cell = 0.6
@@ -352,7 +357,8 @@ export function buildFields(recipe: RecipeId, parts: readonly StagePart[], grid:
       }
       return litSky.length ? height[litSky[litSky.length - 1]] : 0.5
     }
-    const tops = skyArea > 0 ? [0.12 + 0.08 * rng(), 0.28 + 0.08 * rng(), 0.45 + 0.1 * rng()].map((q) => Math.max(0.03, quantile(q))) : [0.08, 0.2, 0.35]
+    const shares = [0.12 + 0.08 * rng(), 0.28 + 0.08 * rng(), 0.45 + 0.1 * rng()]
+    const tops = skyArea > 0 ? shares.map((q) => Math.max(0.03, quantile(q))) : [0.08, 0.2, 0.35]
     for (let k = 1; k < 3; k++) tops[k] = Math.max(tops[k], tops[k - 1] + 0.03)
     const soft = 0.09
     const ground = new Float32Array(n)
@@ -380,7 +386,7 @@ export function buildFields(recipe: RecipeId, parts: readonly StagePart[], grid:
     fields.push({ name: 'high', want: 'cool', values: high })
     fields.push({ name: 'ground', want: 'dark', values: ground })
   } else {
-    // A part only gets a field where it overlaps the lit area (a light just outside the frame lights nothing here).
+    // How much of the lit area a field covers.
     const litShare = (values: Float32Array) => {
       let on = 0
       let all = 0
@@ -390,59 +396,50 @@ export function buildFields(recipe: RecipeId, parts: readonly StagePart[], grid:
       }
       return all > 0 ? on / all : 0
     }
+    // Four broad fields along the bright structure: the first on the brightest part (lightness cubed over the brightest
+    // tenth), for a color that only reads as itself when bright; each next one on the brighter lit cells farthest from
+    // those already placed, so colors take turns along a beam or an outline instead of in rings around one spot, and
+    // never sit in the dim haze alone.
+    const litL = Array.from(L.keys()).filter((i) => grid.coverage[i] > 0).map((i) => L[i]).sort((a, b) => a - b)
+    const brightest = litL.length ? litL[Math.floor(0.9 * (litL.length - 1))] : 0
+    const brighter = litL.length ? litL[Math.floor(0.6 * (litL.length - 1))] : 0
+    // Every seeded number is drawn here in a fixed order, and each center is a weighted middle rather than one picked
+    // cell, so a small change in the design moves the fields a little instead of handing colors to other places.
+    const draws = [0, 1, 2, 3].map(() => ({ x: rng(), y: rng(), salt: rng(), r: 0.3 + rng() * 0.25, stretch: 1 + rng(), angle: rng() * Math.PI }))
+    const centers: [number, number][] = []
+    const cellAt = (i: number): [number, number] => [(((i % w) + 0.5) / w) * fw, ((Math.floor(i / w) + 0.5) / h) * fh]
+    for (const [k, draw] of draws.entries()) {
+      let sx = 0
+      let sy = 0
+      let sw = 0
+      for (let i = 0; i < w * h; i++) {
+        if (grid.coverage[i] <= 0) continue
+        const [x, y] = cellAt(i)
+        let weight: number
+        if (k === 0) weight = smooth(brightest - 0.04, brightest + 0.02, L[i]) * L[i] ** 3
+        else {
+          const gap = Math.min(...centers.map(([cx, cy]) => Math.hypot(x - cx, y - cy)))
+          weight = smooth(brighter - 0.04, brighter + 0.04, L[i]) * (gap * L[i] * (0.85 + 0.3 * cellHash(i, draw.salt))) ** 12
+        }
+        sx += weight * x
+        sy += weight * y
+        sw += weight
+      }
+      const at: [number, number] = sw > 1e-30 ? [sx / sw, sy / sw] : [draw.x * fw, draw.y * fh]
+      centers.push(at)
+      const blob = { cx: at[0], cy: at[1], r: draw.r, stretch: draw.stretch, angle: draw.angle }
+      fields.push({ name: `along${k + 1}`, want: k === 0 ? 'bright' : 'any', values: followLight(blobField(blob, w, h, fw, fh, nu, nv), grid) })
+    }
+    // The look's own parts follow, each fading out as it leaves the lit area (a light just outside the frame lights
+    // nothing here), so the list of fields never changes length and no color jumps to another field.
     for (const [i, part] of parts.entries()) {
       if (part.kind === 'horizon') continue
       const values =
         part.kind === 'spot'
           ? blobField({ cx: part.at[0] * fw, cy: part.at[1] * fh, r: part.radius, stretch: part.stretch ?? 1, angle: ((part.angle ?? 0) * Math.PI) / 180 }, w, h, fw, fh, nu, nv)
           : lineField(part.from, part.to, part.width, w, h, fw, fh)
-      if (litShare(values) >= 0.05) fields.push({ name: `part${i + 1}`, want: part.want ?? 'any', values: followLight(values, grid) })
-    }
-    // Seeded broad fields along the bright structure: the first on the brightest part (a lit cell among the brightest
-    // tenth, picked by lightness cubed), for a color that only reads as itself when bright; each next one on the
-    // brighter lit cell farthest from those already placed, so colors take turns along a beam or an outline instead
-    // of in rings around one spot, and never sit in the dim haze alone.
-    const litL = Array.from(L.keys()).filter((i) => grid.coverage[i] > 0).map((i) => L[i]).sort((a, b) => a - b)
-    const brightest = litL.length ? litL[Math.floor(0.9 * (litL.length - 1))] : 0
-    const brighter = litL.length ? litL[Math.floor(0.6 * (litL.length - 1))] : 0
-    const cdf = new Float64Array(w * h)
-    let total = 0
-    for (let i = 0; i < w * h; i++) {
-      total += grid.coverage[i] > 0 && L[i] >= brightest ? L[i] ** 3 : 0
-      cdf[i] = total
-    }
-    const centers: [number, number][] = []
-    const cellAt = (i: number): [number, number] => [(((i % w) + 0.5) / w) * fw, ((Math.floor(i / w) + 0.5) / h) * fh]
-    for (let k = 0; k < 4; k++) {
-      let at: [number, number] = [rng() * fw, rng() * fh]
-      if (total > 0 && k === 0) {
-        const t = rng() * total
-        let lo = 0
-        let hi = w * h - 1
-        while (lo < hi) {
-          const mid = (lo + hi) >> 1
-          if (cdf[mid] < t) lo = mid + 1
-          else hi = mid
-        }
-        at = cellAt(lo)
-      } else if (total > 0) {
-        let best = -1
-        let bestScore = -1
-        for (let i = 0; i < w * h; i++) {
-          if (grid.coverage[i] <= 0 || L[i] < brighter) continue
-          const [x, y] = cellAt(i)
-          const gap = Math.min(...centers.map(([cx, cy]) => Math.hypot(x - cx, y - cy)))
-          const score = gap * L[i] * (0.85 + 0.3 * rng())
-          if (score > bestScore) {
-            bestScore = score
-            best = i
-          }
-        }
-        if (best >= 0) at = cellAt(best)
-      }
-      centers.push(at)
-      const blob = { cx: at[0], cy: at[1], r: 0.3 + rng() * 0.25, stretch: 1 + rng(), angle: rng() * Math.PI }
-      fields.push({ name: `along${k + 1}`, want: k === 0 ? 'bright' : 'any', values: followLight(blobField(blob, w, h, fw, fh, nu, nv), grid) })
+      const fade = smooth(0.02, 0.06, litShare(values))
+      fields.push({ name: `part${i + 1}`, want: part.want ?? 'any', values: followLight(values, grid).map((v) => v * fade) })
     }
   }
   // Dark colors are the room's or the ground's own dark: two broad seeded fields, kept out of a Contour light's haze.
