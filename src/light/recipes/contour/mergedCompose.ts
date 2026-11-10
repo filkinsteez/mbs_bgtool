@@ -177,9 +177,11 @@ export function seedDesign(seed: number) {
     rayDraw: rand(),
     keyDraw: rand(),
   }
-  // Seeds that share a shape also differ in which stretch of the outline is in the frame.
+  // Seeds that share a shape also differ in which stretch of the outline is in the frame, and in how strongly and how
+  // far into the face the light reaches.
   const jitter: Jitter = { turn, shift, scale, mirror, slide: lerp(-1, 1, rand()) }
-  return { layout: (((s - 1) % LAYOUTS.length) + LAYOUTS.length) % LAYOUTS.length, jitter, ...draws }
+  const face = { faceDraw: rand(), faceReachDraw: rand() }
+  return { layout: (((s - 1) % LAYOUTS.length) + LAYOUTS.length) % LAYOUTS.length, jitter, ...draws, ...face }
 }
 
 /** Index into MERGED_SHAPES of the seed's shape. */
@@ -539,8 +541,8 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const run = longestRun(runs)
   const [fw, fh] = frameSize(aspect)
   // The mood control (Light position; the tool holds it at 0.5) moves the light along the edge from the seed's place.
-  // The seed's place stays in the middle of the visible edge, so the face it lights is in the frame.
-  const homeAt = Math.min(0.85, Math.max(0.15, def.hotAt + 0.6 * design.hotShift + 0.4 * (controls.mood - 0.5)))
+  // The seed's place stays in the middle half of the visible edge, so the face it lights is in the frame.
+  const homeAt = Math.min(0.75, Math.max(0.25, def.hotAt + design.hotShift + 0.4 * (controls.mood - 0.5)))
   // The hot spot stays on a smooth stretch: along the longest stretch of the run clear of every sharp tip, and a drag
   // counts outline points near a tip less (fading in from half of TIP_CLEAR to TIP_CLEAR), as Rim's does.
   const tips = outlineTips(shape0, anchor, aspect)
@@ -660,7 +662,12 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   // saturated blue and only a thin core goes to white.
   Object.assign(parts, { ...(hotCore ? {} : { n1Weight: 0.8 }), n2Weight: 1.1, n3Weight: 1.2, f1Weight: round4(0.09 * (def.fill ?? 1)), f2Width: round4(0.035 * hazeScale) })
   // The face takes soft light from the whole lit stretch of its edge: brighter near it, deep at the far side.
-  Object.assign(parts, { f3Weight: round4(FACE * (def.fill ?? 1)), f3Width: FACE_REACH, f3Light: 1, f3LightGamma: 1 })
+  Object.assign(parts, {
+    f3Weight: round4(FACE * (def.fill ?? 1) * lerp(0.6, 1.4, design.faceDraw)),
+    f3Width: round4(FACE_REACH * lerp(0.55, 1.3, design.faceReachDraw)),
+    f3Light: 1,
+    f3LightGamma: 1,
+  })
   // A wash fills the frame on both sides of its edge, brightest along it, and the edge still reads through it.
   if (def.wash) Object.assign(parts, { f3Side: 0, f3Weight: WASH_FACE, f3Width: WASH_REACH, f1Weight: WASH_HAZE, f1Width: round4(0.25 * hazeScale) })
   const coreBlur = def.soft ? blur : blur ** 0.6
