@@ -56,34 +56,66 @@ const LAYOUT_PAIRS: [number, number][] = [
   [0b0110, 0b1001],
 ]
 
+/** How many groups seedLayout spreads each block's seeds over (seedOrder). */
+const LAYOUT_GROUPS = 3
+
 /**
- * The seed's choice (0 or 1) for each of the four main parts of a layout. In each block of 8
- * seeds (1-8, 9-16, ...) every word of LAYOUT_PAIRS goes to exactly one seed, so any two of
- * those seeds differ in at least two parts. Seeds with the same light (pickContourLight)
- * differ most: the second gets the opposite of the first in all four parts, a third a word
- * of its own. The order is fixed per block, pack and look (salt).
+ * Which word of a block's four pairs of opposite words a seed's layout takes: the pair (0 to 3,
+ * in the order the block takes them) and the word in it (0 or 1). In each block of 8 seeds
+ * (1-8, 9-16, ...) every word goes to exactly one seed. The first seed of a group (seedOrder over
+ * LAYOUT_GROUPS) takes a pair's first word and the second seed its other word, the opposite one; a
+ * later seed takes the first word left.
  */
-export function seedLayout(pack: ColorPack, seed: number, salt: number): number[] {
+function layoutWord(seed: number): [number, number] {
   const { block, slot } = blockSlot(seed)
-  const random = seededRandom(block, salt)
+  const taken = [0, 0, 0, 0]
+  const given = new Map<number, [number, number][]>()
+  let word: [number, number] = [0, 0]
+  for (let s = 0; s <= slot; s++) {
+    const group = seedOrder(LAYOUT_GROUPS, block * 8 + 1 + s)
+    const before = given.get(group) ?? []
+    const free = taken.indexOf(0)
+    if (before.length === 0 && free >= 0) word = [free, 0]
+    else if (before.length === 1 && !(taken[before[0][0]] & (1 << (1 - before[0][1])))) word = [before[0][0], 1 - before[0][1]]
+    else {
+      const pair = taken.findIndex((t) => t !== 0b11)
+      word = [pair, taken[pair] & 1 ? 1 : 0]
+    }
+    taken[word[0]] |= 1 << word[1]
+    given.set(group, [...before, word])
+  }
+  return word
+}
+
+/**
+ * The seed's choice (0 or 1) for each of the four main parts of a layout: its word of
+ * LAYOUT_PAIRS (layoutWord), with the pairs in an order fixed per block and look (salt). Any two
+ * seeds of a block differ in at least two parts, and the two seeds of a pair in all four. The
+ * colors take no part, so a seed has the same layout whatever the pack.
+ */
+export function seedLayout(seed: number, salt: number): number[] {
+  const random = seededRandom(blockSlot(seed).block, salt)
   const pairs = shuffledEight(random)
     .filter((i) => i < LAYOUT_PAIRS.length)
     .map((i) => (random() < 0.5 ? LAYOUT_PAIRS[i] : ([LAYOUT_PAIRS[i][1], LAYOUT_PAIRS[i][0]] as [number, number])))
-  const used = new Set<number>()
-  const given = new Map<number, number[]>()
-  let word = 0
-  for (let s = 0; s <= slot; s++) {
-    const light = contourLightIndex(pack, block * 8 + 1 + s)
-    const before = given.get(light) ?? []
-    const freePair = pairs.find(([a, b]) => !used.has(a) && !used.has(b))
-    const opposite = before.length === 1 ? before[0] ^ 0b1111 : -1
-    if (before.length === 0 && freePair) word = freePair[0]
-    else if (opposite >= 0 && !used.has(opposite)) word = opposite
-    else word = pairs.flat().find((w) => !used.has(w)) ?? 0
-    used.add(word)
-    given.set(light, [...before, word])
-  }
+  const [pair, side] = layoutWord(seed)
+  const word = pairs[pair][side]
   return [0, 1, 2, 3].map((bit) => (word >> bit) & 1)
+}
+
+/**
+ * The seed's place among n: seeds come in runs of n, and each run takes every one of 0 to
+ * n - 1 once, in an order of its own.
+ */
+function seedOrder(n: number, seed: number): number {
+  const index = (((seed - 1) % n) + n) % n
+  const order = Array.from({ length: n }, (_, i) => i)
+  const shuffle = seededRandom(Math.floor((seed - 1) / n), 0x11c7)
+  for (let i = n - 1; i > 0; i--) {
+    const j = Math.floor(shuffle() * (i + 1))
+    ;[order[i], order[j]] = [order[j], order[i]]
+  }
+  return order[index]
 }
 
 /** Piecewise geometric through (0, lo), (0.5, mid), (1, hi); for gains and widths (all > 0). */
@@ -162,9 +194,6 @@ const AIR_GLOW_LUMINANCE = 0.17
 /** How far (short-side units) outside the frame the light is when its glow is all there. */
 const AIR_GLOW_FROM = 0.15
 
-/** Most falloff (short-side units) of the glow past the frame over a dark of another hue. */
-const OTHER_DARK_CORE = 0.14
-
 /**
  * How much brighter than that least level the glow is at its brightest point in the frame: the
  * very edge turns paler toward white, and the glow shows over more of the frame at thumbnail
@@ -181,11 +210,8 @@ const AIR_GLOW_GAIN = 1.6
  * least AIR_GLOW_LUMINANCE for a cool light, and for a warm one at least the level where its
  * haze starts to fall off faster (`fallFrom`, a share of its clipping level), so it shows its
  * own color before it fades; times `intensity`, the look's Intensity gain. The glow is squared
- * (sharpness 2), so it stays near the edge as haze keeps light near its source. Tan's glow is
- * cubed, so its dim amber is a narrow band under its pale edge instead of a wide dark gold or
- * brown field (Yellow and Orange-red dim through red, Lime toward Forest), and so is a glow
- * over a dark of another hue (Meta Blue over Plum), so the dark shows in most of the frame
- * instead of mixing with the light into a third color. It
+ * (sharpness 2), so it stays near the edge as haze keeps light near its source; its size and
+ * fade are the same whatever the light's color, so the layout is too. It
  * comes in as the light leaves the frame, and is off (level 0) while any of the light is in the
  * frame. A look may give a seed its own falloff (`core`) and a faster fade (`sharper`, added
  * to the sharpness), so seeds differ under the same line, and may glow from only the part of the
@@ -206,11 +232,10 @@ export function airGlowParams(
 ): { airGlow: number[]; glowLine: number[] } {
   const { halfW, halfH } = frameHalf(aspect)
   const outside = segmentOutside(lightSeg, halfW, halfH)
-  // Over a dark of another hue the glow stays narrow whatever the seed, so the dark shows.
-  const falloff = darkMatches(light) ? core : Math.min(core, OTHER_DARK_CORE)
+  const falloff = core
   const clip = clipLuminanceOf(light.haze)
   const target = AIR_GLOW_GAIN * Math.max(luminanceOf(light.haze), light.tail ? fallFrom * clip : AIR_GLOW_LUMINANCE)
-  const sharpness = Math.min(3, (light.fall > 1 || !darkMatches(light) ? 3 : 2) + sharper)
+  const sharpness = Math.min(3, 2 + sharper)
   const share = outside <= 0 ? 0 : smoothstep(0, AIR_GLOW_FROM, outside)
   let brightest = 0
   const n = 48
@@ -423,7 +448,7 @@ export interface ContourLight {
   light: string
   haze: string
   base: string
-  /** Level of the base color (dim room light); 0 with black. */
+  /** Level of the base color (dim room light), so its luminance is BASE_LUMINANCE; 0 with black. */
   baseLevel: number
   /** Paper toe: warm lights 0.85 (as Rim and Halo), cool lights 0. */
   toe: number
@@ -444,27 +469,34 @@ export interface ContourLight {
   /** Gain on the light's haze (1: as the look's). */
   lift: number
   /**
-   * Whether the light's haze is a pale veil of its color (veilParam): cool lights, except
-   * Bold's Meta Blue, which keeps its full color and turns Cyan as it brightens, so a Bold
-   * frame never reads as Atmospheric's steel-blue veil.
+   * Whether the light's haze is a pale veil of its color (veilParam): cool lights, except one
+   * whose brightest part turns a color of its own (Meta Blue turning Cyan), which keeps its full
+   * color, so it never reads as a steel-blue veil.
    */
   veil: boolean
   /**
    * Share a veiled light keeps of a look's band of extra chroma near its clipping level: 1, or
-   * OVERCAST_BAND for Atmospheric, whose veil goes to Steel and Ice greys.
+   * OVERCAST_BAND when its light, haze or base is a grey, so the veil goes to the greys.
    */
   band: number
 }
 
 /**
- * Atmospheric's share of the extra chroma near the clipping level: Streaks' bright shafts then
- * have about the radial-streaks example's chroma (0.085 at Oklab L 0.6 to 0.8, 0.05 above),
- * a grey-blue instead of a pale cornflower.
+ * Share of the extra chroma near the clipping level that a veiled light keeps when its light,
+ * haze or base is a grey (Atmospheric): Streaks' bright shafts then have about the radial-streaks
+ * example's chroma (0.085 at Oklab L 0.6 to 0.8, 0.05 above), a grey-blue instead of a pale
+ * cornflower.
  */
 const OVERCAST_BAND = 0.5
 
 /** The red a warm haze ends on as it fades, deeper than Orange-red. */
 const DEEP_RED = '#FF1A00'
+
+/** Orange-red, which Yellow's dim haze passes through, like a flame cooling. */
+const ORANGE_RED = '#FF4F00'
+
+/** Forest's deep green, which Lime's dim haze turns toward instead of olive. */
+const FOREST = '#0F3D33'
 
 /**
  * Tan's dim haze: a deep amber, then an orange, warmer and purer than dim Tan (which reads
@@ -488,12 +520,6 @@ function halfway(a: string, b: string): number[] {
   return unitPeak(pa.map((v, i) => (v + pb[i]) / 2))
 }
 
-const cool = { toe: 0, tail: null, tailFrom: null, fall: 1, lift: 1, veil: true, band: 1 }
-
-function warm(hex: string, tail: [number[], number[]], tailFrom: number | null, fall = 1, lift = 1): Pick<ContourLight, 'toe' | 'tail' | 'tailFrom' | 'fall' | 'lift' | 'veil' | 'band'> {
-  return { toe: warmToe(hex), tail, tailFrom, fall, lift, veil: false, band: 1 }
-}
-
 /**
  * Tan has no dark partner: its haze gets more light, so most of its lit area is at or above
  * Tan's own lightness, and below nominal it falls toward black faster (with a rounded
@@ -502,76 +528,133 @@ function warm(hex: string, tail: [number[], number[]], tailFrom: number | null, 
 const TAN_FALL = 2.5
 const TAN_LIFT = 1.3
 
-function hexByName(pack: ColorPack, name: string): string {
-  const color = pack.colors.find((c) => c.name === name)
-  if (!color) throw new Error(`${pack.id} has no ${name}`)
-  return color.hex
+/** How the dim haze of each warm pack color fades (see ContourLight), by its hex. */
+const WARM_HAZE: Readonly<Record<string, Pick<ContourLight, 'tail' | 'tailFrom' | 'fall' | 'lift'>>> = {
+  '#FFD61E': { tail: [peakColor(ORANGE_RED), peakColor(DEEP_RED)], tailFrom: 1, fall: 1, lift: 1 },
+  '#FF4F00': { tail: [peakColor(ORANGE_RED), peakColor(DEEP_RED)], tailFrom: 1, fall: 1, lift: 1 },
+  '#D6F26C': { tail: [halfway('#D6F26C', FOREST), peakColor(FOREST)], tailFrom: null, fall: 1, lift: 1 },
+  '#B8996E': { tail: [peakColor(TAN_DIM), peakColor(TAN_FAINT)], tailFrom: 1, fall: TAN_FALL, lift: TAN_LIFT },
+}
+
+/** Least Oklab lightness of a color that lights a frame; darker ones (Forest, Plum, Slate, Near-black) are only bases. */
+const LIGHT_L = 0.5
+
+/** Oklab chroma under which a color is a grey (Ice, Steel, Slate, Near-black). */
+const GREY_C = 0.04
+
+/** Oklab lightness over which a grey (Ice) is only a light's pale core: a haze that pale is a flat white area. */
+const PALE_GREY_L = 0.9
+
+/**
+ * How much lighter (Oklab L) a cool light's pale partner is at least, and how far apart their
+ * hues may be (degrees): Meta Blue's partner is Cyan (42 degrees) or Ice, Steel's is Ice.
+ */
+const PARTNER_LIGHTER = 0.1
+const PARTNER_HUE = 60
+
+/**
+ * Luminance of a light's dark base (its level times the base color's own luminance): the same
+ * whatever the dark's color, so the darks are as dark in every pack. About Oklab L 0.16, Near-black
+ * at a fifth of its own level.
+ */
+const BASE_LUMINANCE = 0.0044
+
+/** A color of the list with its Oklab lightness, chroma and hue (degrees), and whether it is warm (WARM_HAZE). */
+interface ListColor {
+  hex: string
+  L: number
+  C: number
+  h: number
+  warm: boolean
+}
+
+function listColor(hex: string): ListColor {
+  const [L, C, h] = linearToOklch(hexToLinear(hex))
+  return { hex, L, C, h, warm: hex.toUpperCase() in WARM_HAZE }
+}
+
+const isGrey = (c: ListColor) => c.C < GREY_C
+
+/** Degrees between two colors' hues. */
+const hueApart = (a: ListColor, b: ListColor) => Math.abs((wrapAngle(((a.h - b.h) * Math.PI) / 180) * 180) / Math.PI)
+
+/**
+ * The base under a light whose haze is `haze`: the darkest dark of the list that is nearly grey
+ * or of about the haze's hue (darkMatches); for a cool light, else the darkest dark of another hue
+ * (the two dim before they meet, darkMeetParam), else a deep shade of the darkest color of the
+ * light's own family darker than its haze (Meta Blue under Cyan); else black. A warm light with no
+ * such dark stands on black: over Meta Blue, Yellow haze turns grey-khaki and Orange-red pink, and
+ * over Plum Tan turns maroon.
+ */
+function baseFor(haze: ListColor, list: readonly ListColor[]): ListColor | null {
+  const darks = list.filter((c) => c !== haze && c.L < LIGHT_L).sort((a, b) => a.L - b.L)
+  const matching = darks.find((d) => d.C <= 0.02 || hueApart(d, haze) <= 60)
+  if (matching) return matching
+  if (haze.warm) return null
+  if (darks.length) return darks[0]
+  const family = list.filter((c) => !c.warm && c.L < haze.L && (isGrey(c) || hueApart(c, haze) <= PARTNER_HUE))
+  return family.sort((a, b) => a.L - b.L)[0] ?? null
+}
+
+/** The light whose brightest part turns `light`, whose haze is `haze`, over its base (baseFor). */
+function lightFor(light: ListColor, haze: ListColor, list: readonly ListColor[]): ContourLight {
+  const base = baseFor(haze, list)
+  const colors = { light: light.hex, haze: haze.hex, base: base?.hex ?? '#000000', baseLevel: base ? round4(BASE_LUMINANCE / luminanceOf(base.hex)) : 0 }
+  const warm = WARM_HAZE[haze.hex.toUpperCase()]
+  if (warm) return { ...colors, ...warm, toe: warmToe(haze.hex), veil: false, band: 1 }
+  const grey = [light, haze, base].some((c) => c !== null && isGrey(c))
+  return { ...colors, toe: 0, tail: null, tailFrom: null, fall: 1, lift: 1, veil: light === haze || isGrey(light), band: grey ? OVERCAST_BAND : 1 }
 }
 
 /**
- * The lights a pack offers, the first the one the look starts from. Each keeps
- * to one hue family, and its haze is the color that shows as the area of light;
- * its light is the color its brightest part turns (Bold's Meta Blue turns Cyan,
- * Atmospheric's Ice). Dark pack colors (Forest, Plum, Slate, Near-black) only appear
- * as bases, never as light. Warm lights stay on black: over a Meta Blue room,
- * Yellow haze turns grey-khaki and Orange-red pink, and Tan over Plum maroon.
+ * The lights a list of pack colors offers. Every color light enough (LIGHT_L) is once the haze,
+ * the color that shows as the area of light, except a grey as pale as Ice, which is only a light's
+ * pale core. A cool light's brightest part turns its partner, the palest cool color or grey at
+ * least PARTNER_LIGHTER lighter and within PARTNER_HUE (Meta Blue turns Cyan or Ice), and a colored
+ * light whose partner is a grey also lights once with its own color at its core; a warm light
+ * pales along its own path. Cool lights come first, then warm ones, each lightest haze first, so
+ * the order of the list doesn't matter. Works for any 2 to 5 pack colors, with or without Meta Blue.
  */
-export function contourLights(pack: ColorPack): ContourLight[] {
-  const blue = pack.colors[0].hex
-  switch (pack.id) {
-    case 'bold': {
-      const cyan = hexByName(pack, 'Cyan')
-      const yellow = hexByName(pack, 'Yellow')
-      const orange = hexByName(pack, 'Orange-red')
-      return [
-        { light: cyan, haze: cyan, base: blue, baseLevel: 0.05, ...cool },
-        { light: cyan, haze: blue, base: '#000000', baseLevel: 0, ...cool, veil: false },
-        { light: yellow, haze: yellow, base: '#000000', baseLevel: 0, ...warm(yellow, [peakColor(orange), peakColor(DEEP_RED)], 1) },
-        { light: orange, haze: orange, base: '#000000', baseLevel: 0, ...warm(orange, [peakColor(orange), peakColor(DEEP_RED)], 1) },
-      ]
-    }
-    case 'elemental': {
-      const lime = hexByName(pack, 'Lime')
-      const tan = hexByName(pack, 'Tan')
-      const forest = hexByName(pack, 'Forest')
-      return [
-        { light: blue, haze: blue, base: hexByName(pack, 'Plum'), baseLevel: 0.15, ...cool },
-        { light: lime, haze: lime, base: forest, baseLevel: 0.12, ...warm(lime, [halfway(lime, forest), peakColor(forest)], null) },
-        { light: tan, haze: tan, base: '#000000', baseLevel: 0, ...warm(tan, [peakColor(TAN_DIM), peakColor(TAN_FAINT)], 1, TAN_FALL, TAN_LIFT) },
-      ]
-    }
-    case 'atmospheric':
-      return [
-        { light: hexByName(pack, 'Ice'), haze: hexByName(pack, 'Steel'), base: hexByName(pack, 'Near-black'), baseLevel: 0.2, ...cool, band: OVERCAST_BAND },
-        { light: hexByName(pack, 'Ice'), haze: blue, base: hexByName(pack, 'Near-black'), baseLevel: 0.18, ...cool, band: OVERCAST_BAND },
-        { light: blue, haze: blue, base: hexByName(pack, 'Slate'), baseLevel: 0.1, ...cool, band: OVERCAST_BAND },
-      ]
-    default: {
-      const unknown: never = pack.id
-      throw new Error(`Unknown pack: ${String(unknown)}`)
-    }
+export function contourLightOptions(colors: readonly string[]): ContourLight[] {
+  const list = colors.map(listColor)
+  const leads = list.filter((c) => c.L >= LIGHT_L && !(isGrey(c) && c.L > PALE_GREY_L))
+  if (!leads.length) leads.push(list.reduce((a, b) => (b.L > a.L ? b : a)))
+  leads.sort((a, b) => Number(a.warm) - Number(b.warm) || b.L - a.L)
+  const options: ContourLight[] = []
+  for (const haze of leads) {
+    const partners = haze.warm ? [] : list.filter((c) => !c.warm && c.L >= haze.L + PARTNER_LIGHTER && (isGrey(c) || hueApart(c, haze) <= PARTNER_HUE))
+    const partner = partners.sort((a, b) => b.L - a.L)[0]
+    if (partner) options.push(lightFor(partner, haze, list))
+    if (!partner || (isGrey(partner) && !isGrey(haze))) options.push(lightFor(haze, haze, list))
   }
+  return options
 }
 
 /**
- * Index in contourLights(pack) of the seed's light. Seeds come in blocks as long as the
- * pack's list of lights, and each block uses every light once in an order of its own, so
- * seeds 1 to 8 show every light color as the main light.
+ * Which of n lights a seed gets: every one in each block of 8 seeds, so seeds 1 to 8 show every
+ * light color as the main light, and two seeds with one light laid out as differently as the
+ * layout allows. With as many lights as layout groups, each group has its own (its first two
+ * seeds have opposite layouts); with up to four, each pair of opposite layouts in the block shares
+ * one (layoutWord); with more, every one once in each run of n seeds.
  */
-function contourLightIndex(pack: ColorPack, seed: number): number {
-  const n = contourLights(pack).length
-  const index = (((seed - 1) % n) + n) % n
-  const order = Array.from({ length: n }, (_, i) => i)
-  const shuffle = seededRandom(Math.floor((seed - 1) / n), 0x11c7)
-  for (let i = n - 1; i > 0; i--) {
-    const j = Math.floor(shuffle() * (i + 1))
-    ;[order[i], order[j]] = [order[j], order[i]]
-  }
-  return order[index]
+function lightIndex(n: number, seed: number): number {
+  if (n === LAYOUT_GROUPS || n > LAYOUT_PAIRS.length) return seedOrder(n, seed)
+  const order = shuffledEight(seededRandom(blockSlot(seed).block, 0x11c8)).filter((i) => i < LAYOUT_PAIRS.length)
+  return order[layoutWord(seed)[0]] % n
 }
 
-/** Picks the light for a seed (contourLightIndex), taking one draw from the seed's stream. */
+/**
+ * Which colors of a list fill a Beam or Streaks frame's light, haze and base, and how each fades:
+ * the seed picks one of the list's lights (contourLightOptions, lightIndex). Only the colors and
+ * the seed go in, and nothing in the layout reads what comes out.
+ */
+export function contourColors(colors: readonly string[], seed: number): ContourLight {
+  const options = contourLightOptions(colors)
+  return options[lightIndex(options.length, seed)]
+}
+
+/** The seed's colors from a pack's colors (contourColors), taking one draw from the seed's stream. */
 export function pickContourLight(pack: ColorPack, seed: number, random: () => number): ContourLight {
   random()
-  return contourLights(pack)[contourLightIndex(pack, seed)]
+  return contourColors(pack.colors.map((c) => c.hex), seed)
 }

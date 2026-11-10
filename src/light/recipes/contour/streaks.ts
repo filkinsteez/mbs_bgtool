@@ -8,7 +8,7 @@ import {
   airGlowParams,
   clipLuminanceOf,
   type ContourLight,
-  contourLights,
+  contourLightOptions,
   darkMeetParam,
   fallParam,
   frameHalf,
@@ -568,7 +568,7 @@ function composeStreaks({ pack, controls, seed, aspect }: ComposeInput): Composi
   // near the lit side's frame edge or past the middle, high in the frame or low (down to just
   // below its bottom edge), the left or the right side lit, a narrow or a wide fan of lit sky.
   // How many shafts the clouds let through spreads over the seeds (seedShares).
-  const [past, low, leftLit, broadFan] = seedLayout(pack, seed, 0x57e4)
+  const [past, low, leftLit, broadFan] = seedLayout(seed, 0x57e4)
   const [rayShare] = seedShares(seed, 0x57e4, 1, random)
   // Choices added later draw from their own stream, so the rest of each seed stays as it was.
   const shape = seededRandom(seed, 0x57e6)
@@ -740,10 +740,12 @@ const RISE_THICK = 0.8
 const THICK_CLOUDS = [0.55, 2.8, 0.32]
 
 /**
- * Thick clouds for a warm light: its own level, since dim warm haze already falls off fast
- * (dimmer, its shafts end in a sunburst at the point instead of reaching along the line).
+ * Thick clouds for a warm light: as thick, with as little light in their shadows, so the shafts
+ * and shadows lie the same whatever the color, but at its own level, since dim warm haze already
+ * falls off fast (dimmer, its shafts end in a sunburst at the point instead of reaching along the
+ * line).
  */
-const THICK_WARM = [1, 2, 0.45]
+const THICK_WARM = [1, THICK_CLOUDS[1], THICK_CLOUDS[2]]
 
 /** The lit sky's side softness for a seed with crisp sides under a dragged line, as a factor. */
 const CRISP_SIDES = 0.55
@@ -1070,7 +1072,7 @@ export const contourStreaks: RecipeDefinition = {
   scatter: [{ source: 'aux', radius: () => SKY_CACHE_BLUR, size: () => SKY_CACHE_SIZE }],
   lens: { bloom: 0.04, bloomLevels: [1, 0.5, 0.25, 0.1, 0, 0, 0, 0], halation: 0 },
   fromPack: (pack: ColorPack) => {
-    const { light, haze, base } = contourLights(pack)[0]
+    const { light, haze, base } = contourLightOptions(pack.colors.map((c) => c.hex))[0]
     return [light, haze, base]
   },
   compose: composeStreaks,

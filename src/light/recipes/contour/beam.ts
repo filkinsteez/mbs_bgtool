@@ -5,7 +5,7 @@ import {
   airGlowParams,
   clipLuminanceOf,
   type ContourLight,
-  contourLights,
+  contourLightOptions,
   darkMatches,
   fallParam,
   frameHalf,
@@ -549,7 +549,7 @@ function composeBeam({ pack, controls, seed, aspect }: ComposeInput): Compositio
   // The seed's layout: left or right of the middle, upright or leaning, narrow or wide, a
   // column or a cone (seedLayout, so seeds 1-8 differ in at least two of these); the
   // floor's height and the pool's kind spread over their ranges (seedShares).
-  const [onRight, leaning, broad, cone] = seedLayout(pack, seed, 0xbea)
+  const [onRight, leaning, broad, cone] = seedLayout(seed, 0xbea)
   const [floorShare, poolShare] = seedShares(seed, 0xbea, 2, random)
   // What else the seed's scene shows, from its own stream so the rest of each seed stays as it
   // was: the lamp hanging at the frame's top edge, its mouth glowing there; the stage's edge high,
@@ -750,11 +750,12 @@ const SOURCE_HAZE: HazeProfile = { ceiling: [1.6, 1.8], floor: [0.45, 0.6] }
 const POOL_HAZE: HazeProfile = { ceiling: [0.45, 0.6], floor: [1.4, 1.8] }
 
 /**
- * The same for a warm light, milder: its dim haze already falls off fast and turns toward its
- * tail colors, so a long dim stretch would read olive (Lime) or brown (Tan).
+ * The same for a warm light: its layers lie as deep, so the beam shows over the same stretch
+ * whatever the color, but they are less dense, since its dim haze already falls off fast and turns
+ * toward its tail colors, and a long dim stretch would read olive (Lime) or brown (Tan).
  */
-const WARM_SOURCE_HAZE: HazeProfile = { ceiling: [1.3, 1.4], floor: [0.8, 0.85] }
-const WARM_POOL_HAZE: HazeProfile = { ceiling: [0.8, 0.85], floor: [1.15, 1.4] }
+const WARM_SOURCE_HAZE: HazeProfile = { ceiling: [1.3, SOURCE_HAZE.ceiling[1]], floor: [0.8, SOURCE_HAZE.floor[1]] }
+const WARM_POOL_HAZE: HazeProfile = { ceiling: [0.8, POOL_HAZE.ceiling[1]], floor: [1.15, POOL_HAZE.floor[1]] }
 
 /** Share of the beam, from its start, that a source-heavy seed's light past the frame glows from. */
 const SOURCE_GLOW = 0.35
@@ -1039,7 +1040,7 @@ export const contourBeam: RecipeDefinition = {
   radianceScale: (ctx) => (ctx.num('edgeSoftness') >= HALF_SCALE_EDGE ? 0.5 : 1),
   lens: { bloom: 0.04, bloomLevels: [1, 0.6, 0.3, 0.15, 0, 0, 0, 0], halation: 0 },
   fromPack: (pack: ColorPack) => {
-    const { light, haze, base } = contourLights(pack)[0]
+    const { light, haze, base } = contourLightOptions(pack.colors.map((c) => c.hex))[0]
     return [light, haze, base]
   },
   compose: composeBeam,

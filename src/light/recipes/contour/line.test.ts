@@ -231,12 +231,15 @@ describe("Streaks' sky, floor pool and horizon band", () => {
 
 describe('the packs that share Meta Blue', () => {
   it("keep Bold's Meta Blue saturated and turning Cyan, and veil Atmospheric's", () => {
+    const hex = (pack: PackId, name: string) => getPack(pack).colors.find((c) => c.name === name)!.hex
+    /** The first seed whose haze is Meta Blue in a pack. */
+    const blueSeed = (pack: PackId) => SEEDS.find((seed) => pickContourLight(getPack(pack), seed, seededRandom(seed, 0)).haze === hex(pack, 'Meta Blue'))!
     for (const recipe of [contourBeam, contourStreaks]) {
-      const bold = recipe.compose!({ pack: getPack('bold'), controls: MIDDLE, seed: 1, aspect: ASPECT })
-      const atmospheric = recipe.compose!({ pack: getPack('atmospheric'), controls: MIDDLE, seed: 1, aspect: ASPECT })
-      expect(bold.colors.slice(0, 2), recipe.id).toEqual([getPack('bold').colors[1].hex, getPack('bold').colors[0].hex])
+      const bold = recipe.compose!({ pack: getPack('bold'), controls: MIDDLE, seed: blueSeed('bold'), aspect: ASPECT })
+      const atmospheric = recipe.compose!({ pack: getPack('atmospheric'), controls: MIDDLE, seed: blueSeed('atmospheric'), aspect: ASPECT })
+      expect(bold.colors.slice(0, 2), recipe.id).toEqual([hex('bold', 'Cyan'), hex('bold', 'Meta Blue')])
       expect((bold.params.veil as number[])[0], recipe.id).toBe(1)
-      expect(atmospheric.colors[1], recipe.id).toBe(getPack('atmospheric').colors[0].hex)
+      expect(atmospheric.colors[1], recipe.id).toBe(hex('atmospheric', 'Meta Blue'))
       expect((atmospheric.params.veil as number[])[0], recipe.id).toBeLessThan(0.5)
     }
   })
