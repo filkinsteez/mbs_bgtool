@@ -718,8 +718,13 @@ float paleAt(float a, float h) {
 float warmAt(float a, float h) {
   if (uKind == 1) return gHalo;
   float along = sideLight(a, uWarm.x);
-  float th = uWarm.y * (0.4 + 0.6 * along) * (1.0 + 0.4 * gradientNoise(vec2(a * 1.7 + 5.1, 3.3), uHorizonSeed + 31));
-  return along * (1.0 - smoothstep(0.3 * th, 1.3 * th, h));
+  // The band's top drifts and its softness changes along its length, so it never runs parallel to the horizon or to
+  // the ground's edge.
+  float th = uWarm.y * (0.4 + 0.6 * along) * (1.0 + 0.6 * gradientNoise(vec2(a * 1.1 + 5.1, 3.3), uHorizonSeed + 31));
+  float soft = 0.5 + 0.35 * gradientNoise(vec2(a * 1.2 + 8.3, 1.2), uHorizonSeed + 33);
+  // Its light keeps more of its strength along the horizon past the hot middle, where it has fallen near Orange-red's
+  // own lightness, so Orange-red has a broad stretch there.
+  return sqrt(along) * (1.0 - smoothstep((0.8 - soft) * th, (0.8 + soft) * th, h));
 }
 
 // The warm light's outer glow: wider and dimmer than the warm band (round a high light, than its warm glow).
@@ -791,12 +796,13 @@ float skyLightness(float a, float h) {
 // everywhere, with no bright rim.
 float groundLightness(float a, float depth) {
   float lit = sideLight(a, 0.7);
-  float fall = max(uGround.z, 0.05);
+  // How deep it dims drifts along the horizon, so the dim room's edge curves on its own.
+  float fall = max(uGround.z, 0.05) * (0.65 + 0.7 * (0.5 + 0.5 * gradientNoise(vec2(a * 1.4 + 1.9, 2.8), uHorizonSeed + 65)));
   float L = mix(uGround.x + 0.03 * lit, uGround.y, smoothstep(0.0, fall, depth));
   if (uKind == 0) {
     float crest = depth - 0.4 * fall - 0.06 * uSlant.x * a - 0.03 * gradientNoise(vec2(a * 2.3 + 4.1, 6.6), uHorizonSeed + 47);
     float nearL = mix(uGround.x - 0.02 + 0.04 * lit, uGround.y, smoothstep(0.0, 0.7 * fall, crest));
-    L = mix(L, nearL, smoothstep(-0.012, 0.012, crest));
+    L = mix(L, nearL, smoothstep(-0.035, 0.035, crest));
   }
   return L + 0.02 * gradientNoise(vec2(a * 1.3 + 9.1, depth * 2.0 + 1.7), uHorizonSeed + 7) + 0.02 * domeAt(a, 0.0) * exp(-depth / 0.15);
 }
@@ -856,7 +862,10 @@ vec3 auxRadiance(vec2 uv, vec2 p) {
     gHalo = uHalo.w * exp(-across * across) * smoothstep(-0.06, 0.02, along) * exp(-lobeOut * lobeOut);
     gHaloLight = 0.62 + 0.31 * exp(-lobeFall * lobeFall);
   }
-  float edge = smoothstep(-0.5 * uPixel - uGround.w, 0.5 * uPixel + uGround.w, h);
+  // The ground's edge drifts off the horizon line and its softness changes along its length.
+  float edgeSoft = uGround.w * (0.4 + 1.2 * (0.5 + 0.5 * gradientNoise(vec2(a * 1.3 + 3.9, 8.8), uHorizonSeed + 69)));
+  float edgeOff = 1.2 * uGround.w * gradientNoise(vec2(a * 1.6 + 6.2, 1.4), uHorizonSeed + 71);
+  float edge = smoothstep(-0.5 * uPixel - edgeSoft, 0.5 * uPixel + edgeSoft, h - edgeOff);
   if (uLightnessOnly == 1) {
     float L = skyLightness(a, h);
     if (uGroundOn == 1) L = mix(groundLightness(a, -h), L, edge);
