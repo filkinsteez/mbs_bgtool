@@ -14,6 +14,7 @@ import { panelAccessFor, usePanelAccess } from './panelAccess'
 import { HistoryStrip } from './history/HistoryStrip'
 import { applyPanelValues, panelValues } from './history/panelValues'
 import { useHistory } from './history/useHistory'
+import { MixControl } from './MixControl'
 import { FilterPicker, FormatPicker, MoodPicker, PackPicker } from './panelPickers'
 import { Preview } from './Preview'
 import { customMix, isMoodId, mixForPack, parseQuery, randomSeed, toQuery, type LinkLook, type SearchParams } from './state'
@@ -22,7 +23,10 @@ import { ToolPanel } from './ToolPanel'
 const EXPORT_LABEL = 'Export'
 const EXPORTING_LABEL = 'Exporting…'
 const EXPORT_FAILED_LABEL = 'Export failed'
-/** The tiles take the place of DialKit's selects, and Shuffle the place of the Seed slider. The mix's text field never shows. */
+/**
+ * The tiles take the place of DialKit's selects, Shuffle the place of the Seed slider, and the Mix control the place of
+ * the mix's text field, which shows nothing while the page has the color mix control off.
+ */
 const MOOD_PATHS = ['mood']
 const PACK_PATHS = [PACK_DIAL_KEY]
 const MIX_PATHS = [MIX_DIAL_KEY]
@@ -80,7 +84,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   // The seed picks the look; the link's own look holds at the link's mood and seed.
   const state = { ...readToolState(dial.values, mood, link, start.colormix), drag }
   const query = toQuery(state)
-  const { look, pack, seed, format, filter, strength, mix } = state
+  const { look, pack, seed, format, filter, strength, colormix, mix } = state
   const scene = useMemo(() => {
     const aspect = frameAspect(format)
     const controls = toolControls(look, getPack(pack), seed, aspect, drag)
@@ -261,7 +265,12 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
               card: 'colors',
               step: '1. Pick a color pack',
             },
-            { paths: MIX_PATHS, node: null, replace: true, card: 'colors' },
+            {
+              paths: MIX_PATHS,
+              node: colormix ? <MixControl pack={getPack(pack)} mix={mix} onChange={(next) => setValue(MIX_DIAL_KEY, mixPanelValue(next))} /> : null,
+              replace: true,
+              card: 'colors',
+            },
             {
               paths: MOOD_PATHS,
               node: <MoodPicker value={mood} onChange={(next) => setValue('mood', next)} />,
