@@ -587,9 +587,11 @@ const DARK2_HALF = 0.19
 const DARK2_PART_WIDTH = 0.042
 /** How far into the face the main light's part sits from the light. */
 const LEAD_INTO = 0.15
-/** How far past the second light's ends the main light's line stays dark, and over how long it comes back. */
-const SECOND_GAP = 0.12
-const SECOND_GAP_FADE = 0.25
+/** The main light hands over to the second light along the line: it is dark over this share of the second light's half
+ * length round its middle and comes back over the rest, full again at the second light's ends, as the second light
+ * fades out, so the line stays lit all along with no dark gap between the two. A warm second light is pale where the
+ * main light comes back (the two colors' bridge), so blue and warm light never add up to pink or violet. */
+const HANDOVER_DARK = 0.5
 /** How far the second light keeps from the frame's sides (short sides). */
 const SECOND_MARGIN = 0.12
 /** The second light's core line against the main light's: a smaller light whose core turns white only at its peak. */
@@ -837,6 +839,8 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     const warmest = slotOf(cool ? coolest : members.reduce((a, b) => (warmthOf(colors[b]) > warmthOf(colors[a]) ? b : a)))
     const brightest = slotOf(cool ? coolest : members.reduce((a, b) => (L(colors[b]) > L(colors[a]) ? b : a)))
     const side = def.wash ? brightest : warmest
+    // A warm one's ends, where the main light comes back, are the pale bridge between the key's color and its own.
+    const end = edgeWarm ? 10 * slotOf(plan.key) + side : side
     const e = host + 1
     delete unitParams[`e${e}Drift`]
     delete unitParams[`e${e}DriftShape`]
@@ -853,8 +857,8 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
       [`e${e}Stops`]: SECOND_SHAPE.length,
       [`e${e}StopAt`]: at.slice(0, 4),
       [`e${e}StopAt2`]: [...at.slice(4), 1],
-      [`e${e}StopColor`]: [side, side, side, brightest],
-      [`e${e}StopColor2`]: [side, side, side, 1],
+      [`e${e}StopColor`]: [end, end, side, brightest],
+      [`e${e}StopColor2`]: [side, end, end, 1],
       [`e${e}StopGain`]: gains.slice(0, 4),
       [`e${e}StopGain2`]: [...gains.slice(4), 0],
       [`e${e}StopContour`]: on2.contour,
@@ -873,14 +877,14 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
       secondGlowWeight: round4((def.wash || edgeWarm ? SECOND_GLOW_WEIGHT : EDGE_GLOW_WEIGHT) / MAIN_GLOW_WEIGHT),
       // Its glow lies on both sides of its line.
       secondGlowSide: def.wash ? -1 : 0,
-      // Between the two lit stretches the main light's line goes dark, well past the second light's ends, so their
-      // face light never overlaps and the colors never mix into pink or mauve.
+      // Along the second light's stretch the main light's line hands over to it: dark round the second light's middle
+      // and back to full at its ends, so the line has no dark gap.
       gapAt: round4(on2.ts[on2.contour]),
       gapContour: on2.contour,
-      // The gap fades out with the second light as a dragged main light comes near, so the main light is never cut;
-      // its length stays (shrinking it left a sharp notch on the main light that flickered as it moved).
-      gapDark: round4(halfLength + SECOND_GAP),
-      gapFade: SECOND_GAP_FADE,
+      // The hand-over fades out with the second light as a dragged main light comes near, so the main light is never
+      // cut; its length stays (shrinking it left a sharp notch on the main light that flickered as it moved).
+      gapDark: round4(HANDOVER_DARK * halfLength),
+      gapFade: round4((1 - HANDOVER_DARK) * halfLength),
       gapDepth: round4(near),
       // Its own soft light on the nearby face, in its own color; a wash's is a wide soft glow, at a third of the wash's
       // own fill so the frame keeps its blue.
