@@ -343,17 +343,17 @@ type Noise = (u: number, v: number) => number
 const WARPED: readonly FieldWant[] = ['lead', ...PART_WANTS, 'dark']
 
 /**
- * The fields of a look whose parts say where colors go (the merged looks), always the same seven, so no color moves to
- * another field while a line is dragged: the lead's light (parts with no want or `lead`, and everywhere no part claims
- * except the look's own dim room); one field per color asked (cool, warm, bright, pale), from every part that asks it
- * (a group asks what its first part asks); and two dark fields, the first dark spot in the first and the second in the
- * second (the dark colors in pack order). An asked color's field fades out where the design is dim, and the solve keeps the color to its
- * part's own light, so a small light's color sits on that light, never over a dim face. Each part counts by its strength
- * and fades as it shrinks to nothing. Each color has its own small warp, so neighbouring color edges are not parallel.
- * `presence` is how much each dark field's own spots are there (0 to 1): buildFields' seeded dark fields give way to them,
- * so a look with one dark spot keeps a seeded place for its second dark color.
+ * The fields of a look whose parts say where colors go (the merged looks): the lead's light (parts with no want or
+ * `lead`, and everywhere no part claims except the look's own dim room); one field per color some part asks for (cool,
+ * warm, bright, pale), from every part that asks it (a group asks what its first part asks), so a want no part asks for
+ * takes no color; and two dark fields, the first dark spot in the first and the second in the second (the dark colors
+ * in pack order). A part asks for its want even at strength 0, so the fields stay the same while a line is dragged and
+ * no color moves to another field. An asked color's field fades out where the design is dim, and the solve keeps the
+ * color to its part's own light, so a small light's color sits on that light, never over a dim face. Each part counts
+ * by its strength and fades as it shrinks to nothing. Each color has its own small warp, so neighbouring color edges
+ * are not parallel.
  */
-function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number, warps: ReadonlyMap<FieldWant, readonly [Noise, Noise]>): { fields: StageField[]; presence: number[] } {
+function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number, warps: ReadonlyMap<FieldWant, readonly [Noise, Noise]>): StageField[] {
   const { width: w, height: h } = grid
   const L = grid.seen ?? grid.lightness
   const [fw, fh] = frameShorts(aspect)
@@ -361,9 +361,10 @@ function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number
   const lead = new Float32Array(w * h)
   const wants = new Map<FieldWant, Float32Array>(PART_WANTS.map((want) => [want, new Float32Array(w * h)]))
   const groupWant = new Map<number, FieldWant>()
-  const darkSpots: { values: Float32Array; count: number }[] = []
+  const darkSpots: Float32Array[] = []
   // Where the asked parts reach, before their colors fade with the design's light.
   const asked = new Float32Array(w * h)
+  const wanted = new Set<FieldWant>()
   const rings = parts.flatMap((part) => (part.kind === 'spot' && part.inner !== undefined && part.want && !['any', 'lead', 'dark', 'bright'].includes(part.want) ? [part] : []))
   for (const part of parts) {
     if (part.kind === 'horizon') continue
@@ -378,9 +379,10 @@ function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number
     const count = Math.min(1, Math.max(0, part.strength ?? 1)) * smooth(0.001, 0.01, area)
     for (let i = 0; i < w * h; i++) values[i] *= count
     if (want === 'lead' || want === 'any') maxInto(lead, values)
-    else if (want === 'dark') darkSpots.push({ values, count })
+    else if (want === 'dark') darkSpots.push(values)
     else {
       // An asked color sits where its part's light is, and fades out with the design's light, never over a dim face.
+      wanted.add(want)
       maxInto(asked, values)
       for (let i = 0; i < w * h; i++) values[i] *= smooth(0.3, 0.55, L[i])
       // A hot core inside a ring (a halo round the light) is that halo's light at its hottest: it takes the halo's
@@ -399,11 +401,7 @@ function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number
   // The lead's own parts (Meta Blue's face) stay its own: an asked color gives way on them.
   for (const values of wants.values()) for (let i = 0; i < w * h; i++) values[i] *= 1 - 0.6 * lead[i]
   const darks = [new Float32Array(w * h), new Float32Array(w * h)]
-  const presence = [0, 0]
-  darkSpots.forEach((spot, s) => {
-    maxInto(darks[s % 2], spot.values)
-    presence[s % 2] = Math.max(presence[s % 2], spot.count)
-  })
+  darkSpots.forEach((values, s) => maxInto(darks[s % 2], values))
   // The lead's light reaches everywhere no part claims, and into the look's own dim room at LEAD_FLOOR of that, so a
   // dark color takes the room as the light falls off to its own lightness, not along the dark spot's outline.
   // Where an asked part meets the dim room the lead's light gives way, so the colors on either side meet there
@@ -415,9 +413,9 @@ function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number
     lead[i] = Math.max(lead[i], LEAD_BASE * (1 - (1 - LEAD_FLOOR) * dark) * (1 - meet[i]))
   }
   const fields: StageField[] = [{ name: 'lead', want: 'lead', values: lead }]
-  for (const [want, values] of wants) fields.push({ name: want, want, values })
+  for (const [want, values] of wants) if (wanted.has(want)) fields.push({ name: want, want, values })
   darks.forEach((values, i) => fields.push({ name: `dark${i + 1}`, want: 'dark', values }))
-  return { fields, presence }
+  return fields
 }
 
 /**
@@ -483,28 +481,25 @@ function brightestPoint(grid: StageGrid): [number, number] {
 
 /**
  * The color fields of one design, from its parts, its light on the grid and the seed. They never depend on the
- * colors or the shares. When the look's parts say where colors go, those alone (partFields), with seeded dark fields
- * only if no part is dark. Otherwise the look's own (Sunrise: the sky, its layers, the glow along the horizon, the
- * ground; Contour: four seeded fields that take turns along the light, each with its haze, then the parts), then two
- * fields for dark colors.
+ * colors or the shares. When the look's parts say where colors go, those alone (partFields): a dark color shows only
+ * where the look's own dark spots are. Otherwise the look's own (Sunrise: the sky, its layers, the glow along the
+ * horizon, the ground; Contour: four seeded fields that take turns along the light, each with its haze, then the
+ * parts), then two seeded fields for dark colors.
  */
 export function buildFields(recipe: RecipeId, parts: readonly StagePart[], grid: StageGrid, seed: number, aspect: number): StageField[] {
   const { width: w, height: h, lightness: L } = grid
   const [fw, fh] = frameShorts(aspect)
+  if (followsParts(parts)) {
+    const warpRng = mulberry32(Math.imul(seed, 104729) + hashText(recipe) + 1)
+    const warps = new Map(WARPED.map((want) => [want, [makeNoise(warpRng, fw, fh), makeNoise(warpRng, fw, fh)] as const]))
+    return partFields(parts, grid, aspect, warps)
+  }
   const rng = mulberry32(Math.imul(seed, 7919) + hashText(recipe))
   const nu = makeNoise(rng, fw, fh)
   const nv = makeNoise(rng, fw, fh)
   const fields: StageField[] = []
   const haze = normalizeMax(blurGrid(L, w, h, 0.12 * Math.min(w, h)))
-  const byParts = followsParts(parts)
-  let presence = [0, 0]
-  if (byParts) {
-    const warpRng = mulberry32(Math.imul(seed, 104729) + hashText(recipe) + 1)
-    const warps = new Map(WARPED.map((want) => [want, [makeNoise(warpRng, fw, fh), makeNoise(warpRng, fw, fh)] as const]))
-    const own = partFields(parts, grid, aspect, warps)
-    fields.push(...own.fields)
-    presence = own.presence
-  } else if (isSunrise(recipe)) {
+  if (isSunrise(recipe)) {
     const horizon = parts.find((part) => part.kind === 'horizon')
     const light = horizon?.kind === 'horizon' && horizon.light ? horizon.light : brightestPoint(grid)
     const sky = horizon?.kind === 'horizon' ? horizon.sky : ([0, -1] as const)
@@ -630,22 +625,10 @@ export function buildFields(recipe: RecipeId, parts: readonly StagePart[], grid:
     seeded.push(values)
   }
   // A dark color never sits against bright light, a thin line included: seeded dark fields fade out within two cells of
-  // any cell whose brightest point is past mid lightness. A look's own dark spots are its dim room as drawn, so they stay.
+  // any cell whose brightest point is past mid lightness.
   const near = nearPeak(grid, 2)
-  const keepOffLight = (values: Float32Array) => {
-    for (let i = 0; i < w * h; i++) values[i] *= 1 - smooth(0.45, 0.7, near[i])
-  }
-  if (byParts) {
-    // The seeded dark fields give way as the look's own dark spots come in.
-    const own = fields.filter((field) => field.want === 'dark')
-    seeded.forEach((values, k) => {
-      keepOffLight(values)
-      for (let i = 0; i < w * h; i++) own[k].values[i] = Math.max(own[k].values[i], values[i] * (1 - presence[k]))
-    })
-    return fields
-  }
   seeded.forEach((values, k) => fields.push({ name: `dark${k + 1}`, want: 'dark', values }))
-  for (const field of fields) if (field.want === 'dark') keepOffLight(field.values)
+  for (const field of fields) if (field.want === 'dark') for (let i = 0; i < w * h; i++) field.values[i] *= 1 - smooth(0.45, 0.7, near[i])
   return fields
 }
 
