@@ -35,19 +35,23 @@ describe('merged Sunrise', () => {
         }
   })
 
-  it('keeps the glow in the frame or at its edge, also when a line starts outside the frame', () => {
+  it('keeps the light in the frame or at its edge, also when a line starts outside the frame; no rings round a high light', () => {
     for (const seed of SEEDS)
       for (const aspect of ASPECTS)
         for (const drag of [undefined, OWNER_LINE]) {
           const { params } = composeMerged({ pack: PACKS[0], controls: { ...CONTROLS, drag }, seed, aspect })
-          const glow = mergedParts(params, aspect).find((part) => part.kind === 'spot' && part.want === 'bright')
-          if (!glow) {
-            expect(params.kind, `s${seed}: only a plain sky has no glow`).toBe(3)
-            continue
+          const parts = mergedParts(params, aspect)
+          if (params.kind === 1) {
+            const lights = parts.flatMap((part) => (part.kind === 'spot' && part.want !== 'dark' && part.want !== 'any' ? [part] : []))
+            for (const one of lights)
+              for (const other of lights)
+                if (one.want !== other.want) expect(Math.hypot(one.at[0] - other.at[0], one.at[1] - other.at[1]), `s${seed}: ${one.want} and ${other.want} share a middle`).toBeGreaterThan(0.02)
           }
-          if (glow.kind !== 'spot') throw new Error('no glow')
-          for (const v of glow.at) expect(v, `s${seed} ${aspect.toFixed(2)} ${drag ? 'line' : 'default'}`).toBeGreaterThanOrEqual(-0.06)
-          for (const v of glow.at) expect(v, `s${seed} ${aspect.toFixed(2)} ${drag ? 'line' : 'default'}`).toBeLessThanOrEqual(1.06)
+          if (params.kind === 3) continue
+          const horizon = parts.find((part) => part.kind === 'horizon')
+          if (horizon?.kind !== 'horizon' || !horizon.light) throw new Error('no light')
+          for (const v of horizon.light) expect(v, `s${seed} ${aspect.toFixed(2)} ${drag ? 'line' : 'default'}`).toBeGreaterThanOrEqual(-0.06)
+          for (const v of horizon.light) expect(v, `s${seed} ${aspect.toFixed(2)} ${drag ? 'line' : 'default'}`).toBeLessThanOrEqual(1.06)
         }
   })
 })
