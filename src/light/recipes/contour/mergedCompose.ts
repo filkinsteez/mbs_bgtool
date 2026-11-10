@@ -1092,12 +1092,13 @@ const vec = (params: Readonly<Record<string, ParamValue>>, key: string, fallback
 }
 
 /**
- * Where the merged look's light is, from its params, always seven parts in this order: the main light with the face
+ * Where the merged look's light is, from its params, always nine parts in this order: the main light with the face
  * near it (the lead color); the second light's stretch of edge in two pieces, asking for a warm color (Yellow over
  * Orange-red, Tan, or in a pack with no warm color its brightest left, Atmospheric's Steel or Ice) or a cool one (Cyan,
- * Ice or Steel) as the seed picks; the main light's far stretch of edge, dimmer than its brightest (cool) in two
- * pieces; two dim stretches of the outline (dark: Forest and Plum, Slate and Near-black). A part not in the frame sits
- * off it. Nothing here reads the colors.
+ * Ice or Steel) as the seed picks, and the same two asking for a pale color when it is cool (at strength 0 when it is
+ * warm); the main light's far stretch of edge, dimmer than its brightest (cool) in two pieces; two dim stretches of the
+ * outline (dark: Forest and Plum, Slate and Near-black). A part not in the frame sits off it. Nothing here reads the
+ * colors.
  */
 export function mergedParts(params: Readonly<Record<string, ParamValue>>): StagePart[] {
   // The second light's parts fade with it as a dragged main light comes near.
@@ -1115,6 +1116,10 @@ export function mergedParts(params: Readonly<Record<string, ParamValue>>): Stage
     spot('partLead', 'any'),
     line('partWarm', edge, fading, WARM_PART_WIDTH),
     line('partWarm2', edge, fading, WARM_PART_WIDTH),
+    // A cool second light asks for a pale color too (Lime, where the pack has no cool color; Ice, where Steel took the
+    // cool one). Not `bright`, which takes Yellow when no part asks for a warm color.
+    line('partWarm', 'pale', edge === 'cool' ? fading : 0, WARM_PART_WIDTH),
+    line('partWarm2', 'pale', edge === 'cool' ? fading : 0, WARM_PART_WIDTH),
     line('partCool', 'cool'),
     line('partCool2', 'cool'),
     line('partDark', 'dark', 1, DARK_PART_WIDTH),
