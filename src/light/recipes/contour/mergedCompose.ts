@@ -534,6 +534,9 @@ const PART_OFF = [-9, -9, -9, -9]
 const COOL_AT = [0.5, 0.8, 1.1]
 /** How wide the parts along an edge are: its light and the face light just beside it. */
 const EDGE_PART_WIDTH = 0.1
+/** The second light's parts hug its glow on the edge, so its color stays on its light and not on the main light's
+ * face beside it. */
+const WARM_PART_WIDTH = 0.05
 /** The dark colors' stretches (short sides): from and to past the second light's end toward the main light; from and
  * to along the main edge from the seed's place for the light, on the side with no second light and past the far
  * stretch; how far into the face; the parts' width. */
@@ -1034,8 +1037,8 @@ export function mergedParts(params: Readonly<Record<string, ParamValue>>): Stage
   }
   return [
     spot('partLead', 'any'),
-    line('partWarm', 'warm', fading),
-    line('partWarm2', 'warm', fading),
+    line('partWarm', 'warm', fading, WARM_PART_WIDTH),
+    line('partWarm2', 'warm', fading, WARM_PART_WIDTH),
     spot('partBright', 'bright', fading),
     line('partCool', 'cool'),
     line('partCool2', 'cool'),
