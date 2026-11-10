@@ -162,6 +162,27 @@ const T = {
   // owner's rule of 10:05 PM: where Meta Blue reads on BLUE_LIGHT.applies or more of the lit pixels it must carry
   // light (blueLight and blueVerdict in lib/color-read.mjs, as color-shares.mjs reports it).
   mix: { asked: 0.1, reads: 0.05 },
+  // Each pack color's own dim path inside its pack (coordinator, 2026-11-10 1:28 AM), as the engine's fire drift and
+  // Rush's dim-path look draw them: Orange-red into deep red and maroon, Yellow into Orange-red, Lime into Forest, Cyan
+  // into Meta Blue and navy, Ice through Steel and Slate to Near-black, Forest and Plum toward black. A path runs from
+  // anchor to anchor in Oklab lightness, chroma and hue, then to black; anchors are pack colors or [L, C, h], which
+  // count as the pack color before them. Below the first anchor's lightness, a pixel no other rule takes counts as the
+  // path's nearer named color when it lies within `dimPathWidth` of the path at its lightness (in a and b: 0.01 plus
+  // 0.15 times the path's chroma there). Off every path, and still outside: olive (Lime dimmed on its own), teal (Cyan
+  // dimmed on its own), brown (Tan dimmed), mauve, pink and magenta where Meta Blue and Orange-red meet, and grey mud.
+  // Lime's path turns green by L 0.6 (hue 150), so Lime dimmed on its own (olive, hue about 120) stays off it; set by
+  // eye on Rush's dim-path close-ups (artifacts/rush/dim-0121), where the wider first try passed Elemental s8's olive
+  // band. `--dim strict` turns it off, as it turns off the navy rule.
+  dimPaths: {
+    bold: [['Yellow', 'Orange-red', [0.45, 0.17, 29], [0.28, 0.09, 18]], ['Cyan', 'Meta Blue']],
+    elemental: [['Lime', [0.6, 0.11, 150], 'Forest'], ['Plum']],
+    atmospheric: [['Ice', 'Steel', 'Slate', 'Near-black']],
+  },
+  dimPathWidth: [0.01, 0.15],
+  // Where two dim paths fade into each other in the dark: below `below` (the dark base's range), a pixel on the line
+  // between the two paths at its lightness (within dimPathWidth) counts as the nearer color. Orange-red's maroon tail
+  // over Meta Blue's navy (Rush Bold s4's arc); the lighter mauve, pink and magenta where they meet stay outside.
+  dimMeets: { bold: [{ colors: ['Orange-red', 'Meta Blue'], below: 0.35 }] },
 }
 // Why Meta Blue carries no light, for each of blueVerdict's reasons.
 const BLUE_TEXT = {
@@ -428,7 +449,74 @@ try {
       }
     }
     const neutrals = (NEUTRALS[packId] ?? []).map((name) => colors.findIndex((c) => c.name === name))
-    return { packId, pack, colors, pairs, neutrals }
+    // The dim paths as points (L, C, h and the pack color a stretch counts as), each ending in black.
+    const dimPaths = (T.dimPaths[packId] ?? []).map((chain) => {
+      const points = []
+      for (const anchor of chain) {
+        if (Array.isArray(anchor)) points.push({ L: anchor[0], C: anchor[1], h: anchor[2], owner: points.at(-1).owner })
+        else {
+          const owner = colors.findIndex((c) => c.name === anchor)
+          const [L, C, h] = lch(colors[owner].lab)
+          points.push({ L, C, h, owner })
+        }
+      }
+      points.push({ L: 0, C: 0, h: points.at(-1).h, owner: points.at(-1).owner })
+      return points
+    })
+    return { packId, pack, colors, pairs, neutrals, dimPaths }
+  }
+  // Where a pack color's dim path (T.dimPaths) is at lightness L: its chroma-plane point and the color it counts as,
+  // or null when no path of that color reaches L.
+  function dimPathAt(k, name, L) {
+    const want = k.colors.findIndex((c) => c.name === name)
+    for (const points of k.dimPaths) {
+      for (let s = 0; s + 1 < points.length; s++) {
+        const a = points[s]
+        const b = points[s + 1]
+        if (L > a.L || L < b.L || a.L <= b.L || (a.owner !== want && b.owner !== want)) continue
+        const t = (a.L - L) / (a.L - b.L)
+        return toAb(a.C + t * (b.C - a.C), a.h + t * (((((b.h - a.h) % 360) + 540) % 360) - 180))
+      }
+    }
+    return null
+  }
+  // The pack color whose dim path (T.dimPaths) passes within T.dimPathWidth of (L, C, h), or where two paths meet in
+  // the dark (T.dimMeets), or -1.
+  function onDimPath(k, L, C, h) {
+    const [px, py] = toAb(C, h)
+    const width = (q) => T.dimPathWidth[0] + T.dimPathWidth[1] * q
+    let fam = -1
+    let best = Infinity
+    for (const points of k.dimPaths) {
+      for (let s = 0; s + 1 < points.length; s++) {
+        const a = points[s]
+        const b = points[s + 1]
+        if (L > a.L || L < b.L || a.L <= b.L) continue
+        const t = (a.L - L) / (a.L - b.L)
+        const Cp = a.C + t * (b.C - a.C)
+        const hp = a.h + t * (((((b.h - a.h) % 360) + 540) % 360) - 180)
+        const [qx, qy] = toAb(Cp, hp)
+        const score = Math.hypot(px - qx, py - qy) / width(Cp)
+        if (score <= 1 && score < best) {
+          best = score
+          fam = t < 0.5 ? a.owner : b.owner
+        }
+      }
+    }
+    if (fam >= 0) return fam
+    for (const meet of T.dimMeets[k.packId] ?? []) {
+      if (L >= meet.below) continue
+      const ends = meet.colors.map((name) => dimPathAt(k, name, L))
+      if (ends.some((e) => !e)) continue
+      const [[ax, ay], [bx, by]] = ends
+      const dx = bx - ax
+      const dy = by - ay
+      const t = Math.min(1, Math.max(0, ((px - ax) * dx + (py - ay) * dy) / Math.max(dx * dx + dy * dy, 1e-12)))
+      const qx = ax + t * dx
+      const qy = ay + t * dy
+      if (Math.hypot(px - qx, py - qy) <= width(Math.hypot(qx, qy))) return k.colors.findIndex((c) => c.name === meet.colors[t < 0.5 ? 0 : 1])
+    }
+    return -1
   }
   const classifiers = Object.fromEntries(PACK_ORDER.map((id) => [id, classifier(id)]))
   // The light colors a pack offers: its colors at least `T.lightL` light. Atmospheric's light is Ice; its other greys
@@ -480,6 +568,10 @@ try {
         bridge = n
       }
     })
+    if (bridge < 0 && dimRule) {
+      const own = onDimPath(k, L, C, h)
+      if (own >= 0) return { fam: own, bridge: -1 }
+    }
     return { fam: -1, bridge }
   }
 
