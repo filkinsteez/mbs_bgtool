@@ -9,7 +9,7 @@ import { defaultMix, mixFromShares, type ColorMix } from './mix'
 import { getPack, isPackId, type ColorPack, type PackId } from './packs'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
 import { buildFields, COVERAGE_SPLIT, gridSize, lookParts, VISIBLE, type StageField, type StageGrid } from './stageFields'
-import { assignFields, colorFields, farPairs, solveWeights, stageColors, STAGE_SHARPNESS, type StageColor } from './stageSolve'
+import { assignFields, colorFields, coloredByParts, farPairs, solveWeights, stageColors, STAGE_SHARPNESS, type StageColor } from './stageSolve'
 
 /**
  * The pack every design is drawn in while the color stage is on, so one mood, seed, drag and format give one
@@ -170,10 +170,10 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
   const { fields, grid } = design
   let solved = solves.get(solveKey)
   if (!solved) {
-    const colors = stageColors(pack, mix)
+    const colors = stageColors(pack, mix, coloredByParts(fields))
     const assignment = assignFields(colors, fields, input.ctx.seed)
     const values = colorFields(fields, assignment, colors)
-    const own = values.map((v, k): StageField => ({ ...fields[assignment[k]], values: v }))
+    const own = values.map((v, k): StageField => ({ name: fields[assignment[k]]?.name ?? 'none', want: fields[assignment[k]]?.want ?? 'any', values: v }))
     solved = remember(solves, solveKey, { colors, assignment, values, ...solveWeights(grid, own, colors, colors.map((_, k) => k)) })
   }
   lastReport = { hexes: solved.colors.map((c) => c.hex), light: solved.light, reads: solved.reads, fields: solved.assignment.map((f) => fields[f]?.name ?? '') }

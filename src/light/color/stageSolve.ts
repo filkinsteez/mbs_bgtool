@@ -24,6 +24,15 @@ const SEEN_CAP = 0.75
 /** The share of the light every color the mix asks at 10% or more should read as, at the least, so it shows. */
 const SHOW_FLOOR = 0.06
 
+/**
+ * How far above its own lightness a dark color may light a look's own dim room (in a look colored by its parts): a
+ * little brighter in its own hue, not grey.
+ */
+const DARK_REACH = 0.06
+
+/** Whether the fields come from the look's parts (partFields starts them with the lead's light). */
+export const coloredByParts = (fields: readonly StageField[]): boolean => fields[0]?.want === 'lead'
+
 export interface StageColor {
   hex: string
   /** The color in linear light, scaled so its brightest channel is 1. */
@@ -55,7 +64,7 @@ const toUnit = (c: readonly number[]): [number, number, number] => {
 export const hueGap = (a: number, b: number) => Math.abs(((a - b + 540) % 360) - 180)
 
 /** The colors that are on, with how each behaves, in pack order. */
-export function stageColors(pack: ColorPack, mix: ColorMix): StageColor[] {
+export function stageColors(pack: ColorPack, mix: ColorMix, byParts = false): StageColor[] {
   const defaults = defaultMix(pack).shares
   const on = mixColors(pack, mix)
   const base = on.map(({ color, share }) => {
@@ -95,7 +104,7 @@ export function stageColors(pack: ColorPack, mix: ColorMix): StageColor[] {
       hue: c.hue,
       group: c.group,
       kind,
-      edge: kind === KIND_DARK ? c.lightness : kind === KIND_BRIGHT ? c.lightness - 0.1 : c.lightness - 0.16,
+      edge: kind === KIND_DARK ? c.lightness + (byParts ? DARK_REACH : 0) : kind === KIND_BRIGHT ? c.lightness - 0.1 : c.lightness - 0.16,
       turn: kind === KIND_TO_NEIGHBOR ? [0.08, 0.12] : [0, 0],
       neighborIndex: fire ? base.indexOf(fire) : -1,
       defaultShare: c.defaultShare,
@@ -132,6 +141,8 @@ export function assignFields(colors: readonly StageColor[], fields: readonly Sta
   const ranked = colors.map((_, k) => k).sort((a, b) => colors[b].defaultShare - colors[a].defaultShare || tie[a] - tie[b])
   const out = new Array<number>(colors.length).fill(-1)
   const used = new Set<number>()
+  // In a look colored by its parts a color only goes to a place of its group.
+  const byParts = coloredByParts(fields)
   fields.forEach((field, f) => {
     if (field.want === 'any') return
     const wanted = (c: StageColor) => {
@@ -154,7 +165,12 @@ export function assignFields(colors: readonly StageColor[], fields: readonly Sta
         }
       }
     }
-    let k = ranked.find((c) => out[c] < 0 && wanted(colors[c]))
+    const free = ranked.filter((c) => out[c] < 0 && wanted(colors[c]))
+    // In a look colored by its parts a warm light takes the color that dims like fire, and the color it dims into
+    // shares it below (Yellow at the core, Orange-red at the edges); with none, the deepest warm color, leaving the
+    // lightest for the bright parts (Tan in the warm glow, Lime on the dome).
+    let k = free[0]
+    if (byParts && field.want === 'warm') k = free.find((c) => colors[c].kind === KIND_TO_NEIGHBOR) ?? [...free].sort((a, b) => colors[a].lightness - colors[b].lightness)[0]
     // A pack without a warm color lights its warm places with its brightest color left (Atmospheric's Ice).
     if (k === undefined && field.want === 'warm') k = ranked.filter((c) => out[c] < 0 && colors[c].group !== 'dark').sort((a, b) => colors[b].lightness - colors[a].lightness)[0]
     if (k === undefined) return
@@ -163,10 +179,15 @@ export function assignFields(colors: readonly StageColor[], fields: readonly Sta
   })
   for (const k of ranked) {
     if (out[k] >= 0) continue
-    const dark = colors[k].group === 'dark'
-    let f = fields.findIndex((field, i) => !used.has(i) && (dark ? field.want === 'dark' : field.want !== 'dark'))
-    if (f < 0) f = fields.findIndex((_, i) => !used.has(i))
-    if (f < 0) f = 0
+    const { group } = colors[k]
+    const dark = group === 'dark'
+    let f = fields.findIndex((field, i) => !used.has(i) && (dark ? field.want === 'dark' : byParts ? field.want === group : field.want !== 'dark'))
+    // A color with no place of its own shares one with a color of its group: two darks in one dark spot, and in a look
+    // colored by its parts two warm colors on one warm light (Yellow at its core, Orange-red at its edges).
+    if (f < 0 && (dark || byParts)) f = fields.findIndex((field) => field.want === group)
+    if (f < 0 && !byParts) f = fields.findIndex((_, i) => !used.has(i))
+    // No place left for this color in this look: it doesn't show.
+    if (f < 0) continue
     out[k] = f
     used.add(f)
   }
@@ -174,19 +195,25 @@ export function assignFields(colors: readonly StageColor[], fields: readonly Sta
 }
 
 /**
- * Each color's field on the stage grid. In a pack with no dark color, Meta Blue also takes the dark fields no color
- * takes (the ground, the room), so the dark there is Meta Blue's own navy and not a dim neighbor's brown.
+ * Each color's field on the stage grid. The dark fields no color takes (more dark spots than dark colors) go to the
+ * dark colors in turn; in a pack with no dark color Meta Blue takes them, so the dark there is Meta Blue's own navy
+ * and not a dim neighbor's brown.
  */
 export function colorFields(fields: readonly StageField[], assignment: readonly number[], colors: readonly StageColor[]): Float32Array[] {
-  const out = assignment.map((f) => fields[f].values)
-  const lead = colors.findIndex((c) => c.hex === META_BLUE_HEX)
-  if (lead < 0 || colors.some((c) => c.kind === KIND_DARK)) return out
+  const out = assignment.map((f) => (f >= 0 ? fields[f].values : new Float32Array(fields[0]?.values.length ?? 0)))
   const taken = new Set(assignment)
   const spare = fields.filter((field, i) => field.want === 'dark' && !taken.has(i))
-  if (!spare.length) return out
-  const merged = Float32Array.from(out[lead])
-  for (const field of spare) for (let i = 0; i < merged.length; i++) merged[i] = Math.max(merged[i], field.values[i])
-  out[lead] = merged
+  const darks = colors.flatMap((c, k) => (c.kind === KIND_DARK && assignment[k] >= 0 ? [k] : []))
+  const lead = colors.findIndex((c) => c.hex === META_BLUE_HEX)
+  const takers = darks.length ? darks : lead >= 0 ? [lead] : []
+  if (!spare.length || !takers.length) return out
+  const copied = new Set<number>()
+  spare.forEach((field, s) => {
+    const k = takers[s % takers.length]
+    if (!copied.has(k)) out[k] = Float32Array.from(out[k])
+    copied.add(k)
+    for (let i = 0; i < out[k].length; i++) out[k][i] = Math.max(out[k][i], field.values[i])
+  })
   return out
 }
 

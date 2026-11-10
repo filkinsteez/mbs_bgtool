@@ -78,7 +78,7 @@ describe('color stage', () => {
     expect(names('atmospheric')).toMatchObject({ '#0064E0': 'sky', '#F2F4F7': 'glow', '#6A7788': 'low' })
   })
 
-  it('gives each group of parts one field, ahead of the stage own, the lead color taking the first', () => {
+  it('colors by the parts when they ask: the lead color for the light, one color per group or want, one per dark spot', () => {
     const grid = flatGrid()
     const streak = (group: number, y: number): StagePart[] => [
       { kind: 'line', from: [0.1, y], to: [0.5, y], width: 0.05, group },
@@ -86,11 +86,34 @@ describe('color stage', () => {
       { kind: 'spot', at: [0.5, y], radius: 0.1, stretch: 3, angle: 0, group },
     ]
     const fields = buildFields('contour.streaks', [...streak(1, 0.3), ...streak(2, 0.7)], grid, 2, 16 / 9)
-    expect(fields.slice(0, 2).map((f) => f.name)).toEqual(['group1', 'group2'])
-    expect(fields.some((f) => f.name.startsWith('part'))).toBe(false)
-    const pack = getPack('bold')
-    const colors = stageColors(pack, defaultMix(pack))
-    expect(assignFields(colors, fields, 2)[colors.findIndex((c) => c.hex === '#0064E0')]).toBe(0)
+    expect(fields.map((f) => f.name)).toEqual(['lead', 'group1', 'group2', 'cool', 'warm', 'bright', 'pale', 'dark1', 'dark2'])
+    expect(fields.some((f) => f.name.startsWith('along') || f.name.startsWith('part'))).toBe(false)
+    const bold = getPack('bold')
+    const boldColors = stageColors(bold, defaultMix(bold))
+    expect(assignFields(boldColors, fields, 2)[boldColors.findIndex((c) => c.hex === '#0064E0')]).toBe(0)
+    const sky: StagePart[] = [
+      { kind: 'horizon', light: [0.5, 0.8], sky: [0, -1] },
+      { kind: 'spot', at: [0.5, 0.8], radius: 0.2, want: 'bright' },
+      { kind: 'spot', at: [0.5, 0.8], radius: 0.4, inner: 0.25, want: 'warm' },
+      { kind: 'spot', at: [0.2, 0.95], radius: 0.2, want: 'dark' },
+      { kind: 'spot', at: [0.8, 0.95], radius: 0.2, want: 'dark' },
+    ]
+    const skyFields = buildFields('sunset.merged', sky, grid, 2, 16 / 9)
+    expect(skyFields.map((f) => f.name)).toEqual(['lead', 'cool', 'warm', 'bright', 'pale', 'dark1', 'dark2'])
+    const elemental = getPack('elemental')
+    const colors = stageColors(elemental, defaultMix(elemental))
+    const named = Object.fromEntries(assignFields(colors, skyFields, 2).map((f, k) => [colors[k].hex, skyFields[f]?.name]))
+    expect(named).toEqual({ '#0064E0': 'lead', '#D6F26C': 'bright', '#B8996E': 'warm', '#0F3D33': 'dark1', '#4A0A3C': 'dark2' })
+    const streaks: StagePart[] = [
+      { kind: 'line', from: [0.1, 0.3], to: [0.9, 0.3], width: 0.05, want: 'warm' },
+      { kind: 'line', from: [0.1, 0.7], to: [0.9, 0.7], width: 0.05, want: 'cool' },
+    ]
+    const streakFields = buildFields('rush.split', streaks, grid, 2, 16 / 9)
+    for (let seed = 1; seed <= 4; seed++) {
+      const at = assignFields(boldColors, streakFields, seed)
+      const nameOf = (hex: string) => streakFields[at[boldColors.findIndex((c) => c.hex === hex)]]?.name
+      expect([nameOf('#FFD61E'), nameOf('#FF4F00'), nameOf('#1FCDF0')]).toEqual(['warm', 'warm', 'cool'])
+    }
   })
 
   it('gives Meta Blue the dark fields no color takes in a pack with no dark color', () => {
