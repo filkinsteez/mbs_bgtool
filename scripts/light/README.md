@@ -216,11 +216,13 @@ Two frames differ in design when, in Contour, layout is over 0.12 or light over 
 ### Color shares
 
 ```sh
-node scripts/light/color-shares.mjs --look <contour.beam|beam|...|sunset.merged|contour.merged|all>[,...] [--seeds 1-8] [--drag default,owner|all]
-  [--format 16x9,9x16] [--mix default|blue-off|Cyan:0.6] [--maps] [--out dir]
-node scripts/light/color-shares.mjs --files <dir> [--pack bold|elemental|atmospheric] [--maps] [--out dir]
+node scripts/light/color-shares.mjs --look <contour.beam|beam|...|sunset.merged|contour.merged|rush.split|all>[,...] [--seeds 1-8] [--drag default,owner|all]
+  [--format 16x9,9x16] [--mix default|blue-off|Cyan:0.6] [--blend] [--maps] [--out dir]
+node scripts/light/color-shares.mjs --files <dir> [--pack bold|elemental|atmospheric] [--blend] [--maps] [--out dir]
 node scripts/light/color-shares.mjs --swatches [--out dir]
 ```
+
+`--blend` adds a second reading, `blendShares` beside `shares` in `shares.json` and both side by side at the end of `summary.md` (coordinator, 2026-11-10 3:25 AM: a soft blend between Meta Blue and Cyan is partly Meta Blue). A lit pixel that lies between the own shades at its lightness of two pack colors read within 3% of the short side of it (within 0.35 times the distance between those two shades, in Oklab a and b) counts toward each by how close it lies to each; every other pixel counts as its label, as in the first reading. The first reading, `lib/color-read.mjs` and the palette check are unchanged.
 
 What the picture shows, for checking the color mix (owner, 2026-11-09: at the default mix every picture shows all of its pack's colors, Meta Blue at least half). For each frame it gives the share of the visibly lit pixels (Oklab L 0.15 and up; darker is black and counts as none) that read as each pack color, with `grey` (pale bridges, white and greys) and `other` (colors outside the pack: pink, teal, olive, brown, violet) as entries of their own. A color's own dim and bright shades count as that color only while they still read as it:
 

@@ -6,12 +6,13 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
 import { list, parseArgs } from './lib/args.mjs'
-import { BLUE_LIGHT, blueLight, blueVerdict, LABELS, mixByName, READ, readAs, rulesFor, sharesOf } from './lib/color-read.mjs'
+import { BLUE_LIGHT, blueLight, blueVerdict, LABELS, LIN, mixByName, oklab, READ, readAs, rulesFor, sharesOf } from './lib/color-read.mjs'
 import { startHarness } from './lib/harness.mjs'
 
 const LOOKS = ['sunset.bands', 'sunset.ramp', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
-// The merged looks (the tool's sunrise=merged and contour=merged switches) are measured when named; `all` is the seven.
-const MERGED = ['sunset.merged', 'contour.merged']
+// The looks behind the tool's switches (sunrise=merged, contour=merged, rush=split) are measured when named; `all` is
+// the seven.
+const MERGED = ['sunset.merged', 'contour.merged', 'rush.split']
 const PACK_IDS = ['bold', 'elemental', 'atmospheric']
 // The palette check's test drags (palette-check.mjs DRAGS), in frame units as in the URL.
 const DRAGS = {
@@ -155,7 +156,8 @@ async function files(rulesById) {
     if (!packId) continue
     const { data, info } = await sharp(path.join(dir, name)).removeAlpha().raw().toBuffer({ resolveWithObject: true })
     const r = sharesOf(rulesById[packId], data, info.width * info.height, true)
-    rows.push({ file: name, pack: packId, lit: +r.lit.toFixed(4), shares: round(r.shares), blue: blueOf(rulesById[packId], data, info.width, info.height, r.labels) })
+    const blend = args.blend ? { blendShares: round(blendShares(rulesById[packId], data, info.width, info.height, r.labels)) } : {}
+    rows.push({ file: name, pack: packId, lit: +r.lit.toFixed(4), shares: round(r.shares), ...blend, blue: blueOf(rulesById[packId], data, info.width, info.height, r.labels) })
     if (args.maps) items.push({ title: name.replace(/\.(png|jpe?g)$/i, ''), png: await sharp(path.join(dir, name)).png().toBuffer(), labels: r.labels, rules: rulesById[packId], shares: r.shares, w: info.width, h: info.height })
   }
   await fs.writeFile(path.join(outDir, 'shares.json'), JSON.stringify(rows, null, 1))
@@ -174,10 +176,70 @@ function blueOf(rules, rgb, width, height, labels) {
 }
 const blueText = (b) => (!b ? 'no Meta Blue' : !b.applies ? 'Meta Blue light: not judged (under 10%)' : `Meta Blue light: ${b.fails.length ? b.fails.join(', ') : 'carries light'} (spread ${b.spread.toFixed(2)}, peak ${b.peak >= 0 ? '+' : ''}${b.peak.toFixed(2)}, borrowed ${b.borrowed.toFixed(2)})`)
 
+// The blend-aware reading (--blend, coordinator 2026-11-10 3:25 AM): a soft blend between two pack colors is partly
+// each. A lit pixel counts toward the two pack colors read within `reach` (share of the short side) of it whose own
+// shades at its lightness it lies between: by how close it lies to each along the line joining them in Oklab a and
+// b, when it lies within `slack` times that line's length of it. Other pixels count as their label, as before.
+const BLEND = { reach: 0.03, slack: 0.35 }
+// A pack color's own shade at lightness L, Oklab a and b: the hex dimmed below its lightness, mixed toward white
+// above it (the reading's own chroma, lib/color-read.mjs).
+function ownShade(c, L) {
+  const C = L <= c.L0 ? (c.C0 * L) / c.L0 : (c.C0 * Math.max(0, 1 - L)) / (1 - c.L0)
+  const h = (c.h0 * Math.PI) / 180
+  return [C * Math.cos(h), C * Math.sin(h)]
+}
+// Per pixel, how many pixels within r (a square) carry a label for which `hit` is true.
+function boxCount(labels, hit, width, height, r) {
+  const row = new Uint32Array(width * height)
+  const pre = new Uint32Array(Math.max(width, height) + 1)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) pre[x + 1] = pre[x] + (hit(labels[y * width + x]) ? 1 : 0)
+    for (let x = 0; x < width; x++) row[y * width + x] = pre[Math.min(width, x + r + 1)] - pre[Math.max(0, x - r)]
+  }
+  const out = new Uint32Array(width * height)
+  for (let x = 0; x < width; x++) {
+    for (let y = 0; y < height; y++) pre[y + 1] = pre[y] + row[y * width + x]
+    for (let y = 0; y < height; y++) out[y * width + x] = pre[Math.min(height, y + r + 1)] - pre[Math.max(0, y - r)]
+  }
+  return out
+}
+function blendShares(rules, rgb, width, height, labels) {
+  const keys = LABELS(rules)
+  const names = rules.colors.map((c) => c.name)
+  const r = Math.max(1, Math.round(BLEND.reach * Math.min(width, height)))
+  const near = names.map((name) => boxCount(labels, (l) => l === name, width, height, r))
+  const counts = Object.fromEntries(keys.map((k) => [k, 0]))
+  let lit = 0
+  for (let p = 0; p < width * height; p++) {
+    if (labels[p] === 'none') continue
+    lit++
+    const [L, A, B] = oklab([LIN[rgb[3 * p]], LIN[rgb[3 * p + 1]], LIN[rgb[3 * p + 2]]])
+    const ks = names.flatMap((_, k) => (near[k][p] > 0 ? [k] : []))
+    let best = null
+    for (let i = 0; i < ks.length; i++)
+      for (let j = i + 1; j < ks.length; j++) {
+        const ei = ownShade(rules.colors[ks[i]], L)
+        const ej = ownShade(rules.colors[ks[j]], L)
+        const dx = ej[0] - ei[0]
+        const dy = ej[1] - ei[1]
+        const len2 = dx * dx + dy * dy
+        if (len2 < 1e-6) continue
+        const t = Math.min(1, Math.max(0, ((A - ei[0]) * dx + (B - ei[1]) * dy) / len2))
+        const d = Math.hypot(A - ei[0] - t * dx, B - ei[1] - t * dy)
+        if (d <= BLEND.slack * Math.sqrt(len2) && (!best || d < best.d)) best = { i: names[ks[i]], j: names[ks[j]], t, d }
+      }
+    if (best) {
+      counts[best.i] += 1 - best.t
+      counts[best.j] += best.t
+    } else counts[labels[p]]++
+  }
+  return Object.fromEntries(keys.map((k) => [k, lit ? counts[k] / lit : 0]))
+}
+
 // The looks at HEAD: each look, pack, seed, format and view, rendered as the tool shows it.
 async function looksRun(harness, rulesById, getPack) {
   const lookArg = list(args.look)
-  if (!lookArg.length) throw new Error('usage: color-shares.mjs --look <contour.beam|beam|...|all> [--seeds 1-8] [--drag default,owner|all] [--format 16x9,9x16] [--maps] [--out dir]; or --files <dir> [--pack id] [--maps]; or --swatches')
+  if (!lookArg.length) throw new Error('usage: color-shares.mjs --look <contour.beam|beam|...|all> [--seeds 1-8] [--drag default,owner|all] [--format 16x9,9x16] [--mix name] [--blend] [--maps] [--out dir]; or --files <dir> [--pack id] [--blend] [--maps]; or --swatches')
   const looks = lookArg.includes('all') ? LOOKS : lookArg.map((l) => (l.includes('.') ? l : LOOKS.find((id) => id.endsWith(`.${l}`)) ?? l))
   for (const look of looks) if (!LOOKS.includes(look) && !MERGED.includes(look)) throw new Error(`Unknown look ${look}`)
   const seeds = list(args.seeds ?? '1-8').flatMap((part) => {
@@ -224,7 +286,8 @@ async function looksRun(harness, rulesById, getPack) {
             const rgb = await sharp(image.data, { raw: { width, height, channels: 4 } }).removeAlpha().raw().toBuffer()
             const r = sharesOf(rulesById[packId], rgb, width * height, true)
             const flags = !mixName || mixName === 'default' ? flagsOf(pack, r.shares) : []
-            frames.push({ look, pack: packId, seed, format, view, lit: +r.lit.toFixed(4), asked: round(asked), shares: round(r.shares), flags, blue: blueOf(rulesById[packId], rgb, width, height, r.labels) })
+            const blend = args.blend ? { blendShares: round(blendShares(rulesById[packId], rgb, width, height, r.labels)) } : {}
+            frames.push({ look, pack: packId, seed, format, view, lit: +r.lit.toFixed(4), asked: round(asked), shares: round(r.shares), ...blend, flags, blue: blueOf(rulesById[packId], rgb, width, height, r.labels) })
             if (args.maps) items.push({ title: `${packId} s${seed} ${format.replace('x', ':')} ${view}`, png: await sharp(rgb, { raw: { width, height, channels: 3 } }).png().toBuffer(), labels: r.labels, rules: rulesById[packId], shares: r.shares, flags, w: width, h: height })
           }
         }
@@ -275,6 +338,20 @@ function summaryOf(frames, looks, formats, views, seeds, getPack, rulesById, mix
   }
   const judged = frames.filter((f) => f.blue?.applies)
   lines.push('', `All: Meta Blue carries light in ${judged.filter((f) => !f.blue.fails.length).length} of ${judged.length} judged frames; ${frames.length - judged.length} not judged.`, '')
+  if (frames.some((f) => f.blendShares)) {
+    lines.push('## Both readings (--blend)', '', `Frames with Meta Blue at 45% or more of the lit pixels, and with every pack color at 5% or more: the reading above (each pixel one label), then the blend-aware reading (a pixel between two pack colors read within ${pct(BLEND.reach)} of the short side counts toward each by how close it lies to each one's own shade at its lightness).`, '', '| Look, pack | Meta Blue 45%+ | every color 5%+ | Meta Blue median |', '| --- | --- | --- | --- |')
+    for (const look of looks)
+      for (const packId of PACK_IDS) {
+        const set = frames.filter((f) => f.look === look && f.pack === packId)
+        if (!set.length) continue
+        const colors = getPack(packId).colors.map((c) => c.name)
+        const mb = (key) => set.filter((f) => (f[key]['Meta Blue'] ?? 0) >= 0.45).length
+        const every = (key) => set.filter((f) => colors.every((c) => (f[key][c] ?? 0) >= 0.05)).length
+        const med = (key) => pct(median(set.map((f) => f[key]['Meta Blue'] ?? 0)))
+        lines.push(`| ${look} ${packId} | ${mb('shares')} / ${mb('blendShares')} of ${set.length} | ${every('shares')} / ${every('blendShares')} | ${med('shares')} / ${med('blendShares')} |`)
+      }
+    lines.push('')
+  }
   return `${lines.join('\n')}\n`
 }
 
