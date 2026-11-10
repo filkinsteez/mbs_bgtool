@@ -32,6 +32,7 @@ export function rushParts(params: Params, aspect: number): StagePart[] {
   const la = vec(params, 'la')
   const le = vec(params, 'le')
   const lf = vec(params, 'lf')
+  const lg = vec(params, 'lg')
   const lights = Math.min(MAX_LIGHTS, Math.round(num(params, 'lights')))
   if (!reach) return []
   const dir = [Math.cos(angle), Math.sin(angle)]
@@ -52,6 +53,8 @@ export function rushParts(params: Params, aspect: number): StagePart[] {
     const [center, half, , coreWidth] = la.slice(4 * i, 4 * i + 4)
     const [fadeIn, fadeLen] = le.slice(4 * i, 4 * i + 2)
     const [drift, bow, corePlace, place] = lf.slice(4 * i, 4 * i + 4)
+    const taper = lg[4 * i] ?? 0
+    const taperAt = (u: number) => Math.exp(taper * (Math.min(1.3, Math.max(-0.3, u / reach)) - 0.5))
     const want = wantOf(place)
     const acrossAt = (u: number, offset = 0) => {
       const scale = Math.max(1 + fan * Math.min(1.5, Math.max(-0.3, u / reach)), 0.25)
@@ -62,7 +65,7 @@ export function rushParts(params: Params, aspect: number): StagePart[] {
       const ub = u0 + ((u1 - u0) * (k + 1)) / PIECES
       const a = acrossAt(ua)
       const b = acrossAt(ub)
-      const width = Math.round(2 * half * 0.5 * (a.scale + b.scale) * 1e4) / 1e4
+      const width = Math.round(2 * half * taperAt(0.5 * (ua + ub)) * 0.5 * (a.scale + b.scale) * 1e4) / 1e4
       parts.push({ kind: 'line', from: toFrame(ua, a.across), to: toFrame(ub, b.across), width, ...(want.line ? { want: want.line } : {}) })
     }
     // The hottest place along the streak the frame sees: where it has fully faded in, or the frame's near edge.
@@ -74,7 +77,7 @@ export function rushParts(params: Params, aspect: number): StagePart[] {
     parts.push({
       kind: 'spot',
       at: p,
-      radius: Math.round(Math.max(2.5 * coreWidth * half * hot.scale, 0.02) * 1e4) / 1e4,
+      radius: Math.round(Math.max(2.5 * coreWidth * half * hot.scale * taperAt(uHot), 0.02) * 1e4) / 1e4,
       stretch: 3,
       angle: Math.round(((Math.atan2((q[1] - p[1]) * 2 * hy, (q[0] - p[0]) * 2 * hx) * 180) / Math.PI) * 100) / 100,
       ...(want.core ? { want: want.core } : {}),

@@ -2,9 +2,11 @@ export const MAX_LIGHTS = 7
 export const MAX_TONGUES = 4
 
 /**
- * Rush: light moving too fast to hold its shape. A stack of streaks of light fills the frame, side by side with black
- * between them, flowing along a shared run that bends more and more toward its far end or runs nearly straight, and may
- * fan out. Each streak has a hot core and falls off to black at its edges; fine streaks run inside it along its motion.
+ * Rush: light moving too fast to hold its shape. Streaks of light fill the frame side by side: one or two wide soft
+ * bands, each with its own gradient and core, and thinner bright streaks, with dark mostly as narrow gaps where two
+ * colors meet (wider black in some seeds). They flow along a shared run that bends more and more toward its far end or
+ * runs nearly straight, and may fan out; each streak widens or narrows along it. Each streak has a hot core and falls
+ * off to black at its edges; fine streaks run inside it along its motion.
  *
  * The light and dark layout never depends on the colors: each streak's luminance is set by the layout (from fixed
  * stand-in colors per role), and the color list only gives its hue, which turns as the light dims (Yellow to
@@ -23,6 +25,7 @@ uniform vec4 uLC[MAX_LIGHTS];       // luminance (layout's), brightness variatio
 uniform vec4 uLD[MAX_LIGHTS];       // across gradient (log of hot side / other side), wander, streak amount, streak frequency
 uniform vec4 uLE[MAX_LIGHTS];       // fade in at (along), fade length, fade out at, color (index into the list)
 uniform vec4 uLF[MAX_LIGHTS];       // drift across per unit along, bow per unit along squared, core place (half-widths), role (for the color stage's parts)
+uniform vec4 uLG[MAX_LIGHTS];       // taper (log of the width at the reach over the width at the start), falloff (exponent of the body), unused, unused
 uniform int uLights;
 uniform vec3 uC0;
 uniform vec3 uC1;
@@ -82,12 +85,14 @@ vec3 radiance(vec2 uv, vec2 p) {
     vec4 Dl = uLD[i];
     vec4 E = uLE[i];
     vec4 F = uLF[i];
+    vec4 G = uLG[i];
     float fi = float(i);
     float s0 = vw - (A.x + u * (F.x + u * F.y));
-    float wide = A.y * (1.0 + A.z) * exp(abs(B.x)) * 2.4 + 0.5 * max(B.z, B.w) + Dl.y;
+    float wide = A.y * (1.0 + A.z) * exp(abs(B.x) + 0.8 * abs(G.x)) * sqrt(7.0 / max(G.y, 0.3)) + 0.5 * max(B.z, B.w) + Dl.y;
     if (abs(s0) > wide) continue;
     float s = s0 - Dl.y * valueNoise(vec2(u * 1.3, fi * 4.7), uSeed + 31 + i);
-    float halfW = A.y * max(0.3, 1.0 + A.z * valueNoise(vec2(u * 1.1 + 7.1, fi * 2.7), uSeed + 61 + i));
+    // Each streak widens or narrows along the flow by its own taper, so neighbouring edges are never parallel.
+    float halfW = A.y * max(0.3, 1.0 + A.z * valueNoise(vec2(u * 1.1 + 7.1, fi * 2.7), uSeed + 61 + i)) * exp(G.x * (clamp(t, -0.3, 1.3) - 0.5));
     // Each side of the streak has its own width, wandering along it.
     float sideScale = exp(s < 0.0 ? B.x : -B.x) * (1.0 + B.y * valueNoise(vec2(u * 5.5, fi * 4.1 + (s < 0.0 ? 1.0 : 2.0)), uSeed + 71 + i));
     float x = s / max(halfW * sideScale, 1e-4);
@@ -98,8 +103,8 @@ vec3 radiance(vec2 uv, vec2 p) {
     float ta = max(u, 0.0) / max(reach, 1.0);
     float env = fadeIn * fadeOut * max(0.0, 1.0 + C.y * valueNoise(vec2(u * 1.05 + 11.0, fi * 6.1), uSeed + 83 + i)) / (1.0 + 0.3 * ta * ta);
     if (env < 1e-4) continue;
-    // A streak: a body falling off to black at its edges, and a hot core.
-    float body = exp(-1.9 * x * x);
+    // A streak: a body falling off to black at its edges (softer in a wide band), and a hot core.
+    float body = exp(-G.y * x * x);
     float cx = (s / max(halfW, 1e-4) - F.z) / A.w;
     float profile = body * (1.0 + C.z * exp(-0.5 * cx * cx));
     // Fine streaks along the motion at three scales, gathered in patches, mostly added light.
@@ -116,12 +121,23 @@ vec3 radiance(vec2 uv, vec2 p) {
     float level = clamp(profile / (1.0 + C.z) * sqrt(min(env, 1.0)), 0.0, 1.0);
     vec3 hue = vec3(0.0);
     if (C.w > 0.5) {
+      // The colors spread across the streak, all of them in its white middle; each turns as it dims the way it does in
+      // its own streak (Yellow toward Orange-red, Lime toward Forest), keeping its width in its brightest channel. A
+      // color placed in the middle (Tan) stays narrow there, so the edge colors read clean (Lime, not khaki).
       float D = mix(B.z, B.w, smoothstep(0.0, 1.0, t));
-      float sigma = 0.6 * halfW;
+      float sigma = 0.5 * halfW;
       for (int k = 0; k < 4; k++) {
         if (k >= uComps) break;
-        float o = (s - (uSpectrum[k] - 0.5) * D) / sigma;
-        hue += uFringe[k] * compColor(k) * exp(-0.5 * o * o);
+        float o = (s - (uSpectrum[k] - 0.5) * D) / (sigma * (abs(uSpectrum[k] - 0.5) < 0.01 ? 0.5 : 1.0));
+        vec3 cc = compColor(k);
+        vec3 e = compDim(k);
+        float eMain = cc.r >= max(cc.g, cc.b) ? e.r : (cc.g >= cc.b ? e.g : e.b);
+        // Each color turns by how bright the streak is there, as a colored streak does: none in the bright middle, so
+      // it stays white, and fully at the dim edges, so dim Lime goes toward Forest and doesn't read olive. Only the
+      // brightness across the streak counts, so a streak dimmed along its length keeps a white middle.
+      float across = clamp(profile / (1.0 + C.z), 0.0, 1.0);
+      vec3 turn = min(pow(vec3(max(across, 1e-4)), e / max(eMain, 1e-3) - 1.0), vec3(4.0));
+        hue += uFringe[k] * cc * exp(-0.5 * o * o) * turn;
       }
     } else {
       int k = int(E.w + 0.5);

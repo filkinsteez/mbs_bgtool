@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { getPack } from '../../color/packs'
 import type { ControlValues, ParamValue } from '../../scene'
+import { rushColors } from './colors'
 import { rushParts } from './parts'
 import { composeRush, composeRushSplit } from './split-compose'
 
@@ -55,6 +56,12 @@ describe('Rush split', () => {
           expect(composeRushSplit(hexesOf('bold'), { ...CONTROLS, drag }, seed, aspect).params.lights, `s${seed} step ${k}`).toBe(own)
         }
       }
+  })
+
+  it("spreads a white streak's colors across it in list order, with Tan, which reads brown when dim, only in its middle", () => {
+    expect(rushColors(hexesOf('bold')).spectrum).toEqual([0, 0.3333, 0.6667, 1])
+    expect(rushColors(hexesOf('elemental')).spectrum.slice(0, 3)).toEqual([0, 1, 0.5])
+    expect(rushColors(hexesOf('atmospheric')).spectrum.slice(0, 3)).toEqual([0, 0.5, 1])
   })
 
   it('gives the color stage each streak as line pieces and its hot core as a spot, its angle in degrees', () => {

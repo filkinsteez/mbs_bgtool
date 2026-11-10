@@ -27,6 +27,7 @@ export const rushSplit: RecipeDefinition = {
     vector('ld', 'Streak gradient and texture', 4 * MAX_LIGHTS),
     vector('le', 'Streak fades and color', 4 * MAX_LIGHTS),
     vector('lf', 'Streak drift and core', 4 * MAX_LIGHTS),
+    vector('lg', 'Streak taper and falloff', 4 * MAX_LIGHTS),
     number('lights', 'Streaks', MAX_LIGHTS),
     vector('spectrum', 'Color places', 4),
     vector('fringe', 'White fringe levels', 4),
@@ -52,6 +53,7 @@ export const rushSplit: RecipeDefinition = {
       uLD: new Float32Array(ctx.vec('ld')),
       uLE: new Float32Array(ctx.vec('le')),
       uLF: new Float32Array(ctx.vec('lf')),
+      uLG: new Float32Array(ctx.vec('lg')),
       uLights: Math.round(ctx.num('lights')),
       uC0: ctx.color('c0'),
       uC1: ctx.color('c1'),
@@ -71,7 +73,7 @@ export const rushSplit: RecipeDefinition = {
     }
   },
   radianceScale: 0.5,
-  lens: { bloom: 0.08, bloomLevels: [1, 0.7, 0.45, 0.25, 0.12, 0.05, 0, 0], halation: 0 },
+  lens: { bloom: 0.08, bloomLevels: [1, 0.7, 0.45, 0.25, 0.12, 0.05, 0, 0], halation: 0, glare: 0.02 },
   fromPack: rushSlotsFromPack,
   compose: composeRush,
 }

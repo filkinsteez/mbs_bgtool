@@ -36,7 +36,10 @@ export interface RushColors {
   /** Each light color's cell of the spectrum [0, 1]; unused cells sit at 2. */
   cellStart: number[]
   cellEnd: number[]
-  /** Each color's place in the spectrum (its cell's middle), for a white streak's fringes. */
+  /**
+   * Each color's place across a white streak, 0 to 1: the colors in list order, evenly spread, except a pale warm color
+   * with nothing to dim into (Tan), which turns brown as it dims and so sits only in the streak's white middle (0.5).
+   */
   spectrum: number[]
   /** A white streak's level for each color (FRINGE_RANGE). */
   fringe: number[]
@@ -73,8 +76,13 @@ const isWarm = (c: Info) => c.C > 0.08 && c.h >= 20 && c.h < 105
  * Orange-red, Lime to Forest, Ice to Steel, Steel to Slate); a warm color without one toward deep red, like a flame; a
  * pale warm color without one (Tan) falls off fast; any other color keeps its own hue.
  */
+const dimPartner = (c: Info, next: Info | undefined) => (next && next.L < c.L && (hueGap(c.h, next.h) < 70 || next.C < 0.04) ? next : undefined)
+
+/** A muted warm color (Oklab chroma 0.03 to 0.12) with no darker neighbour of its hue (Tan): dim, it reads brown. */
+const dimsBrown = (c: Info, next: Info | undefined) => c.h >= 20 && c.h < 105 && c.C > 0.03 && c.C <= 0.12 && !dimPartner(c, next)
+
 function dimExponents(c: Info, next: Info | undefined): [number, number, number] {
-  const partner = next && next.L < c.L && (hueGap(c.h, next.h) < 70 || next.C < 0.04) ? next : undefined
+  const partner = dimPartner(c, next)
   const target = partner ? partner.lin : isWarm(c) && c.C > 0.12 ? ([1, 0.02, 0] as Rgb) : null
   const faster = isWarm(c) ? WARM_FALL : 1
   if (!target) return isWarm(c) ? [TAN_FALL, TAN_FALL, TAN_FALL] : [1, 1, 1]
@@ -149,13 +157,17 @@ export function rushColors(hexes: readonly string[], shares?: readonly number[])
   const fringe = whiteLevels(lights)
   const dim: number[] = []
   for (let k = 0; k < 4; k++) dim.push(...(lights[k] ? dimExponents(lights[k], all[all.indexOf(lights[k]) + 1]) : [1, 1, 1]))
+  const brown = lights.map((c) => dimsBrown(c, all[all.indexOf(c) + 1]))
+  const edgeColors = brown.filter((b) => !b).length
+  let edgeAt = 0
+  const places = brown.map((b) => (b || edgeColors < 2 ? 0.5 : edgeAt++ / (edgeColors - 1)))
   const ground = darks[0]?.hex ?? lights[0].hex
   return {
     slots: [...[0, 1, 2, 3].map((k) => lights[k]?.hex ?? '#000000'), ground],
     count,
     cellStart,
     cellEnd,
-    spectrum: [0, 1, 2, 3].map((k) => (k < count ? round4(0.5 * (cellStart[k] + cellEnd[k])) : 0)),
+    spectrum: [0, 1, 2, 3].map((k) => (k < count ? round4(places[k]) : 0)),
     fringe: [0, 1, 2, 3].map((k) => round4(fringe[k] ?? 0)),
     dim,
     groundLevel: darks[0] ? DARK_GROUND : SHADE_GROUND,
