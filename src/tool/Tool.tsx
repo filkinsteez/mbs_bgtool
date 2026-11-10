@@ -5,9 +5,9 @@ import '@/styles/dial-panel.css'
 import '@/styles/tool.css'
 import { DialStore, useDialKitController } from 'dialkit'
 import { useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { EXPORT_SIZES, getPack, type ExportAspect } from '@/light'
+import { EXPORT_SIZES, getPack, type ExportAspect, type PackId } from '@/light'
 import { buildScene, clampDrag, keepsLine, toolControls, type LightDrag } from './controls'
-import { buildDialConfig, PACK_DIAL_KEY, PANEL_ID, PANEL_LABELS, PANEL_NAME, readToolState, SEED_DIAL_KEY } from './dialConfig'
+import { buildDialConfig, MIX_DIAL_KEY, mixPanelValue, PACK_DIAL_KEY, PANEL_ID, PANEL_LABELS, PANEL_NAME, readToolState, SEED_DIAL_KEY } from './dialConfig'
 import { exportImage } from './exportImage'
 import { FILTER_DIAL_KEY, readChoice, withFilter } from './filterControl'
 import { panelAccessFor, usePanelAccess } from './panelAccess'
@@ -16,15 +16,16 @@ import { applyPanelValues, panelValues } from './history/panelValues'
 import { useHistory } from './history/useHistory'
 import { FilterPicker, FormatPicker, MoodPicker, PackPicker } from './panelPickers'
 import { Preview } from './Preview'
-import { isMoodId, parseQuery, randomSeed, toQuery, type LinkLook, type SearchParams } from './state'
+import { customMix, isMoodId, mixForPack, parseQuery, randomSeed, toQuery, type LinkLook, type SearchParams } from './state'
 import { ToolPanel } from './ToolPanel'
 
 const EXPORT_LABEL = 'Export'
 const EXPORTING_LABEL = 'Exporting…'
 const EXPORT_FAILED_LABEL = 'Export failed'
-/** The tiles take the place of DialKit's selects, and Shuffle the place of the Seed slider. */
+/** The tiles take the place of DialKit's selects, and Shuffle the place of the Seed slider. The mix's text field never shows. */
 const MOOD_PATHS = ['mood']
 const PACK_PATHS = [PACK_DIAL_KEY]
+const MIX_PATHS = [MIX_DIAL_KEY]
 const SEED_PATHS = [SEED_DIAL_KEY]
 const FILTER_PATHS = [FILTER_DIAL_KEY]
 const FORMAT_PATHS = ['format']
@@ -77,9 +78,9 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const dial = useDialKitController(PANEL_NAME, config, { id: PANEL_ID, onAction: (action) => handleAction(action) })
   const { setValue } = dial
   // The seed picks the look; the link's own look holds at the link's mood and seed.
-  const state = { ...readToolState(dial.values, mood, link), drag }
+  const state = { ...readToolState(dial.values, mood, link, start.colormix), drag }
   const query = toQuery(state)
-  const { look, pack, seed, format, filter, strength } = state
+  const { look, pack, seed, format, filter, strength, mix } = state
   const scene = useMemo(() => {
     const aspect = frameAspect(format)
     const controls = toolControls(look, getPack(pack), seed, aspect, drag)
@@ -175,6 +176,12 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     setValue(SEED_DIAL_KEY, randomSeed(seed))
   }
 
+  /** A new pack starts at its default mix, with the Meta Blue switch as it was. */
+  function choosePack(next: PackId) {
+    if (next === pack) return
+    DialStore.updateValues(PANEL_ID, { [PACK_DIAL_KEY]: next, [MIX_DIAL_KEY]: mixPanelValue(mixForPack(getPack(pack), mix, getPack(next))) })
+  }
+
   const onUndoKey = useEffectEvent((event: KeyboardEvent) => {
     if (!(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== 'z' || isTextField(event.target)) return
     if (event.shiftKey ? history.redo() : history.undo()) event.preventDefault()
@@ -196,7 +203,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     setExportStatus('busy')
     try {
       await nextPaint()
-      const outcome = await exportImage(scene, pack, format, { drag })
+      const outcome = await exportImage(scene, pack, format, { drag, mix: customMix(state) })
       console.info('Exported', outcome)
       setExportStatus('idle')
     } catch (error) {
@@ -249,11 +256,12 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
           slots={[
             {
               paths: PACK_PATHS,
-              node: <PackPicker value={pack} onChange={(next) => setValue(PACK_DIAL_KEY, next)} />,
+              node: <PackPicker value={pack} onChange={choosePack} />,
               replace: true,
               card: 'colors',
               step: '1. Pick a color pack',
             },
+            { paths: MIX_PATHS, node: null, replace: true, card: 'colors' },
             {
               paths: MOOD_PATHS,
               node: <MoodPicker value={mood} onChange={(next) => setValue('mood', next)} />,

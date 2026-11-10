@@ -1,5 +1,25 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_STATE, parseDrag, parsePoint, parseQuery, randomSeed, readSeed, SEED_MAX, SEED_MIN, shownLook, toQuery, type ToolState } from './state'
+import { getPack } from '@/light'
+import { defaultMix, formatMix, mixFromShares, mixPercents, setMetaBlue, setShare } from '@/light/color/mix'
+import {
+  customMix,
+  DEFAULT_STATE,
+  mixForPack,
+  parseDrag,
+  parsePoint,
+  parseQuery,
+  randomSeed,
+  readSeed,
+  SEED_MAX,
+  SEED_MIN,
+  shownLook,
+  toQuery,
+  type ToolState,
+} from './state'
+
+const bold = getPack('bold')
+const elemental = getPack('elemental')
+const atmospheric = getPack('atmospheric')
 
 describe('tool state in the URL', () => {
   it('uses the defaults for an empty query', () => {
@@ -14,6 +34,8 @@ describe('tool state in the URL', () => {
       pack: 'atmospheric',
       seed: 43,
       format: '4:5',
+      colormix: false,
+      mix: defaultMix(atmospheric),
       filter: 'none',
       strength: 0.5,
     }
@@ -58,6 +80,62 @@ describe('tool state in the URL', () => {
     expect(state.seed).toBe(1)
     expect(state.format).toBe('16:9')
     expect(state.pack).toBe('bold')
+  })
+})
+
+describe('the color mix in the URL', () => {
+  const custom = mixFromShares(bold, [20, 10, 10, 60])!
+
+  it('is off unless the link has colormix=1, and then the default mix writes no mix=', () => {
+    expect(parseQuery({ pack: 'elemental' })).toMatchObject({ colormix: false, mix: defaultMix(elemental) })
+    const on = parseQuery(new URLSearchParams('mood=sunset&look=bands&pack=bold&colormix=1&seed=1&format=16x9'))
+    expect(on).toEqual({ ...DEFAULT_STATE, colormix: true })
+    expect(toQuery(on)).toBe('mood=sunset&look=bands&pack=bold&colormix=1&seed=1&format=16x9')
+    for (const value of ['0', 'true', 'yes', '']) expect(parseQuery({ colormix: value }).colormix, value).toBe(false)
+  })
+
+  it('round-trips a mix in whole percents after the pack, with its commas as they are', () => {
+    const query = 'mood=contour&look=beam&pack=bold&colormix=1&mix=20,10,10,60&from=0.3,0.7&to=0.7,0.3&seed=4&format=9x16&filter=grain&strength=0.4'
+    const state = parseQuery(new URLSearchParams(query))
+    expect(state.mix).toEqual(custom)
+    expect(toQuery(state)).toBe(query)
+    expect(parseQuery({ ...Object.fromEntries(new URLSearchParams(query)) })).toEqual(state)
+    expect(new URLSearchParams(toQuery({ ...state, mix: defaultMix(bold) })).has('mix')).toBe(false)
+  })
+
+  it('ignores mix= without colormix=1, so old links open and read back as before', () => {
+    const old = parseQuery(new URLSearchParams('mood=sunset&look=bands&pack=bold&mix=20,10,10,60&seed=1&format=16x9'))
+    expect(old).toEqual(DEFAULT_STATE)
+    expect(toQuery(old)).toBe('mood=sunset&look=bands&pack=bold&seed=1&format=16x9')
+  })
+
+  it("takes the pack's default mix for a mix= it cannot read or that doesn't fit the pack", () => {
+    for (const value of ['', 'abc', '50,50', '20,10,10,60,0', '95,5,0,0', '100,0,0,0', '0,0,0,0', '20,10,10,-60', '20.5,10,10,59.5']) {
+      expect(parseQuery({ pack: 'bold', colormix: '1', mix: value }).mix, value).toEqual(defaultMix(bold))
+    }
+    expect(parseQuery({ pack: 'elemental', colormix: '1', mix: '20,10,10,60' }).mix).toEqual(defaultMix(elemental))
+  })
+
+  it("names the mix only while the control is on and the mix isn't the pack's default", () => {
+    expect(customMix({ colormix: true, pack: 'bold', mix: custom })).toEqual([20, 10, 10, 60])
+    expect(customMix({ colormix: false, pack: 'bold', mix: custom })).toBeNull()
+    expect(customMix({ colormix: true, pack: 'bold', mix: defaultMix(bold) })).toBeNull()
+    expect(formatMix(bold, custom)).toBe('20,10,10,60')
+  })
+})
+
+describe('a new pack', () => {
+  it('starts at its default mix', () => {
+    expect(mixForPack(bold, mixFromShares(bold, [20, 10, 10, 60])!, elemental)).toEqual(defaultMix(elemental))
+    expect(mixForPack(elemental, defaultMix(elemental), atmospheric)).toEqual(defaultMix(atmospheric))
+  })
+
+  it('keeps the Meta Blue switch off, with the other colors even', () => {
+    const next = mixForPack(bold, setMetaBlue(bold, defaultMix(bold), false), elemental)
+    expect(next.shares[0]).toBe(0)
+    expect(mixPercents(next)).toEqual([0, 25, 25, 25, 25])
+    expect(mixPercents(mixForPack(elemental, next, bold))).toEqual([0, 34, 33, 33])
+    expect(mixForPack(elemental, setShare(elemental, next, 1, 0.6), atmospheric).shares[0]).toBe(0)
   })
 })
 
@@ -149,6 +227,8 @@ describe('dragged line in the URL', () => {
     pack: 'elemental',
     seed: 77,
     format: '9:16',
+    colormix: false,
+    mix: defaultMix(elemental),
     drag: { from: [0.312, 0.681], to: [0.75, 0.2] },
     filter: 'none',
     strength: 0.5,

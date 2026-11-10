@@ -15,18 +15,24 @@ export interface ExportOutcome {
  * The control values an export's file name carries: the ones the user sets. Intensity, softness and the mood control
  * are fixed per mood, and with a line the mood control follows from the line.
  */
-export type NamedControls = Pick<ControlValues, 'drag'>
+export type NamedControls = Pick<ControlValues, 'drag'> & {
+  /** The color mix in whole percents, pack order, when its control is on and the mix isn't the pack's default. */
+  mix?: readonly number[] | null
+}
 
 /** Line ends are kept to 0.001 of the frame, so tenths of a percent tell any two lines apart. */
 const framePercent = (value: number) => String(Math.round(value * 1000) / 10)
 
 /**
- * File name parts for the controls, at the precision the URL keeps them: when the user dragged a line,
- * `from20,80-to75,30` (its ends in percent of the frame's width and height); none without one.
+ * File name parts for the controls, at the precision the URL keeps them: `mix20-10-10-60` for a mix that isn't the
+ * pack's default, and when the user dragged a line, `from20,80-to75,30` (its ends in percent of the frame's width and
+ * height). None for the default mix and no line.
  */
 export function controlNameParts(controls: NamedControls): string[] {
+  const parts = controls.mix ? [`mix${controls.mix.join('-')}`] : []
   const line = controls.drag ? clampDrag(controls.drag) : undefined
-  return line ? [`from${line.from.map(framePercent).join(',')}`, `to${line.to.map(framePercent).join(',')}`] : []
+  if (line) parts.push(`from${line.from.map(framePercent).join(',')}`, `to${line.to.map(framePercent).join(',')}`)
+  return parts
 }
 
 function download(blob: Blob, fileName: string): void {
