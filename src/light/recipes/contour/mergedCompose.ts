@@ -534,8 +534,15 @@ const PART_OFF = [-9, -9, -9, -9]
 const COOL_AT = [0.5, 0.8, 1.1]
 /** How wide the parts along an edge are: its light and the face light just beside it. */
 const EDGE_PART_WIDTH = 0.1
-/** How far inside the frame's sides the dim room's parts stay. */
-const ROOM_MARGIN = 0.1
+/** The dark colors' stretches (short sides): from and to past the second light's end toward the main light; from and
+ * to along the main edge from the seed's place for the light, on the side with no second light and past the far
+ * stretch; how far into the face; the parts' width. */
+const DARK_FROM = 0.02
+const DARK_TO = 0.17
+const DARK_MAIN = [0.45, 0.65]
+const DARK_FAR = [1.1, 1.3]
+const DARK_IN = 0.05
+const DARK_PART_WIDTH = 0.06
 /** How far into the face the main light's part sits from the light. */
 const LEAD_INTO = 0.15
 /** How far past the second light's ends the main light's line stays dark, and over how long it comes back. */
@@ -874,13 +881,6 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const homeProbe: Vec2 = [seedHome[0] - anchorR[0] + 0.02 * homeNormal[0], seedHome[1] - anchorR[1] + 0.02 * homeNormal[1]]
   const homeInside = Math.abs(windingNumber(drawn.contours.flatMap((c) => c.primitives), homeProbe)) > 0.5
   const homeSign = (homeInside ? 1 : -1) * (def.outside && !def.wash ? -1 : 1)
-  const roomReach = Number(parts.f3Width) * Math.min(1, soften)
-  // From the light, into the face the seed's light faces (the face direction at the dragged light flips).
-  const room = (d: number): Vec2 => [hot[0] + homeSign * homeNormal[0] * d, hot[1] + homeSign * homeNormal[1] * d]
-  // Kept inside the frame, where the room's dim light shows.
-  const inFrameAt = (p: Vec2) => framePoint(p).map((v) => round4(Math.min(1 - ROOM_MARGIN, Math.max(ROOM_MARGIN, v))))
-  partParams.partDark = [...inFrameAt(room(0.12 + roomReach)), round4(0.1 + 0.2 * roomReach), 0]
-  partParams.partDark2 = [...inFrameAt(room(0.45 + roomReach)), round4(0.08 + 0.1 * roomReach), 0]
   const homeLength = contourLength(drawn.contours[onHome.contour]) || 1
   let away = 1
   if (secondOn && secondOn.contour === onHome.contour) {
@@ -895,6 +895,38 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   // edge nearest the light switched, or the light's nearest point on the edge flipped sides).
   const [c1, c2, c3] = COOL_AT.map((d) => framePoint(pointOn(onHome.contour, tHome + (away * d) / homeLength)))
   Object.assign(partParams, { partCool: [...c1, ...c2], partCool2: [...c2, ...c3] })
+  // The dark colors are the dim ends of lights, a little into the lit face, never out where the design has no light:
+  // one in the dip between the second light and the main light (the main light's line dark, the second light not yet
+  // risen), so the two hand over through dark; one where the main light's far stretch fades out. With no second light,
+  // the main light's dim end on its other side. From the seed, so a drag never moves them.
+  const intoFace = (contour: number, t: number): Vec2 => {
+    const c = drawn.contours[contour]
+    const tangent = contourPoint(c, c.closed ? t - Math.floor(t) : Math.min(1, Math.max(0, t))).tangent
+    const normal: Vec2 = [-tangent[1], tangent[0]]
+    const p = pointOn(contour, t)
+    const probeAt: Vec2 = [p[0] - anchorR[0] + 0.02 * normal[0], p[1] - anchorR[1] + 0.02 * normal[1]]
+    const inside = Math.abs(windingNumber(drawn.contours.flatMap((k) => k.primitives), probeAt)) > 0.5
+    const sign = (inside ? 1 : -1) * (def.outside && !def.wash ? -1 : 1)
+    return [sign * normal[0], sign * normal[1]]
+  }
+  const stretchIn = (contour: number, a: number, b: number): number[] => {
+    const n = intoFace(contour, (a + b) / 2)
+    const at = (u: number) => {
+      const p = pointOn(contour, u)
+      return framePoint([p[0] + DARK_IN * n[0], p[1] + DARK_IN * n[1]])
+    }
+    return [...at(a), ...at(b)]
+  }
+  const mainEnd = (sign: number, [from, to]: readonly number[]) =>
+    stretchIn(onHome.contour, tHome + (sign * from) / homeLength, tHome + (sign * to) / homeLength)
+  if (secondOn) {
+    const { contour, t, tSpan } = secondOn
+    const length = contourLength(drawn.contours[contour]) || 1
+    const ends = [-1, 1].map((k) => pointOn(contour, t + k * tSpan))
+    const toward = dist2(ends[0], seedHome) <= dist2(ends[1], seedHome) ? -1 : 1
+    partParams.partDark = stretchIn(contour, t + toward * (tSpan + DARK_FROM / length), t + toward * (tSpan + DARK_TO / length))
+  } else partParams.partDark = mainEnd(-away, DARK_MAIN)
+  partParams.partDark2 = mainEnd(away, DARK_FAR)
   // The main light with the face near it: from the light, a little into the face the seed's light faces.
   const lead: Vec2 = [hot[0] + homeSign * homeNormal[0] * LEAD_INTO, hot[1] + homeSign * homeNormal[1] * LEAD_INTO]
   partParams.partLead = [...framePoint(lead), 0.3, 0]
@@ -985,16 +1017,16 @@ const vec = (params: Readonly<Record<string, ParamValue>>, key: string, fallback
  * Where the merged look's light is, from its params, always eight parts in this order: the main light with the face
  * near it (the lead color); the second light's stretch of edge (warm: Yellow over Orange-red, Tan, or the brightest
  * left, Atmospheric's Steel) in two pieces, and its core (bright: Lime); the main light's far stretch of edge, dimmer
- * than its brightest (cool: Cyan, Ice) in two pieces; the dim lit room, two spots on the face's far side from the
- * seed's light (dark: Forest and Plum, Slate and Near-black). A part not in the frame sits off it. Nothing here reads
- * the colors.
+ * than its brightest (cool: Cyan, Ice) in two pieces; two dim ends of lights a little into the lit face, in the dip
+ * between the second light and the main light and where the far stretch fades (dark: Forest and Plum, Slate and
+ * Near-black). A part not in the frame sits off it. Nothing here reads the colors.
  */
 export function mergedParts(params: Readonly<Record<string, ParamValue>>): StagePart[] {
   // The second light's parts fade with it as a dragged main light comes near (its strength, partBright's fourth value).
   const fading = Math.min(1, Math.max(0, vec(params, 'partBright', PART_OFF)[3]))
-  const line = (key: string, want: FieldWant, strength = 1): StagePart => {
+  const line = (key: string, want: FieldWant, strength = 1, width = EDGE_PART_WIDTH): StagePart => {
     const v = vec(params, key, PART_OFF)
-    return { kind: 'line', from: [v[0], v[1]], to: [v[2], v[3]], width: EDGE_PART_WIDTH, want, strength }
+    return { kind: 'line', from: [v[0], v[1]], to: [v[2], v[3]], width, want, strength }
   }
   const spot = (key: string, want: FieldWant, strength = 1): StagePart => {
     const v = vec(params, key, PART_OFF)
@@ -1007,7 +1039,7 @@ export function mergedParts(params: Readonly<Record<string, ParamValue>>): Stage
     spot('partBright', 'bright', fading),
     line('partCool', 'cool'),
     line('partCool2', 'cool'),
-    spot('partDark', 'dark'),
-    spot('partDark2', 'dark'),
+    line('partDark', 'dark', 1, DARK_PART_WIDTH),
+    line('partDark2', 'dark', 1, DARK_PART_WIDTH),
   ]
 }
