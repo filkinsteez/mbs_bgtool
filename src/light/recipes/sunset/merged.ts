@@ -74,6 +74,8 @@ interface Layout {
   spread: [number, number, number]
   /** Round a high light: the warm glow's place beside the light (short sides, across and up from it, across scaled by `squash`), size, strength. */
   halo: [number, number, number, number]
+  /** The frame's corner where the dim far sky gathers (-0.5 or 0.5 each way from the middle), from the seed's own light. */
+  farCorner: number[]
 }
 
 /** A seeded generator in [0, 1). */
@@ -153,17 +155,17 @@ export function mergedLayout(seed: number, aspect: number, drag?: ControlValues[
   // low suns, the far corner of an open low sky, the far corners round a high light, the far side of a side-lit sky,
   // the dim band under a plain sky's warm light. Where a kind has no dim room the deep top stays small and light.
   const groundL: [number, number, number, number] = [lerp(0.29, 0.33, dimDraw), lerp(0.22, 0.25, next()), lerp(0.12, 0.3, next()), 0]
-  // Round a high light: the way the pale sky spreads from the light (in the light's frame: across, up), leaning to
-  // one side of straight down, and how much farther it reaches that way; the warm glow sits off to the other side,
-  // a little behind the light, where the pale sky is dimmer.
-  const spreadTurn = (next() < 0.5 ? -1 : 1) * lerp(0.35, 1.2, next())
-  const spread: [number, number, number] = [Math.sin(spreadTurn), -Math.cos(spreadTurn), lerp(1.6, 2.6, next())]
-  const haloAcross = (spreadTurn > 0 ? -1 : 1) * lerp(0.14, 0.22, next())
-  const haloAlong = -lerp(0.02, 0.08, next())
+  // Round a high light: the way the pale sky spreads from the light (in the light's frame: across, up), anywhere from
+  // nearly straight down through sideways to up and sideways, and how much farther it reaches that way; the warm glow
+  // runs to one side of the light, turned up to about 40 degrees from square, on the side away from Meta Blue's patch.
+  const spreadTurn = (next() < 0.5 ? -1 : 1) * lerp(0.2, 2.4, next())
+  const spread: [number, number, number] = [Math.sin(spreadTurn), -Math.cos(spreadTurn), lerp(1.3, 3.0, next())]
+  const haloAcross = -patchSide * lerp(0.12, 0.2, next())
+  const haloAlong = lerp(-0.14, 0.04, next())
   const halo: [number, number, number, number] = [
     spread[0] * haloAlong - spread[1] * haloAcross,
     spread[1] * haloAlong + spread[0] * haloAcross,
-    lerp(0.12, 0.19, next()),
+    lerp(0.14, 0.28, next()),
     lerp(0.85, 1, next()),
   ]
   const farDim = () => {
@@ -232,6 +234,15 @@ export function mergedLayout(seed: number, aspect: number, drag?: ControlValues[
   const farthest = (s: readonly number[], u: readonly number[]) => Math.max(...[-0.5, 0.5].flatMap((x) => [-0.5, 0.5].map((y) => (x * frameW - s[0]) * u[0] + (y * frameH - s[1]) * u[1])))
   let span = Math.max(0.3, farthest(sun, up) - horizon[0])
   const ownSpan = span
+  // The frame's corner where the dim far sky gathers, chosen from the seed's own light (round a high light, the
+  // farthest corner; otherwise the one farthest up the sky and to the side), so a line never moves it to another
+  // corner.
+  const ownGlow = [sun[0] + up[0] * horizon[0], sun[1] + up[1] * horizon[0]]
+  const farOf = ([u, v]: readonly number[]) => {
+    const d = [u * frameW - ownGlow[0], v * frameH - ownGlow[1]]
+    return kind === 1 ? Math.hypot(d[0], d[1]) : d[0] * up[0] + d[1] * up[1] + deep[2] * Math.abs(-d[0] * up[1] + d[1] * up[0])
+  }
+  const farCorner = [-0.5, 0.5].flatMap((u) => [-0.5, 0.5].map((v) => [u, v])).reduce((best, c) => (farOf(c) > farOf(best) ? c : best))
   if (drag) {
     const f = toP(drag.from[0], drag.from[1])
     const t = toP(drag.to[0], drag.to[1])
@@ -295,7 +306,8 @@ export function mergedLayout(seed: number, aspect: number, drag?: ControlValues[
     dome[1] *= reach
     pale[0] *= reach
     warm[0] *= reach
-    for (let i = 0; i < 3; i++) halo[i] *= reach
+    halo[0] *= Math.min(reach, 1.2)
+    halo[1] *= Math.min(reach, 1.2)
     patch[0] *= reach
     patch[2] *= reach
   }
@@ -306,7 +318,16 @@ export function mergedLayout(seed: number, aspect: number, drag?: ControlValues[
     kind === 1
       ? Math.max(0.3, ...[-0.5, 0.5].flatMap((x) => [-0.5, 0.5].map((y) => Math.hypot(x * frameW - glow[0], y * frameH - glow[1]))))
       : Math.max(0.3, farthest(sun, up) - horizon[0])
-  return { frameW, frameH, kind, sun, up, span, squash, ground, groundL, horizon, horizonWave, dome, pale, paleBase, warm, sky, deep, slant, skew, patch, spread, halo }
+  if (kind === 1) {
+    // The warm glow stays in the frame: its middle eases in before the frame's edge, wherever a line puts the light.
+    const sideWay = [-up[1], up[0]]
+    const reachOf = (x: number, half: number) => half * limitLean(x / half, 1)
+    const placed = [0, 1].map((i) => glow[i] + sideWay[i] * (halo[0] / squash) + up[i] * halo[1])
+    const kept = [reachOf(placed[0], frameW / 2 - 0.1) - glow[0], reachOf(placed[1], frameH / 2 - 0.1) - glow[1]]
+    halo[0] = (kept[0] * sideWay[0] + kept[1] * sideWay[1]) * squash
+    halo[1] = kept[0] * up[0] + kept[1] * up[1]
+  }
+  return { frameW, frameH, kind, sun, up, span, squash, ground, groundL, horizon, horizonWave, dome, pale, paleBase, warm, sky, deep, slant, skew, patch, spread, halo, farCorner }
 }
 
 // ---------------------------------------------------------------------------------------------------------- colors
@@ -402,6 +423,7 @@ export function composeMerged({ pack, controls, seed, aspect, mix }: MergedInput
       patch: L.patch,
       spread: L.spread,
       halo: L.halo,
+      farCorner: L.farCorner,
       lowest: roles.lowest,
     },
     lens: { bloom: 0, halation: 0 },
@@ -485,10 +507,15 @@ export function mergedParts(params: Record<string, unknown>, aspect: number): St
     const wayTurn = turnOf(way[0], way[1])
     const acrossLength = Math.hypot(spreadUp / squash, spreadAcross)
     // The pale sky's brightest end, by the light and drawn out the way it spreads (Lime, Ice).
-    parts.push(spot(at(way[0] * 0.2 * paleTop, way[1] * 0.2 * paleTop), 0.5 * paleTop * wayLength, 0.35 * paleTop * acrossLength, 'bright', wayTurn, 0.9))
-    const haloAt = at(haloAcross / squash, haloUp)
-    parts.push(spot(haloAt, haloSize / squash, haloSize, 'warm'))
-    parts.push(spot(haloAt, (2.2 * haloSize) / squash, 2.2 * haloSize, 'warm', 0, 0.8))
+    const end = Math.min(0.3 * paleTop, 0.18)
+    parts.push(spot(at(way[0] * 1.2 * end, way[1] * 1.2 * end), end * wayLength, 0.65 * end * acrossLength, 'bright', wayTurn, 0.9))
+    // The warm lobe from the light to one side, one part along it: a wider warm part there met the pale sky and Meta
+    // Blue over a large area, which the stage blends toward grey.
+    const haloOff = Math.hypot(haloAcross, haloUp) || 1
+    const lobe = [haloAcross / haloOff, haloUp / haloOff]
+    const lobeReach = haloOff + 0.6 * haloSize
+    const lobeWay = [lobe[0] / squash, lobe[1]]
+    parts.push(spot(at(lobeWay[0] * 0.55 * lobeReach, lobeWay[1] * 0.55 * lobeReach), 0.65 * lobeReach * Math.hypot(lobeWay[0], lobeWay[1]), 0.56 * haloSize * Math.hypot(lobe[1] / squash, lobe[0]), 'warm', turnOf(lobeWay[0], lobeWay[1])))
     const ahead = paleTop * Math.max(spreadReach, 1)
     const middle = (ahead - paleTop) / 2
     parts.push(spot(at(way[0] * middle, way[1] * middle), ((ahead + paleTop) / 2) * wayLength, paleTop * acrossLength, 'cool', wayTurn))
@@ -514,30 +541,25 @@ export function mergedParts(params: Record<string, unknown>, aspect: number): St
     parts.push(spot(at(0, -0.3 * depth), 0.6, 0.3 * depth, 'dark', turnOf(1, horizonSlope)))
     parts.push(spot(at(middle, -0.6 * depth), width, 0.6 * depth, 'dark', turnOf(1, horizonSlope), 0.75))
   } else {
-    // The dim far sky: its lit edge on the way to the corner farthest from the light, then that corner (round a high
-    // light, by distance).
-    const [deepStart, , deepLower] = params.deep as number[]
-    const far = (c: number[]) => {
-      const d = [c[0] - glowAt[0], c[1] - glowAt[1]]
-      return ringed ? Math.hypot(d[0], d[1]) : d[0] * up[0] + d[1] * up[1] + deepLower * Math.abs(d[0] * side[0] + d[1] * side[1])
-    }
-    const most = Math.max(...corners.map(far))
-    const weights = corners.map((c) => Math.exp((far(c) - most) / 0.12))
-    const total = weights.reduce((s, w) => s + w, 0)
-    const corner = [0, 1].map((i) => corners.reduce((s, c, k) => s + c[i] * weights[k], 0) / total)
+    // The dim far sky: its lit edge on the way to the seed's far corner, then that corner; both fade as a line brings
+    // the light near that corner.
+    const [deepStart] = params.deep as number[]
+    const [cornerU, cornerV] = params.farCorner as number[]
+    const corner = [cornerU * frameW, cornerV * frameH]
     const toCorner = [corner[0] - glowAt[0], corner[1] - glowAt[1]]
+    const fade = smoothstepJs(0.25, 0.55, Math.hypot(toCorner[0], toCorner[1]) / Math.max(span, 0.3))
     const edgeAt = [glowAt[0] + 0.8 * toCorner[0], glowAt[1] + 0.8 * toCorner[1]]
     const cornerTurn = (Math.atan2(toCorner[1], toCorner[0]) * 180) / Math.PI + 90 - angle
     const size = Math.max(0.15, 0.8 * (1 - deepStart) * span)
-    // With the light near the middle every corner is about as far, the way to the corner has no clear direction and
-    // its angle swings while the light barely moves: the spots go round there instead of pointing.
+    // With the light close to the corner the way to it has no clear direction and its angle swings while the light
+    // barely moves: the spots go round there instead of pointing.
     const t = Math.min(1, Math.max(0, (Math.hypot(toCorner[0], toCorner[1]) / (0.5 * Math.hypot(frameW, frameH)) - 0.1) / 0.2))
     const pointed = t * t * (3 - 2 * t)
     const shaped = (along: number, across: number) => [Math.sqrt(along * across) * (along / across) ** (pointed / 2), Math.sqrt(along * across) * (across / along) ** (pointed / 2)] as const
     const [edgeAlong, edgeAcross] = shaped(1.5 * size, 0.5 * size)
     const [cornerAlong, cornerAcross] = shaped(1.1 * size, 0.8 * size)
-    parts.push(spot([0.9 * edgeAt[0], 0.9 * edgeAt[1]], edgeAlong, edgeAcross, 'dark', cornerTurn))
-    parts.push(spot([0.88 * corner[0], 0.88 * corner[1]], cornerAlong, cornerAcross, 'dark', cornerTurn))
+    parts.push(spot([0.9 * edgeAt[0], 0.9 * edgeAt[1]], edgeAlong, edgeAcross, 'dark', cornerTurn, fade))
+    parts.push(spot([0.88 * corner[0], 0.88 * corner[1]], cornerAlong, cornerAcross, 'dark', cornerTurn, fade))
   }
   return parts
 }
@@ -575,6 +597,7 @@ const PARAMS: readonly ParamSpec[] = [
   vec('patch', "Meta Blue's lit patch: place along the horizon, height (share of the sky), size, strength", [0.6, 0.55, 0.3, 0.8]),
   vec('spread', 'Round a high light: the way the pale sky spreads from it (across, up) and how much farther it reaches', [0, -1, 2], -10, 10),
   vec('halo', 'Round a high light: the warm glow beside it (across, up), size, strength', [0.1, 0, 0.1, 0], -10, 10),
+  vec('farCorner', 'The corner where the dim far sky gathers', [0.5, -0.5], -0.5, 0.5),
   { kind: 'boolean', key: 'lightnessOnly', label: 'Show the design lightness only (grey)', default: false },
   vec('lowest', 'Lowest light of the sky, glow, warm band and pale sky colors', [0.25, 0.85, 0.25, 0.5], 0, 1),
 ]
@@ -644,6 +667,7 @@ uniform vec3 uSpread;        // round a high light: the way the pale sky spreads
 uniform vec4 uHalo;          // round a high light: the warm glow beside it (across, up), size, strength
 float gHalo = 0.0;           // round a high light: the warm glow at this pixel
 float gHaloOuter = 0.0;      // round a high light: the warm glow's wider, dimmer outer light at this pixel
+float gHaloLight = 0.0;      // round a high light: the warm glow's lightness at this pixel, falling from the light
 uniform int uLightnessOnly;  // 1: the design's lightness as grey, for proof sheets and the color stage
 uniform vec4 uLowest;        // lowest light of the sky, glow, warm band and pale sky colors (share of their own)
 uniform vec3 uSky;
@@ -743,17 +767,27 @@ float skyLightness(float a, float h) {
   L = mix(L, paleLight, pale);
   // The warm light's wider, dimmer outer glow only adds light where the sky is dimmer than it.
   L += max(0.0, uWarm.z - 0.03 - L) * 0.8 * warmOuterAt(a, h);
-  float warmLight = uKind == 1 ? uWarm.z + 0.2 * gHalo : uWarm.z + 0.1 * sideLight(a, max(0.15, 0.5 * uWarm.x)) - 0.05 * clamp(h / max(uWarm.y, 0.02), 0.0, 1.0);
-  L = mix(L, warmLight, warmAt(a, h));
+  float warmLight = uWarm.z + 0.1 * sideLight(a, max(0.15, 0.5 * uWarm.x)) - 0.05 * clamp(h / max(uWarm.y, 0.02), 0.0, 1.0);
+  // Round a high light the warm lobe only adds light, running down its own slope from the light.
+  L = uKind == 1 ? mix(L, max(L, gHaloLight), gHalo) : mix(L, warmLight, warmAt(a, h));
   L = mix(L, uDome.z, domeAt(a, h));
   return min(L, 0.97);
 }
 
 // The ground, or a plain sky's dim band: dim but lit, lit most under the ridge on the side toward the light and
-// darker away from it and down, so each color on it runs from its lit side to its shadow side; no thin bright rim.
+// falling into the dim room down the slopes and away from the light, so each color on it runs from its lit side to
+// its shadow side. Under a low sun a nearer ridge, tilted against the far one, catches the light on its crest. Soft
+// everywhere, with no bright rim.
 float groundLightness(float a, float depth) {
-  float L = mix(uGround.x, uGround.y, smoothstep(0.0, max(uGround.z, 0.05), depth)) + 0.03 * gradientNoise(vec2(a * 1.3 + 9.1, depth * 2.0 + 1.7), uHorizonSeed + 7);
-  return L + 0.035 * sideLight(a, 0.6) * exp(-depth / 0.1) + 0.02 * domeAt(a, 0.0) * exp(-depth / 0.15);
+  float lit = sideLight(a, 0.7);
+  float fall = max(uGround.z, 0.05);
+  float L = mix(uGround.x + 0.03 * lit, uGround.y, smoothstep(0.0, fall, depth));
+  if (uKind == 0) {
+    float crest = depth - 0.4 * fall - 0.06 * uSlant.x * a - 0.03 * gradientNoise(vec2(a * 2.3 + 4.1, 6.6), uHorizonSeed + 47);
+    float nearL = mix(uGround.x - 0.02 + 0.04 * lit, uGround.y, smoothstep(0.0, 0.7 * fall, crest));
+    L = mix(L, nearL, smoothstep(-0.012, 0.012, crest));
+  }
+  return L + 0.02 * gradientNoise(vec2(a * 1.3 + 9.1, depth * 2.0 + 1.7), uHorizonSeed + 7) + 0.02 * domeAt(a, 0.0) * exp(-depth / 0.15);
 }
 
 // The color each part gives, blended like overlapping light; where two far hues meet, a pale light between them.
@@ -791,16 +825,23 @@ vec3 auxRadiance(vec2 uv, vec2 p) {
     // A light high in the frame: height in the sky is the distance from the light, stretched the way the pale sky
     // spreads so the light sits at its brightest end, wavering with the direction (read from the direction itself,
     // so there is no seam). The warm glow sits off to one side of the light, not round it.
+    // The pale sky is a lobe ahead of the light, narrower across and short behind it; the warm glow is a second lobe
+    // from the light to one side. Both are brightest at the light, where they meet in white, and run down their own
+    // slopes; between them the sky is dimmer, so their colors meet at the light or across that dip.
     vec2 q = vec2(a * uSquash, v - uHorizon.x);
     float ahead = dot(q, uSpread.xy);
     vec2 e = vec2(dot(q, vec2(-uSpread.y, uSpread.x)), ahead / (ahead > 0.0 ? max(uSpread.z, 1.0) : 1.0));
     float len = length(e);
     h = len * (1.0 + 0.22 * gradientNoise(e / max(len, 1e-5) * 1.3 + vec2(5.0, 2.0), uHorizonSeed + 41));
     a = e.x;
-    vec2 hq = (q - uHalo.xy) / max(uHalo.z, 0.02);
-    float wob = 1.0 + 0.2 * gradientNoise(hq * 0.8 + vec2(1.3, 6.1), uHorizonSeed + 43);
-    gHalo = uHalo.w * exp(-dot(hq, hq) * wob);
-    gHaloOuter = uHalo.w * exp(-dot(hq, hq) * wob / 4.84);
+    vec2 lobe = uHalo.xy / max(length(uHalo.xy), 1e-4);
+    float lobeReach = length(uHalo.xy) + 0.6 * uHalo.z;
+    float along = dot(q, lobe);
+    float wob = 1.0 + 0.2 * gradientNoise(q * 2.0 + vec2(1.3, 6.1), uHorizonSeed + 43);
+    float width = 0.7 * uHalo.z * (0.6 + 0.4 * clamp(along / max(lobeReach, 0.05), 0.0, 1.5)) * wob;
+    float across = dot(q, vec2(-lobe.y, lobe.x)) / max(width, 0.02);
+    gHalo = uHalo.w * exp(-across * across) * smoothstep(-0.06, 0.02, along) * exp(-pow(max(along, 0.0) / (1.4 * lobeReach), 2.0));
+    gHaloLight = 0.62 + 0.31 * exp(-pow(max(along, 0.0) / max(lobeReach, 0.05), 2.0));
   }
   float edge = smoothstep(-0.5 * uPixel - uGround.w, 0.5 * uPixel + uGround.w, h);
   if (uLightnessOnly == 1) {
