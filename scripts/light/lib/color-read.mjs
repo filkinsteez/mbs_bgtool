@@ -40,12 +40,12 @@ export const READ = {
   darkUp: 2,
 }
 
-const LIN = Float32Array.from({ length: 256 }, (_, i) => {
+export const LIN = Float32Array.from({ length: 256 }, (_, i) => {
   const v = i / 255
   return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
 })
 const toLinear = (hex) => [1, 3, 5].map((i) => LIN[parseInt(hex.slice(i, i + 2), 16)])
-function oklab([r, g, b]) {
+export function oklab([r, g, b]) {
   const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
   const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
   const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)

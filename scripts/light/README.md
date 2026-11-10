@@ -239,6 +239,36 @@ Each frame also says whether Meta Blue carries light (owner, 2026-11-09 10:05 PM
 
 Set by eye in compare round 24 (`artifacts/compare/rounds/24/blue-calib-default/`). Even skies and haze fields spread 0.08 to 0.18, and dim navy fields stay 0.2 under the hex. The owner's screenshot is one example: its navy field brightens only into the Cyan band, so 43% of its brightest Meta Blue is borrowed, and it spreads 0.52. Bold skies lit only where they meet Cyan or Yellow borrow 36 to 48%; frames whose blue has its own light borrow 0 to 26%. Where the brightest Meta Blue sits against the frame's edge was tried and left out: a beam entering from the top edge has its brightest part there and still glows.
 
+### Color edges
+
+```sh
+node scripts/light/color-edges.mjs --look <sunset.merged|contour.merged|rush.split|merged|all|contour.beam|beam|...>[,...] [--pack bold,...]
+  [--seeds 1-8] [--format 16x9,9x16] [--drag default,owner|all] [--mix default|blue-off|Cyan:0.6] [--maps] [--out dir]
+```
+
+Where the color stage's colors break away from the light (coordinator, 2026-11-10 2:42 AM): firm color edges where the light is soft, flat fills, small dots of one color inside another, and thin seams. Each frame is drawn as the tool draws it with `colormix=1` at the mix (`default` unless `--mix` says otherwise): the design in the stage's design pack, given the pack's colors by `withColorMix`. It is drawn once more without the stage (for merged Sunrise, its grey design lightness), and that render's Oklab lightness is the light the colors should follow. Frames are 480 pixels on the long side. Lengths below are shares of the frame's short side, and areas are shares of the frame. Pixels darker than Oklab L 0.15 are not judged. `merged` names the three looks behind the tool's switches and `all` the seven. A frame fails on any of these:
+
+- **Firm color edge.** Color here is Oklab a and b divided by the lightness (at least 0.2), so a color dimmed in linear light keeps its value and the light's own falloff is not a color change. A window 16% of the short side wide is laid across the steepest color change at each pixel. The pixel is on a firm edge when the color changes by 0.08 or more across the window (and plain a and b by 0.04 or more, so dim colors don't count), over a width (the change divided by its steepest step) of 5% of the short side or less, while the light there changes over at least three times that width. The frame fails when one edge's middle line runs 15% of the short side or longer. Each frame's summary line gives the longest edge and the share of lit pixels on firm edges.
+- **Flat fill.** One connected area of one pack color over 3% of the frame whose lightness spreads under 0.12 (10th to 90th percentile), with a median lightness of 0.35 or more and a firm color edge along 30% or more of its border. A dim room is dark, not a fill, and a band of a smooth gradient that reads as one color has soft borders. White (L 0.95 and up) is left out.
+- **Dot.** One pack color's area of 0.05% to 2% of the frame, off the frame's edge, with 85% or more of a ring 1% to 2.5% of the short side out from it on one other color; the ring skips the thin blended edge round the dot. A white core is the light's own. So is a lighter color inside a later color of its own light path (the palette check's dim paths): Yellow inside Orange-red, Cyan inside Meta Blue, Lime inside Forest, Ice inside Steel, Slate or Near-black.
+- **Seam.** A part of one label (a pack color, `grey` or `other`) 1.5% of the short side thick or thinner and 12% or longer. It needs two other colors along it, each on 20% or more of its border (black left out), and its own color must lie 0.05 or farther (Oklab) from any mix of the two, so the blended pixels of a firm edge are not a seam. A light's hot line inside a later color of its own path, such as a Yellow core along an Orange-red streak, is the light's own.
+
+Set by eye at HEAD 17ee7c0 on the coordinator's frames (`artifacts/compare/rounds/26/tune-17ee7c0/`, 16:9, default view):
+
+- merged Sunrise Elemental s2 (the bullseye) fails on firm edges round the rings, a flat Lime ring and the Lime dot inside Tan;
+- merged Sunrise Bold s4 fails on firm edges along its warm band;
+- merged Sunrise Elemental s5 fails on firm edges along the ridge, a flat Lime patch and a Meta Blue seam along the ridge, while its sky (deep to pale blue, lightness spreading 0.35) has no marks;
+- merged Contour Bold s7 fails on the firm edge round the orange lens;
+- Rush split Bold s7 fails on firm edges and a flat Cyan stripe.
+
+Soft changes that pass: Rush split Bold s3 (a Meta Blue streak fading into pale cream), merged Contour Bold s2 (the warm light on the rim glowing into dark blue), and merged Sunrise Bold s7's Meta Blue into Cyan (that frame fails on the Yellow shape's firm edge). Two flat-fill rules were tried and dropped. Judged by the local change alone, it marked gently graded skies. Asking for the light to vary under a flat area missed the flat hill patches, whose light is as even as the sky's.
+
+`--maps` writes each frame as its own file in `maps/`: the picture, the light, and the map (the picture in grey; firm color edges red, with their middle line bright red; flat fills yellow; dots magenta; seams cyan). Every run writes the same three panels per look as sheets of 24 frames, `summary.md` (per look and pack: frames failing, by reason and by view, then each failing frame with its reasons) and `edges.json` (every frame's measures). It exits 1 when any frame fails. The three merged looks at seeds 1-8 in one format and view (72 frames) take about 20 s. Run it from a frozen copy of HEAD with your change applied. To check one look:
+
+```sh
+node scripts/light/color-edges.mjs --look sunset.merged --seeds 1-8 --format 16x9,9x16 --drag default,owner --maps --out artifacts/<yours>/edges
+```
+
 ## Metrics (`metrics.json`)
 
 All ΔE values are plain Euclidean Oklab distances (L on 0..1; about 0.02 is one just-noticeable difference). The roadmap's starting targets are mean under 0.03 and p95 under 0.06. Ignore rects and rounded corners are masked everywhere.
