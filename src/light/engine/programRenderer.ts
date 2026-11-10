@@ -63,9 +63,22 @@ export interface RenderStats {
 
 const MAX_OUTPUT_SIDE = 8192
 const RENDER_TILE_SIDE = 2048
-/** The 1x lens base comes from the composite's samples on frames this large: at least 2 per base pixel, up to 33 MB. */
+/** A supersampled frame feeds the lens from its own samples only with at least 2 of them per base pixel per axis. */
 const REUSE_MIN_SHORT_SIDE = 2 * LENS_BASE_SHORT_SIDE
+/** The frame's samples are kept as one texture of at most this many pixels (33 MB). */
 const REUSE_MAX_PIXELS = 2560 * 1600
+
+/**
+ * Whether the lens base comes from the frame's own samples: the recipe draws every render pixel once into a texture,
+ * and the base and the composite both read it, instead of the recipe drawing the base again at 512 px with 2 x 2
+ * samples (1.9 million samples on a 16:9 frame, more than a whole 1x preview of 1076 x 606 has). At 1x any frame
+ * that fits the texture qualifies (a moving preview; under 512 px the base is the frame's samples interpolated); a
+ * supersampled frame only with REUSE_MIN_SHORT_SIDE or more, so its base has the 2 x 2 samples' detail.
+ */
+export function lensBaseFromFrame(renderWidth: number, renderHeight: number, factor: number): boolean {
+  if (renderWidth * renderHeight > REUSE_MAX_PIXELS) return false
+  return factor === 1 || Math.min(renderWidth, renderHeight) >= REUSE_MIN_SHORT_SIDE
+}
 
 /**
  * Samples per axis for the lens base: 2 x 2 whenever the render is larger than
@@ -217,9 +230,8 @@ export class ProgramRenderer {
     // Lens base (512 px short side; none when bloom and halation are off) and, for recipes with post passes or a
     // reduced radianceScale, the radiance as a texture that the composite samples. Otherwise the base is drawn
     // straight from the recipe, and with halation on its second image takes the per-sample light above nominal;
-    // except at 1x on frames with a short side of REUSE_MIN_SHORT_SIDE or more, where the composite's own samples
-    // (one per pixel, at least as dense as the base's 2 x 2) are drawn first and also make the base, so the recipe
-    // runs once per pixel instead of a second time for the base.
+    // except on frames lensBaseFromFrame picks, where the composite's own samples (one per render pixel) are drawn
+    // first and also make the base, so the recipe runs once per pixel instead of a second time for the base.
     const usesPost = Boolean(program.post && program.post.length > 0)
     const radianceScale = radianceScaleFor(program, ctx)
     const usesTexture = usesPost || radianceScale < 1
@@ -227,7 +239,7 @@ export class ProgramRenderer {
     const spreadMix = lensSpread(resolved.lens).mix
     const lensOn = spreadMix > 0 || resolved.lens.halation > 0
     const renderShort = Math.min(renderWidth, renderHeight)
-    const reuse = lensOn && !usesTexture && factor === 1 && renderShort >= REUSE_MIN_SHORT_SIDE && renderWidth * renderHeight <= REUSE_MAX_PIXELS
+    const reuse = lensOn && !usesTexture && lensBaseFromFrame(renderWidth, renderHeight, factor)
     const base = lensOn ? gpu.acquire(baseSize.width, baseSize.height, 'rgba16f', !usesTexture && resolved.lens.halation > 0 ? 2 : 1) : null
     let postScene: Target | null = null
     let pixelScene: Target | null = null

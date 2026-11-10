@@ -337,7 +337,10 @@ void main() {
 }
 `
 
-/** The composite for a radiance texture at render resolution: one texel per pixel, unfiltered. */
+/**
+ * The composite for a radiance texture at render resolution: one texel per pixel, unfiltered. A supersampled tile's
+ * apron reaches past the frame, where the edge texels repeat.
+ */
 export const TEXEL_COMPOSITE_SHADER =
   GLSL_HEADER +
   CHUNK_LIBRARY +
@@ -349,7 +352,7 @@ uniform vec2 uTileOrigin;
 out vec4 fragColor;
 void main() {
   vec2 px = gl_FragCoord.xy + uTileOrigin;
-  vec4 scene = texelFetch(uRadianceTex, ivec2(px), 0);
+  vec4 scene = texelFetch(uRadianceTex, clamp(ivec2(floor(px)), ivec2(0), textureSize(uRadianceTex, 0) - 1), 0);
   fragColor = vec4(lensAndTone(scene.rgb, px / uRenderSize), scene.a);
 }
 `
@@ -359,6 +362,7 @@ void main() {
  * average of the texels under each base pixel, and (output 1) of each texel's
  * own exposed light where its luminance is above the halo's start, as the
  * radiance pass takes it per sample. At most 7 texels per base pixel per axis.
+ * A texture smaller than the base is read with bilinear filtering instead.
  */
 export const BASE_FROM_RADIANCE_SHADER =
   GLSL_HEADER +
@@ -372,6 +376,13 @@ layout(location = 1) out vec4 hotColor;
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 void main() {
   vec2 scale = vec2(textureSize(uSrc, 0)) / uDstSize;
+  if (scale.x < 1.0 || scale.y < 1.0) {
+    vec4 c = texture(uSrc, gl_FragCoord.xy / uDstSize);
+    vec3 exposed = max(c.rgb, vec3(0.0)) * uExposureScale;
+    fragColor = c;
+    hotColor = vec4(exposed * smoothstep(1.0, 2.0, max(dot(exposed, LUMA) / uStart.x, max(exposed.r, max(exposed.g, exposed.b)) / uStart.y)), 1.0);
+    return;
+  }
   vec2 lo = (gl_FragCoord.xy - 0.5) * scale;
   vec2 hi = lo + scale;
   vec4 sum = vec4(0.0);

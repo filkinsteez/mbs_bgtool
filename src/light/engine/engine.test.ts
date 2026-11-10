@@ -17,7 +17,7 @@ import {
   levelForRadius,
 } from './lens'
 import { paperToeInverse, TONE_CROSSTALK, TONE_TIE_BAND, toneCurve } from './output'
-import { designFrame, radianceScaleFor } from './programRenderer'
+import { designFrame, lensBaseFromFrame, radianceScaleFor } from './programRenderer'
 import { coerceParam, recipeContext, resolveScene } from './resolve'
 
 const luminance = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
@@ -398,6 +398,24 @@ describe('radiance scale', () => {
     }
     const bySoftness = { ...base, radianceScale: (c: RecipeContext) => (c.num('soft') > 0.5 ? 0.5 : 1) }
     expect(radianceScaleFor(bySoftness, ctx(bySoftness))).toBe(0.5)
+  })
+})
+
+describe('lens base source', () => {
+  it("feeds every moving preview's lens from its own samples, and a supersampled frame only from 2 per base pixel", () => {
+    for (const [w, h] of [[538, 303], [807, 454], [1076, 606], [1614, 908], [2152, 1212], [606, 1076]]) expect(lensBaseFromFrame(w, h, 1), `${w}x${h} 1x`).toBe(true)
+    expect(lensBaseFromFrame(2152, 1212, 2)).toBe(true)
+    expect(lensBaseFromFrame(1280, 720, 2)).toBe(false)
+    expect(lensBaseFromFrame(960, 540, 2)).toBe(false)
+  })
+
+  it('keeps 4K exports and frames too large for one texture on the base drawn from the recipe', () => {
+    for (const aspect of EXPORT_ASPECTS) {
+      const { width, height } = EXPORT_SIZES[aspect]
+      expect(lensBaseFromFrame(width * 2, height * 2, 2), `${aspect} 2x`).toBe(false)
+      expect(lensBaseFromFrame(width, height, 1), `${aspect} 1x`).toBe(false)
+    }
+    expect(lensBaseFromFrame(4304, 2424, 2)).toBe(false)
   })
 })
 
