@@ -671,6 +671,7 @@ uniform vec4 uHalo;          // round a high light: the warm glow beside it (acr
 float gHalo = 0.0;           // round a high light: the warm glow at this pixel
 float gHaloOuter = 0.0;      // round a high light: the warm glow's wider, dimmer outer light at this pixel
 float gHaloLight = 0.0;      // round a high light: the warm glow's lightness at this pixel, falling from the light
+float gPatch = 0.0;          // round a high light: Meta Blue's lit patch at this pixel
 uniform int uLightnessOnly;  // 1: the design's lightness as grey, for proof sheets and the color stage
 uniform vec4 uLowest;        // lowest light of the sky, glow, warm band and pale sky colors (share of their own)
 uniform vec3 uSky;
@@ -704,7 +705,22 @@ float domeAt(float a, float h) {
 // The pale lower sky: tallest over the light and lower along the horizon away from it, its edge soft in some places
 // and firmer in others.
 float paleTop(float a) {
-  return uPale.y * uSpan * mix(sideLight(a, uPale.x), 1.0, uPaleBase) * clamp(1.0 + uSlant.y * a, 0.25, 2.0) * (1.0 + 0.25 * gradientNoise(vec2(a * 1.1 + 7.3, 1.9), uHorizonSeed + 23));
+  // A bell with a rounded top and curved sides, never a peak with straight sides; the slant eases into its limits
+  // instead of rising in a straight line. The seed picks where the edge bulges up or dips, by how much and how wide,
+  // so the pale sky's outline differs from seed to seed.
+  float x = a / max(uPale.x, 0.05);
+  float bell = 1.0 / (1.0 + x * x);
+  float slant = exp(0.7 * tanh(uSlant.y * a / 0.7));
+  float bulgeAt = 0.9 * gradientNoise(vec2(3.7, 1.1), uHorizonSeed + 91);
+  float bulgeBy = 0.4 * gradientNoise(vec2(5.3, 2.9), uHorizonSeed + 93);
+  float bulgeWide = 0.3 + 0.3 * (0.5 + 0.5 * gradientNoise(vec2(1.9, 7.7), uHorizonSeed + 95));
+  float bulgeX = (a - bulgeAt) / bulgeWide;
+  float bulge = 1.0 + bulgeBy * exp(-bulgeX * bulgeX);
+  float waver = 1.0 + 0.25 * gradientNoise(vec2(a * 1.1 + 7.3, 1.9), uHorizonSeed + 23);
+  // Over a low sun and in a plain sky, where the pale sky rises over the horizon; a side light and a high light keep
+  // their own pale sky.
+  if (uKind == 0 || uKind == 3) return 0.94 * uPale.y * uSpan * mix(bell, 1.0, uPaleBase) * slant * bulge * waver;
+  return uPale.y * uSpan * mix(sideLight(a, uPale.x), 1.0, uPaleBase) * clamp(1.0 + uSlant.y * a, 0.25, 2.0) * waver;
 }
 
 float paleAt(float a, float h) {
@@ -770,7 +786,7 @@ float skyLightness(float a, float h) {
   float L = u < 0.5 ? mix(uSkyL.x, uSkyL.y, smoothstep(0.0, 0.5, u)) : mix(uSkyL.y, uSkyL.z, smoothstep(0.5, 1.0, u));
   L -= 0.05 * (1.0 - sideLight(a, 1.2));
   L = mix(L, uSkyL.w, deepAt(a, t));
-  L = mix(L, max(L, uSkyL.x), patchAt(a, t));
+  L = mix(L, max(L, uSkyL.x), uKind == 1 ? gPatch : patchAt(a, t));
   float pale = paleAt(a, h);
   // The pale sky and the warm band are the glow's light spreading: brightest by the glow (round a high light, at the
   // light itself), dimming with height and along the horizon away from it, with no level stretch.
@@ -861,6 +877,14 @@ vec3 auxRadiance(vec2 uv, vec2 p) {
     float lobeFall = max(along, 0.0) / max(lobeReach, 0.05);
     gHalo = uHalo.w * exp(-across * across) * smoothstep(-0.06, 0.02, along) * exp(-lobeOut * lobeOut);
     gHaloLight = 0.62 + 0.31 * exp(-lobeFall * lobeFall);
+    // Meta Blue's lit patch as a soft blob placed in the frame where the color stage's patch part is, its outline
+    // wavering with position. Placed by distance from the light it would stretch into a straight band along the
+    // spread far from the light.
+    float patchReach = uPatch.y * uSpan - uSlant.x * uPatch.x;
+    vec2 patchCenter = vec2(uPatch.x, sqrt(max(0.0, patchReach * patchReach - uPatch.x * uPatch.x) + 0.0225));
+    vec2 patchOff = q - patchCenter + 0.3 * uPatch.z * vec2(gradientNoise(q * 1.3 + vec2(2.1, 8.4), uHorizonSeed + 81), gradientNoise(q * 1.3 + vec2(6.7, 3.2), uHorizonSeed + 83));
+    vec2 patchScaled = vec2(patchOff.x / max(1.35 * uPatch.z * uSquash, 0.05), patchOff.y / max(0.95 * uPatch.z, 0.05));
+    gPatch = uPatch.w * exp(-dot(patchScaled, patchScaled));
   }
   // The ground's edge drifts off the horizon line and its softness changes along its length.
   float edgeSoft = uGround.w * (0.4 + 1.2 * (0.5 + 0.5 * gradientNoise(vec2(a * 1.3 + 3.9, 8.8), uHorizonSeed + 69)));
