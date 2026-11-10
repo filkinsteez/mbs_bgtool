@@ -12,7 +12,7 @@ import path from 'node:path'
 import { chromium } from '@playwright/test'
 import sharp from 'sharp'
 import { list, parseArgs } from './lib/args.mjs'
-import { BLUE_LIGHT, blueLight, blueVerdict, mixByName, rulesFor, sharesOf } from './lib/color-read.mjs'
+import { BLUE_LIGHT, blendSharesOf, blueLight, blueVerdict, mixByName, rulesFor, sharesOf } from './lib/color-read.mjs'
 import { ROOT, startHarness } from './lib/harness.mjs'
 import { raw } from './lib/images.mjs'
 import { loadReferences } from './lib/references.mjs'
@@ -160,8 +160,12 @@ const T = {
   // `mix.reads` or more of the frame's visibly lit pixels, by color-shares' reading (lib/color-read.mjs). It replaces
   // the rules on which pack colors show, and Contour's main light per seed is not checked (Meta Blue leads). Also the
   // owner's rule of 10:05 PM: where Meta Blue reads on BLUE_LIGHT.applies or more of the lit pixels it must carry
-  // light (blueLight and blueVerdict in lib/color-read.mjs, as color-shares.mjs reports it).
-  mix: { asked: 0.1, reads: 0.05 },
+  // light (blueLight and blueVerdict in lib/color-read.mjs, as color-shares.mjs reports it). And the owner's rule of
+  // 10:03 PM (by default Meta Blue is at least half of the picture): where the mix asks Meta Blue at 50% or more, it
+  // reads at `mix.blue` or more, the limit color-shares.mjs flags. The shares are the blend-aware reading
+  // (blendSharesOf: a pixel in a soft blend between two pack colors counts toward both; compare round 28), or with
+  // `--reading first` each pixel's one label, as before.
+  mix: { asked: 0.1, reads: 0.05, blue: 0.45 },
   // Each pack color's own dim path inside its pack (coordinator, 2026-11-10 1:28 AM), as the engine's fire drift and
   // Rush's dim-path look draw them: Orange-red into deep red and maroon, Yellow into Orange-red, Lime into Forest, Cyan
   // into Meta Blue and navy, Ice through Steel and Slate to Near-black, Forest and Plum toward black. A path runs from
@@ -311,6 +315,8 @@ if (dev && looks.some((look) => MERGED.includes(look))) throw new Error('--dev d
 // --mix <default|blue-off|Cyan:0.6>: the shared color stage on at that mix, as the tool draws with colormix=1 (each
 // design drawn in the stage's design pack and given the frame's pack colors), judged with the mix rule (T.mix).
 const mixName = typeof args.mix === 'string' ? args.mix : null
+// --reading first: the mix rule's shares give each pixel its one label, as before compare round 28.
+const reading = args.reading === 'first' ? 'first' : 'blend'
 // The lens's radius follows Softness: R = 0.045 to 0.12 of the short side; a lens edge may be 2R wide.
 T.lensEdge = 2 * (0.045 + 0.075 * controls.softness)
 if (typeof args['lens-edge'] === 'string') T.lensEdge = Number(args['lens-edge'])
@@ -1226,6 +1232,8 @@ try {
       for (const [name, asked] of Object.entries(mix.asked)) {
         if (asked >= T.mix.asked && (mix.shares[name] ?? 0) < T.mix.reads) fail('asked color under 5%', `${name} reads ${pct(mix.shares[name] ?? 0)} (asked ${pct(asked)})`)
       }
+      const blueAsked = mix.asked['Meta Blue'] ?? 0
+      if (blueAsked >= 0.5 && (mix.shares['Meta Blue'] ?? 0) < T.mix.blue) fail('Meta Blue under 45%', `Meta Blue reads ${pct(mix.shares['Meta Blue'] ?? 0)} (asked ${pct(blueAsked)})`)
       const blue = blueVerdict(mix.blue)
       if (blue.reasons.length) fail('Meta Blue carries no light', `Meta Blue on ${pct(mix.blue.share)} carries no light (${blue.reasons.map((r) => BLUE_TEXT[r](mix.blue)).join('; ')})`)
     } else if (sunset && drag) {
@@ -1433,7 +1441,7 @@ try {
   if (looks.length) await fs.mkdir(path.join(outDir, 'renders'), { recursive: true })
   if (maps) await fs.mkdir(path.join(outDir, 'maps'), { recursive: true })
   const report = { source: sourceLabel, startedAt: startedAt.toISOString(), thresholds: T, drags: Object.fromEntries(drags.map((d) => [d, DRAGS[d]])), looks: {} }
-  const summary = [`# Palette check: ${sourceLabel}`, '', `Started ${startedAt.toISOString()}. Controls: intensity ${controls.intensity}, softness ${controls.softness}, mood ${controls.mood}. Rule: ${rule}${rule === 'new' ? `, lens edges up to ${+T.lensEdge.toFixed(3)} of the short side` : ''}; warm tails: ${tailRule}; dim colors: ${dimRule ? 'navy rule (1:40 PM)' : 'strict'}; ${hazeLabel}; ${mainLabel}.${chromaFactors.length > 1 ? ` Also judged with chroma scaled by ${chromaFactors.slice(1).join(', ')}.` : ''} Test drags: ${drags.length ? drags.map(dragText).join('; ') : 'none'}.${mixName ? ` Color stage on at the mix \`${mixName}\`: every color the mix asks at ${pct(T.mix.asked)} or more must read at ${pct(T.mix.reads)} or more of the visibly lit pixels, and where Meta Blue reads on ${pct(BLUE_LIGHT.applies)} or more of them it must carry light (its lightness spreads ${BLUE_LIGHT.spread} or more, its brightest tenth reaches its hex, and under ${pct(BLUE_LIGHT.borrowed)} of that tenth sits beside another color's lighter light); the rules on which pack colors show, Contour's main light per seed and the full-strength Meta Blue share are off.` : ''} Thresholds in \`palette-check.mjs\` (T).`, '']
+  const summary = [`# Palette check: ${sourceLabel}`, '', `Started ${startedAt.toISOString()}. Controls: intensity ${controls.intensity}, softness ${controls.softness}, mood ${controls.mood}. Rule: ${rule}${rule === 'new' ? `, lens edges up to ${+T.lensEdge.toFixed(3)} of the short side` : ''}; warm tails: ${tailRule}; dim colors: ${dimRule ? 'navy rule (1:40 PM)' : 'strict'}; ${hazeLabel}; ${mainLabel}.${chromaFactors.length > 1 ? ` Also judged with chroma scaled by ${chromaFactors.slice(1).join(', ')}.` : ''} Test drags: ${drags.length ? drags.map(dragText).join('; ') : 'none'}.${mixName ? ` Color stage on at the mix \`${mixName}\`: every color the mix asks at ${pct(T.mix.asked)} or more must read at ${pct(T.mix.reads)} or more of the visibly lit pixels and Meta Blue, where the mix asks it at 50% or more, at ${pct(T.mix.blue)} or more (${reading === 'blend' ? 'the blend-aware reading: a pixel in a soft blend between two pack colors counts toward both' : 'each pixel read as one label'}), and where Meta Blue reads on ${pct(BLUE_LIGHT.applies)} or more of them it must carry light (its lightness spreads ${BLUE_LIGHT.spread} or more, its brightest tenth reaches its hex, and under ${pct(BLUE_LIGHT.borrowed)} of that tenth sits beside another color's lighter light); the rules on which pack colors show, Contour's main light per seed and the full-strength Meta Blue share are off.` : ''} Thresholds in \`palette-check.mjs\` (T).`, '']
   for (const look of looks) {
     const started = Date.now()
     const frames = frameList(look)
@@ -1467,9 +1475,11 @@ try {
         const { data, info } = await sharp(f.src).removeAlpha().resize(320, 320, { fit: 'inside' }).raw().toBuffer({ resolveWithObject: true })
         const pack = getPack(f.pack)
         const read = sharesOf(readRules[f.pack], data, info.width * info.height, true)
+        const blend = reading === 'blend' ? blendSharesOf(readRules[f.pack], data, info.width, info.height, read.labels) : null
         const blue = blueLight(readRules[f.pack], data, info.width, info.height, read.labels)
         const rounded = (values) => Object.fromEntries(Object.entries(values).map(([k, v]) => [k, +v.toFixed(4)]))
-        f.mix = { asked: Object.fromEntries(pack.colors.map((c, i) => [c.name, +mixOf(f.pack).shares[i].toFixed(4)])), shares: rounded(read.shares), blue: blue && rounded(blue) }
+        const asked = Object.fromEntries(pack.colors.map((c, i) => [c.name, +mixOf(f.pack).shares[i].toFixed(4)]))
+        f.mix = { asked, shares: rounded((blend ?? read).shares), ...(blend ? { first: rounded(read.shares) } : {}), blue: blue && rounded(blue) }
       }
       Object.assign(f, judge(look, f.pack, f.m, { drag: f.drag, mix: f.mix ?? null }))
     }

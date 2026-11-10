@@ -215,6 +215,269 @@ export function blueVerdict(light) {
   return { applies: true, reasons }
 }
 
+// The blend-aware reading (coordinator, 2026-11-10 3:25 AM, first in color-shares.mjs --blend; fixed in compare round
+// 28): a soft blend between two pack colors is partly each. A lit pixel that reads as a pack color or as `other` counts
+// toward two pack colors read near it when it lies between their own shades at its lightness in Oklab a and b: by how
+// close it lies to each along the line joining them, when it lies within `slack` times that line's length of it. It
+// must read as one of the two or as `other`: grey and white, and a third pack color between two others (Steel between
+// Meta Blue and Ice), count as they read. Two low-chroma pack colors (Atmospheric's Ice, Steel, Slate and Near-black)
+// are never paired, since they differ only in lightness and their a and b are noise. Every other pixel counts as its
+// label.
+export const BLEND = {
+  slack: 0.35,
+  // Two colors whose own shades at the pixel's lightness lie closer than this in a and b are not split there: near
+  // white every color's own shade is nearly white, and a hint of blue in a white would count as half Meta Blue.
+  gap: 0.03,
+  // A pixel reading `other` splits only when it lies `end` or more of the way from both colors: at one end it is that
+  // color gone off, as the first reading has it (dim Yellow at Yellow's own hue reads olive, a bluer violet indigo).
+  end: 0.1,
+  // Both colors are read within `reach` of the pixel (share of the short side). Where the colors change slowly the
+  // window widens to `factor` times half the distance over which they would go from one color's shade to the other's at
+  // the rate they change there (Oklab a and b smoothed over `smooth` of the short side), up to `wide`; where they change
+  // more slowly still (a flat area, not a transition) it stays at `reach`. Set on merged Sunrise's wide sky blends and
+  // the Color agent's round 11 renders (compare round 28).
+  reach: 0.03,
+  factor: 1.2,
+  wide: 0.15,
+  smooth: 0.01,
+  // A light's own path toward white is that light's color. White reads as grey in packs without a white and stays
+  // grey; in a pack whose lightest color is near white (Atmospheric's Ice, Oklab L `pale` or more), an area reading as
+  // that color is a light's core, not a color it blends with, when it is a line (`line` of the short side thick or
+  // thinner) or a center inside one color's light (`center` thick or thinner, with `enclosed` or more of a ring `ring`
+  // wide round it on one chromatic color, the frame's edge counting against). A real area of it (a pale sky, a wide
+  // pale band) blends with the colors it meets. Set by eye in compare round 28: Rush's white streaks are 1% to 5% thick
+  // with 97% or more of their ring on Meta Blue, Contour's rim line 1%; merged Sunrise's pale skies are 45% to 51% thick
+  // with 69% to 78% of their ring on Meta Blue, and Rush's wide pale bands 14% to 18%.
+  pale: 0.9,
+  line: 0.025,
+  center: 0.08,
+  ring: 0.02,
+  enclosed: 0.6,
+}
+// A pack color's own shade at lightness L, Oklab a and b: the hex dimmed below its lightness, mixed toward white above.
+function ownShade(c, L) {
+  const C = ownChroma(c, L)
+  const h = (c.h0 * Math.PI) / 180
+  return [C * Math.cos(h), C * Math.sin(h)]
+}
+// One row or column of the squared distance transform (Felzenszwalb and Huttenlocher).
+function distanceRow(f, n, d, v, z) {
+  let k = 0
+  v[0] = 0
+  z[0] = -Infinity
+  z[1] = Infinity
+  for (let q = 1; q < n; q++) {
+    let s = (f[q] + q * q - f[v[k]] - v[k] * v[k]) / (2 * q - 2 * v[k])
+    while (s <= z[k]) {
+      k--
+      s = (f[q] + q * q - f[v[k]] - v[k] * v[k]) / (2 * q - 2 * v[k])
+    }
+    k++
+    v[k] = q
+    z[k] = s
+    z[k + 1] = Infinity
+  }
+  k = 0
+  for (let q = 0; q < n; q++) {
+    while (z[k + 1] < q) k++
+    d[q] = (q - v[k]) * (q - v[k]) + f[v[k]]
+  }
+}
+// Per pixel, the squared distance in pixels to the nearest pixel for which `hit(p)` is true.
+function squaredDistance(hit, width, height) {
+  const m = Math.max(width, height)
+  const f = new Float64Array(m)
+  const d = new Float64Array(m)
+  const v = new Int32Array(m)
+  const z = new Float64Array(m + 1)
+  const out = new Float64Array(width * height)
+  for (let x = 0; x < width; x++) {
+    for (let y = 0; y < height; y++) f[y] = hit(y * width + x) ? 0 : 1e12
+    distanceRow(f, height, d, v, z)
+    for (let y = 0; y < height; y++) out[y * width + x] = d[y]
+  }
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) f[x] = out[y * width + x]
+    distanceRow(f, width, d, v, z)
+    for (let x = 0; x < width; x++) out[y * width + x] = d[x]
+  }
+  return out
+}
+// A box blur of radius r over one channel.
+function boxBlur(src, width, height, r) {
+  const tmp = new Float32Array(width * height)
+  const out = new Float32Array(width * height)
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) {
+      let s = 0
+      let c = 0
+      for (let i = Math.max(0, x - r); i <= Math.min(width - 1, x + r); i++, c++) s += src[y * width + i]
+      tmp[y * width + x] = s / c
+    }
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) {
+      let s = 0
+      let c = 0
+      for (let j = Math.max(0, y - r); j <= Math.min(height - 1, y + r); j++, c++) s += tmp[j * width + x]
+      out[y * width + x] = s / c
+    }
+  return out
+}
+// The pixels of a pack's near-white color (Oklab L `pale` or more) that are a light's core: each 8-connected area
+// reading as that color is a core when it is a line or a center inside one chromatic color's light.
+function paleCores(rules, labels, width, height, o) {
+  const n = width * height
+  const core = new Uint8Array(n)
+  const short = Math.min(width, height)
+  const ring = Math.max(1, Math.round(o.ring * short))
+  const chromatic = new Set(rules.chromatic.map((c) => c.name))
+  for (const pale of rules.colors.filter((c) => c.neutral && c.L0 >= o.pale)) {
+    const seen = new Uint8Array(n)
+    for (let start = 0; start < n; start++) {
+      if (seen[start] || labels[start] !== pale.name) continue
+      const area = []
+      const stack = [start]
+      seen[start] = 1
+      while (stack.length) {
+        const p = stack.pop()
+        area.push(p)
+        const x = p % width
+        const y = (p - x) / width
+        for (let dy = -1; dy <= 1; dy++)
+          for (let dx = -1; dx <= 1; dx++) {
+            const xx = x + dx
+            const yy = y + dy
+            if (xx < 0 || yy < 0 || xx >= width || yy >= height) continue
+            const q = yy * width + xx
+            if (!seen[q] && labels[q] === pale.name) {
+              seen[q] = 1
+              stack.push(q)
+            }
+          }
+      }
+      // The area's box, with room for the ring.
+      let [x0, y0, x1, y1] = [width, height, 0, 0]
+      for (const p of area) {
+        const x = p % width
+        const y = (p - x) / width
+        x0 = Math.min(x0, x)
+        x1 = Math.max(x1, x)
+        y0 = Math.min(y0, y)
+        y1 = Math.max(y1, y)
+      }
+      const onEdge = area.filter((p) => {
+        const x = p % width
+        const y = (p - x) / width
+        return x === 0 || y === 0 || x === width - 1 || y === height - 1
+      }).length
+      ;[x0, y0] = [Math.max(0, x0 - ring - 1), Math.max(0, y0 - ring - 1)]
+      ;[x1, y1] = [Math.min(width - 1, x1 + ring + 1), Math.min(height - 1, y1 + ring + 1)]
+      const bw = x1 - x0 + 1
+      const bh = y1 - y0 + 1
+      const at = (q) => (y0 + Math.floor(q / bw)) * width + x0 + (q % bw)
+      const inside = new Uint8Array(bw * bh)
+      for (const p of area) inside[(Math.floor(p / width) - y0) * bw + (p % width) - x0] = 1
+      // Thickness: twice the largest distance from inside the area to outside it.
+      const out = squaredDistance((q) => !inside[q], bw, bh)
+      let deepest = 0
+      for (let q = 0; q < bw * bh; q++) if (inside[q]) deepest = Math.max(deepest, out[q])
+      const thickness = 2 * Math.sqrt(deepest)
+      let isCore = thickness <= o.line * short
+      if (!isCore && thickness <= o.center * short) {
+        const to = squaredDistance((q) => inside[q] === 1, bw, bh)
+        const counts = new Map()
+        // Each pixel of the area on the frame's edge stands for the ring it would have beyond the edge.
+        let total = onEdge * ring
+        for (let q = 0; q < bw * bh; q++) {
+          if (inside[q] || to[q] > ring * ring) continue
+          const label = labels[at(q)]
+          total++
+          counts.set(label, (counts.get(label) ?? 0) + 1)
+        }
+        const most = Math.max(0, ...[...counts].filter(([label]) => chromatic.has(label)).map(([, c]) => c))
+        isCore = total > 0 && most / total >= o.enclosed
+      }
+      if (isCore) for (const p of area) core[p] = 1
+    }
+  }
+  return core
+}
+// Shares of one frame in the blend-aware reading (`labels` from sharesOf). With `wantMap`, also each pixel's split (the
+// indexes of its two pack colors, -1 when not split, and how far it lies toward the second), its window in pixels and
+// the pale cores. `options` overrides BLEND's values (for checks of the reading itself).
+export function blendSharesOf(rules, rgb, width, height, labels, wantMap = false, options = {}) {
+  const o = { ...BLEND, ...options }
+  const n = width * height
+  const keys = LABELS(rules)
+  const names = rules.colors.map((c) => c.name)
+  const short = Math.min(width, height)
+  const reach = Math.max(1, o.reach * short)
+  const widest = Math.max(reach, o.wide * short)
+  const lab = new Float32Array(3 * n)
+  for (let p = 0; p < n; p++) lab.set(oklab([LIN[rgb[3 * p]], LIN[rgb[3 * p + 1]], LIN[rgb[3 * p + 2]]]), 3 * p)
+  // How fast a and b change at each pixel (per pixel, smoothed).
+  const r = Math.max(1, Math.round(o.smooth * short))
+  const A = boxBlur(Float32Array.from({ length: n }, (_, p) => lab[3 * p + 1]), width, height, r)
+  const B = boxBlur(Float32Array.from({ length: n }, (_, p) => lab[3 * p + 2]), width, height, r)
+  const rate = new Float32Array(n)
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) {
+      const l = y * width + Math.max(0, x - 1)
+      const rr = y * width + Math.min(width - 1, x + 1)
+      const u = Math.max(0, y - 1) * width + x
+      const dn = Math.min(height - 1, y + 1) * width + x
+      const sx = (Math.min(width - 1, x + 1) - Math.max(0, x - 1)) || 1
+      const sy = (Math.min(height - 1, y + 1) - Math.max(0, y - 1)) || 1
+      rate[y * width + x] = Math.hypot((A[rr] - A[l]) / sx, (A[dn] - A[u]) / sy, (B[rr] - B[l]) / sx, (B[dn] - B[u]) / sy)
+    }
+  const core = paleCores(rules, labels, width, height, o)
+  const near = names.map((name) => squaredDistance((p) => labels[p] === name && !core[p], width, height))
+  const counts = Object.fromEntries(keys.map((k) => [k, 0]))
+  const split = wantMap ? { a: new Int8Array(n).fill(-1), b: new Int8Array(n).fill(-1), t: new Float32Array(n), window: new Float32Array(n), core } : null
+  let lit = 0
+  for (let p = 0; p < n; p++) {
+    const label = labels[p]
+    if (label === 'none') continue
+    lit++
+    let best = null
+    if (label !== 'grey' && !core[p]) {
+      const L = lab[3 * p]
+      const ks = names.flatMap((_, k) => (near[k][p] <= widest * widest ? [k] : []))
+      for (let i = 0; i < ks.length; i++)
+        for (let j = i + 1; j < ks.length; j++) {
+          const ci = rules.colors[ks[i]]
+          const cj = rules.colors[ks[j]]
+          if (ci.neutral && cj.neutral) continue
+          if (label !== 'other' && label !== ci.name && label !== cj.name) continue
+          const ei = ownShade(ci, L)
+          const ej = ownShade(cj, L)
+          const dx = ej[0] - ei[0]
+          const dy = ej[1] - ei[1]
+          const len = Math.hypot(dx, dy)
+          if (len < o.gap) continue
+          const t = Math.min(1, Math.max(0, ((lab[3 * p + 1] - ei[0]) * dx + (lab[3 * p + 2] - ei[1]) * dy) / (len * len)))
+          const d = Math.hypot(lab[3 * p + 1] - ei[0] - t * dx, lab[3 * p + 2] - ei[1] - t * dy)
+          if (d > o.slack * len || (label === 'other' && (t < o.end || t > 1 - o.end))) continue
+          const span = (o.factor * len) / Math.max(1e-9, rate[p]) / 2
+          const window = span <= widest ? Math.max(reach, span) : reach
+          if (near[ks[i]][p] > window * window || near[ks[j]][p] > window * window) continue
+          if (!best || d < best.d) best = { i: ks[i], j: ks[j], t, d, window }
+        }
+    }
+    if (best) {
+      counts[names[best.i]] += 1 - best.t
+      counts[names[best.j]] += best.t
+      if (split) {
+        split.a[p] = best.i
+        split.b[p] = best.j
+        split.t[p] = best.t
+        split.window[p] = best.window
+      }
+    } else counts[label]++
+  }
+  return { shares: Object.fromEntries(keys.map((k) => [k, lit ? counts[k] / lit : 0])), split }
+}
+
 // A color mix by name, from src/light/color/mix.ts: `default`, `blue-off` (Meta Blue at 0%), or `<color>:<share>`
 // such as `Cyan:0.6`, set on the default mix with the others keeping their ratios; null when the pack has no such
 // color.
