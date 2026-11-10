@@ -66,7 +66,11 @@ Later on 2026-11-02 the owner asked for crops of the Meta logo outline as Contou
     percentage of each pack color in the picture (a Meta Blue on/off
     toggle is asked for too). The picture must show those percentages,
     and the design stays the same. Contour shows more of the pack's
-    colors, where light would naturally put them.
+    colors, where light would naturally put them. By default Meta Blue
+    is at least half of the picture (50%) and the pack's other colors
+    share the rest evenly (owner, 2026-11-09, 10:03 PM). Colors come
+    first: every picture shows all of its pack's colors before the
+    control goes into the panel (owner, 10:01 PM).
   - A history of recent backgrounds is wanted: build a first version and
     change it with the owner's feedback. It replaces the 2026-11-06 "no
     Back button" rule.
