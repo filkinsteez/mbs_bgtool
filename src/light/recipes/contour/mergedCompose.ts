@@ -1,6 +1,6 @@
 import { linearToOklab } from '../../color/oklab'
 import { hexToLinear } from '../../color/srgb'
-import type { StagePart } from '../../color/stageFields'
+import type { FieldWant, StagePart } from '../../color/stageFields'
 import type { ComposeInput, Composition, ControlValues, ParamValue } from '../../scene'
 import {
   dragLight,
@@ -528,6 +528,16 @@ const SECOND_SHAPE = [-1, -0.65, -0.3, 0, 0.3, 0.65, 1]
 const SECOND_LEVEL = [0, 0.35, 0.8, 1, 0.8, 0.35, 0]
 /** The second light's colors' Oklab lightness, the same in every pack. */
 const SECOND_L = 0.75
+/** A part that is not in this frame (off it, so its field is empty). */
+const PART_OFF = [-9, -9, -9, -9]
+/** Where the main light's far stretch is, along its edge from the seed's place for the light, in short sides. */
+const COOL_AT = [0.5, 0.8, 1.1]
+/** How wide the parts along an edge are: its light and the face light just beside it. */
+const EDGE_PART_WIDTH = 0.1
+/** How far inside the frame's sides the dim room's parts stay. */
+const ROOM_MARGIN = 0.1
+/** How far into the face the main light's part sits from the light. */
+const LEAD_INTO = 0.15
 /** How far past the second light's ends the main light's line stays dark, and over how long it comes back. */
 const SECOND_GAP = 0.12
 const SECOND_GAP_FADE = 0.25
@@ -733,10 +743,12 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const secondPoint = tries.find((p): p is Vec2 => !!p && Math.sqrt(dist2(p, seedHome)) >= keepOff) ?? null
   const host = plan.second >= 0 ? plan.second : plan.units.length < MERGED_UNITS ? plan.units.length : -1
   const secondParams: Record<string, ParamValue> = { secondUnit: 0, secondAt: [-40, -40] }
+  let secondOn: { contour: number; t: number; tSpan: number; near: number } | null = null
   if (secondPoint && host >= 0) {
     const on2 = nearestOnContours(drawn, anchorR, secondPoint)
     const tSpan = halfLength / (contourLength(drawn.contours[on2.contour]) || 1)
     const near = smooth01(0.3, 0.55, Math.sqrt(dist2(hot, secondPoint)))
+    secondOn = { contour: on2.contour, t: on2.ts[on2.contour], tSpan, near }
     const peak = lerp(0.5, 0.75, design.secondGain) * near
     const at = SECOND_SHAPE.map((o) => round4(Math.min(0.999, Math.max(0.001, on2.ts[on2.contour] + o * tSpan))))
     const gains = SECOND_LEVEL.map((g) => round4(g * peak))
@@ -800,6 +812,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const faceSign = (inside ? 1 : -1) * (def.outside && !def.wash ? -1 : 1)
   const faceDir = [round4(faceSign * normal[0]), round4(faceSign * normal[1])]
 
+
   // In focus, Rim's hot core: the core line 8 times the light's level where it is strongest, so it overexposes to
   // white and the light's color shows in the falloff beside it.
   const hotCore = blur <= 1
@@ -824,6 +837,53 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   // lit as widely as the hot spot it read as a flat field of haze.
   if (spread > 0) Object.assign(parts, { f3Weight: round4(Number(parts.f3Weight) * (1 - 0.92 * smooth01(0, 0.35, spread))) })
 
+  // Parts for the color stage, in frame units, placed so they move only as far as the light does: the second light and
+  // the main light's far stretch from the seed alone; the main light and the dim room from the light, into the face
+  // the seed's light faces (the face direction at the dragged light flips, and the parts jumped with it).
+  const framePoint = (p: Vec2) => [round4(p[0] / fw + 0.5), round4(p[1] / fh + 0.5)]
+  const pointOn = (contour: number, t: number): Vec2 => {
+    const c = drawn.contours[contour]
+    const p = contourPoint(c, c.closed ? t - Math.floor(t) : Math.min(1, Math.max(0, t))).point
+    return [p[0] + anchorR[0], p[1] + anchorR[1]]
+  }
+  const partParams: Record<string, ParamValue> = { partWarm: PART_OFF, partWarm2: PART_OFF, partBright: PART_OFF }
+  if (secondOn && Number(secondParams.secondUnit) > 0) {
+    const { contour, t, tSpan, near } = secondOn
+    const [a, b, c] = [-1, 0, 1].map((k) => framePoint(pointOn(contour, t + k * tSpan)))
+    Object.assign(partParams, { partWarm: [...a, ...b], partWarm2: [...b, ...c], partBright: [...b, round4(Math.max(0.05, 0.35 * halfLength)), round4(near)] })
+  }
+  const onHome = nearestOnContours(drawn, anchorR, seedHome)
+  const tHome = onHome.ts[onHome.contour]
+  const homeTangent = contourPoint(drawn.contours[onHome.contour], tHome).tangent
+  const homeNormal: Vec2 = [-homeTangent[1], homeTangent[0]]
+  const homeProbe: Vec2 = [seedHome[0] - anchorR[0] + 0.02 * homeNormal[0], seedHome[1] - anchorR[1] + 0.02 * homeNormal[1]]
+  const homeInside = Math.abs(windingNumber(drawn.contours.flatMap((c) => c.primitives), homeProbe)) > 0.5
+  const homeSign = (homeInside ? 1 : -1) * (def.outside && !def.wash ? -1 : 1)
+  const roomReach = Number(parts.f3Width) * Math.min(1, soften)
+  // From the light, into the face the seed's light faces (the face direction at the dragged light flips).
+  const room = (d: number): Vec2 => [hot[0] + homeSign * homeNormal[0] * d, hot[1] + homeSign * homeNormal[1] * d]
+  // Kept inside the frame, where the room's dim light shows.
+  const inFrameAt = (p: Vec2) => framePoint(p).map((v) => round4(Math.min(1 - ROOM_MARGIN, Math.max(ROOM_MARGIN, v))))
+  partParams.partDark = [...inFrameAt(room(0.12 + roomReach)), round4(0.1 + 0.2 * roomReach), 0]
+  partParams.partDark2 = [...inFrameAt(room(0.45 + roomReach)), round4(0.08 + 0.1 * roomReach), 0]
+  const homeLength = contourLength(drawn.contours[onHome.contour]) || 1
+  let away = 1
+  if (secondOn && secondOn.contour === onHome.contour) {
+    const d = secondOn.t - tHome
+    away = (drawn.contours[onHome.contour].closed ? d - Math.round(d) : d) > 0 ? -1 : 1
+  } else {
+    const ahead = pointOn(onHome.contour, tHome + 0.6 / homeLength)
+    const behind = pointOn(onHome.contour, tHome - 0.6 / homeLength)
+    away = Math.hypot(ahead[0], ahead[1]) <= Math.hypot(behind[0], behind[1]) ? 1 : -1
+  }
+  // From the seed's own place for the light, so it never moves during a drag (from the dragged light it jumped when the
+  // edge nearest the light switched, or the light's nearest point on the edge flipped sides).
+  const [c1, c2, c3] = COOL_AT.map((d) => framePoint(pointOn(onHome.contour, tHome + (away * d) / homeLength)))
+  Object.assign(partParams, { partCool: [...c1, ...c2], partCool2: [...c2, ...c3] })
+  // The main light with the face near it: from the light, a little into the face the seed's light faces.
+  const lead: Vec2 = [hot[0] + homeSign * homeNormal[0] * LEAD_INTO, hot[1] + homeSign * homeNormal[1] * LEAD_INTO]
+  partParams.partLead = [...framePoint(lead), 0.3, 0]
+
   const rayAt: Vec2 = [hot[0], hot[1] + 0.04]
   const params: Record<string, ParamValue> = {
     shape: MERGED_SHAPE_KINDS.indexOf(spec.kind) + 1,
@@ -843,6 +903,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     ...unitParams,
     ...secondParams,
     faceDir,
+    ...partParams,
     ...parts,
     // Scatter blurs from 0.01 to about 0.33 of the short side (times the softness), so the face's light falls off
     // across it instead of filling it flat.
@@ -900,37 +961,38 @@ export function composeMergedLook({ pack, controls, seed, aspect }: ComposeInput
 // ---------------------------------------------------------------------------
 // Parts for the shared color stage (interface: artifacts/color/NOTES.md). Frame units for places, short sides for sizes.
 
-const num = (params: Readonly<Record<string, ParamValue>>, key: string, fallback: number) => {
-  const v = params[key]
-  return typeof v === 'number' ? v : fallback
-}
 const vec = (params: Readonly<Record<string, ParamValue>>, key: string, fallback: readonly number[]) => {
   const v = params[key]
   return Array.isArray(v) ? v : fallback
 }
 
 /**
- * Where the merged look's light is, from its params, always three parts in this order: the second light where it
- * lights its edge and face (a warm color: Yellow, Orange-red, Lime, Tan, or the brightest left, Atmospheric's Ice); the
- * dim lit room, the face's deep far side past the bright part near the edge (a dark color: Forest, Plum, Slate,
- * Near-black); the main light with the face it lights. With no second light its part sits off the frame and fades
- * out. Nothing here reads the colors.
+ * Where the merged look's light is, from its params, always eight parts in this order: the main light with the face
+ * near it (the lead color); the second light's stretch of edge (warm: Yellow over Orange-red, Tan, or the brightest
+ * left, Atmospheric's Steel) in two pieces, and its core (bright: Lime); the main light's far stretch of edge, dimmer
+ * than its brightest (cool: Cyan, Ice) in two pieces; the dim lit room, two spots on the face's far side from the
+ * seed's light (dark: Forest and Plum, Slate and Near-black). A part not in the frame sits off it. Nothing here reads
+ * the colors.
  */
-export function mergedParts(params: Readonly<Record<string, ParamValue>>, aspect: number): StagePart[] {
-  const [fw, fh] = frameSize(aspect)
-  const at = vec(params, 'at', [0.5, 0.5])
-  const anchor: Vec2 = [(at[0] - 0.5) * fw, (at[1] - 0.5) * fh]
-  const lightAt = vec(params, 'light1At', [0, 0])
-  const hot: Vec2 = [anchor[0] + lightAt[0], anchor[1] + lightAt[1]]
-  const frame = (p: Vec2): [number, number] => [round4(p[0] / fw + 0.5), round4(p[1] / fh + 0.5)]
-  const into = vec(params, 'faceDir', [0, 1])
-  const step = (from: Vec2, d: number): Vec2 => [from[0] + into[0] * d, from[1] + into[1] * d]
-  const reach = num(params, 'f3Width', 0.45) * Math.min(1, num(params, 'soften', 1))
-  const secondAt = vec(params, 'secondAt', [-40, -40])
-  const second: Vec2 = [anchor[0] + secondAt[0], anchor[1] + secondAt[1]]
+export function mergedParts(params: Readonly<Record<string, ParamValue>>): StagePart[] {
+  // The second light's parts fade with it as a dragged main light comes near (its strength, partBright's fourth value).
+  const fading = Math.min(1, Math.max(0, vec(params, 'partBright', PART_OFF)[3]))
+  const line = (key: string, want: FieldWant, strength = 1): StagePart => {
+    const v = vec(params, key, PART_OFF)
+    return { kind: 'line', from: [v[0], v[1]], to: [v[2], v[3]], width: EDGE_PART_WIDTH, want, strength }
+  }
+  const spot = (key: string, want: FieldWant, strength = 1): StagePart => {
+    const v = vec(params, key, PART_OFF)
+    return { kind: 'spot', at: [v[0], v[1]], radius: Math.max(0.01, v[2]), want, strength }
+  }
   return [
-    { kind: 'spot', at: frame(step(second, 0.05)), radius: 0.16, want: 'warm' },
-    { kind: 'spot', at: frame(step(hot, 0.12 + reach)), radius: round4(0.18 + 0.5 * reach), want: 'dark' },
-    { kind: 'spot', at: frame(step(hot, 0.15)), radius: 0.3, want: 'any' },
+    spot('partLead', 'any'),
+    line('partWarm', 'warm', fading),
+    line('partWarm2', 'warm', fading),
+    spot('partBright', 'bright', fading),
+    line('partCool', 'cool'),
+    line('partCool2', 'cool'),
+    spot('partDark', 'dark'),
+    spot('partDark2', 'dark'),
   ]
 }

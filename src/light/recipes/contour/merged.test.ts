@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { getPack, type PackId } from '../../color/packs'
+import type { StagePart } from '../../color/stageFields'
 import type { ControlValues, ParamValue } from '../../scene'
 import { parseQuery, sceneLook, toQuery } from '../../../tool/state'
 import { recipesForMood } from '../index'
@@ -92,17 +93,37 @@ describe('contour.merged', () => {
     }
   })
 
-  it('gives the color stage the second light, the dim room and the main light, and has a second light in every list', () => {
+  it('gives the color stage the main light, the second light, the far stretch and the dim room, the same in every list', () => {
     for (const aspect of [16 / 9, 9 / 16]) {
       for (let seed = 1; seed <= 18; seed++) {
         const seconds = LISTS.map((colors) => composeMerged({ colors, controls: CONTROLS, seed, aspect }).params)
         const { params } = composeMerged({ colors: LISTS[0], controls: CONTROLS, seed, aspect })
-        const parts = mergedParts(params, aspect)
-        expect(parts.map((p) => (p.kind === 'horizon' ? 'horizon' : p.want)), `seed ${seed}`).toEqual(['warm', 'dark', 'any'])
+        const parts = mergedParts(params)
+        expect(parts.map((p) => (p.kind === 'horizon' ? 'horizon' : p.want)), `seed ${seed}`).toEqual(['any', 'warm', 'warm', 'bright', 'cool', 'cool', 'dark', 'dark'])
         for (const part of parts) expect(JSON.stringify(part)).not.toMatch(/null|NaN/)
-        // The second light is part of the design: there in every list or in none, at the same place.
+        // The parts are part of the design: the same in every list, and the second light there in every list or none.
         expect(new Set(seconds.map((p) => Number(p.secondUnit) > 0)).size, `seed ${seed}`).toBe(1)
-        expect(new Set(seconds.map((p) => JSON.stringify(p.secondAt))).size, `seed ${seed}`).toBe(1)
+        expect(new Set(seconds.map((p) => JSON.stringify(mergedParts(p)))).size, `seed ${seed}`).toBe(1)
+      }
+    }
+  })
+
+  it('moves its parts only a little for a small step of the dragged line', () => {
+    const moved = (a: readonly StagePart[], b: readonly StagePart[]) =>
+      Math.max(...a.map((p, i) => {
+        const q = b[i]
+        if (p.kind === 'spot' && q.kind === 'spot') return Math.hypot(p.at[0] - q.at[0], p.at[1] - q.at[1])
+        if (p.kind === 'line' && q.kind === 'line') return Math.max(Math.hypot(p.from[0] - q.from[0], p.from[1] - q.from[1]), Math.hypot(p.to[0] - q.to[0], p.to[1] - q.to[1]))
+        return 0
+      }))
+    for (let seed = 1; seed <= 9; seed++) {
+      let last: StagePart[] | null = null
+      for (let k = 0; k <= 40; k++) {
+        const x = 0.1 + (0.8 * k) / 40
+        const controls = { ...CONTROLS, drag: { from: [x, 0.9] as [number, number], to: [x - 0.05, 0.5] as [number, number] } }
+        const parts = mergedParts(composeMerged({ colors: LISTS[0], controls, seed, aspect: 16 / 9 }).params)
+        if (last) expect(moved(last, parts), `seed ${seed} step ${k}`).toBeLessThan(0.25)
+        last = parts
       }
     }
   })

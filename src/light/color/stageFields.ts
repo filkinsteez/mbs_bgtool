@@ -126,7 +126,7 @@ export function lookParts(recipe: RecipeId, params: Readonly<Record<string, Para
     case 'sunset.merged':
       return mergedParts(params, aspect)
     case 'contour.merged':
-      return contourMergedParts(params, aspect)
+      return contourMergedParts(params)
     case 'rush.split':
       return rushParts(params, aspect)
     default: {
