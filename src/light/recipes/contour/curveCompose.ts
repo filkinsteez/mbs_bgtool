@@ -1,5 +1,5 @@
 import { linearToOklab } from '../../color/oklab'
-import type { ColorPack, PackColor } from '../../color/packs'
+import type { PackColor } from '../../color/packs'
 import { hexToLinear } from '../../color/srgb'
 import { toneCurve } from '../../engine/output'
 import type { ControlValues } from '../../scene'
@@ -79,39 +79,32 @@ export function blockItem<T>(seed: number, salt: number, items: readonly T[]): T
  */
 export const PLACES: readonly Vec2[] = Array.from({ length: 8 }, (_, k) => [Math.round(Math.cos((k * Math.PI) / 4) * 1e6) / 1e6, Math.round(Math.sin((k * Math.PI) / 4) * 1e6) / 1e6])
 
-/** The pack colors bright enough to be a light, shared out over 8 places as evenly as 8 allows, Meta Blue first for the spare ones. */
-function lightSlots(pack: ColorPack): PackColor[] {
-  const lights = pack.colors.filter((c) => lightness(c.hex) > 0.5)
-  return lights.flatMap((c, i) => Array.from({ length: Math.floor(8 / lights.length) + (i < 8 % lights.length ? 1 : 0) }, () => c))
-}
+/** The light slots of a block of 8 seeds: each seed gets a different one, which picks its light's color (curveRoles). */
+const SLOTS: readonly number[] = [0, 1, 2, 3, 4, 5, 6, 7]
 
 /**
- * The light color for a seed: a block of 8 seeds shares out the pack's lights
- * (Bold 2 each; Elemental and Atmospheric 3, 3, 2). It still takes one draw
- * from rand, so the rest of the composition draws as before.
+ * The slot groups the plan spreads kinds and places over: slots 0-2, 3-5 and 6-7, as a list of three light colors
+ * shares out its lights (lightSlots). Fixed, so the plan reads no colors.
  */
-export function pickLight(pack: ColorPack, rand: () => number, seed: number, salt: number): PackColor {
-  rand()
-  return blockItem(seed, salt, lightSlots(pack))
-}
+const PLAN_GROUPS: readonly number[] = [0, 0, 0, 1, 1, 1, 2, 2]
 
 /**
- * Light, shape kind and place for a seed, planned for its whole block of 8 so
- * that frames sharing a light color also differ in kind where the block allows
- * and light parts of the frame as far apart as the places left allow
- * (SHARED.md 10:15 AM: no two of seeds 1-8 look like the same frame).
+ * Light slot, shape kind and place for a seed, from the seed alone, so a seed has the same design in every pack and
+ * with any colors (owner, 2026-11-09). Planned for its whole block of 8: each seed gets its own slot and place, and
+ * the seeds of one slot group differ in kind where the block allows and light parts of the frame as far apart as the
+ * places left allow (SHARED.md 10:15 AM: no two of seeds 1-8 look like the same frame).
  */
-export function blockPlan<K>(pack: ColorPack, seed: number, salt: number, kinds: readonly K[]): { light: PackColor; kind: K; place: Vec2 } {
+export function blockPlan<K>(seed: number, salt: number, kinds: readonly K[]): { slot: number; kind: K; place: Vec2 } {
   const s = Math.round(seed)
   const first = Math.floor((s - 1) / 8) * 8 + 1
-  const lights = Array.from({ length: 8 }, (_, j) => blockItem(first + j, salt, lightSlots(pack)))
+  const slots = Array.from({ length: 8 }, (_, j) => blockItem(first + j, salt, SLOTS))
   const kindsLeft = Array.from({ length: 8 }, (_, j) => blockItem(first + j, salt + 1, kinds))
   const placesLeft = Array.from({ length: 8 }, (_, j) => blockItem(first + j, salt + 2, PLACES))
   const angle = (p: Vec2) => Math.atan2(p[1], p[0])
   const apart = (a: Vec2, b: Vec2) => Math.abs(Math.atan2(Math.sin(angle(a) - angle(b)), Math.cos(angle(a) - angle(b))))
-  const used: { light: PackColor; kind: K; place: Vec2 }[] = []
+  const used: { slot: number; kind: K; place: Vec2 }[] = []
   for (let j = 0; j <= (((s - 1) % 8) + 8) % 8; j++) {
-    const same = used.filter((u) => u.light.hex === lights[j].hex)
+    const same = used.filter((u) => PLAN_GROUPS[u.slot] === PLAN_GROUPS[slots[j]])
     const k = Math.max(0, kindsLeft.findIndex((kind) => !same.some((u) => u.kind === kind)))
     const kind = kindsLeft.splice(k, 1)[0]
     let p = 0
@@ -123,9 +116,19 @@ export function blockPlan<K>(pack: ColorPack, seed: number, salt: number, kinds:
         p = i
       }
     })
-    used.push({ light: lights[j], kind, place: placesLeft.splice(p, 1)[0] })
+    used.push({ slot: slots[j], kind, place: placesLeft.splice(p, 1)[0] })
   }
   return used[used.length - 1]
+}
+
+/**
+ * The colors bright enough to be a light (or, with none, the lightest one), shared out over the 8 light slots as
+ * evenly as 8 allows, the first ones in the list taking the spare slots: four lights 2 each, three 3, 3 and 2.
+ */
+function lightSlots(colors: readonly PackColor[]): PackColor[] {
+  const bright = colors.filter((c) => lightness(c.hex) > 0.5)
+  const lights = bright.length > 0 ? bright : [...colors].sort((a, b) => lightness(b.hex) - lightness(a.hex)).slice(0, 1)
+  return lights.flatMap((c, i) => Array.from({ length: Math.floor(8 / lights.length) + (i < 8 % lights.length ? 1 : 0) }, () => c))
 }
 
 /**
@@ -149,8 +152,8 @@ const COPPER = [1, 0.41, 0.1]
 /**
  * Where a warm light's dim tail goes (C-025, SHARED.md 10:40 AM): Yellow and
  * Orange-red to deep red, Lime to Forest's deep green; Tan, warm but nearly
- * grey, has no dark pack color to go to, so its halo stays bright and ends
- * sooner instead. Null for cool lights, which keep their color as they dim.
+ * grey, has no dark pack color to go to, so it warms toward copper amber
+ * ('bright'). Null for cool lights, which keep their color as they dim.
  */
 export type WarmTail = 'deep red' | 'forest' | 'bright'
 
@@ -167,8 +170,8 @@ export function warmTail(hex: string): WarmTail | null {
  * hue at half its peak lightness and deep red below a quarter, like
  * Orange-red's own tail; Orange-red drifts to the same deep red. Lime drifts
  * to Forest's ratios right away, since it reads olive one stop under its own
- * brightness. Tan keeps its color through its bright band and warms toward
- * copper amber in the short fall at its edge.
+ * brightness. Tan keeps its color near its own level and warms toward copper
+ * amber as it falls off.
  */
 export function warmDrift(hex: string): { ratios: number[]; knee: number; sharpness: number } | null {
   const tail = warmTail(hex)
@@ -191,222 +194,162 @@ export function warmDrift(hex: string): { ratios: number[]; knee: number; sharpn
   }
 }
 
+/**
+ * How much of its wide dim light (a halo's outer fade, a pale arc's inside glow, a rim's haze) a light shows. Tan,
+ * warm and nearly grey, has no dark color to fade into, and dimmed over a wide area it reads brown (C-025), so it
+ * shows TAN_DIM of it, and a Tan rim keeps no face; its curve, band and hot spot stay where the design puts them.
+ */
+const TAN_DIM = 0.25
+export const dimShare = (hex: string) => (warmTail(hex) === 'bright' ? TAN_DIM : 1)
+
 /** Oklab lightness of a base: dark enough that text set on it reads, light enough to tell from black. */
 const BASE_LIGHTNESS = 0.1
 const baseAtLow = (hex: string) => ({ hex, gain: round4((BASE_LIGHTNESS / lightness(hex)) ** 3) })
 
 /**
  * Bases a warm light's dim tail must not fade into, because the mix between
- * them is a third color: deep red over Meta Blue turns maroon and magenta,
- * Lime's green over Plum grey, and Tan's copper over Meta Blue mauve-grey,
- * over Forest olive and over Plum maroon.
+ * them is a third color: deep red over Meta Blue or Cyan turns maroon, magenta
+ * or grey, Lime's green over Plum grey, and Tan's copper over Meta Blue or Cyan
+ * mauve-grey, over Forest olive and over Plum maroon.
  */
 const BASES_TAIL_MUDDIES: Record<WarmTail, readonly string[]> = {
-  'deep red': ['#0064E0'],
+  'deep red': ['#0064E0', '#1FCDF0'],
   forest: ['#4A0A3C'],
-  bright: ['#0064E0', '#0F3D33', '#4A0A3C'],
+  bright: ['#0064E0', '#1FCDF0', '#0F3D33', '#4A0A3C'],
 }
 
-/** Black or one of the pack's darker colors (or Meta Blue) at low light, as slot color and gain, that the light's dim tail fades into cleanly. */
-export function pickBase(pack: ColorPack, rand: () => number, lightHex: string): { hex: string; gain: number } {
-  const dark = pack.colors.filter((c) => lightness(c.hex) < 0.45)
-  const tail = warmTail(lightHex)
+/** The share of seeds whose base is a dark color at low light instead of black (pickBase). */
+const BASE_SHARE = 0.5
+
+/** Oklab chroma under which a color is a grey. */
+const GREY_CHROMA = 0.05
+
+const hueOf = (hex: string) => {
+  const [, a, b] = linearToOklab(hexToLinear(hex))
+  return ((Math.atan2(b, a) * 180) / Math.PI + 360) % 360
+}
+const chromaOf = (hex: string) => {
+  const [, a, b] = linearToOklab(hexToLinear(hex))
+  return Math.hypot(a, b)
+}
+/** Degrees between two hues, 0 to 180. */
+const hueApart = (x: number, y: number) => Math.abs(((x - y + 540) % 360) - 180)
+const BLACK_BASE = { hex: '#000000', gain: 0 }
+
+/**
+ * The base, as slot color and gain: black, or for BASE_SHARE of the seeds (`draw`, the same in every pack, so a
+ * design keeps its dark) a dark color of the list at low light that the light's dim tail fades into cleanly, the draw
+ * picking among them. A list with no dark color (Bold) takes the deep shade of its deepest cool color (Meta Blue's
+ * navy, or Cyan's). Black when no color fades cleanly.
+ */
+function pickBase(colors: readonly PackColor[], light: PackColor, draw: number): { hex: string; gain: number } {
+  if (draw < 1 - BASE_SHARE) return BLACK_BASE
+  const tail = warmTail(light.hex)
   const muddy = tail ? BASES_TAIL_MUDDIES[tail] : []
-  const options: (readonly [{ hex: string; gain: number }, number])[] = [
-    [{ hex: '#000000', gain: 0 }, 3],
-    [baseAtLow(pack.colors[0].hex), 1],
-    ...dark.map((c) => [baseAtLow(c.hex), 1] as const),
-  ]
-  return pickWeighted(
-    rand,
-    options.filter(([o]) => !muddy.includes(o.hex.toUpperCase())),
-  )
+  const darks = colors.filter((c) => lightness(c.hex) < 0.45)
+  const cool = colors
+    .filter((c) => chromaOf(c.hex) >= GREY_CHROMA && hueOf(c.hex) >= 180 && hueOf(c.hex) <= 300)
+    .sort((a, b) => lightness(a.hex) - lightness(b.hex))
+  const options = (darks.length > 0 ? darks : cool.slice(0, 1)).filter((c) => !muddy.includes(c.hex.toUpperCase()))
+  if (options.length === 0) return BLACK_BASE
+  const at = Math.min(options.length - 1, Math.floor(((draw - (1 - BASE_SHARE)) / BASE_SHARE) * options.length))
+  return baseAtLow(options[at].hex)
 }
 
 /**
- * The base for a Meta Blue light (packAccent): where the seed picked Meta Blue at low light, the pack's own dark
- * color if it has one, since a navy base looks the same in every pack.
+ * Shares of a light's parts in its pale color: `body` of a band's body, `line` of a rim's thin core line, which is
+ * near white wherever it shows, so a grey there stays grey, `band` of the rim's color band beside it, `air` of the dim
+ * haze around the light, `face` of a rim's face, `core` of its hot core, and `edge` of the glow at the frame's edge
+ * from a light dragged outside it (offFrameGlow). A part keeps its luminance, so only its color changes.
  */
-export function packBase(base: { hex: string; gain: number }, accentBase: string | null): { hex: string; gain: number } {
-  return accentBase && base.gain > 0 && base.hex.toUpperCase() === '#0064E0' ? baseAtLow(accentBase) : base
-}
-
-/**
- * How a Meta Blue light shows its pack, since every pack has Meta Blue (SHARED.md, 2026-11-05 11:22 AM). Bold's
- * light stays saturated and its pale side leans Cyan: its core takes Cyan and its body leans halfway. Atmospheric's
- * core goes to Steel grey; its body keeps Meta Blue's own pale blue, since part of a grey mixed into Meta Blue turns it
- * periwinkle (Meta Blue has no red and the greys do). In Elemental, Halo adds a second, dimmer light in Lime from
- * outside the frame, apart from the first so their colors don't mix into teal (a Tan one shows only its fall there,
- * which reads brown). Rim's face (the air inside its edge) also takes Forest; Lime's fall drifts to Forest, so the
- * two meet without teal. So that packs differ across the whole frame, not only in the light's tint, the dim haze
- * and a rim's face take the pack too (Bold's lean Cyan, Atmospheric's go fully to Steel, a cool grey, since part of
- * it turns periwinkle), and are brighter: `haze` times for the widest haze (Elemental's is dimmer, so it fades out
- * before it reaches the second light and turns teal) and `faceGain` times for a rim's face, since its thin edge
- * lights little of the frame; Atmospheric's base is Slate where the seed picks a Meta Blue one (packBase). The glow
- * at the frame's edge from a light dragged outside it (offFrameGlow) takes `edge` of the pale color, less than the
- * haze: with more, a Meta Blue seed's edge looks like a Cyan or Ice seed's. A rim has no wide haze of its own, so
- * where its light is strongest it lights the air about it too (`mist`: that glow's width and weight, short sides,
- * and its share in the pale color): Bold's a saturated blue, mostly Meta Blue, since dim Cyan has little color left;
- * Atmospheric's a brighter Steel grey, like light in fog. Null for other lights, which only their own pack has.
- * Shares in the pale
- * color: `body` of a band's body, `line` of a rim's thin core line, which is near white wherever it shows, so a grey
- * there stays grey, `band` of the rim's color band beside it, `air` of the dim haze around the light, `face` of a
- * rim's face and `core` of its hot core. The band, the haze and the face are at or below the light's own level,
- * where the tone curve doesn't turn a mix violet, so Atmospheric's are an overcast grey-blue. Elemental's hot core
- * keeps Meta Blue: Forest is no pale color, and at the light's level it turned the core teal beside the blue edge.
- */
-export function packAccent(
-  pack: ColorPack,
-  light: PackColor,
-  look: 'halo' | 'rim',
-): {
-  pale: PackColor | null
+export interface PaleShares {
   body: number
   line: number
   band: number
   air: number
   face: number
   core: number
-  haze: number
-  faceGain: number
   edge: number
-  base: PackColor | null
-  second: PackColor | null
-  mist: { width: number; weight: number; pale: number } | null
-} | null {
-  if (light.hex.toUpperCase() !== '#0064E0') return null
-  const named = (name: string) => pack.colors.find((c) => c.name === name) ?? null
-  const accent = { body: 0, line: 0, band: 0, air: 0, face: 0, core: 1, haze: 1, faceGain: 1, edge: 0, base: null, second: null, mist: null }
-  switch (pack.id) {
-    case 'bold':
-      return {
-        ...accent,
-        pale: named('Cyan'),
-        body: 0.5,
-        line: 0.5,
-        band: 0.15,
-        air: 0.8,
-        face: 0.6,
-        haze: 1.5,
-        faceGain: 3,
-        mist: look === 'rim' ? { width: 0.12, weight: 0.12, pale: 0.3 } : null,
-      }
-    case 'atmospheric':
-      return {
-        ...accent,
-        pale: named('Steel'),
-        line: 0.6,
-        band: 0.4,
-        air: 1,
-        face: 1,
-        haze: 2,
-        faceGain: 5,
-        edge: 0.6,
-        base: named('Slate'),
-        mist: look === 'rim' ? { width: 0.14, weight: 0.14, pale: 1 } : null,
-      }
-    case 'elemental':
-      return look === 'rim'
-        ? { ...accent, pale: named('Forest'), face: 1, core: 0, haze: SECOND_HAZE, faceGain: 4.5, second: named('Lime') }
-        : { ...accent, pale: null, haze: SECOND_HAZE, second: named('Lime') }
-    default: {
-      const unknown: never = pack.id
-      throw new Error(`Unknown pack: ${String(unknown)}`)
-    }
-  }
 }
 
 /**
- * How far outside the frame's edge Elemental's second light sits and the distance at which its haze halves (short
- * sides). Its glow is the haze's to the power 3, so it stays a bright patch at the edge instead of tinting the frame.
+ * The shares by the kind of pale color. A lighter color of a nearby hue (Cyan for Meta Blue): the light stays
+ * saturated and its pale side leans that color, the core taking it and the body leaning halfway. A lighter grey
+ * (Steel): the core goes grey and the body keeps the light's own pale blue, since part of a grey mixed into Meta Blue
+ * turns it periwinkle (Meta Blue has no red and the greys do); the haze and the face go fully grey, an overcast
+ * grey-blue, as they are at or below the light's level, where the tone curve doesn't turn the mix violet. A dark color
+ * (Forest): only the face, the dim air inside a rim's edge; the hot core keeps the light's own color, since at the
+ * light's level Forest turned it teal beside the blue edge.
  */
-const SECOND_BEYOND = 0.12
-const SECOND_FALLOFF = 0.12
-const SECOND_POWER = 3
-/** Elemental's widest haze around a Meta Blue light, times this (packAccent). */
-const SECOND_HAZE = 0.35
+const PALE_SHARES: Record<'none' | 'light' | 'grey' | 'dark', PaleShares> = {
+  none: { body: 0, line: 0, band: 0, air: 0, face: 0, core: 1, edge: 0 },
+  light: { body: 0.5, line: 0.5, band: 0.15, air: 0.8, face: 0.6, core: 1, edge: 0 },
+  grey: { body: 0, line: 0.6, band: 0.4, air: 1, face: 1, core: 1, edge: 0.6 },
+  dark: { body: 0, line: 0, band: 0, air: 0, face: 1, core: 0, edge: 0 },
+}
+
+/** A light this deep and saturated (Meta Blue) has a pale side in another color: overexposed, it whitens late and keeps its hue. */
+const PALE_LIGHT_MAX_L = 0.6
+const PALE_LIGHT_MIN_CHROMA = 0.15
+/** How far (degrees) a lighter color's hue may be from the light's to be its pale side. */
+const PALE_HUE = 45
+
+/**
+ * The pale color a light's pale side takes, from the colors given, and how much of each part takes it: a deep
+ * saturated light (Meta Blue) leans a lighter color of a nearby hue (Cyan), else the nearest lighter grey (Steel),
+ * else, in a rim's face only, a dark green (Oklab hue 150 to 210, Forest; a dark toward violet, Plum, turns blue
+ * indigo). So a Meta Blue frame shows which colors it is with. None for other lights, which show their own color.
+ */
+function paleFor(colors: readonly PackColor[], light: PackColor, look: 'halo' | 'rim'): { color: PackColor | null } & PaleShares {
+  const none = { color: null, ...PALE_SHARES.none }
+  const L = lightness(light.hex)
+  if (L >= PALE_LIGHT_MAX_L || chromaOf(light.hex) < PALE_LIGHT_MIN_CHROMA) return none
+  const hue = hueOf(light.hex)
+  const others = colors.filter((c) => c.hex !== light.hex)
+  const lighter = others.filter((c) => lightness(c.hex) > L)
+  const tint = lighter.find((c) => chromaOf(c.hex) >= GREY_CHROMA && hueApart(hueOf(c.hex), hue) <= PALE_HUE)
+  if (tint) return { color: tint, ...PALE_SHARES.light }
+  const grey = lighter.filter((c) => chromaOf(c.hex) < GREY_CHROMA).sort((a, b) => lightness(a.hex) - lightness(b.hex))[0]
+  if (grey) return { color: grey, ...PALE_SHARES.grey }
+  if (look !== 'rim') return none
+  const dark = others.find((c) => lightness(c.hex) < 0.45 && chromaOf(c.hex) >= GREY_CHROMA && hueOf(c.hex) >= 150 && hueOf(c.hex) <= 210)
+  return dark ? { color: dark, ...PALE_SHARES.dark } : none
+}
+
+/** Which color fills which role in a Rim or Halo design (curveRoles). */
+export interface CurveRoles {
+  /** The light. */
+  light: PackColor
+  /** The dark ground: a color at low light (slot color and gain), or black (gain 0). */
+  base: { hex: string; gain: number }
+  /** The color the light's pale side takes (core, haze, a rim's face; null for none) and how much of each part takes it. */
+  pale: { color: PackColor | null } & PaleShares
+  /** The colors a line runs through from its bright end, and the warm color whose fall it takes. */
+  line: { hues: PackColor[]; dims: PackColor | null }
+  /** The colors a ring's rim turns through, the light's own first. */
+  ring: PackColor[]
+}
+
+/**
+ * Which color fills which role in a Rim or Halo design, from the colors given (2 to 5 pack colors, in any order, with
+ * or without Meta Blue) and what the seed's design asks: its light slot (blockPlan) and its base draw. The design
+ * never reads the colors, so other colors only recolor it (owner, 2026-11-09). The light is the slot's share of the
+ * colors bright enough to be one; the base, the pale side and the hues along a line or ring follow from the light.
+ */
+export function curveRoles(colors: readonly PackColor[], design: { slot: number; baseDraw: number }, look: 'halo' | 'rim'): CurveRoles {
+  const light = lightSlots(colors)[design.slot]
+  return {
+    light,
+    base: pickBase(colors, light, design.baseDraw),
+    pale: paleFor(colors, light, look),
+    line: lineHues(colors, light),
+    ring: ringHues(colors, light),
+  }
+}
 
 const smoothstep = (a: number, b: number, x: number) => {
   const t = clamp01((x - a) / (b - a))
   return t * t * (3 - 2 * t)
-}
-
-/**
- * A light's pack accent (packAccent) as colors and params: the pale color for slot 5 (parts with a pale share take
- * it when the emitter's pale slot is 5), and Elemental's second light for slot 6 as air glows 2 and 3, just outside
- * the frame across from `home` (where the light sits at the default Light control, so a drag doesn't move it) and on
- * `home`'s own side. Its glow reaches its own level on the frame's edge. Each place fades out while the light's hot
- * spot is within about half a short side of it, and the second place shows only as the first fades, so the two
- * lights never mix and a drag that brings the light to one side moves the second light smoothly to the other; a
- * dragged line's start (where its light is, maybe outside the frame) counts as the hot spot too, and so does the
- * frame's point nearest it, where a far light's glow comes in (offFrameGlow), from a little farther. Split between
- * two places, each patch is dimmer and Lime's dim fall turns it Forest green, so the second light keeps well away
- * from that point instead. `home` and `hot` are in short-side units from the frame center.
- */
-export function accentParams(
-  accent: ReturnType<typeof packAccent>,
-  home: Vec2,
-  hot: Vec2,
-  aspect: number,
-  drag?: ControlValues['drag'],
-): {
-  pale: string | null
-  body: number
-  line: number
-  band: number
-  air: number
-  face: number
-  core: number
-  faceGain: number
-  edge: number
-  base: string | null
-  second: string | null
-  haze: number
-  mist: { width: number; weight: number; pale: number } | null
-  params: Record<string, number | number[]>
-} {
-  const pale = accent?.pale?.hex ?? null
-  const shares = { body: 0, line: 0, band: 0, air: 0, face: 0, core: 1, edge: 0, ...(pale && accent ? accent : {}) }
-  const { body, line, band, air, face, core, edge } = shares
-  const faceGain = accent?.faceGain ?? 1
-  const haze = accent?.haze ?? 1
-  const base = accent?.base?.hex ?? null
-  const mist = accent?.mist ?? null
-  const second = accent?.second ?? null
-  if (!second) return { pale, body, line, band, air, face, core, faceGain, edge, base, second: null, haze, mist, params: {} }
-  const [fw, fh] = frameSize(aspect)
-  const drift = warmDrift(second.hex)
-  const start: Vec2 | null = drag ? [(drag.from[0] - 0.5) * fw, (drag.from[1] - 0.5) * fh] : null
-  const atEdge = (p: Vec2): Vec2 => [Math.min(fw / 2, Math.max(-fw / 2, p[0])), Math.min(fh / 2, Math.max(-fh / 2, p[1]))]
-  // Where a far light's glow comes in, it reaches about OFF_FRAME_FALLOFF farther.
-  const margin = drag ? OFF_FRAME_FALLOFF * smoothstep(0, OFF_FRAME_FROM, segmentOutside([...drag.from, ...drag.from], aspect)) : 0
-  const lights: [Vec2, number][] = [[hot, 0], ...(start ? ([[start, 0], [atEdge(start), margin]] as [Vec2, number][]) : [])]
-  const away = (at: readonly number[]) =>
-    Math.min(...lights.map(([l, m]) => smoothstep(0.3, 0.6, Math.hypot((at[0] - 0.5) * fw - l[0], (at[1] - 0.5) * fh - l[1]) - m)))
-  const across = acrossFrom(home, aspect, SECOND_BEYOND)
-  const beside = acrossFrom([-home[0], -home[1]], aspect, SECOND_BEYOND)
-  // A glow reads by its lightness, about the cube root of its light, so faded in light it still showed its last tenth
-  // and then was gone at once (a jump in Halo Elemental s7's drag sweep). Each place's share is cubed, so its glow's
-  // lightness follows the fade evenly and goes out gently.
-  const first = away(across)
-  const places: [readonly number[], number][] = [
-    [across, first ** 3],
-    [beside, (away(beside) * (1 - first)) ** 3],
-  ]
-  const params: Record<string, number | number[]> = {}
-  places.forEach(([at, share], k) => {
-    const i = k + 2
-    const source = [at[0], at[1], at[0], at[1]].map(round4)
-    Object.assign(params, {
-      [`air${i}Line`]: source,
-      [`air${i}Level`]: round4(airLevelFor(source, SECOND_FALLOFF, aspect, SECOND_POWER) * share),
-      [`air${i}Falloff`]: SECOND_FALLOFF,
-      [`air${i}Power`]: SECOND_POWER,
-      [`air${i}Color`]: 6,
-      ...(drift ? { [`air${i}Drift`]: drift.ratios, [`air${i}DriftShape`]: [drift.knee, drift.sharpness] } : {}),
-    })
-  })
-  return { pale, body, line, band, air, face, core, faceGain, edge, base, second: second.hex, haze, mist, params }
 }
 
 /**
@@ -456,9 +399,8 @@ function segmentOutside(line: readonly number[], aspect: number): number {
  * color, at its own level there, and fades into the frame; the light keeps the dragged direction. It comes in over
  * the line's first OFF_FRAME_FROM short sides outside the frame and is off while any of the line is in it; farther
  * out it dims again (OFF_FRAME_FADE), since a far light lights the air at the edge less, and the outline it lights
- * carries the frame (offFrameSpread). A Tan light's falls faster, so its copper fall stays short instead of reading
- * brown. With a share `pale` of its haze in the pack's pale color (packAccent's `edge`), that share is air glow 2 in
- * color slot 5.
+ * carries the frame (offFrameSpread). With a share `pale` of its haze in the light's pale color (PaleShares' `edge`),
+ * that share is air glow 2 in color slot 5.
  */
 export function offFrameGlow(drag: ControlValues['drag'], hex: string, aspect: number, pale = 0): Record<string, number | number[]> {
   if (!drag) return {}
@@ -467,7 +409,7 @@ export function offFrameGlow(drag: ControlValues['drag'], hex: string, aspect: n
   // Cubed: on black even a glow of a few percent shows, and the eye sees about the cube root of the light.
   const share = smoothstep(0, OFF_FRAME_FROM, outside) ** 3 / (1 + (Math.max(0, outside - OFF_FRAME_FROM) / OFF_FRAME_FADE) ** 2)
   if (share <= 0) return {}
-  const power = warmTail(hex) === 'bright' ? OFF_FRAME_POWER + 1 : OFF_FRAME_POWER
+  const power = OFF_FRAME_POWER
   const level = airLevelFor(line, OFF_FRAME_FALLOFF, aspect, power) * share
   const drift = warmDrift(hex)
   const glow = (i: number, slot: number, part: number) => ({
@@ -482,15 +424,6 @@ export function offFrameGlow(drag: ControlValues['drag'], hex: string, aspect: n
     ...(drift ? { air1Drift: drift.ratios, air1DriftShape: [drift.knee, drift.sharpness] } : {}),
     ...(pale > 0 ? glow(2, 5, pale) : {}),
   }
-}
-
-/** A point `beyond` short sides outside the frame's edge, across the frame center from `away` (short-side units from the center), in frame coordinates. */
-export function acrossFrom(away: Vec2, aspect: number, beyond: number): [number, number] {
-  const [fw, fh] = frameSize(aspect)
-  const length = Math.hypot(away[0], away[1])
-  const dir: Vec2 = length > 1e-6 ? [-away[0] / length, -away[1] / length] : [0, 1]
-  const edge = Math.min(fw / 2 / Math.max(Math.abs(dir[0]), 1e-9), fh / 2 / Math.max(Math.abs(dir[1]), 1e-9))
-  return toFrame([dir[0] * (edge + beyond), dir[1] * (edge + beyond)], aspect)
 }
 
 /** Points along the emitting contours that fall inside the frame (with a margin), in short-side units from the frame center. */
@@ -661,7 +594,7 @@ export function productionParts(prefix: string, light: ProductionLight): Record<
     n3Side: 0,
     n3Light: 2,
     n3LightGamma: 2,
-    // With a pale color (packAccent), the hot core takes it; the recipe sets the core line's and color band's shares.
+    // With a pale color (curveRoles), the hot core takes it; the recipe sets the core line's and color band's shares.
     n3Pale: 1,
     f1Weight: 0.06,
     f1Width: round6(light.haze ?? 0.024),
@@ -767,23 +700,6 @@ const whiteCore = (hex: string) => (whiteScale(hex) < 1 ? round4(WHITE_CORE * fl
  */
 export function haloParts(prefix: string, hex: string): Record<string, number | number[]> {
   const outside = { Side: 2, Light: 1, LightGamma: 1, MaskSoft: 0.015 }
-  if (warmTail(hex) === 'bright') {
-    // A Tan halo keeps most of its light at or above Tan's own brightness: three bands just outside the curve, 1.3
-    // widths apart so their sum has no ripple, make a flat stretch a little above Tan's level that ends in a rounded
-    // gaussian edge and a faint short tail. The inner band spills past the curve, so the inner edge fades over about
-    // a seventh of the short side instead of a crisp limb. The bands widen where the light dims, so the crescent's
-    // ends spread and fade instead of narrowing to a point, and its outer edge drifts away from the curve there.
-    const band = { ...outside, Shape: 8, Width: 0.035, Weight: 1.25, Grow: 1 }
-    const parts: Record<string, number | number[]> = {
-      ...prefixed('n1', { ...band, Offset: -0.012, Side: 0, Width: 0.07, GrowBy: [-0.5, 0.5] }),
-      ...prefixed('n2', { ...band, Offset: -0.057, Width: 0.07, GrowBy: [-0.1, 0.5] }),
-      ...prefixed('n3', { ...band, Offset: -0.102, Width: 0.1, GrowBy: [-0.09, 0.5] }),
-      f1Weight: 0,
-      ...prefixed('f2', { ...outside, Weight: 0.06, Width: 0.12 }),
-      f3Weight: 0,
-    }
-    return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
-  }
   // A broad pale arc (the yellow-halo example's, on dark): a band about a sixth of the short side wide just outside
   // the curve, with the light's saturated color in a wide glow beyond it. The band spills past the curve, so its
   // inner edge fades over about a tenth of the short side like the example's, instead of a hard limb. It widens where
@@ -801,13 +717,13 @@ export function haloParts(prefix: string, hex: string): Record<string, number | 
   const pale = white ? whiteScale(hex) : 1
   const core = white ? whiteCore(hex) : round4(Math.min(9, Math.max(0, nearWhiteLevel(hex) - HALO_BODY)))
   const blurred = { Light: 1, LightGamma: 1, Grow: 1, GrowBy: [-0.375, 0.5], Width: 0.144 }
-  // With a pale color (packAccent), the core takes it; the recipe sets the body's share.
+  // With a pale color (curveRoles), the core takes it; the recipe sets the body's share.
   const parts: Record<string, number | number[]> = {
     ...(white ? prefixed('n1', { ...band, Weight: round4(4 * pale), Width: 0.12, Shape: 8, LightGamma: 1 }) : { n1Weight: 0 }),
     ...prefixed('n2', { ...band, Weight: core, Width: white ? WHITE_CORE_WIDTH : 0.055, Shape: 8, LightGamma: 2.5, Pale: 1 }),
     n3Weight: 0,
     ...(white ? { f1Weight: 0 } : prefixed('f1', { ...blurred, Side: 2, Weight: 1, MaskSoft: 0.06 })),
-    ...prefixed('f2', { ...outside, Weight: round4(white ? 0.8 * pale : 0.7), Width: 0.22, MaskSoft: 0.04 }),
+    ...prefixed('f2', { ...outside, Weight: round4((white ? 0.8 * pale : 0.7) * dimShare(hex)), Width: 0.22, MaskSoft: 0.04 }),
     ...(white ? { f3Weight: 0 } : prefixed('f3', { ...blurred, Side: 0, Weight: 0.9 })),
   }
   return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
@@ -1087,7 +1003,7 @@ export function arcParts(prefix: string, hex: string): Record<string, number | n
       ? { ...prefixed('n1', { ...band, Weight: round4(1.5 * pale), Offset: 0 }), ...prefixed('n2', { ...band, Weight: round4(1.1 * pale), Offset: 0.04 }) }
       : { n1Weight: 0, n2Weight: 0 }),
     ...prefixed('n3', { ...band, Weight: core, Width: white ? WHITE_CORE_WIDTH : 0.04, Shape: 8, Offset: 0.02, LightGamma: 2.5, Pale: 1 }),
-    ...prefixed('f1', { Weight: round4(0.55 * pale), Width: 0.09, Side: 1, Light: 1, LightGamma: 1, MaskSoft: 0.015 }),
+    ...prefixed('f1', { Weight: round4(0.55 * pale * dimShare(hex)), Width: 0.09, Side: 1, Light: 1, LightGamma: 1, MaskSoft: 0.015 }),
     ...prefixed('f2', { Weight: round4(0.12 * pale), Width: 0.03, Side: 2, Light: 1, LightGamma: 1, MaskSoft: 0.015 }),
     ...(white ? { f3Weight: 0 } : prefixed('f3', { Weight: 1.3, Width: 0.09, Side: 0, Light: 1, LightGamma: 1 })),
   }
@@ -1095,31 +1011,16 @@ export function arcParts(prefix: string, hex: string): Record<string, number | n
 }
 
 /**
- * Whether a light can be thin rims: not Yellow, whose rim would mostly be its Orange-red dim stretch (the fire rule),
- * leaving too little Yellow to read as a Yellow light; a Yellow halo keeps its broad crest.
+ * The colors a thin ring's light runs through along its length, the light's own color first, as the hue of a thin
+ * film turns with the angle around it (iridescent-rings reference): the run lineHues finds, except that a lighter
+ * warm color doesn't end it, since each color of a ring sits at its own rim level (ringLevel) and none outshines the
+ * light, while a darker warm color does: it would take the light's share of white (ringParts), and Orange-red with
+ * Yellow's share reads salmon. Bold's Meta Blue turns into Cyan and Orange-red into Yellow, Atmospheric's Meta Blue
+ * into Ice and Steel greys; Elemental's rings stay one color (Meta Blue and Lime add to a teal, and Lime's and Tan's
+ * dim falls, toward Forest and toward copper, can't share a ring).
  */
-export function suitsRings(light: PackColor): boolean {
-  const [, a, b] = linearToOklab(hexToLinear(light.hex))
-  return !(warmTail(light.hex) === 'deep red' && (Math.atan2(b, a) * 180) / Math.PI > 60)
-}
-
-/**
- * The pack colors a thin ring's light runs through along its length, the light's own color first, as the hue of a
- * thin film turns with the angle around it (iridescent-rings reference). Each is the next one in pack order, among
- * the colors light enough to be a rim's light (Forest, Plum, Slate and Near-black are not): Bold's Meta Blue into
- * Cyan, Atmospheric's into Ice and Steel greys. Elemental's rings stay one color: Meta Blue and Lime add to a teal
- * and a green neither pack has (lineHues keeps them apart on a line too), and on a thin rim that stretch was over a
- * fifth of the light. A Tan ring stays one color: its neighbors are dark, and its dim fall (toward copper) and
- * Lime's (toward Forest) can't share a ring.
- */
-export function ringHues(pack: ColorPack, light: PackColor): PackColor[] {
-  const named = (names: string[]) => names.flatMap((name) => pack.colors.find((c) => c.name === name) ?? [])
-  const next: Record<ColorPack['id'], Record<string, string[]>> = {
-    bold: { 'Meta Blue': ['Cyan'], Cyan: ['Meta Blue'], 'Orange-red': ['Yellow'] },
-    elemental: {},
-    atmospheric: { 'Meta Blue': ['Ice', 'Steel'], Ice: ['Meta Blue'], Steel: ['Ice', 'Meta Blue'] },
-  }
-  return [light, ...named(next[pack.id][light.name] ?? [])]
+export function ringHues(colors: readonly PackColor[], light: PackColor): PackColor[] {
+  return hueRun(colors, light, 'ring').hues
 }
 
 /** The most two neighboring colors on a line may differ in Oklab hue (degrees), and the chroma below which a color is a grey (lineHues). */
@@ -1127,9 +1028,9 @@ const LINE_HUE_STEP = 60
 const LINE_HUE_GREY = 0.05
 
 /**
- * The pack colors a line of light runs through along its length, the light's own color first at its bright end
+ * The colors a line of light runs through along its length, the light's own color first at its bright end
  * (contour-light-line: orange where it is brightest, through yellow and a pale white to blue at its far end): the
- * pack's light colors in pack order from the light, the way that has more of them. A line dims the way one warm
+ * light colors in list order from the light, the way that has more of them. A line dims the way one warm
  * color in it does, and that fall must keep every color's largest channel (Yellow's takes all the blue out of a Meta
  * Blue stretch, Orange-red's keeps it), so a run with no such warm color stops short. A line's glow adds the light
  * of the stretches near it, so two neighbors must mix into a hue between their own: within LINE_HUE_STEP degrees,
@@ -1140,8 +1041,13 @@ const LINE_HUE_GREY = 0.05
  * Forest, Plum, Slate and Near-black are too dark to be a line's light; Tan's fall keeps no other color, so a Tan
  * line stays one color. Returns the colors and the warm color whose fall the line takes (null when none is warm).
  */
-export function lineHues(pack: ColorPack, light: PackColor): { hues: PackColor[]; dims: PackColor | null } {
-  const lit = pack.colors.filter((c) => lightness(c.hex) >= 0.45)
+export function lineHues(colors: readonly PackColor[], light: PackColor): { hues: PackColor[]; dims: PackColor | null } {
+  return hueRun(colors, light, 'line')
+}
+
+/** The run of colors from the light along a line (lineHues) or a ring (ringHues). */
+function hueRun(colors: readonly PackColor[], light: PackColor, along: 'line' | 'ring'): { hues: PackColor[]; dims: PackColor | null } {
+  const lit = colors.filter((c) => lightness(c.hex) >= 0.45)
   const lch = (c: PackColor) => {
     const [, a, b] = linearToOklab(hexToLinear(c.hex))
     return { chroma: Math.hypot(a, b), hue: (Math.atan2(b, a) * 180) / Math.PI }
@@ -1165,7 +1071,9 @@ export function lineHues(pack: ColorPack, light: PackColor): { hues: PackColor[]
     const dims = warm.filter((c) => keeps(c, run)).sort((x, y) => lightness(y.hex) - lightness(x.hex))[0] ?? null
     return { fits: dims !== null, dims }
   }
-  const outshines = (c: PackColor) => warmTail(c.hex) !== null && lightness(c.hex) > lightness(light.hex)
+  // A line ends at a lighter warm color, a ring at a darker one (lineHues, ringHues).
+  const outshines = (c: PackColor) =>
+    warmTail(c.hex) !== null && (along === 'line' ? lightness(c.hex) > lightness(light.hex) : lightness(c.hex) < lightness(light.hex))
   const at = lit.findIndex((c) => c.hex === light.hex)
   if (at < 0) return { hues: [light], dims: warmTail(light.hex) ? light : null }
   const longest = (ordered: readonly PackColor[]) => {
@@ -1182,9 +1090,6 @@ export function lineHues(pack: ColorPack, light: PackColor): { hues: PackColor[]
   const backward = longest(lit.slice(0, at + 1).reverse())
   return forward.hues.length > backward.hues.length ? forward : backward
 }
-
-/** How flat a Tan light's field is along the curve (the power of its flat-top field). */
-export const FLAT_POWER = 6
 
 /**
  * Radius of a flat-top light field (kind 5, exp(-(d / r)^power)) at `hot` that

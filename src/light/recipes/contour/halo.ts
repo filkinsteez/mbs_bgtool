@@ -1,32 +1,24 @@
 import type { ColorPack, PackColor } from '../../color/packs'
 import type { ComposeInput, Composition, ParamSpec, ParamValue, RecipeContext, RecipeDefinition } from '../../scene'
 import {
-  accentParams,
   blockPlan,
+  curveRoles,
   dragLight,
   falloffRadius,
-  FLAT_POWER,
-  flatRadius,
   frameSize,
   geo,
   haloParts,
   arcParts,
   offFrameGlow,
   offFrameSpread,
-  packAccent,
-  packBase,
   paleBridge,
   ringDrift,
-  ringHues,
   ringLevel,
   ringParts,
-  suitsRings,
   lerp,
   logoPartsShown,
   longestRun,
   normalNear,
-  pickBase,
-  pickLight,
   pickWeighted,
   pointAlong,
   pointsNearFrame,
@@ -104,10 +96,12 @@ const prefixKeys = (prefix: string, values: Record<string, ParamValue>) =>
  */
 function ringColors(shape: ShapeSettings, anchor: Vec2, aspect: number, hues: readonly PackColor[], near: Vec2): Record<string, ParamValue> {
   const run = longestRun(visibleRuns(buildShape(shape), anchor, aspect))
-  const layout = RING_HUE_PLACES[hues.length]
-  if (!layout || run.length < 2) return {}
+  if (run.length < 2) return {}
   const angle = (p: Vec2) => (Math.atan2(p[1] - anchor[1], p[0] - anchor[0]) * 180) / Math.PI
   const rotate = angle(pointAlong(run, 0.5) ?? run[0]) - 180
+  // A ring of one color turns the same way, so the ring is the same whatever its colors.
+  const layout = RING_HUE_PLACES[hues.length]
+  if (!layout) return { Rotate: round4(rotate) }
   const along = (p: Vec2) => ((((angle(p) - rotate) % 360) + 360) % 360) / 360
   const first = run[0]
   const last = run[run.length - 1]
@@ -327,19 +321,22 @@ function crossingRing(first: HaloLayout, rand: () => number, aspect: number): Ha
 function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Composition {
   const rand = seededRandom(seed, 13)
   // A block of 8 seeds shows four logo crops, two ellipses and two rings, each lighting a different part of the frame.
-  const plan = blockPlan(pack, seed, 67, ['logoEdge', 'logoEdge', 'logoEdge', 'logoEdge', 'ellipse', 'ellipse', 'ring', 'ring'] as const)
-  const light = pickLight(pack, rand, seed, 67)
-  const seedBase = pickBase(pack, rand, light.hex)
+  const plan = blockPlan(seed, 67, ['logoEdge', 'logoEdge', 'logoEdge', 'logoEdge', 'ellipse', 'ellipse', 'ring', 'ring'] as const)
+  // The first draw was the light's; the plan's slot picks it now, and the rest of the composition draws as before.
+  rand()
+  const baseDraw = rand()
+  // The design reads no colors; the colors only fill its roles.
+  const roles = curveRoles(pack.colors, { slot: plan.slot, baseDraw }, 'halo')
+  const { light, base, pale } = roles
   const layout = haloLayout(plan.kind, rand, aspect, plan.place)
   // Ring seeds are two thin glass rims that cross, their color shifting around each ring, their insides faintly
   // lit and their light adding where they overlap (iridescent-rings reference); the others are a crest with a long
-  // fade outward.
-  const rings = plan.kind === 'ring' && suitsRings(light)
+  // fade outward. The seed alone picks which, whatever the light's color, so every pack shows the same design.
+  const rings = plan.kind === 'ring'
   // Ellipse seeds are a broad pale arc with the light's saturated color inside it (yellow-halo reference, on dark).
-  // A Tan light keeps its bright bands.
-  const paleArc = plan.kind === 'ellipse' && warmTail(light.hex) !== 'bright'
+  const paleArc = plan.kind === 'ellipse'
   const crossing = rings ? crossingRing(layout, rand, aspect) : null
-  const hues = rings ? ringHues(pack, light) : [light]
+  const hues = rings ? roles.ring : [light]
   // The hot spot and the falloff follow the longest piece of the curve inside the frame.
   const runs = visibleRuns(buildShape(layout.shape), layout.anchor, aspect)
   const path = longestRun(runs)
@@ -355,30 +352,24 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   const dragged = controls.drag ? dragLight(controls.drag, runs, aspect) : null
   const hot = dragged?.hot ?? pointAlong(path, along(controls.mood)) ?? layout.anchor
   const home = dragged?.hot ?? pointAlong(path, along(0.5)) ?? layout.anchor
-  const accent = accentParams(packAccent(pack, light, 'halo'), pointAlong(path, along(0.5)) ?? layout.anchor, hot, aspect, controls.drag)
-  const base = packBase(seedBase, accent.base)
   const at: Vec2 = [hot[0] - layout.anchor[0], hot[1] - layout.anchor[1]]
   const gain = geo(controls.intensity, 0.35, 1, 2.8)
   const soften = geo(controls.softness, 0.45, 1, 2.4)
   // Light falls 20 to 60 times from the hot spot to the far end of the visible curve (sized at the default
   // hot spot, so the Light control moves the light without resizing it). The light field is six times longer
   // across the curve, so the glow keeps its long fade outward near the hot spot.
-  // A Tan light keeps most of its light at or above Tan's own brightness: near full along most of the curve, then
-  // a rounded shoulder and the same 20 to 60 times fall over a short stretch (a flat-top field).
-  const bright = warmTail(light.hex) === 'bright'
   const powerDraw = rand()
-  const power = bright ? FLAT_POWER : lerp(2, 3, powerDraw)
+  const power = lerp(2, 3, powerDraw)
   const across = normalNear(path, hot, 12)
-  // Rims and the pale arcs are lit most of the way along (3 to 5 times dimmer at the far end of the visible curve);
-  // a Tan crescent keeps its short fall. A dragged line's light is 20 to 60 times dimmer at the line's end.
+  // Rims and the pale arcs are lit most of the way along (3 to 5 times dimmer at the far end of the visible curve).
+  // A dragged line's light is 20 to 60 times dimmer at the line's end.
   const factorDraw = rand()
-  const factor = bright && !rings ? lerp(20, 60, factorDraw) : lerp(3, 5, factorDraw)
+  const factor = lerp(3, 5, factorDraw)
   const dragFactor = lerp(20, 60, factorDraw)
   const stretch = { direction: normalNear(path, home, 12), by: 6 }
-  const radius = bright ? flatRadius(path, home, factor, power, stretch) : falloffRadius(path, home, factor, power, stretch)
+  const radius = falloffRadius(path, home, factor, power, stretch)
   // A dragged light stays near full along the curve and then falls over a rounded shoulder: with a gaussian fall a
   // short line's patch is a long thin ellipse whose ends read as points, most of all where the curve leaves the frame.
-  // A Tan light's flat top falls too fast here: the patch's end reads as a cut edge.
   const dragPower = 4
   // A ring with a warm color dims the way that color does; its other colors keep their own hue (clDrift).
   const warm = warmDrift(hues.find((c) => warmTail(c.hex))?.hex ?? light.hex)
@@ -387,10 +378,6 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
   // the light along them without moving them.
   const seedHot = pointAlong(path, along(0.5)) ?? layout.anchor
   const ring1Parts = rings ? ringParts('ring1', light.hex) : paleArc ? arcParts('ring1', light.hex) : haloParts('ring1', light.hex)
-  // The widest haze: a crest's outer fade, a pale arc's or a ring's inside glow. A ring's only dims: brighter, it
-  // fills the ring like a sail.
-  const hazeKey = rings || paleArc ? 'ring1f1Weight' : 'ring1f2Weight'
-  const hazeGain = rings ? Math.min(1, accent.haze) : accent.haze
   const params: Record<string, ParamValue> = {
     ring1On: true,
     ring1Shape: SHAPE_KINDS.indexOf(layout.shape.kind) + 1,
@@ -403,17 +390,15 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     ring1Color: 2,
     ring1Gain: 1,
     ...ring1Parts,
-    ...(hazeGain !== 1 ? { [hazeKey]: round4(Number(ring1Parts[hazeKey] ?? 0) * hazeGain) } : {}),
     ...(rings ? prefixKeys('ring1', ringColors(layout.shape, layout.anchor, aspect, hues, seedHot)) : {}),
     ...(drift ? { ring1Drift: drift.ratios, ring1DriftShape: [drift.knee, drift.sharpness] } : {}),
-    // A ring's pale color is white, so its rim reads pastel (ringParts); other halos take the pack's pale color.
-    ring1Pale: rings ? RING_WHITE : accent.pale ? 5 : 0,
+    // A ring's pale color is white, so its rim reads pastel (ringParts); other halos take the light's pale color.
+    ring1Pale: rings ? RING_WHITE : pale.color ? 5 : 0,
     // A colored band's body is far part 3 (and far part 1 outside a crest); the rest of the far light is haze.
-    ...Object.fromEntries((rings ? [] : paleArc ? ['f3'] : ['f1', 'f3']).map((k) => [`ring1${k}Pale`, accent.body])),
+    ...Object.fromEntries((rings ? [] : paleArc ? ['f3'] : ['f1', 'f3']).map((k) => [`ring1${k}Pale`, pale.body])),
     // A ring keeps its own shares in white (ringParts).
-    ...Object.fromEntries((rings ? [] : paleArc ? ['f1', 'f2'] : ['f2']).map((k) => [`ring1${k}Pale`, accent.air])),
-    ...accent.params,
-    ...offFrameGlow(controls.drag, light.hex, aspect, accent.edge),
+    ...Object.fromEntries((rings ? [] : paleArc ? ['f1', 'f2'] : ['f2']).map((k) => [`ring1${k}Pale`, pale.air])),
+    ...offFrameGlow(controls.drag, light.hex, aspect, pale.edge),
     ring2On: Boolean(crossing),
     ...(crossing
       ? {
@@ -427,7 +412,6 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
           ring2Gain: 0.85,
           ring2Pale: RING_WHITE,
           ...ringParts('ring2', light.hex),
-          ...(accent.haze < 1 ? { ring2f1Weight: round4(Number(ringParts('ring2', light.hex).ring2f1Weight) * accent.haze) } : {}),
           ...prefixKeys('ring2', ringColors(crossing.shape, crossing.anchor, aspect, hues, seedHot)),
           ...(drift ? { ring2Drift: drift.ratios, ring2DriftShape: [drift.knee, drift.sharpness] } : {}),
         }
@@ -439,7 +423,7 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
     // with a longer least reach than the Rim's: a short line's patch then fades along the curve, instead of a round
     // patch whose edge meets the crisp side at a corner. A light outside the frame reaches farther along the curve.
     // Rings are lit evenly (light field 1 uniform); their hot spot is light field 2, which a drag moves.
-    light1Kind: rings ? 0 : dragged ? 6 : bright ? 5 : 3,
+    light1Kind: rings ? 0 : dragged ? 6 : 3,
     light1At: at.map(round4),
     light1Radius: round4(
       dragged ? Math.hypot(Math.hypot(dragged.length, 0.4) / Math.log(dragFactor) ** (1 / dragPower), offFrameSpread(controls.drag, dragged.hot, aspect)) : radius,
@@ -461,8 +445,8 @@ function composeHalo({ pack, controls, seed, aspect }: ComposeInput): Compositio
       light.hex,
       base.gain > 0 ? base.hex : '#000000',
       hues[1]?.hex ?? '#000000',
-      accent.pale ?? '#000000',
-      accent.second ?? '#000000',
+      pale.color?.hex ?? '#000000',
+      '#000000',
       hues[2]?.hex ?? '#000000',
       '#000000',
     ],

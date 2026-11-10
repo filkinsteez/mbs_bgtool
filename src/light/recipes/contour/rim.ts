@@ -2,25 +2,20 @@ import type { ColorPack } from '../../color/packs'
 import { hexToLinear } from '../../color/srgb'
 import type { ComposeInput, Composition, ParamSpec, ParamValue, RecipeContext, RecipeDefinition } from '../../scene'
 import {
-  accentParams,
   blockPlan,
+  curveRoles,
+  dimShare,
   dragLight,
-  FLAT_POWER,
   flatRadius,
   frameSize,
   geo,
   lerp,
-  lineHues,
   logoPartsShown,
   longestRun,
   normalNear,
   offFrameGlow,
   offFrameSpread,
-  packAccent,
-  packBase,
   paleBridge,
-  pickBase,
-  pickLight,
   pickWeighted,
   pointAlong,
   pointsNearFrame,
@@ -31,7 +26,6 @@ import {
   visiblePath,
   visibleRuns,
   warmDrift,
-  warmTail,
   warmToe,
 } from './curveCompose'
 import {
@@ -342,10 +336,14 @@ const dist = (a: Vec2, b: Vec2) => Math.hypot(a[0] - b[0], a[1] - b[1])
 
 function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition {
   const rand = seededRandom(seed, 7)
-  const light = pickLight(pack, rand, seed, 61)
-  const seedBase = pickBase(pack, rand, light.hex)
+  // The first draw was the light's; the plan's slot picks it now, and the rest of the composition draws as before.
+  rand()
+  const baseDraw = rand()
   // A block of 8 seeds shows three corners, three logo crops, a line and an arc, each lighting a different part of the frame.
-  const plan = blockPlan<RimKind>(pack, seed, 61, ['corner', 'corner', 'corner', 'logo', 'logo', 'logo', 'line', 'arc'])
+  const plan = blockPlan<RimKind>(seed, 61, ['corner', 'corner', 'corner', 'logo', 'logo', 'logo', 'line', 'arc'])
+  // The design above and below reads no colors; the colors only fill its roles.
+  const roles = curveRoles(pack.colors, { slot: plan.slot, baseDraw }, 'rim')
+  const { light, base, pale } = roles
   const kind = plan.kind
   const layout = rimLayout(kind, rand, aspect, plan.place)
   const shape = buildShape(layout.shape)
@@ -368,8 +366,6 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   const dragged = controls.drag ? dragLight(controls.drag, runs, aspect) : null
   const hot = dragged?.hot ?? (line ? lineExit(path, fromStart, lerp(0.08, -0.3, controls.mood)) : pointAlong(run, along(controls.mood))) ?? layout.anchor
   const home = dragged?.hot ?? pointAlong(run, along(0.5)) ?? layout.anchor
-  const accent = accentParams(packAccent(pack, light, 'rim'), pointAlong(run, along(0.5)) ?? layout.anchor, hot, aspect, controls.drag)
-  const base = packBase(seedBase, accent.base)
   const at: Vec2 = [hot[0] - layout.anchor[0], hot[1] - layout.anchor[1]]
   const gain = geo(controls.intensity, 0.35, 1, 2.8)
   // Softness from 0.3 to 1.7 (1 at the default): wider glows change more of the frame per step, so the top
@@ -381,17 +377,13 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   // Away from a line, light field 1 is a flat-top field: near full along a stretch around the hot spot, then a
   // rounded shoulder, 10 to 30 times dimmer at the far end of the curve in the frame (the rim-edge reference stays
   // at 90% for about a third of the short side and is at 10% by 0.9; its fall fits a power of about 2.8). It is
-  // sized at the default hot spot, so the Light control moves the light without resizing it. A Tan edge keeps most
-  // of its light at or above Tan's own brightness: a flatter top, a shorter fall and a glow that ends sooner, so the
-  // light ends partway along the curve instead of fading down it.
-  const bright = warmTail(light.hex) === 'bright'
-  const power = line ? lerp(1.4, 2.2, powerDraw) : bright ? FLAT_POWER : lerp(2.4, 3.2, powerDraw)
+  // sized at the default hot spot, so the Light control moves the light without resizing it. The same for every
+  // light's color, so every pack shows the same design.
+  const power = line ? lerp(1.4, 2.2, powerDraw) : lerp(2.4, 3.2, powerDraw)
   const factor = lerp(10, 30, reachDraw)
   const lineReach = lerp(0.22, 0.34, reachDraw) * Math.max(fw, fh)
-  const reach = line ? lineReach : flatRadius(run, home, factor, power) * (bright ? 0.65 : 1)
-  // A dragged Tan light fades along the line like the others instead of keeping its flat top, so the arm toward the
-  // line's end dims and the line's direction shows even with both edges lit alike.
-  const dragPower = line ? 2.4 : bright ? 3 : power
+  const reach = line ? lineReach : flatRadius(run, home, factor, power)
+  const dragPower = line ? 2.4 : power
   // A logo crop's edges catch the light where they face the way the outline faces at the default hot spot, so the
   // hot spot's own edge is always fully lit (around a hole tip the outline faces back toward the logo's middle).
   const outwardAt = (p: Vec2): number => {
@@ -411,15 +403,13 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   const spread = dragged ? offFrameSpread(controls.drag, dragged.hot, aspect) : 0
   const dragT = dragged ? Math.min(1, dragged.lineLength / 0.15) : 0
   const dragWay = dragT * dragT * (3 - 2 * dragT)
-  // A Tan corner lights both its edges alike: an edge turned away would sit at a dim Tan along its whole length.
   // Under a dragged line the edges facing its way catch more of the light, so the direction shows. A logo crop's do
   // so gently (DRAG_LOGO_FACING): its hot spot's edge often runs along the line, and at the undragged strength kept a
-  // sixth of the light. With Elemental's second light the frame stays lit and a brighter blue edge would add teal to
-  // the Lime glow, so it keeps the undragged strength.
-  const dragFacing = line ? 0 : logo ? (accent.second ? 0.85 : DRAG_LOGO_FACING) : 0.6
-  const facing = dragged ? dragFacing * dragWay : bright ? 0 : logo ? 0.85 : 0
-  // A line runs through the pack's colors along its length (lineHues) and dims the way its warm color does.
-  const lineRun = line ? lineHues(pack, light) : { hues: [light], dims: null }
+  // sixth of the light.
+  const dragFacing = line ? 0 : logo ? DRAG_LOGO_FACING : 0.6
+  const facing = dragged ? dragFacing * dragWay : logo ? 0.85 : 0
+  // A line runs through the colors along its length (lineHues) and dims the way its warm color does.
+  const lineRun = line ? roles.line : { hues: [light], dims: null }
   const drift = warmDrift((lineRun.dims ?? light).hex)
   // A line's bright end and its direction out of the frame there, and where its two visible ends sit along the line
   // (0 to 1 from one end of the long segment to the other).
@@ -431,7 +421,6 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     return 0.5 + ((p[0] - layout.anchor[0]) * Math.cos(r) + (p[1] - layout.anchor[1]) * Math.sin(r)) / layout.shape.size
   }
   const turns = lineRun.hues.length > 1
-  const warmLine = line && !turns && warmTail(light.hex) === 'deep red'
   // The other side of a turning line's glow takes the next color at the light's luminance (the pale share keeps it),
   // which overexposes a darker color: Meta Blue beside Cyan, Orange-red beside Yellow. Scaled to the next color's
   // own level with the light's largest channel, as along the line, and never above the light's luminance.
@@ -465,15 +454,14 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     aspect: 1,
     rotate: round4(layout.shape.rotate),
     flip: layout.shape.flip,
-    // A line turns through the pack's colors from its bright end to its far end (contour-light-line).
+    // A line turns through the colors from its bright end to its far end (contour-light-line).
     ...hueStops,
     ...productionParts('', {
       side: layout.oneSided ? 1 : 0,
       soften,
       // The rim-edge reference's face is a dim navy (Oklab L about 0.22) that darkens away from the edge and the
-      // corner. A Tan face stays dark: a wide dim Tan fill reads grey-brown.
-      // A Meta Blue light's face is brighter (packAccent), so the air inside the edge shows the pack.
-      face: layout.oneSided && !bright ? round4(0.035 * (accent.pale ? accent.faceGain : accent.haze)) : 0,
+      // corner. The same for every light's color, so every pack shows the same design.
+      face: layout.oneSided ? 0.035 : 0,
       glow: line ? 0.006 : 0.005,
       fan: line ? 4 : 1.5,
     }),
@@ -482,36 +470,19 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     ...(line
       ? { n2Weight: 0.55, n2Shape: 3, n2Grow: 1, n2GrowBy: [6.5, 1], n3Weight: 2, f1Grow: 1, f1GrowBy: [2, 1], f1Weight: 0.12, f1Width: 0.02 }
       : {}),
-    // A Yellow or Orange-red line's cone is a different hue on each side (the light-line reference: orange on one
-    // side, red on the other): the hot core's part becomes the second side's cone, tinted toward Orange-red for
-    // Yellow and toward orange for Orange-red.
-    ...(warmLine
-      ? {
-          n2Side: 1,
-          n3Weight: 0.55,
-          n3Width: 0.006,
-          n3Shape: 3,
-          n3Side: 2,
-          n3Light: 1,
-          n3LightGamma: 1.2,
-          n3Grow: 1,
-          n3GrowBy: [6.5, 1],
-          n3Tint: light.hex.toUpperCase() === '#FFD61E' ? [1, 0.35, 0.1] : [1, 4, 1],
-        }
-      : {}),
     ...(drift ? { drift: drift.ratios, driftShape: [drift.knee, drift.sharpness] } : {}),
-    // A turning line's other side takes its next color (slot 4); a Meta Blue light's pale side its pack's pale color.
-    pale: turns ? 4 : accent.pale ? 5 : 0,
+    // A line's other side takes its next color (slot 4, its own where it doesn't turn); a Meta Blue light's pale side
+    // its pale color (slot 5, curveRoles).
+    pale: line ? 4 : pale.color ? 5 : 0,
     // The core line leans toward the pale color; the color band beside it only as a band's body does and less, so
     // the edge keeps the light's own color.
-    ...(accent.pale ? { n1Pale: accent.line, n2Pale: accent.band, n3Pale: accent.core, f1Pale: accent.air, f2Pale: accent.air, f3Pale: accent.face } : {}),
-    // Where a Meta Blue light is strongest it lights the air about the edge in its pack's pale color (packAccent).
-    ...(accent.mist ? { f2Width: accent.mist.width, f2Weight: accent.mist.weight, f2Pale: accent.mist.pale } : {}),
-    // A line that turns through colors opens like a flame toward its bright end, with the light's own color on one
-    // side and the next color (the pale slot) on the other, as contour-light-line is yellow on one side and red on
-    // the other. Where the two meet, the core line adds to both, so the meeting is lighter than either. The haze
-    // splits the same way and follows the light along the line, so the dim end is a thin line.
-    ...(turns
+    ...(pale.color ? { n1Pale: pale.line, n2Pale: pale.band, n3Pale: pale.core, f1Pale: pale.air, f2Pale: pale.air, f3Pale: pale.face } : {}),
+    // Every line opens like a flame toward its bright end, so every pack shows the same design; one that turns
+    // through colors has the light's own color on one side and the next color (the pale slot) on the other, as
+    // contour-light-line is yellow on one side and red on the other. Where the two meet, the core line adds to both, so
+    // the meeting is lighter than either. The haze splits the same way and follows the light along the line, so the
+    // dim end is a thin line.
+    ...(line
       ? {
           n1Pale: 0,
           n2Weight: FLAME_WEIGHT,
@@ -547,62 +518,20 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
           f3Pale: 0,
         }
       : {}),
-    ...accent.params,
-    ...offFrameGlow(controls.drag, light.hex, aspect, accent.edge),
-    // A Tan edge's glow is two bands side by side just inside the edge, a flat stretch a little above Tan's level
-    // that ends in a short rounded fall (the Halo's Tan bands at a rim's scale); a Tan line's are one either side.
-    ...(bright
-      ? line
-        ? {
-            n2Shape: 8,
-            n2Weight: 1.2,
-            n2Width: 0.008,
-            n2Side: 0,
-            n2Offset: 0.008,
-            n2Grow: 0,
-            n3Shape: 8,
-            n3Weight: 1.2,
-            n3Width: 0.008,
-            n3Side: 0,
-            n3Offset: -0.008,
-            n3Light: 1,
-            n3LightGamma: 1,
-            f1Weight: 0.02,
-            f2Weight: 0.02,
-          }
-        : {
-            n2Shape: 8,
-            n2Weight: 1.4,
-            n2Width: 0.008,
-            n2Offset: 0.008,
-            n2Grow: 0,
-            n3Shape: 8,
-            n3Weight: 1.4,
-            n3Width: 0.008,
-            n3Offset: 0.021,
-            n3Side: 1,
-            n3Light: 1,
-            n3LightGamma: 1,
-            f1Weight: 0.02,
-            f2Weight: 0.02,
-          }
-      : {}),
+    ...offFrameGlow(controls.drag, light.hex, aspect, pale.edge),
     facing: round4(facing),
     facingAngle: round4(dragged ? dragged.lineAngle : toward),
     facingPower: FACING_POWER,
     farWidth: 0.01,
     // Along a dragged line the light is at the look's far end (10 to 30 times dimmer) where the line ends. A line of
     // light fades slowly from its bright end: full at the frame edge, then e times dimmer every 0.35 of the long side.
-    // A Tan line keeps the flat top: near full from its bright end, then a short fall.
-    light1Kind: dragged ? 6 : line && !bright ? 4 : 5,
+    light1Kind: dragged ? 6 : line ? 4 : 5,
     light1At: at.map(round4),
-    light1Radius: round4(
-      dragged ? Math.hypot(dragReach / Math.log(factor) ** (1 / dragPower), spread) : line ? (bright ? lineReach : 0.04) : reach,
-    ),
-    light1Power: round4(dragged ? dragPower : line && bright ? FLAT_POWER : power),
+    light1Radius: round4(dragged ? Math.hypot(dragReach / Math.log(factor) ** (1 / dragPower), spread) : line ? 0.04 : reach),
+    light1Power: round4(dragged ? dragPower : power),
     ...(dragged
       ? { light1Length: round4(lerp(1, 0.35, dragWay)), light1Stretch: round4(lerp(1, 0.75, dragWay)), light1Angle: round4(dragged.lineAngle) }
-      : line && !bright
+      : line
         ? { light1Length: round4(0.35 * Math.max(fw, fh)), light1Angle: round4(lineOut) }
         : {}),
     light2Kind: 1,
@@ -620,13 +549,20 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     gain: round4(gain),
     soften: round4(soften),
   }
+  // Tan shows little of its haze (dimShare) and keeps no face: a dim Tan fill over the dark reads grey-brown, and
+  // with a Forest face the two mix olive.
+  const dim = dimShare((lineRun.dims ?? light).hex)
+  if (dim < 1) {
+    for (const key of ['f1Weight', 'f2Weight']) params[key] = round4(Number(params[key] ?? 0) * dim)
+    params.f3Weight = 0
+  }
   const colors = [
     '#000000',
     light.hex,
     base.gain > 0 ? base.hex : '#000000',
-    lineRun.hues[1]?.hex ?? '#000000',
-    accent.pale ?? '#000000',
-    accent.second ?? '#000000',
+    lineRun.hues[1]?.hex ?? (line ? light.hex : '#000000'),
+    pale.color?.hex ?? '#000000',
+    '#000000',
     lineRun.hues[2]?.hex ?? '#000000',
     lineRun.hues[3]?.hex ?? '#000000',
   ]

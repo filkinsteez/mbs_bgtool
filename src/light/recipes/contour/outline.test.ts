@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { PACKS } from '../../color/packs'
+import { PACKS, type ColorPack } from '../../color/packs'
+import { compositionProblems } from '../../compose'
 import { recipeContext, resolveScene, type SceneInput } from '../../engine/resolve'
 import iridescentRings from '../../presets/references/contour-iridescent-rings.json'
 import lightLine from '../../presets/references/contour-light-line.json'
@@ -102,4 +103,37 @@ describe('contour outlines fit their layout and stay closed', () => {
     }
     expect(problems).toEqual([])
   })
+})
+
+/** The params that place the shape and its light: the design, which no color may change (owner, 2026-11-09). */
+const DESIGN_KEYS = /^(shape|at|size|angle|aspect|rotate|flip|ring\dOn|ring\d(Shape|At|Radius|Aspect|Sweep|Rotate|Flip)|light\d\w+|facing\w*|gain|soften|air1(Line|Level|Falloff|Power))$/
+
+/** Each pack's colors as given, without Meta Blue, in reverse order, and two of them. */
+const COLOR_LISTS: ColorPack[] = PACKS.flatMap((pack) => [
+  pack,
+  { ...pack, colors: pack.colors.filter((c) => c.hex !== '#0064E0') },
+  { ...pack, colors: [...pack.colors].reverse() },
+  { ...pack, colors: [pack.colors[1], pack.colors[pack.colors.length - 1]] },
+])
+
+describe('Rim and Halo keep their design whatever colors fill it', () => {
+  const owner = { from: [1.011, 1.224] as [number, number], to: [-0.078, -0.067] as [number, number] }
+  for (const { recipe } of CASES) {
+    it(`${recipe.id}: the same shape, place and light for every color list, and only the colors given`, () => {
+      const problems: string[] = []
+      for (const aspect of [16 / 9, 9 / 16])
+        for (const drag of [undefined, owner])
+          for (const seed of SEEDS.slice(0, 16)) {
+            const designs = COLOR_LISTS.map((pack) => {
+              const composition = recipe.compose!({ pack, controls: { intensity: 0.5, softness: 0.5, mood: 0.5, ...(drag ? { drag } : {}) }, seed, aspect })
+              for (const problem of compositionProblems(recipe, pack, composition)) problems.push(`${pack.id} ${pack.colors.length} colors seed ${seed}: ${problem}`)
+              return JSON.stringify(Object.entries(composition.params).filter(([key]) => DESIGN_KEYS.test(key)).sort(([a], [b]) => a.localeCompare(b)))
+            })
+            designs.forEach((design, i) => {
+              if (design !== designs[0]) problems.push(`${COLOR_LISTS[i].id} ${COLOR_LISTS[i].colors.map((c) => c.name).join(', ')}: seed ${seed} ${aspect.toFixed(3)}${drag ? ' dragged' : ''}`)
+            })
+          }
+      expect(problems.slice(0, 20)).toEqual([])
+    }, 60_000)
+  }
 })
