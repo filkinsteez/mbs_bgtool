@@ -162,7 +162,8 @@ vec3 radiance(vec2 uv, vec2 p) {
       // Bold), so the two edge colors never overlap into mint or aqua. Each edge color dims along its own path.
       float D = mix(B.z, B.w, smoothstep(0.0, 1.0, t));
       float o = G.z < 0.0 ? -s : s;
-      float coreW = exp(-0.5 * pow(o / max(0.5 * D, 1e-4), 2.0));
+      float oc = o / max(0.5 * D, 1e-4);
+      float coreW = exp(-0.5 * oc * oc);
       vec3 edge = vec3(1.0);
       for (int k = 0; k < 4; k++) {
         if (k >= uComps) break;
