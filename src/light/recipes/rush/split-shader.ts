@@ -255,10 +255,23 @@ vec3 radiance(vec2 uv, vec2 p) {
   // the light really falls.
   vec3 leadSum = vec3(0.0);
   float leadW = 0.0;
+  float l1 = 0.0;
+  float l2 = 0.0;
+  vec3 h1 = vec3(1.0);
+  vec3 h2 = vec3(1.0);
   for (int i = 0; i < MAX_LIGHTS; i++) {
     if (i >= uLights) break;
     if (lum[i] <= 1e-7) continue;
     vec3 h = col[i] >= 0 ? dimHue(col[i], clamp(total / max(peak[i], 1e-4), 0.0, 1.0)) : fixedHue[i];
+    if (lum[i] > l1) {
+      l2 = l1;
+      h2 = h1;
+      l1 = lum[i];
+      h1 = h;
+    } else if (lum[i] > l2) {
+      l2 = lum[i];
+      h2 = h;
+    }
     // A lead streak's core shines where its light leads, so it never lays blue over Orange-red (pink).
     if (coreLum[i] > 0.0) {
       vec3 own = compColor(col[i]);
@@ -275,6 +288,23 @@ vec3 radiance(vec2 uv, vec2 p) {
     leadW += w;
   }
   vec3 leadHue = leadW > 0.0 ? leadSum / leadW : vec3(1.0);
+  // Where two different hues meet at nearly the same strength, they would mix into a third (Cyan and Orange-red to
+  // pink, Meta Blue and Orange-red to magenta). Where the light is up, each side keeps its own hue and whitens toward
+  // the meeting the way hot light does, a warm hue through pale yellow and a cool one through pale cyan (never through
+  // salmon). Only the hue changes, so the light and the design are the same in every pack.
+  float meet = smoothstep(0.8, 1.0, l2 / max(l1, 1e-5));
+  float lit = smoothstep(0.15, 0.45, total);
+  // Only hues far apart around the color wheel mix into a third; near ones (Yellow and Orange-red) mix to their own
+  // in-between.
+  vec3 n1 = h1 / max(luminance(h1), 1e-5);
+  vec3 n2 = h2 / max(luminance(h2), 1e-5);
+  vec2 c1 = vec2(n1.r - n1.g, 0.5 * (n1.r + n1.g) - n1.b);
+  vec2 c2 = vec2(n2.r - n2.g, 0.5 * (n2.r + n2.g) - n2.b);
+  float clash = (1.0 - smoothstep(-0.3, 0.2, dot(c1, c2) / max(length(c1) * length(c2), 1e-5))) * smoothstep(0.05, 0.3, min(length(c1), length(c2)));
+  float warmth = clamp((n1.r - n1.b) / max(n1.r + n1.b, 1e-5), -1.0, 1.0);
+  vec3 hotWhite = mix(vec3(0.85, 0.97, 1.0), vec3(1.0, 0.9, 0.6), 0.5 + 0.5 * warmth);
+  vec3 own = mix(leadHue / max(luminance(leadHue), 1e-5), n1, clash * lit);
+  leadHue = mix(own, hotWhite / luminance(hotWhite), meet * clash * lit);
   vec3 sum = leadHue / max(luminance(leadHue), 1e-5) * total;
   // A soft shoulder on the streaks' light, below the level where the tone curve turns a near-white color (Ice) flat
   // white, while saturated colors still whiten at their cores. White streaks' cores come on top and reach white.
