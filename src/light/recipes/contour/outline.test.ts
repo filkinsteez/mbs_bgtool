@@ -7,10 +7,10 @@ import lightLine from '../../presets/references/contour-light-line.json'
 import rimEdge from '../../presets/references/contour-rim-edge.json'
 import yellowHalo from '../../presets/references/contour-yellow-halo.json'
 import type { ControlValues, ParamValue, RecipeContext, RecipeDefinition } from '../../scene'
-import { outlinePieces, SHAPE_KINDS, type CurveLightLayout, type EmitterSettings, type PackedPrimitive } from './curveLight'
+import { buildShape, outlinePieces, SHAPE_KINDS, type CurveLightLayout, type EmitterSettings, type PackedPrimitive } from './curveLight'
 import { contourHalo, HALO_LAYOUT, haloEmitters } from './halo'
 import { contourRim, RIM_LAYOUT, rimEmitters } from './rim'
-import { primitivePoint } from './shapes'
+import { primitiveLength, primitivePoint } from './shapes'
 
 const ASPECTS = [16 / 9, 9 / 16, 1, 4 / 5]
 const SEEDS = Array.from({ length: 40 }, (_, i) => i + 1)
@@ -102,6 +102,38 @@ describe('contour outlines fit their layout and stay closed', () => {
       }
     }
     expect(problems).toEqual([])
+  })
+})
+
+describe('a sharp tip of an outline', () => {
+  it('sends no light of its own within the dark stretch, and full light past the fade', () => {
+    const shape = buildShape({ kind: 'corner', size: 0.03, angle: 70, aspect: 1, rotate: 0, flip: false })
+    const contour = shape.contours[0]
+    const total = contour.primitives.reduce((sum, p) => sum + primitiveLength(p), 0)
+    // The corner's vertex is halfway along its contour.
+    let left = total / 2
+    let tip = primitivePoint(contour.primitives[0], 0)
+    for (const p of contour.primitives) {
+      const l = primitiveLength(p)
+      if (left <= l) {
+        tip = primitivePoint(p, l > 0 ? left / l : 0)
+        break
+      }
+      left -= l
+    }
+    const stops = [{ t: 0, color: [1, 1, 1], gain: 1 }]
+    const pieces = outlinePieces({ shape, stops, fades: [{ contour: 0, t: 0.5, dark: 0.04, fade: 0.12 }] }).filter((p) => p.contour === 0 && p.kind !== 3)
+    const ends = pieces.flatMap((p) => [
+      { at: primitivePoint(p.primitive, 0), light: Math.max(...p.e0) },
+      { at: primitivePoint(p.primitive, 1), light: Math.max(...p.e1) },
+    ])
+    const from = (at: readonly number[]) => Math.hypot(at[0] - tip[0], at[1] - tip[1])
+    const near = ends.filter((e) => from(e.at) < 0.035)
+    const far = ends.filter((e) => from(e.at) > 0.17)
+    expect(near.length).toBeGreaterThan(0)
+    expect(far.length).toBeGreaterThan(0)
+    for (const e of near) expect(e.light).toBe(0)
+    for (const e of far) expect(e.light).toBeCloseTo(1, 6)
   })
 })
 

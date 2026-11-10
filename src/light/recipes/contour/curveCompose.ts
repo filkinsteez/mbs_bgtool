@@ -575,11 +575,14 @@ export function productionParts(prefix: string, light: ProductionLight): Record<
     // The core line fades more slowly than the glow, so it shows along the whole edge (the rim-edge reference's
     // 1 px line is all that is left at its far end).
     n1LightGamma: 0.5,
-    // A narrow band of full color beside the pale core, falling off quickly into the face (the rim-edge reference
-    // is at Oklab L 0.82, 0.56 and 0.28 at 0.01, 0.02 and 0.04 of the short side from the edge near its corner).
+    // The edge's light landing on the face beside it, at a grazing angle: Lambert's cosine and the inverse square from
+    // every point of the edge, a light FACE_HEIGHT above the face's plane, is flat for about the height and then falls
+    // as 1 / distance^2. p = 2 has the same half width and falls as 1 / distance^4 past it, which keeps the part's
+    // reach short (p = 1 drew every piece of the outline out to about 0.6 of the short side and made Rim 55% slower);
+    // past about 0.02 of the short side the face's even fill (f3) takes over, as in the rim-edge reference.
     n2Weight: 0.9,
-    n2Width: round6(light.glow ?? 0.005),
-    n2Shape: 8,
+    n2Width: round6(FACE_HEIGHT / FACE_HALF_WIDTH_P2),
+    n2Shape: 2,
     n2Side: light.side,
     n2Light: 1,
     n2LightGamma: 1.2,
@@ -596,9 +599,12 @@ export function productionParts(prefix: string, light: ProductionLight): Record<
     n3LightGamma: 2,
     // With a pale color (curveRoles), the hot core takes it; the recipe sets the core line's and color band's shares.
     n3Pale: 1,
-    f1Weight: 0.06,
+    // The haze around the edge, on both sides (the air in front of the face too): every point of the edge glows in
+    // it as e^(-r / reach) / r (clAirlightWeights), with rim-edge's reach.
+    f1Weight: HAZE_GLOW,
     f1Width: round6(light.haze ?? 0.024),
-    f1Side: light.side,
+    f1Airlight: HAZE_REACH,
+    f1Side: 0,
     f1Light: 1,
     f1LightGamma: 1,
     f2Weight: 0.05,
@@ -610,6 +616,14 @@ export function productionParts(prefix: string, light: ProductionLight): Record<
   Object.assign(parts, { f3Weight: round4(light.face), f3Width: 0.35, f3Side: 1, f3Light: 2, f3LightGamma: 0.6 })
   return Object.fromEntries(Object.entries(parts).map(([key, value]) => [`${prefix}${key}`, value]))
 }
+
+/** Height of a rim's light above the face's plane, short sides (the grazing light on the face, productionParts). */
+const FACE_HEIGHT = 0.006
+/** Half width of the p = 2 near kernel across a straight emitter, in units of its width: 2 sqrt(sqrt(2) - 1). */
+const FACE_HALF_WIDTH_P2 = 1.2872
+/** Reach of the haze glow around an edge (rim-edge's dark side, fitted on the scatter rungs) and its level. */
+const HAZE_REACH = 0.028
+const HAZE_GLOW = 0.08
 
 const prefixed = (prefix: string, values: Record<string, number | number[]>) =>
   Object.fromEntries(Object.entries(values).map(([key, value]) => [`${prefix}${key}`, value]))
@@ -757,11 +771,13 @@ const DRAG_SOFTNESS = 0.12
  * when `from` passes between two parts of the outline; the outline's direction there is averaged the same way. A line
  * straight across the outline lights both ways alike, so the direction can flip there without a jump. Also the
  * line's own direction (degrees) and length (short-side units). Null when no part of the outline is in the frame.
+ * `weight` (0..1 per outline point) lets a look keep the hot spot off some points without a jump.
  */
 export function dragLight(
   drag: { from: readonly number[]; to: readonly number[] },
   runs: readonly (readonly Vec2[])[],
   aspect: number,
+  weight?: (p: Vec2) => number,
 ): { hot: Vec2; angle: number; length: number; back: number; lineAngle: number; lineLength: number } | null {
   const [fw, fh] = frameSize(aspect)
   const from: Vec2 = [(drag.from[0] - 0.5) * fw, (drag.from[1] - 0.5) * fh]
@@ -781,7 +797,7 @@ export function dragLight(
   let c2 = 0
   let s2 = 0
   for (const { p, d, tangent } of points) {
-    const w = Math.exp(-(d - nearest) / DRAG_SOFTNESS)
+    const w = Math.exp(-(d - nearest) / DRAG_SOFTNESS) * (weight ? weight(p) : 1)
     if (w < 1e-6) continue
     wx += w * p[0]
     wy += w * p[1]

@@ -52,7 +52,7 @@ import {
   type ShapeKind,
   type ShapeSettings,
 } from './curveLight'
-import { META_LOGO_LANDMARKS, META_LOGO_PARTS, windingNumber, type Vec2 } from './shapes'
+import { META_LOGO_LANDMARKS, META_LOGO_PARTS, primitiveLength, primitivePoint, primitiveTangent, windingNumber, type Primitive, type Shape, type Vec2 } from './shapes'
 
 const COLORS = 8
 const STOPS = 6
@@ -81,6 +81,20 @@ const FLAME_WEIGHT = 1
 const FLAME_HAZE = 0.18
 /** How far (short sides) the two sides of a turning line's glow reach across it into each other. */
 const FLAME_SIDE_SOFT = 0.02
+/**
+ * No light on a pinch point (the owner, 2026-11-09): where an outline turns more than TIP_TURN within TIP_SPAN of its
+ * length (about one lens radius), as the logo's hole tips, its notch and a tight corner do, its own light goes out
+ * before the tip: none within TIP_DARK of it along the outline, full from TIP_DARK + TIP_FADE on (both times the
+ * Softness width), so the tip and the glow about it stay unlit while every lit point still adds its light. The hot spot
+ * keeps TIP_CLEAR from every tip: the Light control runs it along the longest stretch clear of them, and a drag that
+ * starts nearest a tip puts it on the nearest clear point. Up to TIPS tips in or near the frame.
+ */
+const TIP_TURN = (60 * Math.PI) / 180
+const TIP_SPAN = 0.08
+const TIP_DARK = 0.04
+const TIP_FADE = 0.12
+const TIP_CLEAR = 0.2
+const TIPS = 4
 const luminance = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 // The whole Meta logo outline (104 pieces, 3 contours) plus a cut at every stop in each contour must fit:
 // pieces past the limit are dropped, and the inside test then flips inside and outside in horizontal bands.
@@ -101,6 +115,10 @@ const params: ParamSpec[] = [
   { kind: 'vector', key: 'stopColor2', label: 'Stops 4-6 color slot', min: 1, max: COLORS, step: 1, default: [2, 2, 2] },
   { kind: 'vector', key: 'stopGain', label: 'Stops 1-3 gain', min: 0, max: 20, step: 0.001, default: [1, 1, 1] },
   { kind: 'vector', key: 'stopGain2', label: 'Stops 4-6 gain', min: 0, max: 20, step: 0.001, default: [1, 1, 1] },
+  { kind: 'vector', key: 'tipAt', label: 'Sharp tips along their contours, where the light goes out (0..1, -1 none)', min: -1, max: 1, step: 0.0001, default: [-1, -1, -1, -1] },
+  { kind: 'vector', key: 'tipContour', label: 'Contours of the sharp tips', min: 0, max: 8, step: 1, default: [0, 0, 0, 0] },
+  { kind: 'number', key: 'tipDark', label: 'Unlit stretch either side of a tip', min: 0, max: 1, step: 0.0005, default: 0 },
+  { kind: 'number', key: 'tipFade', label: 'Fade before the unlit stretch', min: 0, max: 1, step: 0.0005, default: 0 },
   ...nearParams('n1', 'Core', { Weight: 2.5, Width: 0.0008, Shape: 8, Light: 2 }),
   ...nearParams('n2', 'Glow', { Weight: 0.7, Width: 0.004, Shape: 3, Side: 1, Light: 1, Grow: 2, GrowBy: [1.5, 2] }),
   ...nearParams('n3', 'Near part 3'),
@@ -334,6 +352,87 @@ function lineExit(path: readonly Vec2[], fromStart: boolean, shift: number): Vec
 
 const dist = (a: Vec2, b: Vec2) => Math.hypot(a[0] - b[0], a[1] - b[1])
 
+/**
+ * The sharp tips of a shape placed at `anchor` (short-side units from the frame center): each contour's points where
+ * its direction turns more than TIP_TURN between TIP_SPAN / 2 before and after, one tip at the middle of each such
+ * stretch, as the contour (index) and fraction (0..1) along it and as a point. The tips within reach of the frame,
+ * nearest the frame center first.
+ */
+export function outlineTips(shape: Shape, anchor: Vec2, aspect: number): { contour: number; t: number; at: Vec2 }[] {
+  const [fw, fh] = frameSize(aspect)
+  const reach = TIP_CLEAR
+  const tips: { contour: number; t: number; at: Vec2 }[] = []
+  for (const [contour, c] of shape.contours.entries()) {
+    const samples: { s: number; angle: number }[] = []
+    let total = 0
+    for (const p of c.primitives) {
+      const l = primitiveLength(p)
+      const steps = Math.max(1, Math.ceil(l / 0.004))
+      for (let i = 0; i < steps; i++) {
+        const d = primitiveTangent(p, i / steps)
+        samples.push({ s: total + (l * i) / steps, angle: Math.atan2(d[1], d[0]) })
+      }
+      total += l
+    }
+    const n = samples.length
+    if (n < 3 || total <= 0) continue
+    // The direction along the contour without its jumps of a full turn; on a closed contour one lap adds `lap`.
+    const wrapPi = (a: number) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI))
+    const angle = [samples[0].angle]
+    for (let i = 1; i < n; i++) angle.push(angle[i - 1] + wrapPi(samples[i].angle - samples[i - 1].angle))
+    const lap = angle[n - 1] + wrapPi(samples[0].angle - samples[n - 1].angle) - angle[0]
+    const step = TIP_SPAN / 2 / (total / n)
+    const directionAt = (k: number): number | null => {
+      if (c.closed) return angle[((k % n) + n) % n] + lap * Math.floor(k / n)
+      return k >= 0 && k < n ? angle[k] : null
+    }
+    const sharp = samples.map((_, i) => {
+      const before = directionAt(Math.round(i - step))
+      const after = directionAt(Math.round(i + step))
+      return before !== null && after !== null && Math.abs(after - before) > TIP_TURN
+    })
+    // Stretches of sharp samples (a closed contour's may wrap past its start), each a tip at its middle.
+    const first = c.closed ? sharp.findIndex((v) => !v) : 0
+    if (first < 0) continue
+    for (let k = 0; k < n; ) {
+      const i = (first + k) % n
+      if (!sharp[i]) {
+        k++
+        continue
+      }
+      let length = 0
+      while (k + length < n && sharp[(first + k + length) % n]) length++
+      const mid = samples[(first + k + Math.floor(length / 2)) % n].s
+      const point = pointOnContour(c.primitives, mid)
+      const at: Vec2 = [point[0] + anchor[0], point[1] + anchor[1]]
+      if (Math.abs(at[0]) <= fw / 2 + reach && Math.abs(at[1]) <= fh / 2 + reach) tips.push({ contour, t: mid / total, at })
+      k += length
+    }
+  }
+  return tips.sort((a, b) => Math.hypot(a.at[0], a.at[1]) - Math.hypot(b.at[0], b.at[1])).slice(0, TIPS)
+}
+
+/** The pieces of a run of points where `keep` holds, in order. */
+function stretches(run: readonly Vec2[], keep: (p: Vec2) => boolean): Vec2[][] {
+  const out: Vec2[][] = [[]]
+  for (const p of run) {
+    if (keep(p)) out[out.length - 1].push(p)
+    else if (out[out.length - 1].length) out.push([])
+  }
+  return out
+}
+
+/** The point `s` along a chain of primitives (short sides from its start). */
+function pointOnContour(primitives: readonly Primitive[], s: number): Vec2 {
+  let at = 0
+  for (const p of primitives) {
+    const l = primitiveLength(p)
+    if (s <= at + l || p === primitives[primitives.length - 1]) return primitivePoint(p, l > 0 ? Math.min(1, Math.max(0, (s - at) / l)) : 0)
+    at += l
+  }
+  return [0, 0]
+}
+
 function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition {
   const rand = seededRandom(seed, 7)
   // The first draw was the light's; the plan's slot picks it now, and the rest of the composition draws as before.
@@ -354,18 +453,37 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   const line = layout.shape.kind === 'line'
   const logo = layout.shape.kind === 'logo'
   const corner = layout.shape.kind === 'corner'
-  // Other shapes follow the longest piece inside the frame; a corner's hot spot starts at its vertex end.
+  // Other shapes follow the longest piece inside the frame; a corner's hot spot starts at its vertex end. The hot
+  // spot keeps clear of the outline's sharp tips (outlineTips): it moves along the longest stretch clear of them.
   const runs = line ? [path] : visibleRuns(shape, layout.anchor, aspect)
   const run = line ? path : longestRun(runs)
-  const vertexFirst = run.length > 1 && dist(run[0], layout.anchor) <= dist(run[run.length - 1], layout.anchor)
+  const tips = line ? [] : outlineTips(shape, layout.anchor, aspect)
+  const clear = (p: Vec2) => tips.every((tip) => dist(tip.at, p) >= TIP_CLEAR)
+  // Where tips cut the run into stretches, the seed picks one at least half as long as the longest and shifts the Light
+  // control's range along it, so crops lit beside a tip don't all put their light the same way (a draw of its own:
+  // the others stay).
+  const clearStretches = stretches(run, clear).filter((s) => s.length > 1)
+  const longestClear = longestRun(clearStretches)
+  const choices = clearStretches.filter((s) => s.length >= longestClear.length / 2)
+  const spot = seededRandom(seed, 41)
+  const lit = choices.length > 1 ? choices[Math.min(choices.length - 1, Math.floor(spot() * choices.length))] : longestClear
+  const smooth = lit.length > 1 ? lit : run
+  const vertexFirst = smooth.length > 1 && dist(smooth[0], layout.anchor) <= dist(smooth[smooth.length - 1], layout.anchor)
   const start = corner ? vertexFirst : fromStart
-  const along = (mood: number) => (start ? lerp(0, 0.5, mood) : lerp(1, 0.5, mood))
+  const shift = lit.length > 1 && lit.length < run.length ? lerp(0, 0.5, spot()) : 0
+  const along = (mood: number) => (start ? lerp(shift, shift + 0.5, mood) : lerp(1 - shift, 0.5 - shift, mood))
   // A dragged line puts the hot spot on the outline nearest its start and runs the light along the outline its
   // way (SHARED.md, "Dragging the light"); the Light control then doesn't move it again. Without one, a line is
-  // brightest where it leaves the frame and the Light control moves that end inward.
-  const dragged = controls.drag ? dragLight(controls.drag, runs, aspect) : null
-  const hot = dragged?.hot ?? (line ? lineExit(path, fromStart, lerp(0.08, -0.3, controls.mood)) : pointAlong(run, along(controls.mood))) ?? layout.anchor
-  const home = dragged?.hot ?? pointAlong(run, along(0.5)) ?? layout.anchor
+  // brightest where it leaves the frame and the Light control moves that end inward. Outline points near a sharp tip
+  // count less in where a drag's hot spot sits (fading in from half of TIP_CLEAR to TIP_CLEAR), so as the line's start
+  // passes a tip the hot spot moves smoothly from one arm to the other instead of jumping.
+  const awayFromTips = (p: Vec2) => {
+    const t = Math.min(1, Math.max(0, (Math.min(Infinity, ...tips.map((tip) => dist(tip.at, p))) / TIP_CLEAR - 0.5) * 2))
+    return 0.02 + 0.98 * t * t * (3 - 2 * t)
+  }
+  const dragged = controls.drag ? dragLight(controls.drag, runs, aspect, tips.length ? awayFromTips : undefined) : null
+  const hot = dragged?.hot ?? (line ? lineExit(path, fromStart, lerp(0.08, -0.3, controls.mood)) : pointAlong(smooth, along(controls.mood))) ?? layout.anchor
+  const home = dragged?.hot ?? pointAlong(smooth, along(0.5)) ?? layout.anchor
   const at: Vec2 = [hot[0] - layout.anchor[0], hot[1] - layout.anchor[1]]
   const gain = geo(controls.intensity, 0.35, 1, 2.8)
   // Softness from 0.3 to 1.7 (1 at the default): wider glows change more of the frame per step, so the top
@@ -394,7 +512,7 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
   }
   // Without a drag the facing stays the seed's, so the Light control moves the light along the outline, not the side
   // it shines from.
-  const seedHome = pointAlong(run, along(0.5)) ?? layout.anchor
+  const seedHome = pointAlong(smooth, along(0.5)) ?? layout.anchor
   const toward = logo ? outwardAt(seedHome) : (Math.atan2(at[1], at[0]) * 180) / Math.PI
   // A dragged line sets the light's direction and reach: the light runs from the hot spot along the line and has
   // reached the dark at its end, edges facing the line's way catch it, and the hot spot grows with the line. A very
@@ -456,6 +574,11 @@ function composeRim({ pack, controls, seed, aspect }: ComposeInput): Composition
     flip: layout.shape.flip,
     // A line turns through the colors from its bright end to its far end (contour-light-line).
     ...hueStops,
+    // The light goes out before each sharp tip (outlineTips); the unlit stretch widens with the glow.
+    tipAt: Array.from({ length: TIPS }, (_, i) => (tips[i] ? round4(tips[i].t) : -1)),
+    tipContour: Array.from({ length: TIPS }, (_, i) => tips[i]?.contour ?? 0),
+    tipDark: round4(TIP_DARK * soften),
+    tipFade: round4(TIP_FADE * soften),
     ...productionParts('', {
       side: layout.oneSided ? 1 : 0,
       soften,
@@ -612,11 +735,16 @@ export function rimEmitters(ctx: RecipeContext): EmitterSettings[] {
     flip: ctx.bool('flip'),
   })
   const stops = readStops(ctx)
+  const tipContour = ctx.vec('tipContour')
+  const fades = ctx
+    .vec('tipAt')
+    .flatMap((t, i) => (t >= 0 ? [{ contour: Math.round(tipContour[i]), t, dark: ctx.num('tipDark'), fade: ctx.num('tipFade') }] : []))
   return [
     {
       shape,
       anchor: ctx.vec('at'),
       stops,
+      fades,
       // The drift measures against the first stop's color, the light's own at a line's bright end.
       own: stops[0]?.color,
       near: [1, 2, 3].map((i) => readNear(ctx, `n${i}`, soften, gain)),

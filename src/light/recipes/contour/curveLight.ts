@@ -571,6 +571,15 @@ vec3 clLine(int e, vec2 q, float sigma, bool ownColor) {
   return acc / (4.0 * sigma * ${literal(Math.sqrt(Math.PI) * gammaRatio(8))});
 }
 
+// Weights for the four scatter blurs of a thin emitter, each a gaussian of width sigmas[i] across it with peak 1, whose
+// sum is the emitter's light in the haze around it with that reach: every point of the emitter glows as
+// e^(-r / reach) / r, which across a straight emitter is K0(distance / reach), and a gaussian of width s takes
+// e^(-s^2 / (2 reach^2)) per step of the ladder. Normalized to a sum of 1, so the glow peaks at 1 across the emitter.
+vec4 clAirlightWeights(vec4 sigmas, float reach) {
+  vec4 w = exp(-0.5 * sigmas * sigmas / max(reach * reach, 1e-12));
+  return w / max(dot(w, vec4(1.0)), 1e-6);
+}
+
 // Far parts of emitter e from the four scatter blurs of its light (channel e of each when one channel per emitter).
 vec3 clFar(int e, float light1, float light2, float sd, vec3 b0, vec3 b1, vec3 b2, vec3 b3, bool perEmitter) {
   vec3 total = vec3(0.0);
@@ -589,19 +598,32 @@ vec3 clFar(int e, float light1, float light2, float sd, vec3 b0, vec3 b1, vec3 b
     if (lit <= 1e-6) continue;
     int gi = int(c.w + 0.5);
     float grow = gi == 0 ? 1.0 : 1.0 + d.x * pow(gi == 1 ? light1 : light2, d.y);
-    // Position on the rung ladder per channel; one step past the widest rung the light is uniform
-    // (the limit of a very wide kernel, which peaks at 1 across a straight emitter).
-    vec3 x = clamp(log(max(a.y * c.rgb * grow, vec3(1e-6)) / uClRungs.x) / log(uClRungs.y / uClRungs.x), 0.0, 4.0);
-    vec3 w0 = max(vec3(0.0), 1.0 - abs(x));
-    vec3 w1 = max(vec3(0.0), 1.0 - abs(x - 1.0));
-    vec3 w2 = max(vec3(0.0), 1.0 - abs(x - 2.0));
-    vec3 w3 = max(vec3(0.0), 1.0 - abs(x - 3.0));
-    vec3 w4 = max(vec3(0.0), x - 3.0);
     vec3 s0 = perEmitter ? own * b0[e] : b0;
     vec3 s1 = perEmitter ? own * b1[e] : b1;
     vec3 s2 = perEmitter ? own * b2[e] : b2;
     vec3 s3 = perEmitter ? own * b3[e] : b3;
-    vec3 light = w0 * rung.x * s0 + w1 * rung.y * s1 + w2 * rung.z * s2 + w3 * rung.w * s3 + w4 * own;
+    vec3 light;
+    float airReach = uClFar[fb + 4].y;
+    if (airReach > 0.0) {
+      // The emitter's light in the haze around it (clAirlightWeights): every rung, each by its weight, per channel at
+      // that channel's reach.
+      vec3 reach = airReach * c.rgb * grow;
+      vec4 wr = clAirlightWeights(uClRungs, reach.r);
+      vec4 wg = clAirlightWeights(uClRungs, reach.g);
+      vec4 wb = clAirlightWeights(uClRungs, reach.b);
+      light = vec3(wr.x, wg.x, wb.x) * rung.x * s0 + vec3(wr.y, wg.y, wb.y) * rung.y * s1
+            + vec3(wr.z, wg.z, wb.z) * rung.z * s2 + vec3(wr.w, wg.w, wb.w) * rung.w * s3;
+    } else {
+      // Position on the rung ladder per channel; one step past the widest rung the light is uniform
+      // (the limit of a very wide kernel, which peaks at 1 across a straight emitter).
+      vec3 x = clamp(log(max(a.y * c.rgb * grow, vec3(1e-6)) / uClRungs.x) / log(uClRungs.y / uClRungs.x), 0.0, 4.0);
+      vec3 w0 = max(vec3(0.0), 1.0 - abs(x));
+      vec3 w1 = max(vec3(0.0), 1.0 - abs(x - 1.0));
+      vec3 w2 = max(vec3(0.0), 1.0 - abs(x - 2.0));
+      vec3 w3 = max(vec3(0.0), 1.0 - abs(x - 3.0));
+      vec3 w4 = max(vec3(0.0), x - 3.0);
+      light = w0 * rung.x * s0 + w1 * rung.y * s1 + w2 * rung.z * s2 + w3 * rung.w * s3 + w4 * own;
+    }
     total += clPale(e, mask * lit * a.x * b.rgb * light, uClFar[fb + 4].x);
   }
   return total;
@@ -707,6 +729,11 @@ export interface FarSettings {
   maskSoft: number
   /** Share (0..1) of the part's light moved into its emitter's pale color, at the same luminance. */
   pale?: number
+  /**
+   * When above 0, the part is the emitter's light in the haze around it, from every rung (clAirlightWeights), with this
+   * reach (short sides) instead of one blur of width `sigma`.
+   */
+  airlight?: number
 }
 
 /** Edges catch more light where they face it: emission times mix(1, max(0, outward normal . light direction)^power, strength). */
@@ -717,11 +744,24 @@ export interface FacingSettings {
   power: number
 }
 
+/**
+ * A stretch of an outline whose own light goes out: none within `dark` (short sides along the contour) of `t` (0..1
+ * along contour `contour`), full from `dark + fade` on, a straight ramp between. A sharp tip's light stops before the
+ * tip, so the tip and the glow about it stay unlit while every lit point of the outline still adds its light.
+ */
+export interface EmissionFade {
+  contour: number
+  t: number
+  dark: number
+  fade: number
+}
+
 export interface EmitterSettings {
   shape: Shape | null
   /** Frame position (0..1) of the shape's origin. */
   anchor: readonly number[]
   stops: readonly EmissionStop[]
+  fades?: readonly EmissionFade[]
   near: readonly NearSettings[]
   far: readonly FarSettings[]
   maskShift: readonly number[]
@@ -865,7 +905,27 @@ function facingAt(p: Primitive, f: number, inside: number, facing: FacingSetting
   return 1 + (lit - 1) * Math.min(1, facing.strength)
 }
 
-function packShape(shape: Shape, stops: readonly EmissionStop[], facing?: FacingSettings): PackedPrimitive[] {
+/** The share of an outline's own light left at `t` along a contour `total` long by its fades (EmissionFade). */
+function fadeAt(fades: readonly EmissionFade[], closed: boolean, total: number, t: number): number {
+  let share = 1
+  for (const f of fades) {
+    const apart = Math.abs(t - f.t)
+    const d = (closed ? Math.min(apart, 1 - apart) : apart) * total
+    share *= f.fade > 0 ? Math.min(1, Math.max(0, (d - f.dark) / f.fade)) : d > f.dark ? 1 : 0
+  }
+  return share
+}
+
+/** Where a contour's pieces are cut so its fades ramp straight between their edges (fractions 0..1 along it). */
+function fadeCuts(fades: readonly EmissionFade[], closed: boolean, total: number): number[] {
+  if (total <= 0) return []
+  const wrap = (t: number) => (closed ? t - Math.floor(t) : t)
+  return fades
+    .flatMap((f) => [-f.dark - f.fade, -f.dark, f.dark, f.dark + f.fade].map((d) => wrap(f.t + d / total)))
+    .filter((t) => t > 0 && t < 1)
+}
+
+function packShape(shape: Shape, stops: readonly EmissionStop[], facing?: FacingSettings, fades: readonly EmissionFade[] = []): PackedPrimitive[] {
   const split = splitArcs(shape, ARC_PIECE)
   const out: PackedPrimitive[] = []
   const stopTimes = stops
@@ -878,12 +938,15 @@ function packShape(shape: Shape, stops: readonly EmissionStop[], facing?: Facing
   for (const [index, contour] of contours.entries()) {
     const total = contourLength(contour)
     const inside = filledSide(contour, maskPrimitives)
+    const own = fades.filter((f) => f.contour === index)
+    const times = own.length ? [...stopTimes, ...fadeCuts(own, contour.closed, total)].sort((a, b) => a - b) : stopTimes
+    const lit = (t: number) => (own.length ? fadeAt(own, contour.closed, total, t) : 1)
     let at = 0
     for (const primitive of contour.primitives) {
       const l = primitiveLength(primitive)
       const t0 = total > 0 ? at / total : 0
       const t1 = total > 0 ? (at + l) / total : 1
-      const cuts = stopTimes.filter((t) => t > t0 + 1e-6 && t < t1 - 1e-6).map((t) => (t - t0) / (t1 - t0))
+      const cuts = times.filter((t) => t > t0 + 1e-6 && t < t1 - 1e-6).map((t) => (t - t0) / (t1 - t0))
       let f = 0
       for (const piece of cutPrimitive(primitive, cuts)) {
         const pl = primitiveLength(piece)
@@ -897,8 +960,8 @@ function packShape(shape: Shape, stops: readonly EmissionStop[], facing?: Facing
           kind: piece.kind === 'segment' ? 1 : 2,
           inside,
           contour: index,
-          e0: stopAt(stops, a).map((v) => v * f0),
-          e1: stopAt(stops, b).map((v) => v * f1),
+          e0: stopAt(stops, a).map((v) => v * f0 * lit(a)),
+          e1: stopAt(stops, b).map((v) => v * f1 * lit(b)),
         })
       }
       at += l
@@ -953,8 +1016,8 @@ function rayDirection(boxes: readonly number[], aspect: number, anchor: readonly
 }
 
 /** Every primitive of a shape as packed for the shader (contours whole, open ones closed far away), before the layout's limit. */
-export function outlinePieces(settings: Pick<EmitterSettings, 'shape' | 'stops' | 'facing'>): readonly PackedPrimitive[] {
-  return settings.shape ? packShape(settings.shape, settings.stops, settings.facing) : []
+export function outlinePieces(settings: Pick<EmitterSettings, 'shape' | 'stops' | 'facing' | 'fades'>): readonly PackedPrimitive[] {
+  return settings.shape ? packShape(settings.shape, settings.stops, settings.facing, settings.fades) : []
 }
 
 /** Points that bound a primitive: its ends and, for arcs, the extreme points inside its sweep. */
@@ -1018,7 +1081,7 @@ export function curveLightUniforms(
     const own = settings.own ?? stopAt(settings.stops, 0)
     // Past this distance from the edge every side mask is fully on or off (4 softness widths), so only the inside test matters.
     const maskReach = Math.max(0, ...sided.map((c) => Math.abs(c.maskInset) + 4 * Math.max(c.maskSoft, MIN_MASK_SOFT))) + Math.abs(settings.maskGrow) + 1e-3
-    const packed = fitOutlines(packShape(settings.shape, settings.stops, settings.facing), layout.primitives)
+    const packed = fitOutlines(packShape(settings.shape, settings.stops, settings.facing, settings.fades), layout.primitives)
     const brightest = Math.max(1e-6, ...packed.flatMap((entry) => [...entry.e0, ...entry.e1]))
     packed.forEach((entry, i) => {
       const o = (e * layout.primitives + i) * PRIM_VEC4 * 4
@@ -1056,7 +1119,7 @@ export function curveLightUniforms(
       far.set([c.tint[0], c.tint[1], c.tint[2], c.lightGamma], o + 4)
       far.set([c.channelWidth[0], c.channelWidth[1], c.channelWidth[2], Math.round(c.grow)], o + 8)
       far.set([c.growGain, c.growGamma, c.maskInset, c.maskSoft], o + 12)
-      far.set([paleLight > 1e-6 ? Math.min(1, Math.max(0, c.pale ?? 0)) : 0, 0, 0, 0], o + 16)
+      far.set([paleLight > 1e-6 ? Math.min(1, Math.max(0, c.pale ?? 0)) : 0, Math.max(0, c.airlight ?? 0), 0, 0], o + 16)
     })
   }
   const light = new Float32Array(16)
@@ -1201,6 +1264,7 @@ export function farParams(prefix: string, label: string, defaults: Defaults = {}
       { kind: 'number', key: `${prefix}MaskInset`, label: `${label} side edge inset`, min: -1, max: 1, step: 0.0001, default: 0 },
       { kind: 'number', key: `${prefix}MaskSoft`, label: `${label} side edge softness`, min: 0, max: 1, step: 0.0001, default: 0 },
       { kind: 'number', key: `${prefix}Pale`, label: `${label} share in the pale color`, min: 0, max: 1, step: 0.001, default: 0 },
+      { kind: 'number', key: `${prefix}Airlight`, label: `${label} haze reach (0: one blur of its width)`, min: 0, max: 1, step: 0.0005, default: 0 },
     ],
     prefix,
     defaults,
@@ -1272,6 +1336,7 @@ export function readFar(ctx: RecipeContext, prefix: string, widthScale: number, 
     maskInset: ctx.num(`${prefix}MaskInset`),
     maskSoft: ctx.num(`${prefix}MaskSoft`) * widthScale,
     pale: ctx.num(`${prefix}Pale`),
+    airlight: ctx.num(`${prefix}Airlight`) * widthScale,
   }
 }
 
