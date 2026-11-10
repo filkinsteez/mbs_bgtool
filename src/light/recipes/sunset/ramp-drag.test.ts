@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getPack, PACK_IDS } from '../../color/packs'
+import { getPack, PACK_IDS, packHexes } from '../../color/packs'
 import { compositionProblems } from '../../compose'
 import { sunsetRamp } from './ramp'
 import { composeRamp, rampStructure } from './ramp-compose'
@@ -44,7 +44,7 @@ describe('composeRamp with a dragged line', () => {
             for (let angle = -180; angle < 180; angle += 45) {
               for (const length of [0.05, 0.5, 1.5]) {
                 const drag = lineAt(from, angle, length, aspect)
-                const composition = composeRamp(packId, { intensity: 0.5, softness: 0.5, mood: 0.5, drag }, seed, aspect)
+                const composition = composeRamp(packHexes(packId), { intensity: 0.5, softness: 0.5, mood: 0.5, drag }, seed, aspect)
                 expect(compositionProblems(sunsetRamp, pack, composition), `${packId} ${seed} ${rampStructure(seed)} ${aspect} ${from} ${angle} ${length}`).toEqual([])
               }
             }
@@ -58,7 +58,7 @@ describe('composeRamp with a dragged line', () => {
     for (let seed = 1; seed <= 9; seed++) {
       if (['water', 'land'].includes(rampStructure(seed))) continue
       const drag = lineAt([0.4, 0.6], -70, 0.5, 16 / 9)
-      const { params } = composeRamp('bold', { intensity: 0.5, softness: 0.5, mood: 0.5, drag }, seed, 16 / 9)
+      const { params } = composeRamp(packHexes('bold'), { intensity: 0.5, softness: 0.5, mood: 0.5, drag }, seed, 16 / 9)
       const [ax, ay] = params.anchor as number[]
       const turn = ((params.angle as number) * Math.PI) / 180
       const dx = (0.4 - ax) * (16 / 9)

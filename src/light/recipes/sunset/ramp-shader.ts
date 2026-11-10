@@ -66,6 +66,7 @@ uniform vec3 uVeil;          // white light over the sky: under the far band, mo
 uniform vec2 uVeilFar;       // heights above the horizon between which the veil fades out into the far band of full Meta Blue (0, 0: none)
 uniform vec3 uVeilTint;      // the veil's color away from the light: a pale tint of one of the pack's colors, at luminance 1
 uniform float uVeilMute;     // share of the sky's color the veil greys toward its own tint at the same light (0: none)
+uniform float uVeilMuteLow;  // share of that greying kept near the horizon (0: none there, so a warm low sky keeps its own color)
 uniform float uHazeMass;     // share by which the veil thickens and thins with the sky's masses (0: none)
 uniform float uBlueHue;      // 1: sky blues turned toward violet go back to Meta Blue's hue (pack frames); 0: they keep it
 uniform vec3 uVeilNear;      // the veil's color near the light, at luminance 1 (0, 0, 0: the bridge's)
@@ -522,7 +523,7 @@ vec3 rampSky(vec2 p, out vec3 core) {
     // Near the light the sky keeps its own color, and only blue greys: a warm low sky keeps its own.
     if (uVeilMute > 0.0) {
       float blue = clamp(-linearToOklab(max(sky, vec3(0.0))).z / 0.04, 0.0, 1.0);
-      mute = min(1.0, uVeilMute * open * (1.0 - low) * blue);
+      mute = min(1.0, uVeilMute * open * mix(1.0 - low, 1.0, uVeilMuteLow) * blue);
       sky = mix(sky, luminance(sky) * uVeilTint, mute);
     }
     veilLight = (uVeil.x + uVeil.y * low) * open * mix(uVeilTint, uVeilNear.x > 0.0 ? uVeilNear : bridgeTint, low);

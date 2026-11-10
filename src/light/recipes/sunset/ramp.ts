@@ -1,9 +1,9 @@
-import type { ColorPack } from '../../color/packs'
+import { packHexes, type ColorPack } from '../../color/packs'
 import type { Rgb } from '../../color/srgb'
 import type { NumberParam, ParamSpec, RecipeContext, RecipeDefinition, ScatterBlur, UniformMap, VectorParam } from '../../scene'
 import { gradientNoise, NOISE_RMS } from './boundary'
 import { rampBoundary, type RampUniforms } from './ramp-boundary'
-import { composeRamp, rampPackColors } from './ramp-compose'
+import { composeRamp, rampSlotColors } from './ramp-compose'
 import { GLOW_LAYERS, RAMP_COLORS, RAMP_EDGES, RAMP_FRAGMENT, SUN_LAYERS } from './ramp-shader'
 
 const num = (key: string, label: string, min: number, max: number, step: number, value: number): NumberParam => ({
@@ -79,6 +79,7 @@ const PARAMS: ParamSpec[] = [
   vec('veilFar', 'Heights above the horizon between which the veil fades out into the far band of full Meta Blue (0, 0: none)', -8, 8, 0.001, [0, 0]),
   vec('veilTint', "The veil's color away from the light, linear light at luminance 1", 0, 4, 0.001, [1, 1, 1]),
   num('veilMute', "Share of the sky's color the veil greys toward its tint at the same light (0: none)", 0, 1, 0.005, 0),
+  num('veilMuteLow', 'Share of that greying kept near the horizon (0: none there)', 0, 1, 0.005, 0),
   num('hazeMass', 'Share by which the veil thickens and thins with the sky masses (0: none)', 0, 2, 0.005, 0),
   num('blueHue', "1: sky blues turned toward violet go back to Meta Blue's hue (pack frames); 0: they keep their hue", 0, 1, 1, 0),
   vec('veilNear', "The veil's color near the light, linear light at luminance 1 (0, 0, 0: the bridge's)", 0, 4, 0.001, [0, 0, 0]),
@@ -177,6 +178,7 @@ const COLOR_SLOTS = [
   { key: 'water', label: 'Water' },
 ]
 
+const hexesOf = (pack: ColorPack) => pack.colors.map((color) => color.hex)
 const luma = (c: Rgb) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 const scale = (c: Rgb, k: number): number[] => [c[0] * k, c[1] * k, c[2] * k]
 const mixRgb = (a: Rgb, b: Rgb, t: number): Rgb => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
@@ -239,6 +241,7 @@ function uniforms(ctx: RecipeContext): UniformMap {
     uVeilFar: ctx.vec('veilFar'),
     uVeilTint: ctx.vec('veilTint'),
     uVeilMute: ctx.num('veilMute'),
+    uVeilMuteLow: ctx.num('veilMuteLow'),
     uHazeMass: ctx.num('hazeMass'),
     uBlueHue: ctx.num('blueHue'),
     uVeilNear: ctx.vec('veilNear'),
@@ -339,12 +342,12 @@ export const sunsetRamp: RecipeDefinition = {
   mood: 'sunset',
   label: 'Ramp',
   colorSlots: COLOR_SLOTS,
-  defaultColors: rampPackColors('bold', 1),
+  defaultColors: rampSlotColors(packHexes('bold'), 1),
   params: PARAMS,
   fragment: RAMP_FRAGMENT,
   uniforms,
   scatter: [LENS],
   radianceScale: 0.5,
-  fromPack: (pack: ColorPack) => rampPackColors(pack.id, 1),
-  compose: ({ pack, controls, seed, aspect }) => composeRamp(pack.id, controls, seed, aspect),
+  fromPack: (pack: ColorPack) => rampSlotColors(hexesOf(pack), 1),
+  compose: ({ pack, controls, seed, aspect }) => composeRamp(hexesOf(pack), controls, seed, aspect),
 }
