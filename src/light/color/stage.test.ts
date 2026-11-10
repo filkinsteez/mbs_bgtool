@@ -80,13 +80,14 @@ describe('color stage', () => {
 
   it('colors by the parts when they ask: the lead color for the light, one color per group or want, one per dark spot', () => {
     const grid = flatGrid()
-    const streak = (group: number, y: number): StagePart[] => [
-      { kind: 'line', from: [0.1, y], to: [0.5, y], width: 0.05, group },
-      { kind: 'line', from: [0.5, y], to: [0.9, y], width: 0.05, group },
-      { kind: 'spot', at: [0.5, y], radius: 0.1, stretch: 3, angle: 0, group },
+    const streak = (group: number, y: number, want?: 'cool'): StagePart[] => [
+      { kind: 'line', from: [0.1, y], to: [0.5, y], width: 0.05, group, want },
+      { kind: 'line', from: [0.5, y], to: [0.9, y], width: 0.05, group, want },
+      { kind: 'spot', at: [0.5, y], radius: 0.1, stretch: 3, angle: 0, group, want },
     ]
-    const fields = buildFields('contour.streaks', [...streak(1, 0.3), ...streak(2, 0.7)], grid, 2, 16 / 9)
-    expect(fields.map((f) => f.name)).toEqual(['lead', 'group1', 'group2', 'cool', 'warm', 'bright', 'pale', 'dark1', 'dark2'])
+    // A streak that asks no color is the look's own light; one that asks a color is one field.
+    const fields = buildFields('contour.streaks', [...streak(1, 0.3), ...streak(2, 0.7, 'cool')], grid, 2, 16 / 9)
+    expect(fields.map((f) => f.name)).toEqual(['lead', 'group2', 'cool', 'warm', 'bright', 'pale', 'dark1', 'dark2'])
     expect(fields.some((f) => f.name.startsWith('along') || f.name.startsWith('part'))).toBe(false)
     const bold = getPack('bold')
     const boldColors = stageColors(bold, defaultMix(bold))

@@ -46,8 +46,8 @@ export type FieldWant = 'any' | 'warm' | 'cool' | 'dark' | 'bright' | 'pale' | '
  * A spot with `inner` is a ring from `inner` to `radius` (a halo, the pale sky round a high light).
  * Spots and lines with the same `group` are one light (a Rush streak's pieces and its core): it takes one color.
  * When any part asks for a color (a `want` other than `any`) or has a group, the look's parts alone say where colors
- * go (partFields): parts with no want or `lead` are the look's own light, in the lead color; parts that share a want
- * (or a group) are one light in one color; each `dark` part takes its own dark color.
+ * go (partFields): parts with no want or `lead`, grouped or not, are the look's own light, in the lead color; parts
+ * that share a want (or a group) are one light in one color; the `dark` parts take the dark colors in turn.
  */
 export type StagePart =
   | { kind: 'spot'; at: readonly [number, number]; radius: number; stretch?: number; angle?: number; inner?: number; want?: FieldWant; group?: number }
@@ -309,8 +309,8 @@ const maxInto = (into: Float32Array, values: Float32Array) => {
 }
 
 /**
- * The fields of a look whose parts say where colors go (the merged looks): the look's own light (parts with no want,
- * or `lead`) with everything no other part claims, for the lead color; one per group and one for all the parts that
+ * The fields of a look whose parts say where colors go (the merged looks): the look's own light (parts with no want
+ * or `lead`) with everything no other part claims, for the lead color; one per group that asks a color and one for all the parts that
  * share a want, so each is one light in one color; and, when some part is dark, two dark fields that take the dark
  * spots in turn, so two dark colors each get their own (otherwise buildFields adds its two seeded ones). No seeded
  * fields across the light. The list has the same length whatever parts a frame has (a want with no part has an empty
@@ -328,7 +328,7 @@ function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number
     if (part.kind === 'horizon') continue
     const values = partField(part, w, h, fw, fh, nu, nv)
     const want = part.want ?? 'any'
-    if (want === 'lead' || (want === 'any' && part.group === undefined)) maxInto(lead, values)
+    if (want === 'lead' || want === 'any') maxInto(lead, values)
     else if (part.group !== undefined) {
       const held = groups.get(part.group)
       if (held) maxInto(held.values, values)
