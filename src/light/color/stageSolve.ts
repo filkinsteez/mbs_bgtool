@@ -143,19 +143,27 @@ export const PAIR_PRESENT = [0.02, 0.15] as const
 export const PAIR_WIDTH = 0.03
 
 /**
- * The widest lightness gap between a light color's fade and a dark color's that pairedMasks closes. A wider gap is
- * other colors' light (Meta Blue's, Steel's), so a dark color never climbs into it.
+ * The widest lightness gap between a light color's fade and a dark color's that pairedMasks always closes. A wider
+ * gap is other colors' light (Meta Blue's, Steel's), so a dark color never climbs into it, unless the light crosses
+ * it within PAIR_THIN.
  */
 export const PAIR_GAP = 0.08
 
 /**
+ * Grid cells: where the light crosses a wider gap within less than these (from the first to the second), the gap is
+ * a strip too thin for a color of its own between the two, and they hand over directly.
+ */
+export const PAIR_THIN = [2, 3] as const
+
+/**
  * The colors' lightness masks in a look colored by its parts. Where a light color that fades out below its own
  * lightness (Tan, Lime, Ice, Cyan) and a dark color that fades out above its own are both present (`present`: each
- * color's field here) and their fades nearly meet (PAIR_GAP), their masks meet at the lightness between the fades:
- * the light color shows above it, the dark color below, so they hand over directly and narrowly along the light, with
- * no gap for a third color between them.
+ * color's field here), and their fades nearly meet (PAIR_GAP) or the light crosses the gap between them in a thin
+ * strip (`slope`: how much the light changes per grid cell here; PAIR_THIN), their masks meet at the lightness between
+ * the fades: the light color shows above it, the dark color below, so they hand over directly and narrowly along the
+ * light, with no strip of a third color between them.
  */
-export function pairedMasks(colors: readonly StageColor[], present: readonly number[], lightness: number): number[] {
+export function pairedMasks(colors: readonly StageColor[], present: readonly number[], lightness: number, slope = 0): number[] {
   const out = colors.map((c) => colorMask(c, lightness))
   colors.forEach((a, j) => {
     if (a.kind !== KIND_BRIGHT) return
@@ -163,9 +171,10 @@ export function pairedMasks(colors: readonly StageColor[], present: readonly num
       if (b.kind !== KIND_DARK) return
       const low = a.edge - a.fade[1]
       const high = b.edge + b.fade[0]
-      if (low - high > PAIR_GAP) return
-      const pa = smooth(PAIR_PRESENT[0], PAIR_PRESENT[1], present[j])
-      const pb = smooth(PAIR_PRESENT[0], PAIR_PRESENT[1], present[k])
+      const pair = low - high <= PAIR_GAP ? 1 : 1 - smooth(PAIR_THIN[0], PAIR_THIN[1], (low - high) / Math.max(slope, 1e-4))
+      if (pair <= 0) return
+      const pa = pair * smooth(PAIR_PRESENT[0], PAIR_PRESENT[1], present[j])
+      const pb = pair * smooth(PAIR_PRESENT[0], PAIR_PRESENT[1], present[k])
       const at = 0.5 * (low + high)
       const above = smooth(at - PAIR_WIDTH, at + PAIR_WIDTH, lightness)
       out[j] = Math.max(out[j], pb * above)
@@ -296,7 +305,7 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
   const masks = colors.map(() => new Float32Array(visible.length))
   visible.forEach((i, j) => {
     const l = Math.max(S[i], VISIBLE)
-    const m = byParts ? pairedMasks(colors, F.map((f) => f[i]), l) : colors.map((c) => colorMask(c, l))
+    const m = byParts ? pairedMasks(colors, F.map((f) => f[i]), l, grid.slope?.[i] ?? 0) : colors.map((c) => colorMask(c, l))
     m.forEach((v, k) => (masks[k][j] = v))
   })
   const capped = colors.map((_, k) => byParts && fields[assignment[k]].want !== 'lead')
@@ -442,7 +451,7 @@ export function softFields(grid: StageGrid, values: readonly Float32Array[], col
   const shares = colors.map(() => new Float32Array(n))
   for (let i = 0; i < n; i++) {
     const l = Math.max(L[i], VISIBLE)
-    const masks = pairedMasks(colors, values.map((v) => v[i]), l)
+    const masks = pairedMasks(colors, values.map((v) => v[i]), l, grid.slope?.[i] ?? 0)
     const x = colors.map((_, k) => Math.max(0, weights[k] * values[k][i] * masks[k]))
     // Taken relative to the strongest, so a cell where every field is faint still blends smoothly.
     const top = Math.max(...x)

@@ -30,6 +30,8 @@ export interface StageGrid {
   seen?: Float32Array
   /** The light the lens adds to each cell (its glow round brighter light), as luminance after exposure. */
   glow?: Float32Array
+  /** How much the light as the picture shows it (`seen`) changes per grid cell, smoothed over about a cell. */
+  slope?: Float32Array
 }
 
 /** Points per cell side where the design is read for `coverage`. */
@@ -183,6 +185,19 @@ function makeNoise(rng: () => number, fw: number, fh: number): (u: number, v: nu
     const b = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * sx
     return a + (b - a) * sy
   }
+}
+
+/** How much a lightness on the grid changes per cell, after a blur of a cell: its gradient's length. */
+export function lightSlope(lightness: Float32Array, w: number, h: number): Float32Array {
+  const light = blurGrid(lightness, w, h, 1)
+  const out = new Float32Array(w * h)
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const gx = (light[y * w + Math.min(w - 1, x + 1)] - light[y * w + Math.max(0, x - 1)]) / 2
+      const gy = (light[Math.min(h - 1, y + 1) * w + x] - light[Math.max(0, y - 1) * w + x]) / 2
+      out[y * w + x] = Math.hypot(gx, gy)
+    }
+  return out
 }
 
 /** Separable gaussian blur on the grid, sigma in cells, edges clamped. */

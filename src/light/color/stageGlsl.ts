@@ -1,4 +1,4 @@
-import { PAIR_GAP, PAIR_PRESENT, PAIR_WIDTH } from './stageSolve'
+import { PAIR_GAP, PAIR_PRESENT, PAIR_THIN, PAIR_WIDTH } from './stageSolve'
 
 /**
  * The color stage in GLSL: `vec3 colorStage(vec2 uv, vec3 radiance)` keeps each pixel's luminance exactly and gives it
@@ -75,8 +75,9 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
   float bestValue = -1.0;
   int best = 0;
   // With the soft blend, where a light color that fades out below its own lightness and a dark color are both
-  // present and their fades nearly meet, their masks meet at the lightness between the fades (pairedMasks in
-  // stageSolve), so they hand over directly along the light with no gap for a third color.
+  // present, and their fades nearly meet or the light crosses the gap between them in a thin strip (fb.z: how much
+  // the light changes per grid cell), their masks meet at the lightness between the fades (pairedMasks in
+  // stageSolve), so they hand over directly along the light with no strip of a third color.
   float pairMask[5];
   for (int k = 0; k < 5; k++) pairMask[k] = 0.0;
   if (uMixSoft > 0.5) {
@@ -87,12 +88,13 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
       for (int k = 0; k < 5; k++) {
         if (k >= uMixCount || uMixColor[k].a < 2.5) continue;
         float high = uMixTurn[k].y + uMixTurn[k].z;
-        if (low - high > ${PAIR_GAP.toFixed(4)}) continue;
+        float pair = low - high <= ${PAIR_GAP.toFixed(4)} ? 1.0 : 1.0 - smoothstep(${PAIR_THIN[0].toFixed(4)}, ${PAIR_THIN[1].toFixed(4)}, (low - high) / max(fb.z, 1e-4));
+        if (pair <= 0.0) continue;
         float presentK = smoothstep(${PAIR_PRESENT[0].toFixed(4)}, ${PAIR_PRESENT[1].toFixed(4)}, mixFieldValue(int(uMixField[k].x + 0.5), fa, fb));
         float at = 0.5 * (low + high);
         float above = smoothstep(at - ${PAIR_WIDTH.toFixed(4)}, at + ${PAIR_WIDTH.toFixed(4)}, L);
-        pairMask[j] = max(pairMask[j], presentK * above);
-        pairMask[k] = max(pairMask[k], presentJ * (1.0 - above));
+        pairMask[j] = max(pairMask[j], pair * presentK * above);
+        pairMask[k] = max(pairMask[k], pair * presentJ * (1.0 - above));
       }
     }
   }

@@ -9,7 +9,7 @@ import { isRecipeId, type ColorMixSettings, type LensSettings, type RecipeContex
 import { defaultMix, mixFromShares, type ColorMix } from './mix'
 import { getPack, isPackId, type ColorPack, type PackId } from './packs'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
-import { blurGrid, buildFields, COVERAGE_SPLIT, GRID_SHORT, gridSize, lookParts, VISIBLE, type StageField, type StageGrid } from './stageFields'
+import { blurGrid, buildFields, COVERAGE_SPLIT, GRID_SHORT, gridSize, lightSlope, lookParts, VISIBLE, type StageField, type StageGrid } from './stageFields'
 import { assignFields, colorFields, coloredByParts, farPairs, KIND_TO_NEIGHBOR, softFields, solveWeights, stageColors, STAGE_SHARPNESS, type StageColor } from './stageSolve'
 
 /**
@@ -149,7 +149,7 @@ function readDesign(input: ColorStageInput): StageGrid | null {
     lightness[i] = Math.cbrt(lightness[i])
     peak[i] = Math.cbrt(peak[i])
   }
-  return { width: w, height: h, lightness, coverage, peak, seen, glow }
+  return { width: w, height: h, lightness, coverage, peak, seen, glow, slope: lightSlope(seen, w, h) }
 }
 
 /**
@@ -215,7 +215,11 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
     const soft = byParts ? softFields(grid, values, colors, solution.weights) : []
     const drawn = byParts
       ? {
-          values: [...Array.from({ length: 5 }, (_, k) => soft[k] ?? new Float32Array(grid.width * grid.height)), grid.glow ?? new Float32Array(grid.width * grid.height)],
+          values: [
+            ...Array.from({ length: 5 }, (_, k) => soft[k] ?? new Float32Array(grid.width * grid.height)),
+            grid.glow ?? new Float32Array(grid.width * grid.height),
+            grid.slope ?? new Float32Array(grid.width * grid.height),
+          ],
           weights: colors.map(() => 1),
         }
       : { values, weights: solution.weights }
