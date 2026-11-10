@@ -59,8 +59,19 @@ void main() {
 }
 `
 
-/** The radiance the pipeline sees: the recipe's own, or what its `combine` makes of it and the blurred light. */
-function sceneRadianceGlsl(program: Pick<RecipeProgram, 'scatter'>): string {
+/**
+ * The radiance the pipeline sees. With the color stage's GLSL (`colorStage`), it is the stage's recoloring of the
+ * recipe's radiance; without it, the recipe's radiance itself.
+ */
+function sceneRadianceGlsl(program: Pick<RecipeProgram, 'scatter'>, stage?: string): string {
+  const own = ownRadianceGlsl(program)
+  if (!stage) return own
+  return `${own.replace('vec3 sceneRadiance(vec2 uv, vec2 p)', 'vec3 designRadiance(vec2 uv, vec2 p)')}${stage}
+vec3 sceneRadiance(vec2 uv, vec2 p) { return colorStage(uv, designRadiance(uv, p)); }\n`
+}
+
+/** The recipe's own radiance: `radiance`, or what its `combine` makes of it and the blurred light. */
+function ownRadianceGlsl(program: Pick<RecipeProgram, 'scatter'>): string {
   const blurs = program.scatter ?? []
   if (blurs.length === 0) return `vec3 sceneRadiance(vec2 uv, vec2 p) { return radiance(uv, p); }\n`
   // uScatterB<i> is the same blur with the edges of the edge level before, mixed in just past a switch (runScatter).
@@ -95,13 +106,14 @@ function grainWeightGlsl(program: Pick<RecipeProgram, 'grainWeight'>): string {
  */
 export type RecipeShaderMode = 'radiance' | 'composite' | 'source' | 'aux'
 
-export function buildRecipeShader(program: Pick<RecipeProgram, 'fragment' | 'scatter' | 'grainWeight'>, mode: RecipeShaderMode): string {
+/** `stage`: the color stage's GLSL, for the modes that draw the scene radiance (radiance, composite). */
+export function buildRecipeShader(program: Pick<RecipeProgram, 'fragment' | 'scatter' | 'grainWeight'>, mode: RecipeShaderMode, stage?: string): string {
   const head = GLSL_HEADER + ENGINE_UNIFORMS + CHUNK_LIBRARY
   switch (mode) {
     case 'radiance':
-      return head + program.fragment + sceneRadianceGlsl(program) + grainWeightGlsl(program) + subsampledMain('sceneRadiance', true, true)
+      return head + program.fragment + sceneRadianceGlsl(program, stage) + grainWeightGlsl(program) + subsampledMain('sceneRadiance', true, true)
     case 'composite':
-      return head + LENS_COMPOSITE_GLSL + program.fragment + sceneRadianceGlsl(program) + grainWeightGlsl(program) + COMPOSITE_MAIN
+      return head + LENS_COMPOSITE_GLSL + program.fragment + sceneRadianceGlsl(program, stage) + grainWeightGlsl(program) + COMPOSITE_MAIN
     case 'source':
       return head + program.fragment + subsampledMain('radiance', true, false)
     case 'aux':

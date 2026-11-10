@@ -17,6 +17,7 @@ import { createProfiler, NO_PROFILE } from './profile'
 import { buildRecipeShader, type RecipeShaderMode } from './recipeShader'
 import { recipeContext, resolveScene, type SceneInput } from './resolve'
 import { runScatter } from './scatter'
+import { prepareColorStage } from '../color/stage'
 
 export interface RenderOptions {
   /** Output size in pixels. */
@@ -155,6 +156,7 @@ export class ProgramRenderer {
     const renderHeight = height * factor
     const short = Math.min(width, height)
     const frameInShorts = [width / short, height / short]
+    let stageUniforms: UniformMap = {}
     const engine = (w: number, h: number, origin: number[], pixel: number, subsamples: number): UniformMap => ({
       ...recipeUniforms,
       uRenderSize: [w, h],
@@ -165,6 +167,7 @@ export class ProgramRenderer {
       uSubsamples: subsamples,
       uHalationStart: halationStart(resolved.lens),
       uExposureScale: 2 ** resolved.output.exposure,
+      ...stageUniforms,
     })
 
     const profiler = options.profile ? createProfiler(gpu) : null
@@ -172,6 +175,12 @@ export class ProgramRenderer {
 
     // Scattered light first: blurred copies of the recipe's light that its combine function reads.
     const scatter = runScatter(gpu, program, ctx, renderWidth, renderHeight, engine, mark)
+    // The shared color stage (scene.colorMix): recolors the scene radiance before post passes and the lens.
+    const stage = scene.colorMix
+      ? prepareColorStage({ gpu, program, ctx, settings: scene.colorMix, engine, scatterUniforms: scatter.uniforms, scatterTextures: scatter.textures, exposureScale: 2 ** resolved.output.exposure })
+      : null
+    if (stage) stageUniforms = stage.uniforms
+    const recipeTextures = stage ? { ...scatter.textures, ...stage.textures } : scatter.textures
 
     // Lens base (512 px short side; none when bloom and halation are off) and, for recipes with post passes or a
     // reduced radianceScale, the radiance as a texture that the composite samples. Otherwise the base is drawn
@@ -190,7 +199,7 @@ export class ProgramRenderer {
     let postScene: Target | null = null
     let pixelScene: Target | null = null
     // Compiled only when drawn: with the lens off and no radiance texture the render never uses it.
-    const radianceProgram = () => gpu.program(buildRecipeShader(program, 'radiance'))
+    const radianceProgram = () => gpu.program(buildRecipeShader(program, 'radiance', stage?.chunk))
     if (usesTexture) {
       const scale = Math.min(radianceScale, usesPost ? POST_MAX_SHORT_SIDE / renderShort : 1)
       const pw = Math.max(1, Math.round(renderWidth * scale))
@@ -200,7 +209,7 @@ export class ProgramRenderer {
       const raw = gpu.acquire(pw, ph)
       gpu.draw(radianceProgram(), raw, {
         uniforms: { ...engine(pw, ph, [0, 0], 1 / (Math.min(pw, ph) * subsamples), subsamples), ...scatter.uniforms },
-        textures: scatter.textures,
+        textures: recipeTextures,
       })
       mark.mark('radiance texture', raw)
       postScene = usesPost && program.post ? runPostPasses(gpu, raw, program.post, ctx, mark) : raw
@@ -216,7 +225,7 @@ export class ProgramRenderer {
       pixelScene = gpu.acquire(renderWidth, renderHeight)
       gpu.draw(radianceProgram(), pixelScene, {
         uniforms: { ...engine(renderWidth, renderHeight, [0, 0], 1 / renderShort, 1), ...scatter.uniforms },
-        textures: scatter.textures,
+        textures: recipeTextures,
       })
       mark.mark('radiance texture', pixelScene)
       gpu.draw(gpu.program(BASE_FROM_RADIANCE_SHADER), base, {
@@ -228,7 +237,7 @@ export class ProgramRenderer {
       const subsamples = baseSubsamples(renderShort, Math.min(base.width, base.height))
       gpu.draw(radianceProgram(), base, {
         uniforms: { ...engine(base.width, base.height, [0, 0], 1 / (Math.min(base.width, base.height) * subsamples), subsamples), ...scatter.uniforms },
-        textures: scatter.textures,
+        textures: recipeTextures,
       })
       mark.mark('lens base', base)
     }
@@ -265,12 +274,12 @@ export class ProgramRenderer {
       ? gpu.program(TEXTURE_COMPOSITE_SHADER)
       : pixelScene
         ? gpu.program(TEXEL_COMPOSITE_SHADER)
-        : gpu.program(buildRecipeShader(program, 'composite'))
+        : gpu.program(buildRecipeShader(program, 'composite', stage?.chunk))
     const sceneTextures = postScene
       ? { ...lensTextures, uRadianceTex: postScene }
       : pixelScene
         ? { ...lensTextures, uRadianceTex: pixelScene }
-        : { ...lensTextures, ...scatter.textures }
+        : { ...lensTextures, ...recipeTextures }
     const resolveX = gpu.program(RESOLVE_X_SHADER)
     // Filters that work per cell read a small copy of the whole frame, drawn by the same composite.
     const frameProgram = postScene || pixelScene ? gpu.program(TEXTURE_COMPOSITE_SHADER) : compositeProgram
@@ -330,6 +339,7 @@ export class ProgramRenderer {
     gpu.release(pixelScene)
     filters.release()
     scatter.release()
+    stage?.release()
     gpu.trimPool()
     if (options.present) this.present()
     if (options.measure && !gpu.waiting) {

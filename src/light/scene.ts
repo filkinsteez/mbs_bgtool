@@ -187,6 +187,12 @@ export const OUTPUT_NUMBERS: readonly NumericSetting<NumericKeys<OutputSettings>
 // ---------------------------------------------------------------------------
 // Scene and preset (the preset JSON shape is shared with other tools; keep it)
 
+/** The shared color stage (src/light/color/stage.ts): the picked pack and one share per pack color, in pack order. */
+export interface ColorMixSettings {
+  pack: PackId
+  shares: readonly number[]
+}
+
 export interface Scene {
   recipe: RecipeId
   seed: number
@@ -196,6 +202,8 @@ export interface Scene {
   params: Record<string, ParamValue>
   lens: Partial<LensSettings>
   output: Partial<OutputSettings>
+  /** Set by `withColorMix`: the color stage gives the design these colors before the lens. Without it nothing changes. */
+  colorMix?: ColorMixSettings
 }
 
 export interface Preset {

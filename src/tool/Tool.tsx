@@ -6,6 +6,7 @@ import '@/styles/tool.css'
 import { DialStore, useDialKitController } from 'dialkit'
 import { useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { EXPORT_SIZES, getPack, type ExportAspect, type PackId } from '@/light'
+import { COLOR_DESIGN_PACK, withColorMix } from '@/light/color/stage'
 import { buildScene, clampDrag, keepsLine, toolControls, type LightDrag } from './controls'
 import { buildDialConfig, MIX_DIAL_KEY, mixPanelValue, PACK_DIAL_KEY, PANEL_ID, PANEL_LABELS, PANEL_NAME, readToolState, SEED_DIAL_KEY } from './dialConfig'
 import { exportImage } from './exportImage'
@@ -85,11 +86,15 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const state = { ...readToolState(dial.values, mood, link, start.colormix), drag }
   const query = toQuery(state)
   const { look, pack, seed, format, filter, strength, colormix, mix } = state
+  // With the color mix on, every pack draws one design and the color stage gives it the pack's colors and the mix.
+  const shares = colormix ? mixPanelValue(mix) : null
   const scene = useMemo(() => {
     const aspect = frameAspect(format)
-    const controls = toolControls(look, getPack(pack), seed, aspect, drag)
-    return withFilter(buildScene(look, getPack(pack), seed, controls, aspect), { filter, strength })
-  }, [look, pack, seed, drag, format, filter, strength])
+    const design = getPack(shares ? COLOR_DESIGN_PACK : pack)
+    const controls = toolControls(look, design, seed, aspect, drag)
+    const built = buildScene(look, design, seed, controls, aspect)
+    return withFilter(shares ? withColorMix(built, getPack(pack), { shares: shares.split(',').map(Number) }) : built, { filter, strength })
+  }, [look, pack, seed, drag, format, filter, strength, shares])
 
   const access = useMemo(
     () => panelAccessFor(PANEL_ID, PANEL_NAME, config, { busy: exportStatus === 'busy' ? [EXPORTING_LABEL] : [], labels: PANEL_LABELS }),
