@@ -570,7 +570,7 @@ const warmthOf = (hex: string) => parseInt(hex.slice(1, 3), 16) - parseInt(hex.s
 
 /** The face's light (times the layout's fill) and how far into the face it reaches (short sides). */
 const FACE = 0.1
-const FACE_REACH = 0.45
+const FACE_REACH = 0.1
 /** A wash: its light on both sides of the edge, how far that reaches, and its haze. */
 const WASH_FACE = 0.6
 const WASH_REACH = 0.9
