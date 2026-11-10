@@ -5,7 +5,6 @@ import { defaultMix, mixColors } from '../../color/mix'
 import { hexToLinear, type Rgb } from '../../color/srgb'
 import type { ComposeInput, Composition, ControlValues, ParamSpec, RecipeContext, RecipeDefinition, UniformMap } from '../../scene'
 import { bridgeLight } from './bands-light'
-import { gradientNoise } from './boundary'
 
 /**
  * Sunrise as one look (hidden; the tool shows it with `sunrise=merged`). The seed picks one of four kinds of sky, in
@@ -14,12 +13,16 @@ import { gradientNoise } from './boundary'
  * color's own lightness:
  * - Meta Blue's sky, a wide gradient: palest (0.66-0.72) where the pale sky ends, full in the middle, deeper (0.40-0.44)
  *   far from the light, slanted against the horizon, with a soft lit patch of its own in most seeds;
- * - a small, light deep top (0.34-0.40) far from the light, its edge drifting and changing softness along its length;
+ * - dim room for the dark colors (0.22-0.33, lit, never black) where light falls off: lit hills under most low suns,
+ *   the far corner of an open low sky, the far corners round a high light, the far side of a side-lit sky, a soft dim
+ *   band under a plain sky; elsewhere a small, light deep top (0.34-0.40);
  * - a pale sky over the glow (0.76-0.84), tallest over the light, a dome round it in some seeds and a band in others;
  * - a warm band on the horizon near the light, or a warm halo round a high light (0.6-0.7);
- * - the glow: a dome over the light, wider than tall, near white (0.92 and up); a plain sky has none;
- * - a dim ground under some low suns, lit by the glow near the light.
+ * - the glow: a dome over the light, wider than tall, near white (0.92 and up); a plain sky has none.
  * Every part's lightness changes across it; there are no flat areas, and no two boundaries follow the same curve.
+ * Each kind takes a dragged line its own way: a low sun's horizon runs along it with the sun where it starts; a high
+ * light sits a third of the way along it; a side light's side and height come from where it starts; a plain sky's
+ * gradient tilts with it and its horizon moves to the line's middle.
  *
  * The layout comes from the seed, the dragged line and the frame's aspect only, never the colors. `fillRoles` gives
  * each part a color from the colors that are on, for when the color stage is off; with it on, the stage colors the
@@ -44,6 +47,8 @@ interface Layout {
   /** Around a high light: how much narrower the rings are along the horizon than up. */
   squash: number
   ground: boolean
+  /** The ground or dim band: lightness by the horizon and deep down, how deep it dims (short sides), edge softness. */
+  groundL: [number, number, number, number]
   /** Horizon above the light, its bow (per short side squared), tilt, and drift (short sides). */
   horizon: [number, number, number, number]
   horizonWave: [number, number]
@@ -57,8 +62,8 @@ interface Layout {
   warm: [number, number, number]
   /** Meta Blue's sky: lightness by the pale sky, in the middle, far from the light; the deep top's lightness. */
   sky: [number, number, number, number]
-  /** Where the deep top starts (share of the span), and how soft its edge is. */
-  deep: [number, number]
+  /** Where the deep sky starts (share of the span), how soft its edge is, how much lower it comes far from the light. */
+  deep: [number, number, number]
   /** How the sky's gradient and the pale sky's edge slant against the horizon (per short side). */
   slant: [number, number]
   /** How much farther the light reaches on one side of the light than on the other (-0.5..0.5). */
@@ -125,8 +130,10 @@ export function mergedLayout(seed: number, aspect: number, drag?: ControlValues[
   const warm: [number, number, number] = [lerp(0.35, 1.3, next()), lerp(0.03, 0.09, next()), lerp(0.6, 0.7, next())]
   // Meta Blue's sky: paler toward the pale sky and the glow, full in the middle, deeper away from the light; then a
   // small, light deep top far from the light.
-  const sky: [number, number, number, number] = [lerp(0.66, 0.72, next()), lerp(0.53, 0.57, next()), lerp(0.4, 0.44, next()), lerp(0.34, 0.4, next())]
-  const deep: [number, number] = [lerp(0.55, 0.85, next()), lerp(0.1, 0.2, next())]
+  const sky: [number, number, number, number] = [lerp(0.66, 0.72, next()), lerp(0.53, 0.57, next()), lerp(0.4, 0.44, next()), 0]
+  const deepDraw = next()
+  const deep: [number, number, number] = [0, lerp(0.1, 0.2, next()), 0]
+  const dimDraw = next()
   // The sky's gradient and the pale sky's edge each slant their own way against the horizon.
   const slant: [number, number] = [(next() - 0.5) * 1.4, (next() - 0.5) * 1.2]
   const skew = (next() - 0.5) * 1.0
@@ -135,19 +142,37 @@ export function mergedLayout(seed: number, aspect: number, drag?: ControlValues[
   const patchSide = next() < 0.5 ? -1 : 1
   const patch: [number, number, number, number] = [patchSide * lerp(0.3, 1.2, next()), lerp(0.45, 0.8, next()), lerp(0.25, 0.6, next()), patchOn ? lerp(0.8, 1.0, next()) : 0]
   const leanDraw = next()
-  const groundUnderLine = lerp(0.04, 0.3, next())
   const squash = lerp(0.6, 1.0, next())
+  // Dim room for the dark colors, at or a little below their own lightness (Plum and Near-black about 0.27, Forest
+  // 0.33, Slate 0.39; above it the stage pales them), lit and never black, where light falls off: lit hills under most
+  // low suns, the far corner of an open low sky, the far corners round a high light, the far side of a side-lit sky,
+  // the dim band under a plain sky's warm light. Where a kind has no dim room the deep top stays small and light.
+  const groundL: [number, number, number, number] = [lerp(0.29, 0.33, dimDraw), lerp(0.22, 0.25, next()), lerp(0.12, 0.3, next()), 0]
+  const farDim = () => {
+    deep[0] = lerp(0.58, 0.72, deepDraw)
+    deep[2] = lerp(0.1, 0.25, dimDraw)
+    sky[3] = lerp(0.24, 0.3, dimDraw)
+  }
+  const smallTop = () => {
+    deep[0] = lerp(0.75, 0.9, deepDraw)
+    sky[3] = lerp(0.34, 0.4, dimDraw)
+  }
   let ground = false
   let sun: [number, number]
   let tilt: number
   let mostLean: number
   if (kind === 0) {
-    // A low sun on the horizon: a low ground in some seeds, else an open sky with its glow from the middle of the frame
-    // down to the bottom edge. An open sky tilts up to about 30 degrees either way, a ground about 12.
-    ground = groundDraw < 0.4
-    sun = toP(across, ground ? lerp(0.97, 0.8, rise) : lerp(0.6, 1.0, rise))
+    // A low sun on the horizon: lit hills over the bottom sixth to a quarter in most seeds, else an open sky with its
+    // glow from the middle of the frame down to the bottom edge. An open sky tilts up to about 30 degrees either way,
+    // hills about 12.
+    ground = groundDraw < 0.75
+    sun = toP(across, ground ? lerp(0.84, 0.72, rise) : lerp(0.6, 1.0, rise))
     tilt = tiltDraw * (ground ? 0.4 : 1.05)
-    mostLean = ground ? lerp(0.2, 0.4, leanDraw) : lerp(0.15, 1.1, leanDraw)
+    mostLean = lerp(0.2, 0.45, leanDraw)
+    if (ground) {
+      horizon[3] = lerp(0.03, 0.07, height)
+      smallTop()
+    } else farDim()
   } else if (kind === 1) {
     // A light high in the frame, the sky graded around it: a smaller glow, a warm halo, the pale sky and Meta Blue in
     // rings that waver and are wider than tall.
@@ -158,22 +183,28 @@ export function mergedLayout(seed: number, aspect: number, drag?: ControlValues[
     dome[0] = lerp(0.08, 0.22, domeDraw)
     dome[1] = dome[0]
     warm[1] = lerp(0.08, 0.18, rise)
+    farDim()
   } else if (kind === 2) {
     // A sky lit from one side: the light on the left or right edge, the sky turned toward the far side.
     sun = toP(side > 0 ? lerp(0.97, 1.03, height) : lerp(-0.03, 0.03, height), lerp(0.25, 0.75, rise))
     tilt = -side * lerp(1.15, 1.65, tiltDraw + 0.5)
     mostLean = 1.7
+    farDim()
   } else {
-    // A plain sky gradient with no horizon in sight: no glow, the warm and the pale light low across the whole width.
-    sun = toP(lerp(0.2, 0.8, (across - 0.06) / 0.88), lerp(1.04, 1.12, height))
+    // A plain sky gradient with no light in sight: no glow, the warm and the pale light low across the whole width,
+    // over a soft dim band along the bottom.
+    sun = toP(lerp(0.2, 0.8, (across - 0.06) / 0.88), lerp(0.74, 0.86, height))
     tilt = tiltDraw * 0.25
-    mostLean = 0.3
+    mostLean = 0.4
+    ground = true
+    groundL[3] = lerp(0.05, 0.1, rise)
     dome[3] = 0
     paleBase = 1
     pale[0] = 4
     pale[1] = lerp(0.3, 0.5, rise)
     warm[0] = 4
     warm[1] = lerp(0.1, 0.2, height)
+    smallTop()
   }
   sun = [sun[0], sun[1] + horizon[0]]
   let up: [number, number] = [Math.sin(tilt), -Math.cos(tilt)]
@@ -185,31 +216,60 @@ export function mergedLayout(seed: number, aspect: number, drag?: ControlValues[
     const t = toP(drag.to[0], drag.to[1])
     const len = Math.hypot(t[0] - f[0], t[1] - f[1])
     const dir = len > 1e-6 ? [(t[0] - f[0]) / len, (t[1] - f[1]) / len] : [0, -1]
-    // The sky leans with the line up to the seed's own limit, and back to level as the line turns to point down, so
-    // the lean never flips sides.
-    const raw = Math.atan2(dir[0], -dir[1])
-    const lean = limitLean(raw, mostLean) * (1 - smoothstepJs(0.55 * Math.PI, Math.PI, Math.abs(raw)))
-    up = [Math.sin(lean), -Math.cos(lean)]
-    // A high light sits partway along the line, inside the frame; the other kinds put the light at its start.
-    sun = kind === 1 ? [f[0] + 0.35 * (t[0] - f[0]), f[1] + 0.35 * (t[1] - f[1])] : f
-    // When the line starts outside the frame the glow comes up toward the sky until it reaches the frame's edge, so it
-    // never sits out of sight; where the way to the sky only grazes the frame, it stops a little past the height of the
-    // frame's nearest corner, so the height never jumps as the line turns. A ground's horizon lies the seed's own
-    // height above that.
-    const half = [frameW / 2, frameH / 2]
-    const entry = (i: 0 | 1) => {
-      if (Math.abs(sun[i]) <= half[i]) return 0
-      const k = (Math.sign(sun[i]) * half[i] - sun[i]) / up[i]
-      return k > 0 ? k : Infinity
+    const mid = [(f[0] + t[0]) / 2, (f[1] + t[1]) / 2]
+    // Held inside a range, easing into its ends, so nothing stops in a step.
+    const hold = (x: number, lo: number, hi: number) => (lo + hi) / 2 + ((hi - lo) / 2) * limitLean((x - (lo + hi) / 2) / ((hi - lo) / 2), 1)
+    const atV = (v: number) => (v - 0.5) * frameH
+    // A longer line spreads the light farther, easing in and out of its limits.
+    let reach = 0.8 + 0.9 * smoothstepJs(0.3, 2.2, len)
+    if (kind === 0 || kind === 3) {
+      // A low sun: the line is the horizon, leaning with it up to the seed's limit and coming level as the line turns
+      // upright, at the height of the line's middle; the sun sits on it where the line starts, inside the frame.
+      // A plain sky: the line tilts the gradient, leaning with it as above and back to level as it turns to point down,
+      // and its horizon moves to the height of the line's middle, low in the frame; no light in sight.
+      let lean: number
+      if (kind === 0) {
+        const angle = Math.atan2(dir[1], dir[0])
+        const fold = angle > Math.PI / 2 ? angle - Math.PI : angle <= -Math.PI / 2 ? angle + Math.PI : angle
+        lean = limitLean(fold, mostLean) * (1 - smoothstepJs(0.3 * Math.PI, 0.5 * Math.PI, Math.abs(fold)))
+      } else {
+        const raw = Math.atan2(dir[0], -dir[1])
+        lean = limitLean(raw, mostLean) * (1 - smoothstepJs(0.55 * Math.PI, Math.PI, Math.abs(raw)))
+      }
+      up = [Math.sin(lean), -Math.cos(lean)]
+      const along = [-up[1], up[0]]
+      const base = [mid[0], ground ? hold(mid[1], atV(0.62), atV(0.9)) : hold(mid[1], atV(0.5), atV(1.0))]
+      const s = kind === 0 ? (f[0] - base[0]) * along[0] + (f[1] - base[1]) * along[1] : 0
+      const room = (0.44 * frameW) / Math.max(along[0], 0.3)
+      const onLine = hold(s + base[0] / Math.max(along[0], 0.3), -room, room) - base[0] / Math.max(along[0], 0.3)
+      sun = [base[0] + along[0] * onLine - up[0] * horizon[0], base[1] + along[1] * onLine - up[1] * horizon[0]]
+    } else if (kind === 1) {
+      // A high light sits partway along the line and the sky leans with it; when that point is outside the frame the
+      // glow comes up toward the sky until it reaches the frame's edge, stopping a little past the nearest corner's
+      // height where the way only grazes the frame, so the height never jumps as the line turns.
+      const raw = Math.atan2(dir[0], -dir[1])
+      const lean = limitLean(raw, mostLean) * (1 - smoothstepJs(0.55 * Math.PI, Math.PI, Math.abs(raw)))
+      up = [Math.sin(lean), -Math.cos(lean)]
+      sun = [f[0] + 0.35 * (t[0] - f[0]), f[1] + 0.35 * (t[1] - f[1])]
+      const half = [frameW / 2, frameH / 2]
+      const entry = (i: 0 | 1) => {
+        if (Math.abs(sun[i]) <= half[i]) return 0
+        const k = (Math.sign(sun[i]) * half[i] - sun[i]) / up[i]
+        return k > 0 ? k : Infinity
+      }
+      const corners = [-0.5, 0.5].flatMap((u) => [-0.5, 0.5].map((v) => (u * frameW - sun[0]) * up[0] + (v * frameH - sun[1]) * up[1]))
+      horizon[0] = Math.max(0, Math.min(Math.max(entry(0), entry(1)), Math.min(...corners) + 0.3))
+      const outward = (t[0] - f[0]) * up[0] + (t[1] - f[1]) * up[1] - horizon[0]
+      const lineSpan = 0.5 * (outward + 0.3 + Math.sqrt((outward - 0.3) ** 2 + 0.01))
+      reach = 0.7 + 1.5 * smoothstepJs(0.4, 2.5, lineSpan / ownSpan)
+    } else {
+      // A side light: where the line starts picks the side (the light slides across as the start crosses the middle,
+      // the sky turning through straight up) and how high the light sits.
+      const toRight = smoothstepJs(0.3, 0.7, drag.from[0])
+      const lean = lerp(1.3, -1.3, toRight)
+      up = [Math.sin(lean), -Math.cos(lean)]
+      sun = toP(lerp(-0.03, 1.03, toRight), hold(drag.from[1], 0.15, 0.85))
     }
-    const corners = [-0.5, 0.5].flatMap((u) => [-0.5, 0.5].map((v) => (u * frameW - sun[0]) * up[0] + (v * frameH - sun[1]) * up[1]))
-    const toFrame = Math.min(Math.max(entry(0), entry(1)), Math.min(...corners) + 0.3)
-    horizon[0] = ground ? toFrame + groundUnderLine : Math.max(off, toFrame)
-    // A longer line spreads the light farther: the glow, the pale sky, the warm band and the blue patch grow with it,
-    // easing in and out of their limits so they never start to change in a step.
-    const along = (t[0] - f[0]) * up[0] + (t[1] - f[1]) * up[1] - horizon[0]
-    const lineSpan = 0.5 * (along + 0.3 + Math.sqrt((along - 0.3) ** 2 + 0.01))
-    const reach = 0.7 + 1.5 * smoothstepJs(0.4, 2.5, lineSpan / ownSpan)
     dome[0] *= reach
     dome[1] *= reach
     pale[0] *= reach
@@ -224,7 +284,7 @@ export function mergedLayout(seed: number, aspect: number, drag?: ControlValues[
     kind === 1
       ? Math.max(0.3, ...[-0.5, 0.5].flatMap((x) => [-0.5, 0.5].map((y) => Math.hypot(x * frameW - glow[0], y * frameH - glow[1]))))
       : Math.max(0.3, farthest(sun, up) - horizon[0])
-  return { frameW, frameH, kind, sun, up, span, squash, ground, horizon, horizonWave, dome, pale, paleBase, warm, sky, deep, slant, skew, patch }
+  return { frameW, frameH, kind, sun, up, span, squash, ground, groundL, horizon, horizonWave, dome, pale, paleBase, warm, sky, deep, slant, skew, patch }
 }
 
 // ---------------------------------------------------------------------------------------------------------- colors
@@ -306,6 +366,7 @@ export function composeMerged({ pack, controls, seed, aspect, mix }: MergedInput
       span: clamp(L.span, 0.1, 20),
       squash: L.squash,
       ground: L.ground,
+      groundL: L.groundL,
       horizon: L.horizon,
       horizonWave: L.horizonWave,
       dome: L.dome,
@@ -334,7 +395,8 @@ export function composeMerged({ pack, controls, seed, aspect, mix }: MergedInput
  * - Meta Blue's own lit patch, in the seeds that have one (want `any`: the lead color's own light, not an accent);
  * - a bright spot: the glow over the light (Yellow, white); a plain sky has none;
  * - a warm spot: the warm band on the horizon near the light, or the warm halo round a high light (Orange-red, Tan);
- * - a cool spot: the pale sky over the glow, or round a high light (Cyan, Lime, Ice, or the pale end of the sky).
+ * - a cool spot: the pale sky over the glow, or round a high light (Cyan, Lime, Ice, or the pale end of the sky);
+ * - dark spots for the dim room: the lit hills or a plain sky's dim band, and the dim far corner of the sky.
  * The rest is the sky's: Meta Blue paler toward the pale sky and the glow, full in the middle, deeper far from the
  * light. The stage colors the look's lightness-only render (`lightnessOnlyParams`).
  */
@@ -371,11 +433,31 @@ export function mergedParts(params: Record<string, unknown>, aspect: number): St
     if (domeOn > 0) parts.push({ kind: 'spot', at: toFrame(glowAt), radius: domeHeight, stretch: 1 / squash, angle, want: 'bright' })
     parts.push({ kind: 'spot', at: toFrame(glowAt), radius: warmThickness, stretch: 1 / squash, angle, want: 'warm' })
     parts.push({ kind: 'spot', at: toFrame(glowAt), radius: paleTop, stretch: 1 / squash, angle, want: 'cool' })
-    return parts
+  } else {
+    if (domeOn > 0) parts.push({ kind: 'spot', at: toFrame(glowAt), radius: domeHeight, stretch: domeWidth / domeHeight, angle, want: 'bright' })
+    parts.push({ kind: 'spot', at: toFrame(at(0, warmThickness / 2)), radius: warmThickness, stretch: warmReach / warmThickness, angle, want: 'warm' })
+    parts.push({ kind: 'spot', at: toFrame(at(0, paleTop / 2)), radius: paleTop / 2, stretch: Math.max(1, paleReach / (paleTop / 2)), angle, want: 'cool' })
   }
-  if (domeOn > 0) parts.push({ kind: 'spot', at: toFrame(glowAt), radius: domeHeight, stretch: domeWidth / domeHeight, angle, want: 'bright' })
-  parts.push({ kind: 'spot', at: toFrame(at(0, warmThickness / 2)), radius: warmThickness, stretch: warmReach / warmThickness, angle, want: 'warm' })
-  parts.push({ kind: 'spot', at: toFrame(at(0, paleTop / 2)), radius: paleTop / 2, stretch: Math.max(1, paleReach / (paleTop / 2)), angle, want: 'cool' })
+  const corners = [-0.5, 0.5].flatMap((x) => [-0.5, 0.5].map((y) => [x * frameW, y * frameH]))
+  if (params.ground) {
+    // The lit hills, or a plain sky's dim band: below the horizon across the frame.
+    const depth = Math.max(...corners.map((c) => -((c[0] - glowAt[0]) * up[0] + (c[1] - glowAt[1]) * up[1])))
+    if (depth > 0.02) {
+      const across = -(glowAt[0] * side[0] + glowAt[1] * side[1])
+      const width = Math.hypot(frameW, frameH)
+      parts.push({ kind: 'spot', at: toFrame(at(across, -depth / 2)), radius: depth / 2, stretch: Math.max(1, width / depth), angle, want: 'dark' })
+    }
+  }
+  const [deepStart, , deepLower] = params.deep as number[]
+  if (deepLower > 0) {
+    // The dim far sky: the frame's corner farthest from the light (round a high light, by distance).
+    const far = (c: number[]) => {
+      const d = [c[0] - glowAt[0], c[1] - glowAt[1]]
+      return ringed ? Math.hypot(d[0], d[1]) : d[0] * up[0] + d[1] * up[1] + deepLower * Math.abs(d[0] * side[0] + d[1] * side[1])
+    }
+    const corner = corners.reduce((best, c) => (far(c) > far(best) ? c : best))
+    parts.push({ kind: 'spot', at: toFrame([corner[0] * 0.85, corner[1] * 0.85]), radius: Math.max(0.15, 0.8 * (1 - deepStart) * span), stretch: 1.5, angle, want: 'dark' })
+  }
   return parts
 }
 
@@ -398,14 +480,15 @@ const PARAMS: readonly ParamSpec[] = [
   num('span', 'Sky span (short sides)', 0.1, 20, 1),
   num('squash', 'Around a high light: how much narrower the rings are along the horizon', 0.2, 2, 0.8),
   { kind: 'boolean', key: 'ground', label: 'Ground', default: false },
+  vec('groundL', 'Ground or dim band: lightness by the horizon, deep down, how deep it dims, edge softness', [0.35, 0.26, 0.25, 0], 0, 2),
   vec('horizon', 'Horizon above the light, bow, tilt, drift', [0.03, 0, 0, 0.02]),
   vec('horizonWave', 'Horizon drift lattice, seed', [1, 11], 0, 1e6),
   vec('dome', 'Glow: half-width along the horizon, height, lightness at its middle, strength', [0.3, 0.15, 0.95, 1], 0, 10),
   vec('pale', 'Pale lower sky: reach along the horizon, height (share of the sky), lightness, edge softness change', [1, 0.3, 0.8, 0.5], 0, 10),
   num('paleBase', 'Share of the pale sky kept far along the horizon (0: a dome over the light, 1: a band)', 0, 1, 0.5),
   vec('warm', 'Warm band: reach along the horizon, thickness, lightness', [0.8, 0.05, 0.65], 0, 10),
-  vec('sky', 'Meta Blue by the pale sky, in the middle, far from the light; deep top lightness', [0.65, 0.55, 0.46, 0.4], 0, 10),
-  vec('deep', 'Deep top start (share of the sky), edge softness', [0.75, 0.15], 0, 10),
+  vec('sky', 'Meta Blue by the pale sky, in the middle, far from the light; deep sky lightness', [0.65, 0.55, 0.46, 0.4], 0, 10),
+  vec('deep', 'Deep sky start (share of the sky), edge softness, how much lower it comes far from the light', [0.75, 0.15, 0], 0, 10),
   vec('slant', 'Slant against the horizon of the sky gradient and of the pale sky edge', [0, 0], -2, 2),
   num('skew', 'Lit farther on one side of the light', -1, 1, 0),
   vec('patch', "Meta Blue's lit patch: place along the horizon, height (share of the sky), size, strength", [0.6, 0.55, 0.3, 0.8]),
@@ -423,6 +506,7 @@ function uniforms(ctx: RecipeContext): UniformMap {
     uSpan: ctx.num('span'),
     uSquash: ctx.num('squash'),
     uGroundOn: ctx.bool('ground') ? 1 : 0,
+    uGround: ctx.vec('groundL'),
     uHorizon: ctx.vec('horizon'),
     uHorizonWave: ctx.vec('horizonWave')[0],
     uHorizonSeed: Math.round(ctx.vec('horizonWave')[1]),
@@ -458,6 +542,7 @@ uniform vec2 uUp;
 uniform float uSpan;
 uniform float uSquash;       // around a high light: how much narrower the rings are along the horizon than up
 uniform int uGroundOn;
+uniform vec4 uGround;        // ground or dim band: lightness by the horizon, deep down, how deep it dims, edge softness
 uniform vec4 uHorizon;       // horizon above the light, bow, tilt, drift (short sides)
 uniform float uHorizonWave;  // drift lattice (per short side)
 uniform int uHorizonSeed;
@@ -466,7 +551,7 @@ uniform vec4 uPale;          // pale lower sky reach along the horizon, height (
 uniform float uPaleBase;     // share of the pale sky's height it keeps far along the horizon (0: a dome over the light; 1: a band)
 uniform vec3 uWarm;          // warm band reach along the horizon, thickness (short sides), lightness
 uniform vec4 uSkyL;          // Meta Blue by the pale sky, in the middle, far from the light; deep top lightness
-uniform vec2 uDeep;          // deep top start (share of the span), edge softness
+uniform vec3 uDeep;          // deep sky start (share of the span), edge softness, how much lower it comes far from the light
 uniform vec2 uSlant;         // slant against the horizon of the sky's gradient and of the pale sky's edge (per short side)
 uniform float uSkew;         // how much farther the light reaches on one side of the light
 uniform vec4 uPatch;         // Meta Blue's lit patch place along the horizon, height (share of the span), size, strength
@@ -525,9 +610,10 @@ float skyHeight(float a, float h) {
   return (max(h, 0.0) + uSlant.x * a) / uSpan + 0.05 * gradientNoise(vec2(a * 0.6 + 2.1, h * 0.6 + 5.3), uHorizonSeed + 3);
 }
 
-// How far into the deep top a place is (0 to 1); the edge drifts and changes softness along its length.
+// How far into the deep sky a place is (0 to 1); the edge drifts, changes softness along its length, and comes lower
+// far from the light, so the deep sky can be a far corner rather than a band across the top.
 float deepAt(float a, float t) {
-  float edge = uDeep.x + 0.08 * gradientNoise(vec2(a * 0.8 + 6.6, 2.2), uHorizonSeed + 5);
+  float edge = uDeep.x + 0.08 * gradientNoise(vec2(a * 0.8 + 6.6, 2.2), uHorizonSeed + 5) - uDeep.z * (1.0 - sideLight(a, 1.0));
   float soft = uDeep.y * (0.6 + 0.8 * (0.5 + 0.5 * gradientNoise(vec2(a * 0.7 + 1.4, 9.9), uHorizonSeed + 9)));
   return smoothstep(edge - soft, edge + soft + 0.15, t);
 }
@@ -558,9 +644,9 @@ float skyLightness(float a, float h) {
   return min(L, 0.97);
 }
 
-// The ground: dim, lit by the glow near the light, darker away and down.
+// The ground, or a plain sky's dim band: dim but lit, its rim lit by the glow near the light, darker away and down.
 float groundLightness(float a, float depth) {
-  float L = 0.24 + 0.03 * gradientNoise(vec2(a * 1.3 + 9.1, depth * 2.0 + 1.7), uHorizonSeed + 7) - 0.05 * smoothstep(0.05, 0.4, depth);
+  float L = mix(uGround.x, uGround.y, smoothstep(0.0, max(uGround.z, 0.05), depth)) + 0.03 * gradientNoise(vec2(a * 1.3 + 9.1, depth * 2.0 + 1.7), uHorizonSeed + 7);
   return L + 0.3 * domeAt(a, 0.0) * exp(-depth / 0.12) + 0.06 * sideLight(a, uWarm.x) * exp(-depth / 0.05);
 }
 
@@ -603,7 +689,7 @@ vec3 auxRadiance(vec2 uv, vec2 p) {
     h = len * (1.0 + 0.22 * gradientNoise(q / max(len, 1e-5) * 1.3 + vec2(5.0, 2.0), uHorizonSeed + 41));
     a = q.x;
   }
-  float edge = smoothstep(-0.5 * uPixel, 0.5 * uPixel, h);
+  float edge = smoothstep(-0.5 * uPixel - uGround.w, 0.5 * uPixel + uGround.w, h);
   if (uLightnessOnly == 1) {
     float L = skyLightness(a, h);
     if (uGroundOn == 1) L = mix(groundLightness(a, -h), L, edge);
