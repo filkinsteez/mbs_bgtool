@@ -105,10 +105,14 @@
   line-height: 16px;
 }
 
-/* A card of the panel (ToolPanel's `card`): one surface with its sliders and buttons inside, inset like the tiles. */
+/*
+ * A card of the panel (ToolPanel's `card`): one surface with its sliders and buttons inside, inset like the tiles. Its
+ * bottom padding is the space under its lowest part (the names, Shuffle, a slider, or a chosen square's ring), the same
+ * as under the ring in the Format card: 4px less than the tiles' bottom padding.
+ */
 .tool-card {
   --card-gap: 8px;
-  --card-bottom: 12px;
+  --card-bottom: 8px;
   display: flex;
   flex-direction: column;
   gap: var(--card-gap);
@@ -122,13 +126,13 @@
   background: none;
 }
 
-/* The controls under the tiles sit as far below the names, or below a chosen square's ring (4px past it), as they
-   sit apart. */
-.tool-card > .tool-tiles:not(:last-child) {
+/* In a card the tiles leave the space below them to the card, keeping only room for a chosen square's ring (4px past
+   the square). */
+.tool-card > .tool-tiles {
   padding-bottom: 0;
 }
 
-.tool-card > .tool-tiles[data-kind='shape']:not(:last-child) {
+.tool-card > .tool-tiles[data-kind='shape'] {
   padding-bottom: 4px;
 }
 
@@ -206,6 +210,15 @@
 .tool-tiles[data-kind='shape'] .tool-tile {
   width: min(100%, 64px);
   justify-self: center;
+}
+
+/* The first and last squares sit at the card's inner edges, as the strips, the pictures and the Format squares do. */
+.tool-tiles[data-kind='shape'] .tool-tile:where(:first-child) {
+  justify-self: start;
+}
+
+.tool-tiles[data-kind='shape'] .tool-tile:where(:last-child) {
+  justify-self: end;
 }
 
 .tool-tiles[data-kind='shape'] .tool-tile-face {
@@ -494,7 +507,7 @@
 
   .tool-card {
     --card-gap: 6px;
-    --card-bottom: 8px;
+    --card-bottom: 6px;
   }
 
   .tool-tiles {
@@ -548,7 +561,7 @@
 
   .tool-card {
     --card-gap: 4px;
-    --card-bottom: 7px;
+    --card-bottom: 5px;
   }
 
   .tool-tiles {
@@ -616,7 +629,7 @@
 
   .tool-card {
     --card-gap: 3px;
-    --card-bottom: 6px;
+    --card-bottom: 3px;
   }
 
   .tool-tiles {
