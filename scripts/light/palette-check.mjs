@@ -12,14 +12,15 @@ import path from 'node:path'
 import { chromium } from '@playwright/test'
 import sharp from 'sharp'
 import { list, parseArgs } from './lib/args.mjs'
-import { mixByName, rulesFor, sharesOf } from './lib/color-read.mjs'
+import { BLUE_LIGHT, blueLight, blueVerdict, mixByName, rulesFor, sharesOf } from './lib/color-read.mjs'
 import { ROOT, startHarness } from './lib/harness.mjs'
 import { raw } from './lib/images.mjs'
 import { loadReferences } from './lib/references.mjs'
 
 const LOOKS = ['sunset.ramp', 'sunset.bands', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
-// The merged looks (the tool's sunrise=merged and contour=merged switches) are checked when named; `all` is the seven.
-const MERGED = ['sunset.merged', 'contour.merged']
+// The looks behind a switch in the tool (sunrise=merged, contour=merged, rush=split) are checked when named; `all` is
+// the seven. Rush is light on a dark base, so its frames are read and judged as Contour's are.
+const MERGED = ['sunset.merged', 'contour.merged', 'rush.split']
 const PACK_ORDER = ['bold', 'elemental', 'atmospheric']
 
 // Thresholds, set by eye on the coordinator's shots (artifacts/coordinator/bands-bug, palette-now, palette-now-contour).
@@ -51,6 +52,8 @@ const T = {
   hazeHue: { 'Meta Blue': [-30, 12] },
   // Sunset skies (SHARED.md, decided 2026-11-04 4:15 PM): full-strength Meta Blue, Oklab chroma `sky.C` or more in
   // Meta Blue's hue window, covers at most about `sky.share` of a Sunset frame. Frames over it are listed, not failed.
+  // With the color stage on (--mix) it is off: the Meta Blue light rule under `mix` tests the owner's complaint of
+  // 2026-11-09 10:05 PM (a flat blue field) directly (coordinator, 12:44 AM on 2026-11-10).
   sky: { C: 0.15, share: 0.25 },
   pale: { L: 0.78, C: 0.05 }, // a pixel this light and this grey is a pale bridge, never mud
   warmDimStops: { yellowish: 1, red: 1.5 }, // how far under nominal a warm color still reads as itself, not olive or brown
@@ -155,8 +158,16 @@ const T = {
   // With the color stage on (--mix), the owner's rule of 2026-11-09 10:01 PM (every picture shows all of its pack's
   // colors) as the coordinator set it at 11:24 PM: every color the mix asks at `mix.asked` or more reads at
   // `mix.reads` or more of the frame's visibly lit pixels, by color-shares' reading (lib/color-read.mjs). It replaces
-  // the rules on which pack colors show, and Contour's main light per seed is not checked (Meta Blue leads).
+  // the rules on which pack colors show, and Contour's main light per seed is not checked (Meta Blue leads). Also the
+  // owner's rule of 10:05 PM: where Meta Blue reads on BLUE_LIGHT.applies or more of the lit pixels it must carry
+  // light (blueLight and blueVerdict in lib/color-read.mjs, as color-shares.mjs reports it).
   mix: { asked: 0.1, reads: 0.05 },
+}
+// Why Meta Blue carries no light, for each of blueVerdict's reasons.
+const BLUE_TEXT = {
+  flat: (b) => `flat: its lightness spreads ${b.spread.toFixed(2)}, under ${BLUE_LIGHT.spread}`,
+  dim: (b) => `dim: its brightest tenth is ${(-b.peak).toFixed(2)} darker than its hex`,
+  borrowed: (b) => `borrowed: ${Math.round(100 * b.borrowed)}% of its brightest tenth sits beside another color's lighter light`,
 }
 // Hues that are neither neighbour, so a lens edge never excuses them (SHARED.md palette rules).
 const THIRD_HUES = new Set(['pink', 'salmon', 'mauve', 'lavender', 'purple', 'magenta', 'mauve-grey', 'indigo'])
@@ -275,7 +286,7 @@ for (const pair of list(args.at)) {
   controls[name] = Number(value)
 }
 if (dev && list(args.at).length) throw new Error('--at does not apply with --dev: the tool page sends its own fixed intensity, softness and mood control')
-if (dev && looks.some((look) => MERGED.includes(look))) throw new Error('--dev does not reach the merged looks: render them with the harness (no --dev)')
+if (dev && looks.some((look) => MERGED.includes(look))) throw new Error('--dev does not reach the looks behind a switch: render them with the harness (no --dev)')
 // --mix <default|blue-off|Cyan:0.6>: the shared color stage on at that mix, as the tool draws with colormix=1 (each
 // design drawn in the stage's design pack and given the frame's pack colors), judged with the mix rule (T.mix).
 const mixName = typeof args.mix === 'string' ? args.mix : null
@@ -1123,6 +1134,8 @@ try {
       for (const [name, asked] of Object.entries(mix.asked)) {
         if (asked >= T.mix.asked && (mix.shares[name] ?? 0) < T.mix.reads) fail('asked color under 5%', `${name} reads ${pct(mix.shares[name] ?? 0)} (asked ${pct(asked)})`)
       }
+      const blue = blueVerdict(mix.blue)
+      if (blue.reasons.length) fail('Meta Blue carries no light', `Meta Blue on ${pct(mix.blue.share)} carries no light (${blue.reasons.map((r) => BLUE_TEXT[r](mix.blue)).join('; ')})`)
     } else if (sunset && drag) {
       // Under a drag (12:45 PM): two pack colors over a visible share, one of them its pack's own (Bold's warm light
       // is, overexposed or pale too). Two of Atmospheric's greys count as two colors only when they are two tones: a
@@ -1328,7 +1341,7 @@ try {
   if (looks.length) await fs.mkdir(path.join(outDir, 'renders'), { recursive: true })
   if (maps) await fs.mkdir(path.join(outDir, 'maps'), { recursive: true })
   const report = { source: sourceLabel, startedAt: startedAt.toISOString(), thresholds: T, drags: Object.fromEntries(drags.map((d) => [d, DRAGS[d]])), looks: {} }
-  const summary = [`# Palette check: ${sourceLabel}`, '', `Started ${startedAt.toISOString()}. Controls: intensity ${controls.intensity}, softness ${controls.softness}, mood ${controls.mood}. Rule: ${rule}${rule === 'new' ? `, lens edges up to ${+T.lensEdge.toFixed(3)} of the short side` : ''}; warm tails: ${tailRule}; dim colors: ${dimRule ? 'navy rule (1:40 PM)' : 'strict'}; ${hazeLabel}; ${mainLabel}.${chromaFactors.length > 1 ? ` Also judged with chroma scaled by ${chromaFactors.slice(1).join(', ')}.` : ''} Test drags: ${drags.length ? drags.map(dragText).join('; ') : 'none'}.${mixName ? ` Color stage on at the mix \`${mixName}\`: every color the mix asks at ${pct(T.mix.asked)} or more must read at ${pct(T.mix.reads)} or more of the visibly lit pixels; the rules on which pack colors show and Contour's main light per seed are off.` : ''} Thresholds in \`palette-check.mjs\` (T).`, '']
+  const summary = [`# Palette check: ${sourceLabel}`, '', `Started ${startedAt.toISOString()}. Controls: intensity ${controls.intensity}, softness ${controls.softness}, mood ${controls.mood}. Rule: ${rule}${rule === 'new' ? `, lens edges up to ${+T.lensEdge.toFixed(3)} of the short side` : ''}; warm tails: ${tailRule}; dim colors: ${dimRule ? 'navy rule (1:40 PM)' : 'strict'}; ${hazeLabel}; ${mainLabel}.${chromaFactors.length > 1 ? ` Also judged with chroma scaled by ${chromaFactors.slice(1).join(', ')}.` : ''} Test drags: ${drags.length ? drags.map(dragText).join('; ') : 'none'}.${mixName ? ` Color stage on at the mix \`${mixName}\`: every color the mix asks at ${pct(T.mix.asked)} or more must read at ${pct(T.mix.reads)} or more of the visibly lit pixels, and where Meta Blue reads on ${pct(BLUE_LIGHT.applies)} or more of them it must carry light (its lightness spreads ${BLUE_LIGHT.spread} or more, its brightest tenth reaches its hex, and under ${pct(BLUE_LIGHT.borrowed)} of that tenth sits beside another color's lighter light); the rules on which pack colors show, Contour's main light per seed and the full-strength Meta Blue share are off.` : ''} Thresholds in \`palette-check.mjs\` (T).`, '']
   for (const look of looks) {
     const started = Date.now()
     const frames = frameList(look)
@@ -1357,12 +1370,14 @@ try {
     }
     for (const f of frames) {
       if (f.missing) continue
-      f.m = await analyse(f.src, f.pack, f.sceneHexes ?? null, maps ? path.join(outDir, 'maps', `${f.id}.png`) : null, look.startsWith('contour.'))
+      f.m = await analyse(f.src, f.pack, f.sceneHexes ?? null, maps ? path.join(outDir, 'maps', `${f.id}.png`) : null, !look.startsWith('sunset.'))
       if (mixName) {
         const { data, info } = await sharp(f.src).removeAlpha().resize(320, 320, { fit: 'inside' }).raw().toBuffer({ resolveWithObject: true })
         const pack = getPack(f.pack)
-        const shares = sharesOf(readRules[f.pack], data, info.width * info.height).shares
-        f.mix = { asked: Object.fromEntries(pack.colors.map((c, i) => [c.name, +mixOf(f.pack).shares[i].toFixed(4)])), shares: Object.fromEntries(Object.entries(shares).map(([k, v]) => [k, +v.toFixed(4)])) }
+        const read = sharesOf(readRules[f.pack], data, info.width * info.height, true)
+        const blue = blueLight(readRules[f.pack], data, info.width, info.height, read.labels)
+        const rounded = (values) => Object.fromEntries(Object.entries(values).map(([k, v]) => [k, +v.toFixed(4)]))
+        f.mix = { asked: Object.fromEntries(pack.colors.map((c, i) => [c.name, +mixOf(f.pack).shares[i].toFixed(4)])), shares: rounded(read.shares), blue: blue && rounded(blue) }
       }
       Object.assign(f, judge(look, f.pack, f.m, { drag: f.drag, mix: f.mix ?? null }))
     }
@@ -1414,7 +1429,7 @@ try {
       const packFrames = groups[0].frames.filter((f) => f.pack === pack)
       const failing = packFrames.filter((f) => f.fails?.length)
       const row = rows[pack]
-      const sky = look.startsWith('sunset.') ? ` ${skyLine(packFrames.filter((f) => f.m))}` : ''
+      const sky = look.startsWith('sunset.') && !mixName ? ` ${skyLine(packFrames.filter((f) => f.m))}` : ''
       summary.push(`- ${pack}: ${failing.length} of ${packFrames.filter((f) => !f.missing).length} frames fail.${contour ? ` ${mainLightLine(row)}` : ''} ${varietyLine(row.alike)}${sky}`)
     }
     summary.push(`- Frames failing, by reason: ${reasonLine(groups[0].frames)}.`, '')
@@ -1578,7 +1593,7 @@ try {
     const width = LEFT + shownWidth + extraWidth + 40
     const height = 70 + groups.reduce((s, g) => s + groupHeight(g), 0) + 10
     const dragged = Boolean(groups[0].drag)
-    const mixFails = `, a color the mix asks at ${pct(T.mix.asked)}+ reading under ${pct(T.mix.reads)}`
+    const mixFails = `, a color the mix asks at ${pct(T.mix.asked)}+ reading under ${pct(T.mix.reads)}, Meta Blue on ${pct(BLUE_LIGHT.applies)}+ of the lit pixels that carries no light`
     const lookFails = look.startsWith('sunset.')
       ? mixName ? mixFails : dragged ? `, under 2 pack colors over ${pct(T.drag.visible)}, no color only the pack has` : ', under 3 pack colors, no Meta Blue, no warm color, two warm colors (Bold)'
       : `, no pack color, base or light outside the pack${mixName ? mixFails : dragged ? '' : ', a pack light color never used across seeds'}`
@@ -1604,8 +1619,9 @@ try {
           let left = otherLeft
           if (shownOnSheet(f)) left = LEFT + (portrait ? SHOWN['16x9'] * (TW + GAP) + (f.seed - firstSeed) * (PW + GAP) : (f.seed - firstSeed) * (TW + GAP))
           else otherLeft += w + GAP
-          const skyOver = f.m && look.startsWith('sunset.') ? f.m.skyFull > T.sky.share : false
-          const skyText = f.m && look.startsWith('sunset.') ? `${portrait ? ' ' : '   full Meta Blue '}${pct(f.m.skyFull)}` : ''
+          const skyShown = f.m && look.startsWith('sunset.') && !mixName
+          const skyOver = skyShown ? f.m.skyFull > T.sky.share : false
+          const skyText = skyShown ? `${portrait ? ' ' : '   full Meta Blue '}${pct(f.m.skyFull)}` : ''
           comp.push({ input: textSvg([{ text: `s${f.seed}${portrait ? ' 9:16' : ''}${skyText}`, color: skyOver ? '#e0a040' : '#bbb' }], w, 16, 11), left, top })
           if (f.missing || !f.m) {
             comp.push({ input: textSvg(['missing'], w, 16), left, top: top + 18 })
