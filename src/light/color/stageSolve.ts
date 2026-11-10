@@ -543,6 +543,42 @@ export function softFields(grid: StageGrid, values: readonly Float32Array[], col
   })
 }
 
+/** A pack color's dim path for the engine's glow: the color, then the darker colors it turns into as its light dims. */
+export interface StageDimPath {
+  /** The pack color in linear light. */
+  color: readonly number[]
+  /**
+   * Each darker color in linear light, with the level of the glow's light (its light against its source's, 0 to 1)
+   * below which it has taken over, highest first.
+   */
+  steps: readonly { color: readonly number[]; below: number }[]
+}
+
+/**
+ * Each color's dim path for the engine's glow, from the turns the stage draws, so a glow fades through the same colors
+ * as the light it comes from: Yellow into Orange-red (its fire turn), Lime into Forest (its dim end), and a near-neutral
+ * light color into the pack's lightest near-neutral darker color (Ice into Steel), which the stage itself leaves to
+ * Meta Blue's light. A step has taken over at the level where its turn ends, the turn's lightness against the color's
+ * own (as luminance). Colors that keep their hue down to black (Meta Blue, Cyan, Orange-red, Tan, the dark colors)
+ * have no steps.
+ */
+export function stageDimPaths(colors: readonly StageColor[]): StageDimPath[] {
+  const level = (c: StageColor, lightness: number) => Math.min(1, Math.max(0, lightness / c.lightness)) ** 3
+  return colors.map((c) => {
+    const color = hexToLinear(c.hex)
+    if (c.neighborIndex >= 0 && (c.kind === KIND_TO_NEIGHBOR || c.kind === KIND_BRIGHT))
+      return { color, steps: [{ color: hexToLinear(colors[c.neighborIndex].hex), below: level(c, c.edge - c.turn[1]) }] }
+    if (c.kind === KIND_BRIGHT && c.chroma < 0.02) {
+      const darker = colors.filter((o) => o !== c && o.chroma < DIM_NEUTRAL && o.lightness < c.lightness).sort((a, b) => b.lightness - a.lightness)[0]
+      if (darker) return { color, steps: [{ color: hexToLinear(darker.hex), below: level(c, c.edge - c.fade[1]) }] }
+    }
+    return { color, steps: [] }
+  })
+}
+
+/** Chroma under which a darker pack color counts as near-neutral, for a near-neutral light color's dim path (Steel). */
+const DIM_NEUTRAL = 0.06
+
 /** Pairs of colors far apart in hue (60 degrees or more, both with real chroma): their meeting line is a pale bridge. */
 export function farPairs(colors: readonly StageColor[]): number {
   let bits = 0

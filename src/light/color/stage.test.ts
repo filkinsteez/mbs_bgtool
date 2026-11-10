@@ -8,7 +8,8 @@ import { getPack } from './packs'
 import { COLOR_DESIGN_PACK, colorRamp, RAMP_STEPS, withColorMix } from './stage'
 import { buildFields, gridSize, lookParts, type StageField, type StageGrid, type StagePart } from './stageFields'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
-import { assignFields, colorFields, colorMask, KIND_BRIGHT, KIND_DARK, KIND_PLAIN, KIND_TO_NEIGHBOR, pairedMasks, solveWeights, stageColors } from './stageSolve'
+import { hexToLinear } from './srgb'
+import { assignFields, colorFields, colorMask, KIND_BRIGHT, KIND_DARK, KIND_PLAIN, KIND_TO_NEIGHBOR, pairedMasks, solveWeights, stageColors, stageDimPaths, type StageDimPath } from './stageSolve'
 
 const CONTROLS = { intensity: 0.5, softness: 0.5, mood: 0.5 }
 
@@ -290,5 +291,29 @@ describe('color stage', () => {
     }
     const withAux = { fragment: program.fragment + 'vec3 auxRadiance(vec2 uv, vec2 p) { return vec3(0.0); }\n' }
     for (const mode of ['source', 'aux'] as const) expect(buildRecipeShader(withAux, mode, COLOR_STAGE_GLSL)).toBe(buildRecipeShader(withAux, mode))
+  })
+
+  it('gives the glow the dim path of each color from the turns the stage draws', () => {
+    const paths = (packId: 'bold' | 'elemental' | 'atmospheric') => {
+      const pack = getPack(packId)
+      const colors = stageColors(pack, defaultMix(pack), true)
+      return Object.fromEntries(stageDimPaths(colors).map((path, k) => [colors[k].hex, path]))
+    }
+    const steps = (path: StageDimPath) => path.steps.map((s) => ({ color: s.color.map((v) => v.toFixed(4)).join(','), below: s.below }))
+    const linear = (hex: string) => hexToLinear(hex).map((v) => v.toFixed(4)).join(',')
+    const bold = paths('bold')
+    expect(steps(bold['#FFD61E']).map((s) => s.color)).toEqual([linear('#FF4F00')])
+    for (const hex of ['#0064E0', '#1FCDF0', '#FF4F00']) expect(bold[hex].steps).toEqual([])
+    const elemental = paths('elemental')
+    expect(steps(elemental['#D6F26C']).map((s) => s.color)).toEqual([linear('#0F3D33')])
+    for (const hex of ['#0064E0', '#0F3D33', '#B8996E', '#4A0A3C']) expect(elemental[hex].steps).toEqual([])
+    const atmospheric = paths('atmospheric')
+    expect(steps(atmospheric['#F2F4F7']).map((s) => s.color)).toEqual([linear('#6A7788')])
+    for (const hex of ['#0064E0', '#6A7788', '#384753', '#1C2B33']) expect(atmospheric[hex].steps).toEqual([])
+    for (const path of [bold['#FFD61E'], elemental['#D6F26C'], atmospheric['#F2F4F7']]) {
+      expect(path.steps[0].below).toBeGreaterThan(0.1)
+      expect(path.steps[0].below).toBeLessThan(0.6)
+    }
+    expect(bold['#FFD61E'].color).toEqual(hexToLinear('#FFD61E'))
   })
 })
