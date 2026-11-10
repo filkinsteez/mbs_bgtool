@@ -105,6 +105,8 @@ const params: ParamSpec[] = [
   { kind: 'number', key: 'gapFade', label: 'Gap fade length', min: 0, max: 2, step: 0.0001, default: 0.1 },
   { kind: 'number', key: 'gapDepth', label: 'How much of the light the gap takes away (0..1)', min: 0, max: 1, step: 0.0001, default: 1 },
   { kind: 'number', key: 'secondFar', label: 'Second light haze and face (times the main ones, reach halved)', min: 0, max: 2, step: 0.01, default: 1 },
+  { kind: 'number', key: 'secondGlow', label: 'Second light glow width (times the main one)', min: 0.1, max: 8, step: 0.0001, default: 1 },
+  { kind: 'number', key: 'secondGlowWeight', label: 'Second light glow strength (times the main one)', min: 0, max: 4, step: 0.0001, default: 1 },
   { kind: 'number', key: 'gain', label: 'Overall gain', min: 0, max: 20, step: 0.001, default: 1 },
   { kind: 'number', key: 'soften', label: 'Overall width', min: 0.05, max: 16, step: 0.001, default: 1 },
 ]
@@ -218,7 +220,12 @@ export function mergedEmitters(ctx: RecipeContext): EmitterSettings[] {
       own: slotColor(ctx, ctx.num(`e${i}Own`)),
       near: [1, 2, 3].map((n) => {
         const read = free(readNear(ctx, `n${n}`, soften, gain))
-        const part = second && n === 1 ? { ...read, weight: read.weight * ctx.num('secondCore') } : read
+        const part =
+          second && n === 1
+            ? { ...read, weight: read.weight * ctx.num('secondCore') }
+            : second && n === 2
+              ? { ...read, weight: read.weight * ctx.num('secondGlowWeight'), sigma: read.sigma * ctx.num('secondGlow') }
+              : read
         return accent ? { ...part, pale: nearPale[n - 1] } : part
       }),
       far: [1, 2, 3].map((n) => {

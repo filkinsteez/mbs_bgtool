@@ -548,9 +548,11 @@ const SECOND_MARGIN = 0.12
 const SECOND_CORE = 0.35
 const SECOND_FAR = 0.6
 /** The main light's glow: wider and stronger, so Meta Blue's own light is the brightest and widest and its brightest
- * part reaches its own color's lightness. */
+ * part reaches its own color's lightness. The second light keeps the glow strength it had (SECOND_GLOW_WEIGHT, at
+ * the base width): wider, its own color reached into the main light's face and mixed to indigo or mauve. */
 const MAIN_GLOW = 2
 const MAIN_GLOW_WEIGHT = 1.5
+const SECOND_GLOW_WEIGHT = 1.1
 /** Red over blue in sRGB: above zero for warm colors. */
 const warmthOf = (hex: string) => parseInt(hex.slice(1, 3), 16) - parseInt(hex.slice(5, 7), 16)
 
@@ -791,6 +793,8 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
       secondUnit: e,
       secondAt: [round4(secondPoint[0] - anchorR[0]), round4(secondPoint[1] - anchorR[1])],
       secondCore: SECOND_CORE,
+      secondGlow: round4(1 / MAIN_GLOW),
+      secondGlowWeight: round4(SECOND_GLOW_WEIGHT / MAIN_GLOW_WEIGHT),
       // Between the two lit stretches the main light's line goes dark, well past the second light's ends, so their
       // face light never overlaps and the colors never mix into pink or mauve.
       gapAt: round4(on2.ts[on2.contour]),
