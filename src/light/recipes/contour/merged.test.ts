@@ -91,12 +91,15 @@ describe('contour.merged', () => {
     }
   })
 
-  it('gives the color stage the light, then the face it lights', () => {
-    for (let seed = 1; seed <= 9; seed++) {
-      const { params } = composeMerged({ colors: LISTS[0], controls: CONTROLS, seed, aspect: 16 / 9 })
-      const parts = mergedParts(params, 16 / 9)
-      expect(parts.map((p) => p.kind)).toEqual(['spot', 'spot'])
-      for (const part of parts) expect(JSON.stringify(part)).not.toMatch(/null|NaN/)
+  it('gives the color stage the light with its face, then the far stretch of the edge', () => {
+    for (const aspect of [16 / 9, 9 / 16]) {
+      for (let seed = 1; seed <= 18; seed++) {
+        const { params } = composeMerged({ colors: LISTS[0], controls: CONTROLS, seed, aspect })
+        const parts = mergedParts(params, aspect)
+        expect(parts[0].kind, `seed ${seed}`).toBe('spot')
+        expect(parts.slice(1).map((p) => p.kind), `seed ${seed}`).toEqual(parts.length > 1 ? ['line'] : [])
+        for (const part of parts) expect(JSON.stringify(part)).not.toMatch(/null|NaN/)
+      }
     }
   })
 

@@ -1092,7 +1092,11 @@ export function curveLightUniforms(
   const emit = new Float32Array(layout.emitters * EMIT_VEC4 * 4)
   for (let e = 0; e < layout.emitters; e++) {
     const settings = emitters[e]
-    if (!settings || !settings.shape) continue
+    if (!settings) continue
+    // The light fields sit relative to the first emitter's anchor (clAnchor(0) in curveLight), so an emitter with no
+    // outline still gives its anchor; without it the fields would sit off in a corner and every emitter go dark.
+    emit.set([settings.anchor[0] ?? 0, settings.anchor[1] ?? 0, 0, 0], e * EMIT_VEC4 * 4)
+    if (!settings.shape) continue
     const sided = [...settings.near, ...settings.far].filter((c) => c.weight > 0 && Math.round(c.side) !== 0)
     const own = settings.own ?? stopAt(settings.stops, 0)
     // Past this distance from the edge every side mask is fully on or off (4 softness widths), so only the inside test matters.

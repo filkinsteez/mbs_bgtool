@@ -154,10 +154,7 @@ export function mergedEmitters(ctx: RecipeContext): EmitterSettings[] {
   const keySlot = ctx.num('keySlot')
   return Array.from({ length: UNITS }, (_, k) => {
     const i = k + 1
-    // A unit that is off still draws its outline, unlit: an emitter with no shape before a lit one blacks out the
-    // whole picture.
-    const on = ctx.bool(`e${i}On`)
-    const dark: EmissionStop[] = [{ t: 0, color: [0, 0, 0], gain: 1 }]
+    if (!ctx.bool(`e${i}On`)) return { shape: null, anchor: at, stops: [], near: [], far: [], maskShift: [0, 0], maskGrow: 0 }
     // An accent's wide light (its haze and the face it lights) takes the key's color at the same luminance, so the
     // face and the far haze read as the key's light instead of a mix of every color, and no brightness changes.
     const accent = Math.round(ctx.num(`e${i}Own`)) !== Math.round(keySlot) && Math.round(ctx.num(`e${i}Rest`)) === 1
@@ -168,9 +165,9 @@ export function mergedEmitters(ctx: RecipeContext): EmitterSettings[] {
     return {
       shape,
       anchor: at,
-      stops: on ? unitStops(ctx, i) : dark,
+      stops: unitStops(ctx, i),
       stopContour,
-      restStops: on ? [{ t: 0, color: litSlot(ctx, ctx.num(`e${i}Rest`)), gain: 1 }] : dark,
+      restStops: [{ t: 0, color: litSlot(ctx, ctx.num(`e${i}Rest`)), gain: 1 }],
       fades,
       // The drift measures the light against the color's own level, so a color under the stand-in's lightness dims
       // through its darker neighbour where its light is low.

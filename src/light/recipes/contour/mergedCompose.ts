@@ -73,18 +73,23 @@ interface LayoutDef {
   soft?: boolean
   /** The seed's turn, times this (a horizon only leans a little). */
   turn?: number
+  /** How far (logo units, each way) the seed slides the logo's crop point along its outline. */
+  slide?: Vec2
+  /** A wash: the light fills the whole frame on both sides of the edge, brightest along it. */
+  wash?: boolean
 }
 
+// Large crops: the outline crosses the frame and the face it lights takes a real share of it.
 const LAYOUTS: readonly LayoutDef[] = [
-  { name: 'Arch', kind: 'logo', feature: 'rightTop', size: 2.6, rotate: 0, target: [0.15, 0.35], hotAt: 0.5 },
-  { name: 'Loop end', kind: 'logo', feature: 'rightEnd', size: 2.0, rotate: 0, target: [-0.36, 0.05], hotAt: 0.45, tall: 1.8 },
-  { name: 'Bend', kind: 'logo', feature: 'rightBottom', size: 2.8, rotate: -25, target: [0.25, -0.45], hotAt: 0.5 },
-  { name: 'Corner', kind: 'roundedSquare', size: 1.5, radius: 0.45, rotate: -12, target: [0.3, 0.2], hotAt: 0.5 },
-  { name: 'Ribbon', kind: 'logo', feature: 'ribbon', size: 3.0, rotate: -30, target: [0.05, 0.15], hotAt: 0.5 },
-  { name: 'Halo', kind: 'ring', size: 1.5, rotate: 0, target: [0.1, 0.1], hotAt: 0.5 },
-  { name: 'Close', kind: 'roundedSquare', size: 1.1, radius: 0.7, rotate: -18, target: [0.12, 0.05], hotAt: 0.5, blur: 3.2, fill: 2.6 },
-  { name: 'Horizon', kind: 'ring', size: 5, rotate: 0, target: [0, 0.42], hotAt: 0.5, blur: 1.4, fill: 1.6, outside: true, rays: true, turn: 0.3 },
-  { name: 'Wash', kind: 'ring', size: 3.4, rotate: 0, target: [-0.15, -0.3], tallTarget: [-0.15, -0.05], hotAt: 0.5, tall: 1.2, blur: 7, fill: 3.4, soft: true, outside: true },
+  { name: 'Arch', kind: 'logo', feature: 'rightTop', size: 4.2, rotate: 0, target: [0.1, -0.05], hotAt: 0.5, slide: [0.1, 0.01] },
+  { name: 'Loop end', kind: 'logo', feature: 'rightEnd', size: 3.4, rotate: 0, target: [0.1, 0.05], hotAt: 0.45, tall: 1.4, slide: [0.01, 0.12] },
+  { name: 'Bend', kind: 'logo', feature: 'rightBottom', size: 4.4, rotate: -25, target: [-0.15, 0.2], hotAt: 0.5, slide: [0.1, -0.01] },
+  { name: 'Corner', kind: 'roundedSquare', size: 2.4, radius: 0.6, rotate: -12, target: [0.3, -0.2], hotAt: 0.5 },
+  { name: 'Ribbon', kind: 'logo', feature: 'ribbon', size: 4.6, rotate: -30, target: [0, 0.05], hotAt: 0.5, slide: [0.08, 0.04] },
+  { name: 'Halo', kind: 'ring', size: 2.2, rotate: 0, target: [0.3, 0.05], hotAt: 0.5 },
+  { name: 'Close', kind: 'roundedSquare', size: 1.6, radius: 0.8, rotate: 72, target: [-0.2, 0.2], hotAt: 0.5, blur: 3.2, fill: 2.6 },
+  { name: 'Horizon', kind: 'ring', size: 5, rotate: 0, target: [0, 0.3], hotAt: 0.5, blur: 1.4, fill: 1.6, outside: true, rays: true, turn: 0.3 },
+  { name: 'Wash', kind: 'ring', size: 3.4, rotate: 0, target: [-0.1, -0.1], tallTarget: [-0.1, 0], hotAt: 0.5, tall: 1.2, blur: 3, fill: 3.4, soft: true, outside: true, wash: true },
 ]
 
 /** The shapes in the order the panel shows them; a seed's shape is `shapeOfSeed`. */
@@ -100,6 +105,8 @@ interface Jitter {
   shift: Vec2
   scale: number
   mirror: boolean
+  /** -1..1: which stretch of the outline the crop shows (LayoutDef.slide; a square's corner rounds more or less). */
+  slide: number
 }
 
 /** A logo crop shows one part of the logo: no second part and no second landmark comes near the frame. */
@@ -114,12 +121,14 @@ function placeLayout(def: LayoutDef, aspect: number, jitter: Jitter): { spec: Me
   const [fw, fh] = frameSize(aspect)
   const at = aspect < 1 && def.tallTarget ? def.tallTarget : def.target
   const target: Vec2 = [(at[0] + jitter.shift[0]) * (fw / 2), (at[1] + jitter.shift[1]) * (fh / 2)]
-  const radius = (def.radius ?? 0.3) * jitter.scale
+  const radius = (def.radius ?? 0.3) * jitter.scale * (def.kind === 'roundedSquare' ? 1 + 0.4 * jitter.slide : 1)
   const rotate = def.rotate + jitter.turn * (def.turn ?? 1)
   const place = (size: number) => {
     let point: Vec2
     if (def.kind === 'logo') {
-      const f = FEATURE[def.feature ?? 'rightTop']
+      const base = FEATURE[def.feature ?? 'rightTop']
+      const slide = def.slide ?? [0, 0]
+      const f: Vec2 = [base[0] + slide[0] * jitter.slide, base[1] + slide[1] * jitter.slide]
       point = rot([f[0] * size, f[1] * size], rotate)
     } else if (def.kind === 'roundedSquare') {
       const c = size - radius + radius / Math.SQRT2
@@ -155,16 +164,12 @@ export function seedDesign(seed: number) {
   const s = Math.round(seed)
   const rand = seededRandom(s, 913)
   const variant = Math.floor((s - 1) / LAYOUTS.length)
-  const jitter: Jitter = {
-    turn: lerp(-24, 24, rand()),
-    shift: [lerp(-0.16, 0.16, rand()), lerp(-0.16, 0.16, rand())],
-    scale: lerp(0.8, 1.3, rand()),
-    mirror: (variant % 2 === 1) !== (rand() < 0.25),
-  }
-  return {
-    layout: (((s - 1) % LAYOUTS.length) + LAYOUTS.length) % LAYOUTS.length,
-    jitter,
-    hotShift: lerp(-0.25, 0.25, rand()),
+  const turn = lerp(-24, 24, rand())
+  const shift: Vec2 = [lerp(-0.12, 0.12, rand()), lerp(-0.12, 0.12, rand())]
+  const scale = lerp(0.85, 1.25, rand())
+  const mirror = (variant % 2 === 1) !== (rand() < 0.25)
+  const draws = {
+    hotShift: lerp(-0.35, 0.35, rand()),
     reachDraw: rand(),
     powerDraw: rand(),
     hotDraw: rand(),
@@ -172,6 +177,9 @@ export function seedDesign(seed: number) {
     rayDraw: rand(),
     keyDraw: rand(),
   }
+  // Seeds that share a shape also differ in which stretch of the outline is in the frame.
+  const jitter: Jitter = { turn, shift, scale, mirror, slide: lerp(-1, 1, rand()) }
+  return { layout: (((s - 1) % LAYOUTS.length) + LAYOUTS.length) % LAYOUTS.length, jitter, ...draws }
 }
 
 /** Index into MERGED_SHAPES of the seed's shape. */
@@ -482,6 +490,14 @@ const STAND_IN = '#0064E0'
 /** How much farther the second edge must be than the nearest (frame units) before the accents show in full. */
 const BETWEEN = 0.25
 
+/** The face's light (times the layout's fill) and how far into the face it reaches (short sides). */
+const FACE = 0.1
+const FACE_REACH = 0.45
+/** A wash: its light on both sides of the edge, how far that reaches, and its haze. */
+const WASH_FACE = 0.6
+const WASH_REACH = 0.9
+const WASH_HAZE = 0.4
+
 /**
  * No light at a pinch point (the owner, 2026-11-09): where the outline turns sharply (outlineTips, as Rim finds them),
  * every unit's own light goes out within TIP_DARK of the tip along the outline and comes back over TIP_FADE (both
@@ -523,7 +539,8 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const run = longestRun(runs)
   const [fw, fh] = frameSize(aspect)
   // The mood control (Light position; the tool holds it at 0.5) moves the light along the edge from the seed's place.
-  const homeAt = Math.min(0.85, Math.max(0.15, def.hotAt + design.hotShift + 0.4 * (controls.mood - 0.5)))
+  // The seed's place stays in the middle of the visible edge, so the face it lights is in the frame.
+  const homeAt = Math.min(0.85, Math.max(0.15, def.hotAt + 0.6 * design.hotShift + 0.4 * (controls.mood - 0.5)))
   // The hot spot stays on a smooth stretch: along the longest stretch of the run clear of every sharp tip, and a drag
   // counts outline points near a tip less (fading in from half of TIP_CLEAR to TIP_CLEAR), as Rim's does.
   const tips = outlineTips(shape0, anchor, aspect)
@@ -540,7 +557,9 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const blur = def.blur ?? 1
   const soften = geo(controls.softness, 0.3, 1, 1.7) * blur
   const power = lerp(2.4, 3.2, design.powerDraw)
-  const factor = lerp(10, 30, design.reachDraw)
+  // How far the light along the edge falls by the far end of the visible stretch: 4 to 16 times, so the far stretch
+  // still carries a dimmer light (a wash's whole edge is lit).
+  const factor = def.wash ? 2 : lerp(4, 16, design.reachDraw)
   const reach = flatRadius(run, home, factor, power)
   const hazeScale = lerp(0.7, 1.5, design.hazeDraw)
   const dragReach = dragged ? Math.hypot(dragged.lineLength, 0.12) : 0
@@ -633,14 +652,21 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     })
   })
 
-  const parts = productionParts('', { side: def.outside ? 2 : 1, soften, face: 0.035 * (def.fill ?? 1), glow: 0.009, haze: round4(0.04 * hazeScale), fan: 2 })
+  // In focus, Rim's hot core: the core line 8 times the light's level where it is strongest, so it overexposes to
+  // white and the light's color shows in the falloff beside it.
+  const hotCore = blur <= 1
+  const parts = productionParts('', { side: def.outside ? 2 : 1, soften, face: 0.035 * (def.fill ?? 1), glow: 0.009, haze: round4(0.04 * hazeScale), fan: 2, hotCore })
   // A light brightens in its own color first: a small hot spot over a strong colored glow, so a blue light blooms
   // saturated blue and only a thin core goes to white.
-  Object.assign(parts, { n1Weight: 0.8, n2Weight: 1.1, n3Weight: 1.2, f1Weight: round4(0.09 * (def.fill ?? 1)), f2Width: round4(0.035 * hazeScale) })
+  Object.assign(parts, { ...(hotCore ? {} : { n1Weight: 0.8 }), n2Weight: 1.1, n3Weight: 1.2, f1Weight: round4(0.09 * (def.fill ?? 1)), f2Width: round4(0.035 * hazeScale) })
+  // The face takes soft light from the whole lit stretch of its edge: brighter near it, deep at the far side.
+  Object.assign(parts, { f3Weight: round4(FACE * (def.fill ?? 1)), f3Width: FACE_REACH, f3Light: 1, f3LightGamma: 1 })
+  // A wash fills the frame on both sides of its edge, brightest along it, and the edge still reads through it.
+  if (def.wash) Object.assign(parts, { f3Side: 0, f3Weight: WASH_FACE, f3Width: WASH_REACH, f1Weight: WASH_HAZE, f1Width: round4(0.25 * hazeScale) })
   const coreBlur = def.soft ? blur : blur ** 0.6
   // Out of focus, the hot core spreads over a large area, so it carries less light there, as a defocused lamp does.
   if (blur > 1) Object.assign(parts, { n1Width: round4(0.0014 * coreBlur), n3Width: round4(0.0035 * coreBlur), n3Weight: round4(1.2 / blur ** 0.7) })
-  if (def.outside) Object.assign(parts, { f3Side: 2 })
+  if (def.outside && !def.wash) Object.assign(parts, { f3Side: 2 })
   // A light outside the frame lights a wider stretch of the edge, but the face behind the edge stays near the edge:
   // lit as widely as the hot spot it read as a flat field of haze.
   if (spread > 0) Object.assign(parts, { f3Weight: round4(Number(parts.f3Weight) * (1 - 0.92 * smooth01(0, 0.35, spread))) })
@@ -663,7 +689,10 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     keySlot: slotOf(plan.key),
     ...unitParams,
     ...parts,
+    // Scatter blurs from 0.01 to about 0.33 of the short side (times the softness), so the face's light falls off
+    // across it instead of filling it flat.
     farWidth: 0.01,
+    farStep: 3.2,
     light1Kind: dragged ? 6 : 5,
     light1At: [round4(hot[0] - anchor[0]), round4(hot[1] - anchor[1])],
     light1Radius: round4(dragged ? Math.hypot(dragReach / Math.log(factor) ** (1 / power), spread) : reach),
@@ -676,7 +705,8 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     groundFar: plan.ground.far >= 0 ? slotOf(plan.ground.far) : 1,
     groundL: ROOM_L,
     // The room is lit toward the light and darker away from it.
-    groundDir: [round4(-hot[0] / Math.max(1e-3, Math.hypot(hot[0], hot[1]))), round4(-hot[1] / Math.max(1e-3, Math.hypot(hot[0], hot[1]))), -0.5, 0.7],
+    // Away from the light; near the frame's middle the gradient shortens and softens instead of turning fast.
+    groundDir: [round4(-hot[0] / Math.max(0.3, Math.hypot(hot[0], hot[1]))), round4(-hot[1] / Math.max(0.3, Math.hypot(hot[0], hot[1]))), -0.5, 0.7],
     gain: round4(gain),
     soften: round4(soften),
     ...(def.rays
@@ -725,9 +755,10 @@ const vec = (params: Readonly<Record<string, ParamValue>>, key: string, fallback
 }
 
 /**
- * Where the merged look's light is, from its params: the light at its core with its near haze (the lead color's), then
- * the face and haze it lights on the shape's inside (outside behind a horizon). Two parts, as the stage lays its own
- * fields along the bright outline and keeps eight fields in all. Nothing here reads the colors.
+ * Where the merged look's light is, from its params: first the light with the face it lights (the lead color's, so it
+ * carries light as a gradient, not only along the line), then the far stretch of the outline, where the light along
+ * the edge is dimmer (another color, where the light would put it). Two parts, as the stage lays its own fields along
+ * the bright outline and keeps eight fields in all. Nothing here reads the colors.
  */
 export function mergedParts(params: Readonly<Record<string, ParamValue>>, aspect: number): StagePart[] {
   const [fw, fh] = frameSize(aspect)
@@ -736,14 +767,25 @@ export function mergedParts(params: Readonly<Record<string, ParamValue>>, aspect
   const lightAt = vec(params, 'light1At', [0, 0])
   const hot: Vec2 = [anchor[0] + lightAt[0], anchor[1] + lightAt[1]]
   const frame = (p: Vec2): [number, number] => [round4(p[0] / fw + 0.5), round4(p[1] / fh + 0.5)]
-  const side = num(params, 'f1Side', 1) === 2 ? -1 : 1
+  const side = num(params, 'f3Side', 1) === 2 ? -1 : 1
   const toMiddle: Vec2 = [anchor[0] - hot[0], anchor[1] - hot[1]]
   const len = Math.hypot(toMiddle[0], toMiddle[1]) || 1
   const inward: Vec2 = [(side * toMiddle[0]) / len, (side * toMiddle[1]) / len]
-  const haze = num(params, 'f1Width', 0.04) * num(params, 'soften', 1)
-  const reach = 0.12 + haze
-  return [
-    { kind: 'spot', at: frame(hot), radius: round4(num(params, 'light2Radius', 0.18) + 0.05), want: 'any' },
-    { kind: 'spot', at: frame([hot[0] + inward[0] * reach, hot[1] + inward[1] * reach]), radius: round4(0.2 + 0.5 * num(params, 'f3Weight', 0.035) + 1.5 * haze) },
-  ]
+  const into = 0.15 + 0.3 * num(params, 'f3Width', 0.35) * Math.min(1, num(params, 'soften', 1))
+  const parts: StagePart[] = [{ kind: 'spot', at: frame([hot[0] + inward[0] * into, hot[1] + inward[1] * into]), radius: round4(into + 0.12), want: 'any' }]
+  // The far stretch: the outer half of the longer arm of the visible edge from the light.
+  const kind = MERGED_SHAPE_KINDS[Math.min(MERGED_SHAPE_KINDS.length - 1, Math.max(0, Math.round(num(params, 'shape', 1)) - 1))]
+  const spec: MergedShapeSpec = { kind, size: num(params, 'size', 1), radius: num(params, 'radius', 0.3), rotate: num(params, 'rotate', 0), flip: params.flip === true }
+  const runs = visibleRuns(buildMergedShape(spec), anchor, aspect)
+  const d2 = (p: Vec2) => (p[0] - hot[0]) ** 2 + (p[1] - hot[1]) ** 2
+  const run = runs.reduce<Vec2[]>((best, r) => (best.length === 0 || (r.length > 1 && Math.min(...r.map(d2)) < Math.min(...best.map(d2))) ? r : best), [])
+  if (run.length > 3) {
+    const i0 = run.reduce((bi, p, i) => (d2(p) < d2(run[bi]) ? i : bi), 0)
+    const arms = [run.slice(0, i0 + 1).reverse(), run.slice(i0)]
+    const arm = arms[0].length >= arms[1].length ? arms[0] : arms[1]
+    const from = pointAlong(arm, 0.55)
+    const to = pointAlong(arm, 1)
+    if (arm.length > 3 && from && to) parts.push({ kind: 'line', from: frame(from), to: frame(to), width: 0.14, want: 'any' })
+  }
+  return parts
 }
