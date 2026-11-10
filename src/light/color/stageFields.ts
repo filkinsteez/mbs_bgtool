@@ -30,9 +30,10 @@ export const COVERAGE_SPLIT = 4
 
 /**
  * What a field asks for: a warm light, a cool one, a dark color, a color that only reads as itself when bright (Yellow,
- * Lime, Tan, Ice: for the brightest part of a light), or whichever the shares give it.
+ * Cyan, Lime, Tan, Ice: for the brightest part of a light), a light color that isn't warm (`pale`: Cyan, Lime, Ice, for
+ * a pale sky), the lead color (`lead`: the largest share, Meta Blue at the default), or whichever the shares give it.
  */
-export type FieldWant = 'any' | 'warm' | 'cool' | 'dark' | 'bright'
+export type FieldWant = 'any' | 'warm' | 'cool' | 'dark' | 'bright' | 'pale' | 'lead'
 
 /**
  * A look's part, in frame units: x from the left edge and y from the top edge (0..1 inside the frame), sizes in

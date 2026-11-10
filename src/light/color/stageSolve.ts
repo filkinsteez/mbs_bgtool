@@ -8,8 +8,8 @@ import { mulberry32, VISIBLE, type StageField, type StageGrid } from './stageFie
 export const KIND_PLAIN = 0
 /** Only reads as itself when bright; below that it turns into its darker pack neighbor (Yellow to Orange-red). */
 export const KIND_TO_NEIGHBOR = 1
-/** Only reads as itself when bright and has no darker neighbor (Tan in Elemental): it turns neutral instead. */
-export const KIND_TO_NEUTRAL = 2
+/** Only reads as itself where the design is about as light (Cyan, Lime, Ice, Tan): a light of its own on bright parts. */
+export const KIND_BRIGHT = 2
 /** A dark color: only at or below its own lightness. */
 export const KIND_DARK = 3
 
@@ -33,21 +33,15 @@ export interface StageColor {
   hue: number
   group: 'warm' | 'cool' | 'dark'
   kind: number
-  /** Bright-only colors: the lightness where they start to turn (16 below their own). Dark colors: their own lightness. */
-  edge: number
-  /** Lightness over which a bright-only color turns: above its edge and below it. */
-  turn: [number, number]
-  /** What a bright-only color turns into, brightest channel 1. */
-  neighbor: [number, number, number]
   /**
-   * A warm color with a lighter warm neighbor (Orange-red with Yellow) turns into it as its light grows, as a fire's
-   * core goes yellow and then white: that neighbor, and the lightness where the turn starts (2 for none).
+   * The lightness that bounds where the color goes: Yellow starts turning into Orange-red 0.16 under its own; a light
+   * color (Cyan, Lime, Ice, Tan) shows from 0.1 under its own; a dark color up to its own.
    */
-  upper: [number, number, number]
-  upperFrom: number
-  /** Where `neighbor` and `upper` are in the list of colors that are on (-1 for none), for counting what a pixel reads as. */
+  edge: number
+  /** Lightness over which Yellow turns into Orange-red: above its edge and below it. */
+  turn: [number, number]
+  /** Where the color Yellow dims into (Orange-red) is in the list of colors that are on, else -1. */
   neighborIndex: number
-  upperIndex: number
   /** Its share in the pack's default mix, for handing out fields. */
   defaultShare: number
   /** The asked share, of the colors that are on. */
@@ -86,22 +80,13 @@ export function stageColors(pack: ColorPack, mix: ColorMix): StageColor[] {
     }
   })
   return base.map((c) => {
-    let neighbor: (typeof base)[number] | undefined
-    if (c.brightOnly) {
-      const darker = base.filter((o) => o !== c && !o.brightOnly && o.lightness < c.lightness)
-      neighbor =
-        c.chroma < 0.02
-          ? darker.filter((o) => o.group !== 'dark' && o.chroma < 0.06).sort((x, y) => y.lightness - x.lightness)[0]
-          : darker.filter((o) => o.chroma >= 0.04 && hueGap(o.hue, c.hue) <= 60).sort((x, y) => hueGap(x.hue, c.hue) - hueGap(y.hue, c.hue))[0]
-    }
-    // A plain color brightens into a lighter color of its own kind: Orange-red into Yellow, Meta Blue into Cyan (or into
-    // Ice, a grey), Steel into Ice.
-    const upper =
-      c.group !== 'dark' && !c.brightOnly
-        ? base.filter((o) => o !== c && o.group === c.group && o.lightness > c.lightness + 0.1 && (o.chroma < 0.02 || hueGap(o.hue, c.hue) <= 60)).sort((x, y) => x.lightness - y.lightness)[0]
+    // Yellow dims like fire through a darker warm color within 60 degrees (Orange-red); every other color keeps its
+    // own hue from dim to bright, the way the engine draws a light of it.
+    const fire =
+      c.brightOnly && c.group === 'warm'
+        ? base.filter((o) => o !== c && !o.brightOnly && o.group === 'warm' && o.lightness < c.lightness && hueGap(o.hue, c.hue) <= 60).sort((x, y) => hueGap(x.hue, c.hue) - hueGap(y.hue, c.hue))[0]
         : undefined
-    const kind = c.group === 'dark' ? KIND_DARK : !c.brightOnly ? KIND_PLAIN : neighbor ? KIND_TO_NEIGHBOR : KIND_TO_NEUTRAL
-    const turn: [number, number] = kind === KIND_TO_NEIGHBOR ? (c.chroma < 0.02 ? [0.05, 0.25] : [0.08, 0.12]) : kind === KIND_TO_NEUTRAL ? [0.05, 0.1] : [0, 0]
+    const kind = c.group === 'dark' ? KIND_DARK : fire ? KIND_TO_NEIGHBOR : c.brightOnly ? KIND_BRIGHT : KIND_PLAIN
     return {
       hex: c.hex,
       unit: c.unit,
@@ -110,13 +95,9 @@ export function stageColors(pack: ColorPack, mix: ColorMix): StageColor[] {
       hue: c.hue,
       group: c.group,
       kind,
-      edge: kind === KIND_DARK ? c.lightness : c.lightness - 0.16,
-      turn,
-      neighbor: neighbor ? neighbor.unit : kind === KIND_TO_NEUTRAL ? [1, 1, 1] : c.unit,
-      upper: upper ? upper.unit : c.unit,
-      upperFrom: upper ? c.lightness + 0.04 : 2,
-      neighborIndex: neighbor ? base.indexOf(neighbor) : -1,
-      upperIndex: upper ? base.indexOf(upper) : -1,
+      edge: kind === KIND_DARK ? c.lightness : kind === KIND_BRIGHT ? c.lightness - 0.1 : c.lightness - 0.16,
+      turn: kind === KIND_TO_NEIGHBOR ? [0.08, 0.12] : [0, 0],
+      neighborIndex: fire ? base.indexOf(fire) : -1,
       defaultShare: c.defaultShare,
       share: c.share,
     }
@@ -130,12 +111,14 @@ const smooth = (e0: number, e1: number, x: number) => {
 
 /** How much of a color reads as itself at a lightness: a bright-only color only above its turn, as the shader turns it. */
 function itself(c: StageColor, lightness: number): number {
-  return c.kind === KIND_TO_NEIGHBOR || c.kind === KIND_TO_NEUTRAL ? smooth(c.edge - c.turn[1], c.edge + c.turn[0], lightness) : 1
+  return c.kind === KIND_TO_NEIGHBOR ? smooth(c.edge - c.turn[1], c.edge + c.turn[0], lightness) : 1
 }
 
 /** How much a color may show at a lightness: a dark color only at or below its own; the others anywhere. */
 export function colorMask(c: StageColor, lightness: number): number {
-  return c.kind === KIND_DARK ? 1 - smooth(c.edge - 0.1, c.edge, lightness) : 1
+  if (c.kind === KIND_DARK) return 1 - smooth(c.edge - 0.1, c.edge, lightness)
+  if (c.kind === KIND_BRIGHT) return smooth(c.edge - 0.2, c.edge, lightness)
+  return 1
 }
 
 /**
@@ -151,7 +134,26 @@ export function assignFields(colors: readonly StageColor[], fields: readonly Sta
   const used = new Set<number>()
   fields.forEach((field, f) => {
     if (field.want === 'any') return
-    const wanted = (c: StageColor) => (field.want === 'bright' ? c.kind === KIND_TO_NEIGHBOR || c.kind === KIND_TO_NEUTRAL : c.group === field.want)
+    const wanted = (c: StageColor) => {
+      switch (field.want) {
+        case 'lead':
+          return c === colors[ranked[0]]
+        case 'bright':
+          return c.kind === KIND_TO_NEIGHBOR || c.kind === KIND_BRIGHT
+        case 'pale':
+          return c.kind === KIND_BRIGHT && !(c.group === 'warm' && c.hue < 100)
+        case 'warm':
+        case 'cool':
+        case 'dark':
+          return c.group === field.want
+        case 'any':
+          return true
+        default: {
+          const unknown: never = field.want
+          throw new Error(`No color for ${String(unknown)}`)
+        }
+      }
+    }
     let k = ranked.find((c) => out[c] < 0 && wanted(colors[c]))
     // A pack without a warm color lights its warm places with its brightest color left (Atmospheric's Ice).
     if (k === undefined && field.want === 'warm') k = ranked.filter((c) => out[c] < 0 && colors[c].group !== 'dark').sort((a, b) => colors[b].lightness - colors[a].lightness)[0]
@@ -243,17 +245,14 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
   const reads = colors.map((c) => {
     const own = new Float32Array(visible.length)
     const down = new Float32Array(visible.length)
-    const up = new Float32Array(visible.length)
     visible.forEach((i, j) => {
       const l = Math.max(L[i], VISIBLE)
-      const seen = 1 - smooth(1.2, 1.4, l)
+      const seen = 1 - smooth(0.95, 1.1, l)
       const self = itself(c, l)
-      const raised = c.upperIndex >= 0 ? smooth(c.upperFrom, c.upperFrom + 0.15, l) * itself(colors[c.upperIndex], l) : 0
-      own[j] = seen * self * (1 - raised)
+      own[j] = seen * self
       down[j] = c.neighborIndex >= 0 ? seen * (1 - self) * colorMask(colors[c.neighborIndex], l) : 0
-      up[j] = seen * self * raised
     })
-    return { own, down, up }
+    return { own, down }
   })
   const p = new Float64Array(K)
   /** Per color: the share of the light it leads, what of that reads as itself, and what reads as it from others' turns. */
@@ -265,7 +264,6 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
       area[k] += amount
       own[k] += amount * reads[k].own[j]
       if (colors[k].neighborIndex >= 0) incoming[colors[k].neighborIndex] += amount * reads[k].down[j]
-      if (colors[k].upperIndex >= 0) incoming[colors[k].upperIndex] += amount * reads[k].up[j]
     }
     visible.forEach((i, j) => {
       let s = 0
@@ -310,7 +308,7 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
       else out[k] = floor[r] + (pool - floorSum) * (extraSum > 1e-9 ? extra[r] / extraSum : target[k] / Math.max(1e-9, 1 - (lead >= 0 ? target[lead] : 0)))
     })
     for (let k = 0; k < K; k++) {
-      if (colors[k].kind !== KIND_DARK || out[k] <= most[k] * 0.97) continue
+      if ((colors[k].kind !== KIND_DARK && colors[k].kind !== KIND_BRIGHT) || out[k] <= most[k] * 0.97) continue
       const excess = out[k] - most[k] * 0.97
       out[k] -= excess
       if (lead >= 0) out[lead] += excess

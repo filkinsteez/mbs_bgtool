@@ -1,4 +1,5 @@
 import type { Gpu, Target } from '../engine/gl'
+import { toneCurve } from '../engine/output'
 import { runPostPasses } from '../engine/passes'
 import { NO_PROFILE } from '../engine/profile'
 import { buildRecipeShader } from '../engine/recipeShader'
@@ -176,7 +177,7 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
     solved = remember(solves, solveKey, { colors, assignment, values, ...solveWeights(grid, own, colors, colors.map((_, k) => k)) })
   }
   lastReport = { hexes: solved.colors.map((c) => c.hex), light: solved.light, reads: solved.reads, fields: solved.assignment.map((f) => fields[f]?.name ?? '') }
-  const textures = fieldTextures(input.gpu, grid, solved.values)
+  const textures = { ...fieldTextures(input.gpu, grid, solved.values), uMixRamps: rampTexture(input.gpu, solved.colors) }
   return {
     chunk: COLOR_STAGE_GLSL,
     uniforms: stageUniforms(solved),
@@ -189,25 +190,70 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
 
 function stageUniforms({ colors, weights }: Solved): UniformMap {
   const color = new Float32Array(20)
-  const neighbor = new Float32Array(20)
-  const upper = new Float32Array(20)
+  const turn = new Float32Array(20)
   const field = new Float32Array(20)
   colors.slice(0, 5).forEach((c, k) => {
     color.set([...c.unit, c.kind], 4 * k)
-    neighbor.set([...c.neighbor, c.edge], 4 * k)
-    upper.set([...c.upper, c.upperFrom], 4 * k)
-    field.set([k, weights[k], c.turn[0], c.turn[1]], 4 * k)
+    turn.set([c.neighborIndex, c.edge, c.turn[0], c.turn[1]], 4 * k)
+    field.set([k, weights[k], 0, 0], 4 * k)
   })
   return {
     uMixCount: Math.min(5, colors.length),
     uMixColor: color,
-    uMixNeighbor: neighbor,
-    uMixUpper: upper,
+    uMixTurn: turn,
     uMixField: field,
     uMixFar: farPairs(colors.slice(0, 5)),
     uMixSharp: STAGE_SHARPNESS,
     uMixBridge: 1,
   }
+}
+
+/** Steps in a color's ramp, evenly spaced in the cube root of luminance from black to white. */
+export const RAMP_STEPS = 32
+
+/**
+ * How the engine draws a light of the color `unit` from dim to bright: for each step's luminance (cube-root spaced from
+ * 0 to 1), the color the tone curve shows for that light at that luminance, scaled to luminance 1. Meta Blue runs
+ * navy, Meta Blue, a lighter blue, white; the last step is white.
+ */
+export function colorRamp(unit: readonly number[]): Float32Array {
+  const luma = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+  const shown: { y: number; rgb: [number, number, number] }[] = []
+  for (let s = 0; s <= 160; s++) {
+    const rgb = toneCurve(unit.map((v) => v * 1e-3 * 2 ** (s / 8)))
+    shown.push({ y: luma(rgb), rgb })
+  }
+  const out = new Float32Array(RAMP_STEPS * 3)
+  for (let j = 0; j < RAMP_STEPS; j++) {
+    const y = (j / (RAMP_STEPS - 1)) ** 3
+    let rgb: readonly number[] = [1, 1, 1]
+    const at = shown.findIndex((d) => d.y >= y)
+    if (at === 0) rgb = shown[0].rgb
+    else if (at > 0) {
+      const a = shown[at - 1]
+      const b = shown[at]
+      const t = (y - a.y) / Math.max(b.y - a.y, 1e-9)
+      rgb = a.rgb.map((v, i) => v + t * (b.rgb[i] - v))
+    }
+    const l = Math.max(luma(rgb), 1e-9)
+    out.set(rgb.map((v) => v / l), 3 * j)
+  }
+  return out
+}
+
+/** Every color's ramp as one texture: a row per color, a column per step. */
+function rampTexture(gpu: Gpu, colors: readonly StageColor[]): Target {
+  const gl = gpu.gl
+  const data = new Float32Array(RAMP_STEPS * 5 * 4)
+  colors.slice(0, 5).forEach((c, k) => {
+    const ramp = colorRamp(c.unit)
+    for (let j = 0; j < RAMP_STEPS; j++) data.set([ramp[3 * j], ramp[3 * j + 1], ramp[3 * j + 2], 1], 4 * (k * RAMP_STEPS + j))
+  })
+  const target = gpu.acquire(RAMP_STEPS, 5)
+  gl.bindTexture(gl.TEXTURE_2D, target.texture)
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, RAMP_STEPS, 5, gl.RGBA, gl.FLOAT, data)
+  gl.bindTexture(gl.TEXTURE_2D, null)
+  return target
 }
 
 /** Each color's field as two four-channel textures on the stage grid (colors 0-3 and 4), row 0 at the top like a render. */
