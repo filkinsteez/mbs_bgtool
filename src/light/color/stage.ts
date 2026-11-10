@@ -233,6 +233,7 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
             ...Array.from({ length: 5 }, (_, k) => soft[k] ?? new Float32Array(grid.width * grid.height)),
             grid.glow ?? new Float32Array(grid.width * grid.height),
             grid.slope ?? new Float32Array(grid.width * grid.height),
+            grid.seen ?? grid.lightness,
           ],
           weights: colors.map(() => 1),
         }
@@ -324,7 +325,7 @@ function rampTexture(gpu: Gpu, colors: readonly StageColor[]): Target {
 
 /**
  * Each color's field as two four-channel textures on the stage grid (colors 0-3, then 4 and, in a look colored by
- * its parts, the light as the picture shows it), row 0 at the top like a render.
+ * its parts, the lens's glow, the light's slope and the light as the picture shows it), row 0 at the top like a render.
  */
 function fieldTextures(gpu: Gpu, grid: StageGrid, fields: readonly Float32Array[]): Record<string, Target> {
   const { width: w, height: h } = grid

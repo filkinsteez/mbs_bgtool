@@ -1,6 +1,12 @@
 import { DIM_TURN, PAIR_GAP, PAIR_PRESENT, PAIR_THIN, PAIR_WIDTH } from './stageSolve'
 
 /**
+ * How much lighter than its grid cell a pixel is (a thin bright line in a dim cell) where a dark color starts and
+ * finishes dropping out on the pixel's own light (soft blend).
+ */
+const LINE_LIGHTER = [0.04, 0.12] as const
+
+/**
  * The color stage in GLSL: `vec3 colorStage(vec2 uv, vec3 radiance)` keeps each pixel's luminance exactly and gives it
  * the colors of the color fields (two textures of four fields on the stage grid, one per color), weighted and added like
  * overlapping light. Each color is shown the way the engine draws a light of it at that lightness (its ramp, measured
@@ -116,6 +122,10 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
     // The soft blend's shares already keep each color to its lightness on the grid; here a color only drops out
     // where it can't show at all (a thin bright line in a dim cell), so its own share isn't thinned.
     float mask = max(mixMask(k, L), pairMask[k]);
+    // A dark color drops out on a pixel's own light only where the pixel is much lighter than its grid cell (fb.w: a
+    // thin bright line in a dim cell). Elsewhere its share already follows the cell's light, which falls off smoothly,
+    // so it meets a light in a soft, rounded blend, not in a V along the ridge of light a line makes.
+    if (uMixSoft > 0.5 && uMixColor[k].a > 2.5) mask = mix(1.0, mask, smoothstep(${LINE_LIGHTER[0].toFixed(4)}, ${LINE_LIGHTER[1].toFixed(4)}, L - fb.w));
     float f = max(mixFieldValue(int(uMixField[k].x + 0.5), fa, fb), 0.0) * (uMixSoft > 0.5 ? smoothstep(0.0, 0.25, mask) : mask);
     if (f > bestValue) {
       bestValue = f;
