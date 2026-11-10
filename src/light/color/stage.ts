@@ -205,7 +205,8 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
   let solved = solves.get(solveKey)
   if (!solved) {
     const byParts = coloredByParts(fields)
-    const colors = stageColors(pack, mix, byParts)
+    // Rush's Orange-red keeps its fade until Rush's rework of its forms lands (coordinator, 2026-11-10 8:31 AM).
+    const colors = stageColors(pack, mix, byParts, input.program.id !== 'rush.split')
     const assignment = assignFields(colors, fields, input.ctx.seed)
     const values = colorFields(fields, assignment, colors)
     const own = values.map((v, k): StageField => ({ name: fields[assignment[k]]?.name ?? 'none', want: fields[assignment[k]]?.want ?? 'any', values: v }))

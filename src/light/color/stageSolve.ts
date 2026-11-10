@@ -70,7 +70,11 @@ const toUnit = (c: readonly number[]): [number, number, number] => {
 export const hueGap = (a: number, b: number) => Math.abs(((a - b + 540) % 360) - 180)
 
 /** The colors that are on, with how each behaves, in pack order. */
-export function stageColors(pack: ColorPack, mix: ColorMix, byParts = false): StageColor[] {
+/**
+ * `fireToBlack`: in a look colored by its parts, the color that dims like fire (Yellow) also takes its field from before
+ * the dim fade, so the color it dims into (Orange-red) keeps its share down to black, as Cyan does.
+ */
+export function stageColors(pack: ColorPack, mix: ColorMix, byParts = false, fireToBlack = false): StageColor[] {
   const defaults = defaultMix(pack).shares
   const on = mixColors(pack, mix)
   const base = on.map(({ color, share }) => {
@@ -123,7 +127,7 @@ export function stageColors(pack: ColorPack, mix: ColorMix, byParts = false): St
       fade: kind === KIND_DARK ? [0, 0.1] : kind === KIND_BRIGHT ? [0, 0.2] : [0, 0],
       neighborIndex: fire ? base.indexOf(fire) : dim ? base.indexOf(dim) : -1,
       clean,
-      keepsDark: clean,
+      keepsDark: clean || (byParts && fireToBlack && Boolean(fire)),
       defaultShare: c.defaultShare,
       share: c.share,
     }
