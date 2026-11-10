@@ -1,10 +1,11 @@
 /**
- * The color stage in GLSL: `vec3 colorStage(vec2 uv, vec3 radiance)` keeps each pixel's luminance and gives it the
- * hue of the color fields (two textures of four fields on the stage grid), weighted and added like overlapping light.
- * Bright-only colors turn into their darker neighbor (or neutral) as their light dims, and a warm color with a lighter
- * warm neighbor turns into it as its light grows (Orange-red's core goes Yellow, then white); where two colors far
- * apart in hue meet, the line goes pale in lit parts and dark in dim parts. Needs SAMPLE_GLSL and LUMA from the chunk
- * library, and uExposureScale from the engine.
+ * The color stage in GLSL: `vec3 colorStage(vec2 uv, vec3 radiance)` keeps each pixel's luminance exactly and gives it
+ * the hue of the color fields (two textures of four fields on the stage grid, one per color), weighted and added like
+ * overlapping light. A color turns into its darker neighbor as its light dims (Yellow into Orange-red, Cyan into Meta
+ * Blue) and into its lighter neighbor as its light grows (Orange-red into Yellow, Meta Blue into Cyan), so each color
+ * sits where the design's lightness fits it; a color too dark for a pixel's lightness goes pale toward white. Where
+ * two colors far apart in hue meet, the line goes neutral. Needs SAMPLE_GLSL and LUMA from the chunk library, and
+ * uExposureScale from the engine.
  */
 export const COLOR_STAGE_GLSL = /* glsl */ `
 uniform sampler2D uMixFieldsA;
@@ -17,9 +18,6 @@ uniform vec4 uMixField[5];
 uniform int uMixFar;
 uniform float uMixSharp;
 uniform float uMixBridge;
-uniform float uMixLift;
-uniform float uMixDip;
-uniform float uMixKeepLuminance;
 
 float mixFieldValue(int index, vec4 a, vec4 b) {
   vec4 src = index < 4 ? a : b;
@@ -48,12 +46,14 @@ vec3 mixColorAt(int k, float L) {
   return c;
 }
 
-// Each color keeps its hue as it brightens: its brightest channel (after exposure) eases toward full strength and
-// only the hottest light, past three times full strength, goes on toward white. Returns the factor for the color.
-float mixCeiling(float top) {
-  if (top <= 0.75) return 1.0;
-  float held = 0.75 + 0.25 * (1.0 - exp(-(top - 0.75) / 0.25)) + 0.3 * max(top - 3.0, 0.0);
-  return held / top;
+// The color c at luminance y (after exposure): itself, dimmed, while its brightest channel stays at or under 1; past
+// that it goes toward white at the same luminance, and from luminance 1 it is white.
+vec3 mixPale(vec3 c, float y) {
+  vec3 u = mixUnit(c);
+  float lu = max(dot(u, LUMA), 1e-6);
+  if (y <= lu) return u * (y / lu);
+  if (y >= 1.0) return vec3(y);
+  return mix(u, vec3(1.0), (y - lu) / max(1.0 - lu, 1e-6));
 }
 
 vec3 colorStage(vec2 uv, vec3 radiance) {
@@ -101,19 +101,10 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
     }
   }
   b = min(b, 1.0);
-  // Where the design is lit, far hues meet through a pale bridge, a little lighter. Where it is dim, each hue dims into
-  // its own dark and the meeting line goes dark, so far hues never mix into mauve, indigo or teal.
-  float lit = smoothstep(0.3, 0.55, L);
-  float pale = b * b * lit;
-  m = mix(m, vec3(1.0), uMixBridge * pale);
-  float lift = L < 1.0 ? uMixLift * pale * (1.0 - L) : 0.0;
-  // The pixel keeps the design's luminance, but no channel goes past the design's brightest channel there, so Meta Blue
-  // where the design was Yellow stays deep to mid. A look's own lightness-only (grey) design keeps its luminance alone:
-  // a grey design's brightest channel says nothing about color.
-  float v = max(rad.r, max(rad.g, rad.b));
-  float byLuminance = y / max(dot(m, LUMA), 1e-6);
-  float scale = uMixKeepLuminance > 0.5 ? byLuminance : min(byLuminance, v / max(m.r, max(m.g, max(m.b, 1e-6))));
-  vec3 lightOut = m * scale * pow((L + lift) / L, 3.0) * (1.0 - uMixDip * b * (1.0 - lit));
-  return lightOut * mixCeiling(max(lightOut.r, max(lightOut.g, lightOut.b)) * uExposureScale);
+  // Far hues meet through neutral along a narrow line, so they never mix into mauve, indigo or teal.
+  m = mix(m, vec3(1.0), uMixBridge * b * b);
+  // The pixel keeps the design's luminance exactly, whatever the colors and the mix, so the light and dark layout
+  // never moves; a color too dark for that luminance goes pale toward white.
+  return mixPale(m, y * uExposureScale) / uExposureScale;
 }
 `

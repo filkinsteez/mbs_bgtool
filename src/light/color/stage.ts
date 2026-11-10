@@ -12,9 +12,11 @@ import { assignFields, colorFields, farPairs, solveWeights, stageColors, STAGE_S
 
 /**
  * The pack every design is drawn in while the color stage is on, so one mood, seed, drag and format give one
- * lightness layout whatever the pack and mix; the stage then gives it the picked pack's colors.
+ * lightness layout whatever the pack and mix; the stage then gives it the picked pack's colors at that lightness.
+ * Atmospheric's designs have Meta Blue's range over much of the frame (deep darks, mid skies, a bright Ice glow), so
+ * Meta Blue stays a saturated blue where it leads; Bold's are bright almost everywhere.
  */
-export const COLOR_DESIGN_PACK: PackId = 'bold'
+export const COLOR_DESIGN_PACK: PackId = 'atmospheric'
 
 /**
  * Turns the shared color stage on for a scene. Build `scene` from COLOR_DESIGN_PACK (the design); `pack` and `mix`
@@ -169,7 +171,7 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
   const textures = fieldTextures(input.gpu, grid, solved.values)
   return {
     chunk: COLOR_STAGE_GLSL,
-    uniforms: { ...stageUniforms(solved), uMixKeepLuminance: input.ctx.params.lightnessOnly === true ? 1 : 0 },
+    uniforms: stageUniforms(solved),
     textures,
     release() {
       for (const target of Object.values(textures)) input.gpu.release(target)
@@ -197,8 +199,6 @@ function stageUniforms({ colors, weights }: Solved): UniformMap {
     uMixFar: farPairs(colors.slice(0, 5)),
     uMixSharp: STAGE_SHARPNESS,
     uMixBridge: 1,
-    uMixLift: 0.05,
-    uMixDip: 0.85,
   }
 }
 

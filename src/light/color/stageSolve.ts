@@ -71,7 +71,8 @@ export function stageColors(pack: ColorPack, mix: ColorMix): StageColor[] {
     const hue = ((Math.atan2(b, a) * 180) / Math.PI + 360) % 360
     const dark = L < 0.45
     const warm = !dark && chroma > 0.04 && hue >= 20 && hue <= 140
-    const brightOnly = !dark && ((warm && L >= 0.6 && hue >= 60) || chroma < 0.02)
+    // Light colors only read as themselves where the design is about as light: Yellow, Lime, Tan, Ice, and Cyan.
+    const brightOnly = !dark && ((warm && L >= 0.6 && hue >= 60) || chroma < 0.02 || (!warm && L >= 0.7))
     return {
       hex: color.hex,
       unit: toUnit(linear),
@@ -93,9 +94,11 @@ export function stageColors(pack: ColorPack, mix: ColorMix): StageColor[] {
           ? darker.filter((o) => o.group !== 'dark' && o.chroma < 0.06).sort((x, y) => y.lightness - x.lightness)[0]
           : darker.filter((o) => o.chroma >= 0.04 && hueGap(o.hue, c.hue) <= 60).sort((x, y) => hueGap(x.hue, c.hue) - hueGap(y.hue, c.hue))[0]
     }
+    // A plain color brightens into a lighter color of its own kind: Orange-red into Yellow, Meta Blue into Cyan (or into
+    // Ice, a grey), Steel into Ice.
     const upper =
-      c.group === 'warm' && !c.brightOnly
-        ? base.filter((o) => o !== c && o.group === 'warm' && o.lightness > c.lightness + 0.1 && hueGap(o.hue, c.hue) <= 60)[0]
+      c.group !== 'dark' && !c.brightOnly
+        ? base.filter((o) => o !== c && o.group === c.group && o.lightness > c.lightness + 0.1 && (o.chroma < 0.02 || hueGap(o.hue, c.hue) <= 60)).sort((x, y) => x.lightness - y.lightness)[0]
         : undefined
     const kind = c.group === 'dark' ? KIND_DARK : !c.brightOnly ? KIND_PLAIN : neighbor ? KIND_TO_NEIGHBOR : KIND_TO_NEUTRAL
     const turn: [number, number] = kind === KIND_TO_NEIGHBOR ? (c.chroma < 0.02 ? [0.05, 0.25] : [0.08, 0.12]) : kind === KIND_TO_NEUTRAL ? [0.05, 0.1] : [0, 0]

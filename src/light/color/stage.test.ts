@@ -3,7 +3,7 @@ import { composeScene } from '../compose'
 import { buildRecipeShader } from '../engine/recipeShader'
 import { getRecipe } from '../recipes'
 import { RECIPE_IDS, type RecipeId, type Scene } from '../scene'
-import { defaultMix, mixFromShares } from './mix'
+import { defaultMix, mixFromShares, setMetaBlue, setShare } from './mix'
 import { getPack } from './packs'
 import { COLOR_DESIGN_PACK, withColorMix } from './stage'
 import { buildFields, gridSize, lookParts, type StageField, type StageGrid } from './stageFields'
@@ -39,22 +39,25 @@ describe('color stage', () => {
   it('names each color by how it dims', () => {
     const kinds = (packId: 'bold' | 'elemental' | 'atmospheric') =>
       Object.fromEntries(stageColors(getPack(packId), defaultMix(getPack(packId))).map((c) => [c.hex, c.kind]))
-    expect(kinds('bold')).toEqual({ '#0064E0': KIND_PLAIN, '#1FCDF0': KIND_PLAIN, '#FFD61E': KIND_TO_NEIGHBOR, '#FF4F00': KIND_PLAIN })
+    expect(kinds('bold')).toEqual({ '#0064E0': KIND_PLAIN, '#1FCDF0': KIND_TO_NEIGHBOR, '#FFD61E': KIND_TO_NEIGHBOR, '#FF4F00': KIND_PLAIN })
     expect(kinds('elemental')).toEqual({ '#0064E0': KIND_PLAIN, '#D6F26C': KIND_TO_NEIGHBOR, '#0F3D33': KIND_DARK, '#B8996E': KIND_TO_NEUTRAL, '#4A0A3C': KIND_DARK })
     expect(kinds('atmospheric')).toEqual({ '#0064E0': KIND_PLAIN, '#F2F4F7': KIND_TO_NEIGHBOR, '#6A7788': KIND_PLAIN, '#384753': KIND_DARK, '#1C2B33': KIND_DARK })
   })
 
-  it('brightens Orange-red toward Yellow, and no other color toward another', () => {
-    for (const packId of ['bold', 'elemental', 'atmospheric'] as const) {
+  it('turns each color into its lighter or darker neighbor of the same kind as the light grows or dims', () => {
+    const turns = (packId: 'bold' | 'elemental' | 'atmospheric') => {
       const colors = stageColors(getPack(packId), defaultMix(getPack(packId)))
-      for (const c of colors) {
-        if (c.hex !== '#FF4F00') expect(c.upperFrom).toBe(2)
-        else {
-          expect(c.upperFrom).toBeLessThan(1)
-          expect(c.upper).toEqual(colors.find((o) => o.hex === '#FFD61E')!.unit)
-        }
-      }
+      return Object.fromEntries(colors.map((c) => [c.hex, { up: colors[c.upperIndex]?.hex ?? null, down: colors[c.neighborIndex]?.hex ?? null }]))
     }
+    expect(turns('bold')).toEqual({
+      '#0064E0': { up: '#1FCDF0', down: null },
+      '#1FCDF0': { up: null, down: '#0064E0' },
+      '#FFD61E': { up: null, down: '#FF4F00' },
+      '#FF4F00': { up: '#FFD61E', down: null },
+    })
+    expect(turns('elemental')['#0064E0']).toEqual({ up: null, down: null })
+    expect(turns('atmospheric')['#0064E0'].up).toBe('#F2F4F7')
+    expect(turns('atmospheric')['#6A7788'].up).toBe('#F2F4F7')
   })
 
   it('gives Meta Blue the sky, warm colors the glow and dark colors the ground in a sunrise', () => {
@@ -148,6 +151,34 @@ describe('color stage', () => {
         expect(fields.length).toBeLessThanOrEqual(8)
         for (const f of fields) for (const v of f.values) expect(v >= 0 && v <= 1.000001).toBe(true)
         expect(buildFields(recipe, parts, grid, 2, aspect)).toEqual(fields)
+      }
+    }
+  })
+
+  it('keeps the design lightness under any mix: the default, Meta Blue off and one color at 60%', () => {
+    // The shader's last step, which alone sets the output's luminance: any color, at the design's luminance.
+    expect(COLOR_STAGE_GLSL).toContain('return mixPale(m, y * uExposureScale) / uExposureScale;')
+    expect(COLOR_STAGE_GLSL).toContain('if (y <= lu) return u * (y / lu);')
+    expect(COLOR_STAGE_GLSL).toContain('if (y >= 1.0) return vec3(y);')
+    expect(COLOR_STAGE_GLSL).toContain('return mix(u, vec3(1.0), (y - lu) / max(1.0 - lu, 1e-6));')
+    const luma = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+    const pale = (c: readonly number[], y: number) => {
+      const top = Math.max(c[0], c[1], c[2], 1e-6)
+      const u = c.map((v) => v / top)
+      const lu = Math.max(luma(u), 1e-6)
+      if (y <= lu) return u.map((v) => v * (y / lu))
+      if (y >= 1) return [y, y, y]
+      const t = (y - lu) / Math.max(1 - lu, 1e-6)
+      return u.map((v) => v + (1 - v) * t)
+    }
+    for (const packId of ['bold', 'elemental', 'atmospheric'] as const) {
+      const pack = getPack(packId)
+      const cyanOrFirst = pack.colors.findIndex((c) => c.hex !== '#0064E0')
+      for (const mix of [defaultMix(pack), setMetaBlue(pack, defaultMix(pack), false), setShare(pack, defaultMix(pack), cyanOrFirst, 0.6)]) {
+        const units = stageColors(pack, mix).flatMap((c) => [c.unit, c.neighbor, c.upper])
+        const blends = units.flatMap((a) => units.map((b) => a.map((v, i) => 0.5 * (v + b[i]))))
+        for (const c of [...units, ...blends, ...blends.map((b) => b.map((v) => 0.5 * (v + 1)))])
+          for (const y of [0.001, 0.02, 0.1, 0.3, 0.6, 0.95, 1.4]) expect(luma(pale(c, y))).toBeCloseTo(y, 6)
       }
     }
   })

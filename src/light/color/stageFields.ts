@@ -354,7 +354,7 @@ export function buildFields(recipe: RecipeId, parts: readonly StagePart[], grid:
     }
     const tops = skyArea > 0 ? [0.12 + 0.08 * rng(), 0.28 + 0.08 * rng(), 0.45 + 0.1 * rng()].map((q) => Math.max(0.03, quantile(q))) : [0.08, 0.2, 0.35]
     for (let k = 1; k < 3; k++) tops[k] = Math.max(tops[k], tops[k - 1] + 0.03)
-    const soft = 0.045
+    const soft = 0.09
     const ground = new Float32Array(n)
     const glow = new Float32Array(n)
     const low = new Float32Array(n)
