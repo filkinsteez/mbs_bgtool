@@ -1,4 +1,4 @@
-import { defaultMix, mixColors, type ColorMix } from './mix'
+import { defaultMix, META_BLUE_HEX, mixColors, type ColorMix } from './mix'
 import { linearToOklab } from './oklab'
 import type { ColorPack } from './packs'
 import { hexToLinear } from './srgb'
@@ -21,6 +21,9 @@ const SOLVE_STEPS = 100
 /** Lightness from which light starts to turn white: brighter cells count no more than this in the solve. */
 const SEEN_CAP = 0.75
 
+/** The share of the light every color the mix asks at 10% or more should read as, at the least, so it shows. */
+const SHOW_FLOOR = 0.06
+
 export interface StageColor {
   hex: string
   /** The color in linear light, scaled so its brightest channel is 1. */
@@ -42,6 +45,9 @@ export interface StageColor {
    */
   upper: [number, number, number]
   upperFrom: number
+  /** Where `neighbor` and `upper` are in the list of colors that are on (-1 for none), for counting what a pixel reads as. */
+  neighborIndex: number
+  upperIndex: number
   /** Its share in the pack's default mix, for handing out fields. */
   defaultShare: number
   /** The asked share, of the colors that are on. */
@@ -106,6 +112,8 @@ export function stageColors(pack: ColorPack, mix: ColorMix): StageColor[] {
       neighbor: neighbor ? neighbor.unit : kind === KIND_TO_NEUTRAL ? [1, 1, 1] : c.unit,
       upper: upper ? upper.unit : c.unit,
       upperFrom: upper ? c.lightness + 0.04 : 2,
+      neighborIndex: neighbor ? base.indexOf(neighbor) : -1,
+      upperIndex: upper ? base.indexOf(upper) : -1,
       defaultShare: c.defaultShare,
       share: c.share,
     }
@@ -117,9 +125,14 @@ const smooth = (e0: number, e1: number, x: number) => {
   return t * t * (3 - 2 * t)
 }
 
+/** How much of a color reads as itself at a lightness: a bright-only color only above its turn, as the shader turns it. */
+function itself(c: StageColor, lightness: number): number {
+  return c.kind === KIND_TO_NEIGHBOR || c.kind === KIND_TO_NEUTRAL ? smooth(c.edge - c.turn[1], c.edge + c.turn[0], lightness) : 1
+}
+
 /** How much a color may show at a lightness: a dark color only at or below its own; the others anywhere. */
 export function colorMask(c: StageColor, lightness: number): number {
-  return c.kind === KIND_DARK ? 1 - smooth(c.edge - 0.12, c.edge + 0.06, lightness) : 1
+  return c.kind === KIND_DARK ? 1 - smooth(c.edge - 0.1, c.edge, lightness) : 1
 }
 
 /**
@@ -155,18 +168,38 @@ export function assignFields(colors: readonly StageColor[], fields: readonly Sta
   return out
 }
 
+/**
+ * Each color's field on the stage grid. In a pack with no dark color, Meta Blue also takes the dark fields no color
+ * takes (the ground, the room), so the dark there is Meta Blue's own navy and not a dim neighbor's brown.
+ */
+export function colorFields(fields: readonly StageField[], assignment: readonly number[], colors: readonly StageColor[]): Float32Array[] {
+  const out = assignment.map((f) => fields[f].values)
+  const lead = colors.findIndex((c) => c.hex === META_BLUE_HEX)
+  if (lead < 0 || colors.some((c) => c.kind === KIND_DARK)) return out
+  const taken = new Set(assignment)
+  const spare = fields.filter((field, i) => field.want === 'dark' && !taken.has(i))
+  if (!spare.length) return out
+  const merged = Float32Array.from(out[lead])
+  for (const field of spare) for (let i = 0; i < merged.length; i++) merged[i] = Math.max(merged[i], field.values[i])
+  out[lead] = merged
+  return out
+}
+
 export interface StageSolution {
   /** Per color, its field's weight (the largest is 1). */
   weights: number[]
-  /** Per color, the share of the visibly lit cells its field leads, after the solve. */
+  /** Per color, the share of the light its field leads (visibly lit cells weighed by lightness), after the solve. */
   light: number[]
+  /** Per color, the share of the light that reads as it, after the solve. */
+  reads: number[]
 }
 
 /**
- * Sets the fields' weights so each color leads its asked share of the light: the visibly lit cells, each weighed by
- * its lightness up to SEEN_CAP, so a faint glow counts less than the light itself, as by eye. A dark color asked for
- * more than the dim cells it may take gets all of them; the rest goes to the others in their ratios. Smooth in the
- * shares: a fixed start and a fixed number of damped steps, so close shares give close weights.
+ * Sets the fields' weights so each color reads as its asked share of the light: the visibly lit cells, each weighed
+ * by its lightness up to SEEN_CAP, so a faint glow counts less than the light itself, as by eye. A cell counts toward
+ * the color it reads as (Yellow dimmed into Orange-red as Orange-red, light past full strength as no color); Meta Blue
+ * is served first, then every color gets enough to show (see `plan` below). Smooth in the shares: a fixed start and a
+ * fixed number of damped steps, so close shares give close weights.
  */
 export function solveWeights(grid: StageGrid, fields: readonly StageField[], colors: readonly StageColor[], assignment: readonly number[], sharpness = STAGE_SHARPNESS): StageSolution {
   const K = colors.length
@@ -202,9 +235,35 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
   })
   const top0 = Math.max(...weights)
   weights = weights.map((w) => w / top0)
+  // What each color's light reads as in each cell, the way color-shares.mjs judges a pixel: itself, the neighbor it
+  // dims into, the lighter color it brightens into, or nothing (white, past about three times full strength).
+  const reads = colors.map((c) => {
+    const own = new Float32Array(visible.length)
+    const down = new Float32Array(visible.length)
+    const up = new Float32Array(visible.length)
+    visible.forEach((i, j) => {
+      const l = Math.max(L[i], VISIBLE)
+      const seen = 1 - smooth(1.2, 1.4, l)
+      const self = itself(c, l)
+      const raised = c.upperIndex >= 0 ? smooth(c.upperFrom, c.upperFrom + 0.15, l) * itself(colors[c.upperIndex], l) : 0
+      own[j] = seen * self * (1 - raised)
+      down[j] = c.neighborIndex >= 0 ? seen * (1 - self) * colorMask(colors[c.neighborIndex], l) : 0
+      up[j] = seen * self * raised
+    })
+    return { own, down, up }
+  })
   const p = new Float64Array(K)
-  const shares = (ws: readonly number[]) => {
-    const light = new Array<number>(K).fill(0)
+  /** Per color: the share of the light it leads, what of that reads as itself, and what reads as it from others' turns. */
+  const measure = (ws: readonly number[]) => {
+    const area = new Array<number>(K).fill(0)
+    const own = new Array<number>(K).fill(0)
+    const incoming = new Array<number>(K).fill(0)
+    const add = (k: number, j: number, amount: number) => {
+      area[k] += amount
+      own[k] += amount * reads[k].own[j]
+      if (colors[k].neighborIndex >= 0) incoming[colors[k].neighborIndex] += amount * reads[k].down[j]
+      if (colors[k].upperIndex >= 0) incoming[colors[k].upperIndex] += amount * reads[k].up[j]
+    }
     visible.forEach((i, j) => {
       let s = 0
       for (let k = 0; k < K; k++) {
@@ -215,22 +274,57 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
         // As in the shader: where every weighted field is gone, the strongest field's color takes the pixel.
         let best = 0
         for (let k = 1; k < K; k++) if (F[k][i] * masks[k][j] > F[best][i] * masks[best][j]) best = k
-        light[best] += cover[j]
+        add(best, j, cover[j])
         return
       }
-      for (let k = 0; k < K; k++) light[k] += (cover[j] * p[k]) / s
+      for (let k = 0; k < K; k++) add(k, j, (cover[j] * p[k]) / s)
     })
-    return light.map((v) => v / n)
+    return { area: area.map((v) => v / n), own: own.map((v) => v / n), incoming: incoming.map((v) => v / n) }
+  }
+  const lead = colors.findIndex((c) => c.hex === META_BLUE_HEX)
+  /**
+   * The light each color should lead in this step. Meta Blue first: enough to read its asked share, at most a quarter
+   * of the light more than asked so the others keep room. Then every color asked 10% or more gets enough to read SHOW_FLOOR,
+   * and what is left goes by the asked shares; both scaled by how much of each color's light reads as itself. A dark
+   * color gets no more than the dim cells it may take; the rest goes to Meta Blue.
+   */
+  const plan = (m: ReturnType<typeof measure>): number[] => {
+    const readsAsItself = m.area.map((a, k) => (a > 1e-4 ? Math.min(1, Math.max(0.1, m.own[k] / a)) : 1))
+    const need = (k: number, share: number) => Math.max(0, share - m.incoming[k]) / readsAsItself[k]
+    const out = new Array<number>(K).fill(0)
+    let pool = 1
+    if (lead >= 0) {
+      out[lead] = Math.min(target[lead] + 0.25, need(lead, target[lead]), 1)
+      pool -= out[lead]
+    }
+    const rest = colors.map((_, k) => k).filter((k) => k !== lead)
+    const floor = rest.map((k) => (target[k] >= 0.1 ? need(k, SHOW_FLOOR) : 0))
+    const floorSum = floor.reduce((a, b) => a + b, 0)
+    const extra = rest.map((k, r) => Math.max(0, need(k, target[k]) - floor[r]))
+    const extraSum = extra.reduce((a, b) => a + b, 0)
+    rest.forEach((k, r) => {
+      if (floorSum >= pool) out[k] = (pool * floor[r]) / Math.max(floorSum, 1e-9)
+      else out[k] = floor[r] + (pool - floorSum) * (extraSum > 1e-9 ? extra[r] / extraSum : target[k] / Math.max(1e-9, 1 - (lead >= 0 ? target[lead] : 0)))
+    })
+    for (let k = 0; k < K; k++) {
+      if (colors[k].kind !== KIND_DARK || out[k] <= most[k] * 0.97) continue
+      const excess = out[k] - most[k] * 0.97
+      out[k] -= excess
+      if (lead >= 0) out[lead] += excess
+    }
+    return out
   }
   // Steps shrink as the solve goes, so sharp fields settle instead of swinging past their shares.
   for (let step = 0; step < SOLVE_STEPS; step++) {
-    const light = shares(weights)
+    const m = measure(weights)
+    const goal = plan(m)
     const rate = Math.max(0.15, 1 - step / SOLVE_STEPS) / sharpness
-    weights = weights.map((w, k) => w * Math.min(2, Math.max(0.5, target[k] / Math.max(light[k], 1e-5))) ** rate)
+    weights = weights.map((w, k) => w * Math.min(2, Math.max(0.5, goal[k] / Math.max(m.area[k], 1e-5))) ** rate)
     const top = Math.max(...weights)
     weights = weights.map((w) => w / top)
   }
-  return { weights, light: shares(weights) }
+  const final = measure(weights)
+  return { weights, light: final.area, reads: final.own.map((v, k) => v + final.incoming[k]) }
 }
 
 /** Pairs of colors far apart in hue (60 degrees or more, both with real chroma): their meeting line is a pale bridge. */

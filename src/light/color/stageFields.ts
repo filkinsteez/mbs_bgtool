@@ -21,6 +21,8 @@ export interface StageGrid {
   height: number
   lightness: Float32Array
   coverage: Float32Array
+  /** Each cell's brightest point, as a lightness: a thin bright line counts here even where it barely moves the mean. */
+  peak: Float32Array
 }
 
 /** Points per cell side where the design is read for `coverage`. */
@@ -450,5 +452,27 @@ export function buildFields(recipe: RecipeId, parts: readonly StagePart[], grid:
     if (!isSunrise(recipe)) for (let i = 0; i < w * h; i++) values[i] *= 1 - haze[i]
     fields.push({ name: `dark${k + 1}`, want: 'dark', values })
   }
+  // A dark color never sits against bright light, a thin line included: dark fields fade out within two cells of any
+  // cell whose brightest point is past mid lightness.
+  const near = nearPeak(grid, 2)
+  for (const field of fields) if (field.want === 'dark') for (let i = 0; i < w * h; i++) field.values[i] *= 1 - smooth(0.45, 0.7, near[i])
   return fields
+}
+
+/** Each cell's brightest `peak` within `reach` cells. */
+function nearPeak(grid: StageGrid, reach: number): Float32Array {
+  const { width: w, height: h, peak } = grid
+  const out = new Float32Array(w * h)
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      let top = 0
+      for (let dy = -reach; dy <= reach; dy++)
+        for (let dx = -reach; dx <= reach; dx++) {
+          const xx = x + dx
+          const yy = y + dy
+          if (xx >= 0 && xx < w && yy >= 0 && yy < h) top = Math.max(top, peak[yy * w + xx])
+        }
+      out[y * w + x] = top
+    }
+  return out
 }

@@ -2,12 +2,13 @@ import type { Gpu, Target } from '../engine/gl'
 import { runPostPasses } from '../engine/passes'
 import { NO_PROFILE } from '../engine/profile'
 import { buildRecipeShader } from '../engine/recipeShader'
-import { isRecipeId, type ColorMixSettings, type RecipeContext, type RecipeProgram, type Scene, type UniformMap } from '../scene'
+import { lightnessOnlyParams } from '../recipes/sunset/merged'
+import { isRecipeId, type ColorMixSettings, type RecipeContext, type RecipeId, type RecipeProgram, type Scene, type UniformMap } from '../scene'
 import { defaultMix, mixFromShares, type ColorMix } from './mix'
 import { getPack, isPackId, type ColorPack, type PackId } from './packs'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
 import { buildFields, COVERAGE_SPLIT, gridSize, lookParts, VISIBLE, type StageField, type StageGrid } from './stageFields'
-import { assignFields, farPairs, solveWeights, stageColors, STAGE_SHARPNESS, type StageColor } from './stageSolve'
+import { assignFields, colorFields, farPairs, solveWeights, stageColors, STAGE_SHARPNESS, type StageColor } from './stageSolve'
 
 /**
  * The pack every design is drawn in while the color stage is on, so one mood, seed, drag and format give one
@@ -17,10 +18,17 @@ export const COLOR_DESIGN_PACK: PackId = 'bold'
 
 /**
  * Turns the shared color stage on for a scene. Build `scene` from COLOR_DESIGN_PACK (the design); `pack` and `mix`
- * are what the user picked. Without this the scene draws exactly as before.
+ * are what the user picked. A look that renders its own design lightness (LIGHTNESS_ONLY) draws that instead. Without
+ * this the scene draws exactly as before.
  */
 export function withColorMix(scene: Scene, pack: ColorPack, mix: ColorMix): Scene {
-  return { ...scene, colorMix: { pack: pack.id, shares: [...mix.shares] } }
+  const ownLightness = LIGHTNESS_ONLY[scene.recipe]
+  return { ...scene, ...(ownLightness ? { params: ownLightness(scene.params) } : {}), colorMix: { pack: pack.id, shares: [...mix.shares] } }
+}
+
+/** Looks that render their design lightness alone (grey) for the stage, in place of a design drawn in a pack. */
+const LIGHTNESS_ONLY: Partial<Record<RecipeId, (params: Scene['params']) => Scene['params']>> = {
+  'sunset.merged': lightnessOnlyParams,
 }
 
 /** What the renderer adds to a scene's recipe shaders and draws while the stage is on. */
@@ -51,14 +59,21 @@ interface Design {
 interface Solved {
   colors: StageColor[]
   assignment: number[]
+  /** Each color's field on the stage grid (`colorFields`), what the shader reads. */
+  values: Float32Array[]
   weights: number[]
   light: number[]
+  reads: number[]
 }
 
-/** The last solve, for checks: each color on, its share of the visibly lit grid cells, and the field it leads. */
+/**
+ * The last solve, for checks: each color on, its share of the light its field leads, its share of the light that
+ * reads as it, and the field it leads.
+ */
 export interface ColorStageReport {
   hexes: string[]
   light: number[]
+  reads: number[]
   fields: string[]
 }
 
@@ -102,6 +117,7 @@ function readDesign(input: ColorStageInput): StageGrid | null {
   gpu.release(light)
   const lightness = new Float32Array(w * h)
   const coverage = new Float32Array(w * h)
+  const peak = new Float32Array(w * h)
   const points = COVERAGE_SPLIT * COVERAGE_SPLIT
   for (let py = 0; py < ph; py++)
     for (let px = 0; px < pw; px++) {
@@ -110,10 +126,14 @@ function readDesign(input: ColorStageInput): StageGrid | null {
       if (!(v > 0) || !Number.isFinite(v)) continue
       const i = Math.floor(py / COVERAGE_SPLIT) * w + Math.floor(px / COVERAGE_SPLIT)
       lightness[i] += v / points
+      peak[i] = Math.max(peak[i], v)
       if (Math.cbrt(v) >= VISIBLE) coverage[i] += 1 / points
     }
-  for (let i = 0; i < w * h; i++) lightness[i] = Math.cbrt(lightness[i])
-  return { width: w, height: h, lightness, coverage }
+  for (let i = 0; i < w * h; i++) {
+    lightness[i] = Math.cbrt(lightness[i])
+    peak[i] = Math.cbrt(peak[i])
+  }
+  return { width: w, height: h, lightness, coverage, peak }
 }
 
 function designKey(input: ColorStageInput): string {
@@ -136,18 +156,20 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
   const pack = getPack(isPackId(input.settings.pack) ? input.settings.pack : COLOR_DESIGN_PACK)
   const mix = mixFromShares(pack, input.settings.shares) ?? defaultMix(pack)
   const solveKey = `${key}|${pack.id}|${mix.shares.join(',')}`
+  const { fields, grid } = design
   let solved = solves.get(solveKey)
   if (!solved) {
     const colors = stageColors(pack, mix)
-    const assignment = assignFields(colors, design.fields, input.ctx.seed)
-    solved = remember(solves, solveKey, { colors, assignment, ...solveWeights(design.grid, design.fields, colors, assignment) })
+    const assignment = assignFields(colors, fields, input.ctx.seed)
+    const values = colorFields(fields, assignment, colors)
+    const own = values.map((v, k): StageField => ({ ...fields[assignment[k]], values: v }))
+    solved = remember(solves, solveKey, { colors, assignment, values, ...solveWeights(grid, own, colors, colors.map((_, k) => k)) })
   }
-  const { fields } = design
-  lastReport = { hexes: solved.colors.map((c) => c.hex), light: solved.light, fields: solved.assignment.map((f) => fields[f]?.name ?? '') }
-  const textures = fieldTextures(input.gpu, design)
+  lastReport = { hexes: solved.colors.map((c) => c.hex), light: solved.light, reads: solved.reads, fields: solved.assignment.map((f) => fields[f]?.name ?? '') }
+  const textures = fieldTextures(input.gpu, grid, solved.values)
   return {
     chunk: COLOR_STAGE_GLSL,
-    uniforms: stageUniforms(solved),
+    uniforms: { ...stageUniforms(solved), uMixKeepLuminance: input.ctx.params.lightnessOnly === true ? 1 : 0 },
     textures,
     release() {
       for (const target of Object.values(textures)) input.gpu.release(target)
@@ -155,7 +177,7 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
   }
 }
 
-function stageUniforms({ colors, assignment, weights }: Solved): UniformMap {
+function stageUniforms({ colors, weights }: Solved): UniformMap {
   const color = new Float32Array(20)
   const neighbor = new Float32Array(20)
   const upper = new Float32Array(20)
@@ -164,7 +186,7 @@ function stageUniforms({ colors, assignment, weights }: Solved): UniformMap {
     color.set([...c.unit, c.kind], 4 * k)
     neighbor.set([...c.neighbor, c.edge], 4 * k)
     upper.set([...c.upper, c.upperFrom], 4 * k)
-    field.set([assignment[k], weights[k], c.turn[0], c.turn[1]], 4 * k)
+    field.set([k, weights[k], c.turn[0], c.turn[1]], 4 * k)
   })
   return {
     uMixCount: Math.min(5, colors.length),
@@ -180,15 +202,15 @@ function stageUniforms({ colors, assignment, weights }: Solved): UniformMap {
   }
 }
 
-/** The fields as two four-channel textures on the stage grid (fields 0-3 and 4-7), row 0 at the top like a render. */
-function fieldTextures(gpu: Gpu, design: Design): Record<string, Target> {
-  const { width: w, height: h } = design.grid
+/** Each color's field as two four-channel textures on the stage grid (colors 0-3 and 4), row 0 at the top like a render. */
+function fieldTextures(gpu: Gpu, grid: StageGrid, fields: readonly Float32Array[]): Record<string, Target> {
+  const { width: w, height: h } = grid
   const gl = gpu.gl
   const out: Record<string, Target> = {}
   for (const [t, name] of ['uMixFieldsA', 'uMixFieldsB'].entries()) {
     const data = new Float32Array(w * h * 4)
     for (let c = 0; c < 4; c++) {
-      const values = design.fields[4 * t + c]?.values
+      const values = fields[4 * t + c]
       if (!values) continue
       for (let i = 0; i < w * h; i++) data[4 * i + c] = values[i]
     }

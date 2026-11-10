@@ -19,6 +19,7 @@ uniform float uMixSharp;
 uniform float uMixBridge;
 uniform float uMixLift;
 uniform float uMixDip;
+uniform float uMixKeepLuminance;
 
 float mixFieldValue(int index, vec4 a, vec4 b) {
   vec4 src = index < 4 ? a : b;
@@ -31,7 +32,7 @@ vec3 mixUnit(vec3 c) { return c / max(c.r, max(c.g, max(c.b, 1e-6))); }
 float mixMask(int k, float L) {
   if (uMixColor[k].a < 2.5) return 1.0;
   float own = uMixNeighbor[k].a;
-  return 1.0 - smoothstep(own - 0.12, own + 0.06, L);
+  return 1.0 - smoothstep(own - 0.1, own, L);
 }
 
 vec3 mixColorAt(int k, float L) {
@@ -45,6 +46,14 @@ vec3 mixColorAt(int k, float L) {
   float upper = uMixUpper[k].a;
   if (upper < 1.5) c = mixUnit(mix(c, uMixUpper[k].rgb, smoothstep(upper, upper + 0.15, L)));
   return c;
+}
+
+// Each color keeps its hue as it brightens: its brightest channel (after exposure) eases toward full strength and
+// only the hottest light, past three times full strength, goes on toward white. Returns the factor for the color.
+float mixCeiling(float top) {
+  if (top <= 0.75) return 1.0;
+  float held = 0.75 + 0.25 * (1.0 - exp(-(top - 0.75) / 0.25)) + 0.3 * max(top - 3.0, 0.0);
+  return held / top;
 }
 
 vec3 colorStage(vec2 uv, vec3 radiance) {
@@ -98,10 +107,13 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
   float pale = b * b * lit;
   m = mix(m, vec3(1.0), uMixBridge * pale);
   float lift = L < 1.0 ? uMixLift * pale * (1.0 - L) : 0.0;
-  // The pixel keeps the design's luminance, but no channel goes past the design's brightest channel there: Meta Blue
-  // where the design was Yellow stays deep to mid instead of going white, and only light past full strength turns white.
+  // The pixel keeps the design's luminance, but no channel goes past the design's brightest channel there, so Meta Blue
+  // where the design was Yellow stays deep to mid. A look's own lightness-only (grey) design keeps its luminance alone:
+  // a grey design's brightest channel says nothing about color.
   float v = max(rad.r, max(rad.g, rad.b));
-  float scale = min(y / max(dot(m, LUMA), 1e-6), v / max(m.r, max(m.g, max(m.b, 1e-6))));
-  return m * scale * pow((L + lift) / L, 3.0) * (1.0 - uMixDip * b * (1.0 - lit));
+  float byLuminance = y / max(dot(m, LUMA), 1e-6);
+  float scale = uMixKeepLuminance > 0.5 ? byLuminance : min(byLuminance, v / max(m.r, max(m.g, max(m.b, 1e-6))));
+  vec3 lightOut = m * scale * pow((L + lift) / L, 3.0) * (1.0 - uMixDip * b * (1.0 - lit));
+  return lightOut * mixCeiling(max(lightOut.r, max(lightOut.g, lightOut.b)) * uExposureScale);
 }
 `
