@@ -48,8 +48,10 @@ const E = {
   dot: { min: 0.0005, max: 0.02, ring: [0.01, 0.025], enclosed: 0.85, whiteL: 0.9, whiteC: 0.04 },
   // Seam: a part of one color `thickness` thick or thinner and `length` or longer, with two other colors along it (each
   // `side` or more of its border), whose own color lies `own` or farther (Oklab) from any mix of the two. A light's hot
-  // line inside a later color of its own path (OWN_PATHS) is the light's own.
-  seam: { thickness: 0.015, length: 0.12, side: 0.2, own: 0.05 },
+  // line inside a later color of its own path (OWN_PATHS) is the light's own, and so is a line where the light itself
+  // is a line, lighter or darker along it by `lightLine` or more than on both sides (a rim's white-hot line), or steps
+  // by `lightStep` or more from one side to the other (a colored fringe along that line).
+  seam: { thickness: 0.015, length: 0.12, side: 0.2, own: 0.05, lightLine: 0.03, lightStep: 0.1 },
 }
 // Each pack color's own light path from light to dim, as the palette check's dim paths (T.dimPaths): a Yellow core
 // inside Orange-red light, or Cyan inside Meta Blue, is one light, not a dot.
@@ -133,8 +135,9 @@ function distance(w, h, seed, same) {
   return d
 }
 
-// The labels along an area's border (4-neighbours outside it with another label), with their count and mean Oklab.
-function borderOf(pixels, w, h, lab, L, A, B, skip) {
+// The labels along an area's border (4-neighbours outside it with another label), with their count, mean Oklab and
+// mean light.
+function borderOf(pixels, w, h, lab, L, A, B, Ld, skip) {
   const sides = new Map()
   let total = 0
   for (const p of pixels) {
@@ -144,16 +147,17 @@ function borderOf(pixels, w, h, lab, L, A, B, skip) {
       if (qx < 0 || qy < 0 || qx >= w || qy >= h) continue
       const q = qy * w + qx
       if (lab[q] === lab[p] || skip(q)) continue
-      const s = sides.get(lab[q]) ?? { n: 0, L: 0, a: 0, b: 0 }
+      const s = sides.get(lab[q]) ?? { n: 0, L: 0, a: 0, b: 0, light: 0 }
       s.n++
       s.L += L[q]
       s.a += A[q]
       s.b += B[q]
+      s.light += Ld[q]
       sides.set(lab[q], s)
       total++
     }
   }
-  const ranked = [...sides.entries()].map(([label, s]) => ({ label, share: s.n / Math.max(1, total), lab: [s.L / s.n, s.a / s.n, s.b / s.n] })).sort((x, y) => y.share - x.share)
+  const ranked = [...sides.entries()].map(([label, s]) => ({ label, share: s.n / Math.max(1, total), lab: [s.L / s.n, s.a / s.n, s.b / s.n], light: s.light / s.n })).sort((x, y) => y.share - x.share)
   return { total, ranked }
 }
 const meanLab = (pixels, L, A, B) => {
@@ -334,10 +338,13 @@ function analyse(rules, packId, rgb, lightRgb, w, h) {
     for (const p of px) deepest = Math.max(deepest, toEdge[p])
     const length = px.length / Math.max(1, 2 * deepest - 1) / short
     if (length < E.seam.length) continue
-    const { ranked } = borderOf(px, w, h, lab, L, A, B, (q) => lab[q] === NONE)
+    const { ranked } = borderOf(px, w, h, lab, L, A, B, Ld, (q) => lab[q] === NONE)
     const sides = ranked.filter((s) => s.share >= E.seam.side)
     if (sides.length < 2) continue
     if (sides.some((s) => onOwnPath(packId, names[lab[px[0]]], names[s.label]))) continue
+    const light = px.reduce((s, p) => s + Ld[p], 0) / px.length
+    const [lo, hi] = [Math.min(sides[0].light, sides[1].light), Math.max(sides[0].light, sides[1].light)]
+    if (light > hi + E.seam.lightLine || light < lo - E.seam.lightLine || hi - lo >= E.seam.lightStep) continue
     const own = offMix(meanLab(px, L, A, B), sides[0].lab, sides[1].lab)
     if (own < E.seam.own) continue
     seams.push({ pixels: px, label: names[lab[px[0]]], between: [names[sides[0].label], names[sides[1].label]], length, own })
