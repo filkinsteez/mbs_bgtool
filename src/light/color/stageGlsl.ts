@@ -19,6 +19,8 @@ uniform vec4 uMixField[5];
 uniform int uMixFar;
 uniform float uMixSharp;
 uniform float uMixBridge;
+uniform float uMixNarrow;
+uniform float uMixSoft;
 
 const int MIX_RAMP_STEPS = 32;
 
@@ -28,11 +30,12 @@ float mixFieldValue(int index, vec4 a, vec4 b) {
   return c == 0 ? src.x : c == 1 ? src.y : c == 2 ? src.z : src.w;
 }
 
+// A dark color fades out above its edge, a light color below it, over the lightness its fade gives (uMixTurn.zw).
 float mixMask(int k, float L) {
   float kind = uMixColor[k].a;
   float edge = uMixTurn[k].y;
-  if (kind > 2.5) return 1.0 - smoothstep(edge - 0.1, edge, L);
-  if (kind > 1.5) return smoothstep(edge - 0.2, edge, L);
+  if (kind > 2.5) return 1.0 - smoothstep(edge - uMixTurn[k].w, edge + uMixTurn[k].z, L);
+  if (kind > 1.5) return smoothstep(edge - uMixTurn[k].w, edge + uMixTurn[k].z, L);
   return 1.0;
 }
 
@@ -70,7 +73,10 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
   for (int k = 0; k < 5; k++) {
     p[k] = 0.0;
     if (k >= uMixCount) continue;
-    float f = max(mixFieldValue(int(uMixField[k].x + 0.5), fa, fb), 0.0) * mixMask(k, L);
+    // The soft blend's shares already keep each color to its lightness on the grid; here a color only drops out
+    // where it can't show at all (a thin bright line in a dim cell), so its own share isn't thinned.
+    float mask = mixMask(k, L);
+    float f = max(mixFieldValue(int(uMixField[k].x + 0.5), fa, fb), 0.0) * (uMixSoft > 0.5 ? smoothstep(0.0, 0.25, mask) : mask);
     if (f > bestValue) {
       bestValue = f;
       best = k;
@@ -82,27 +88,33 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
     for (int k = 0; k < 5; k++) p[k] = k == best ? 1.0 : 0.0;
     s = 1.0;
   }
-  // Each side keeps its own color up to the meeting line (shares squared).
+  // Each side keeps its own color up to the meeting line (shares squared); with the soft blend (uMixSoft) the
+  // shares already say how gradually one color changes into the next, and are drawn as they are.
   vec3 m = vec3(0.0);
   float s2 = 0.0;
+  float pp = 0.0;
   for (int k = 0; k < 5; k++) {
     if (k >= uMixCount) continue;
     p[k] /= s;
-    s2 += p[k] * p[k];
-    m += p[k] * p[k] * mixColorAt(k, L, yE);
+    float q = uMixSoft > 0.5 ? p[k] : p[k] * p[k];
+    s2 += q;
+    pp += p[k] * p[k];
+    m += q * mixColorAt(k, L, yE);
   }
   m /= max(s2, 1e-6);
+  // In a look colored by its parts (uMixNarrow) the neutral line where far hues meet is narrower (shares squared).
   float b = 0.0;
   for (int i = 0; i < 5; i++) {
     for (int j = 0; j < 5; j++) {
       if (j <= i || j >= uMixCount) continue;
       if (((uMixFar >> (i * 5 + j)) & 1) == 0) continue;
-      b += 4.0 * p[i] * p[j];
+      b += uMixNarrow > 0.5 ? 4.0 * p[i] * p[i] * p[j] * p[j] / max(pp * pp, 1e-12) : 4.0 * p[i] * p[j];
     }
   }
   b = min(b, 1.0);
   // Far hues meet through neutral along a narrow line, so they never mix into mauve, indigo or teal.
-  m = mix(m, vec3(1.0), uMixBridge * b * b);
+  // With the soft blend the line whitens only where the design is light; in the dim it would read as a grey line.
+  m = mix(m, vec3(1.0), uMixBridge * b * b * (uMixSoft > 0.5 ? smoothstep(0.45, 0.75, L) : 1.0));
   // The design's luminance exactly, whatever the colors and the mix, so the light and dark layout never moves.
   return m / max(dot(m, LUMA), 1e-6) * y;
 }

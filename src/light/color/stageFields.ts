@@ -43,7 +43,8 @@ export type FieldWant = 'any' | 'warm' | 'cool' | 'dark' | 'bright' | 'pale' | '
  * - line: a column of light or a stretch of an outline, from `from` to `to`, `width` across.
  * - horizon: Sunrise's light on its horizon and the direction from it to the deepest sky. A null `light` means the
  *   brightest part of the design.
- * A spot with `inner` is a ring from `inner` to `radius` (a halo, the pale sky round a high light).
+ * A spot with `inner` is a ring from `inner` to `radius` (a halo, the pale sky round a high light). A `bright` spot
+ * inside a ring's bright middle is that ring's hottest light and takes the ring's color.
  * Spots and lines with the same `group` are one light (a Rush streak's pieces and its core): it takes one color.
  * `strength` (0 to 1, default 1) is how much a part counts: a part that comes, goes or jumps while a line is dragged
  * should fade its strength, and its color fades in and out with it instead of switching.
@@ -335,6 +336,9 @@ function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number
   const wants = new Map<FieldWant, Float32Array>(PART_WANTS.map((want) => [want, new Float32Array(w * h)]))
   const groupWant = new Map<number, FieldWant>()
   const darkSpots: { values: Float32Array; count: number }[] = []
+  // Where the asked parts reach, before their colors fade with the design's light.
+  const asked = new Float32Array(w * h)
+  const rings = parts.flatMap((part) => (part.kind === 'spot' && part.inner !== undefined && part.want && !['any', 'lead', 'dark', 'bright'].includes(part.want) ? [part] : []))
   for (const part of parts) {
     if (part.kind === 'horizon') continue
     let want = part.want ?? 'any'
@@ -351,9 +355,19 @@ function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number
     else if (want === 'dark') darkSpots.push({ values, count })
     else {
       // An asked color sits where its part's light is, and fades out with the design's light, never over a dim face.
+      maxInto(asked, values)
       for (let i = 0; i < w * h; i++) values[i] *= smooth(0.3, 0.55, L[i])
+      // A hot core inside a ring (a halo round the light) is that halo's light at its hottest: it takes the halo's
+      // color, which goes toward white there, instead of a dot of another color, handing over smoothly as it leaves.
+      const shares = want === 'bright' && part.kind === 'spot' ? ringShares(part.at, rings, fw, fh) : []
+      let rest = 1
+      for (const [ringWant, share] of shares) {
+        const held = wants.get(ringWant)
+        if (held) maxInto(held, values.map((v) => v * share))
+        rest -= share
+      }
       const held = wants.get(want)
-      if (held) maxInto(held, values)
+      if (held) maxInto(held, rest < 1 ? values.map((v) => v * rest) : values)
     }
   }
   // The lead's own parts (Meta Blue's face) stay its own: an asked color gives way on them.
@@ -365,11 +379,37 @@ function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number
     presence[s % 2] = Math.max(presence[s % 2], spot.count)
   })
   // The lead's light reaches everywhere no part claims, except into the look's own dim room.
-  for (let i = 0; i < w * h; i++) lead[i] = Math.max(lead[i], LEAD_BASE * (1 - Math.max(darks[0][i], darks[1][i])))
+  // Where an asked part meets the dim room the lead's light gives way, so the colors on either side meet there
+  // instead of a strip of the lead between them.
+  for (let i = 0; i < w * h; i++) {
+    const dark = Math.max(darks[0][i], darks[1][i])
+    lead[i] = Math.max(lead[i], LEAD_BASE * (1 - dark) * (1 - smooth(0.1, 0.4, Math.min(asked[i], dark))))
+  }
   const fields: StageField[] = [{ name: 'lead', want: 'lead', values: lead }]
   for (const [want, values] of wants) fields.push({ name: want, want, values })
   darks.forEach((values, i) => fields.push({ name: `dark${i + 1}`, want: 'dark', values }))
   return { fields, presence }
+}
+
+/**
+ * How much of a point (frame units) each ring round it takes, in the look's order of rings: all of it well inside a
+ * ring's bright middle, none of it past that middle, smoothly between; what one ring takes the next can't.
+ */
+function ringShares(at: readonly [number, number], rings: readonly Extract<StagePart, { kind: 'spot' }>[], fw: number, fh: number): [FieldWant, number][] {
+  const out: [FieldWant, number][] = []
+  let rest = 1
+  for (const ring of rings) {
+    const stretch = ring.stretch ?? 1
+    const a = ((ring.angle ?? 0) * Math.PI) / 180
+    const du = (at[0] - ring.at[0]) * fw
+    const dv = (at[1] - ring.at[1]) * fh
+    const q = Math.hypot((du * Math.cos(a) + dv * Math.sin(a)) / (ring.radius * Math.sqrt(stretch)), (-du * Math.sin(a) + dv * Math.cos(a)) / (ring.radius / Math.sqrt(stretch)))
+    const mid = 0.5 * (1 + (ring.inner ?? 0) / ring.radius)
+    const share = rest * (1 - smooth(0.5 * mid, mid, q))
+    if (share > 0 && ring.want) out.push([ring.want, share])
+    rest -= share
+  }
+  return out
 }
 
 /** A soft band along a line segment. */

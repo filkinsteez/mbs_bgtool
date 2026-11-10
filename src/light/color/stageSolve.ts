@@ -2,7 +2,7 @@ import { defaultMix, META_BLUE_HEX, mixColors, type ColorMix } from './mix'
 import { linearToOklab } from './oklab'
 import type { ColorPack } from './packs'
 import { hexToLinear } from './srgb'
-import { mulberry32, VISIBLE, type StageField, type StageGrid } from './stageFields'
+import { blurGrid, mulberry32, VISIBLE, type StageField, type StageGrid } from './stageFields'
 
 /** How a color behaves as its light dims (the GLSL chunk reads the same numbers). */
 export const KIND_PLAIN = 0
@@ -49,6 +49,8 @@ export interface StageColor {
   edge: number
   /** Lightness over which Yellow turns into Orange-red: above its edge and below it. */
   turn: [number, number]
+  /** Lightness over which a light or dark color fades out at its edge: above the edge and below it. */
+  fade: [number, number]
   /** Where the color Yellow dims into (Orange-red) is in the list of colors that are on, else -1. */
   neighborIndex: number
   /** Its share in the pack's default mix, for handing out fields. */
@@ -96,6 +98,9 @@ export function stageColors(pack: ColorPack, mix: ColorMix, byParts = false): St
         ? base.filter((o) => o !== c && !o.brightOnly && o.group === 'warm' && o.lightness < c.lightness && hueGap(o.hue, c.hue) <= 60).sort((x, y) => hueGap(x.hue, c.hue) - hueGap(y.hue, c.hue))[0]
         : undefined
     const kind = c.group === 'dark' ? KIND_DARK : fire ? KIND_TO_NEIGHBOR : c.brightOnly ? KIND_BRIGHT : KIND_PLAIN
+    // In a look colored by its parts, light colors fade over more of the light, so they cross into the dark colors
+    // below them as the light falls off, with no gap where a third color shows as a thin line; Yellow hands over to
+    // Orange-red a little higher, so Orange-red has more than a rim.
     return {
       hex: c.hex,
       unit: c.unit,
@@ -104,8 +109,9 @@ export function stageColors(pack: ColorPack, mix: ColorMix, byParts = false): St
       hue: c.hue,
       group: c.group,
       kind,
-      edge: kind === KIND_DARK ? c.lightness + (byParts ? DARK_REACH : 0) : kind === KIND_BRIGHT ? c.lightness - 0.1 : c.lightness - 0.16,
-      turn: kind === KIND_TO_NEIGHBOR ? [0.08, 0.12] : [0, 0],
+      edge: kind === KIND_DARK ? c.lightness + (byParts ? DARK_REACH : 0) : kind === KIND_BRIGHT ? c.lightness - 0.1 : c.lightness - (byParts ? 0.12 : 0.16),
+      turn: kind === KIND_TO_NEIGHBOR ? (byParts ? [0.06, 0.14] : [0.08, 0.12]) : [0, 0],
+      fade: kind === KIND_DARK ? [0, 0.1] : kind === KIND_BRIGHT ? [0, 0.2] : [0, 0],
       neighborIndex: fire ? base.indexOf(fire) : -1,
       defaultShare: c.defaultShare,
       share: c.share,
@@ -125,8 +131,8 @@ function itself(c: StageColor, lightness: number): number {
 
 /** How much a color may show at a lightness: a dark color only at or below its own; the others anywhere. */
 export function colorMask(c: StageColor, lightness: number): number {
-  if (c.kind === KIND_DARK) return 1 - smooth(c.edge - 0.1, c.edge, lightness)
-  if (c.kind === KIND_BRIGHT) return smooth(c.edge - 0.2, c.edge, lightness)
+  if (c.kind === KIND_DARK) return 1 - smooth(c.edge - c.fade[1], c.edge + c.fade[0], lightness)
+  if (c.kind === KIND_BRIGHT) return smooth(c.edge - c.fade[1], c.edge + c.fade[0], lightness)
   return 1
 }
 
@@ -360,6 +366,64 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
   }
   const final = measure(weights)
   return { weights, light: final.area, reads: final.own.map((v, k) => v + final.incoming[k]) }
+}
+
+/** How much the design's light changes over the distance a color takes to change into the next (soft blend). */
+const LIGHT_STEP = 0.08
+
+/** The shortest and longest distance, in grid cells, over which a color changes into the next (soft blend). */
+const SOFT_RANGE = [0.5, 2] as const
+
+/** Blur widths, in grid cells, that the soft blend interpolates between. */
+const SOFT_LEVELS = [0.5, 1, 2]
+
+/**
+ * The soft blend, for a look colored by its parts: each color's share of each grid cell as the firm blend draws it,
+ * then spread over the distance the design's light changes by LIGHT_STEP there: far where the light is nearly even,
+ * a short way at a rim or a fast falloff. So a color changes into the next as gradually as the light does, never as a
+ * firm outline round a part on even light. The shader draws these shares as they are.
+ */
+export function softFields(grid: StageGrid, values: readonly Float32Array[], colors: readonly StageColor[], weights: readonly number[], sharpness = STAGE_SHARPNESS): Float32Array[] {
+  const { width: w, height: h, lightness: L } = grid
+  const n = w * h
+  const shares = colors.map(() => new Float32Array(n))
+  for (let i = 0; i < n; i++) {
+    const l = Math.max(L[i], VISIBLE)
+    const x = colors.map((c, k) => Math.max(0, weights[k] * values[k][i] * colorMask(c, l)))
+    // Taken relative to the strongest, so a cell where every field is faint still blends smoothly.
+    const top = Math.max(...x)
+    if (top <= 1e-12) {
+      shares[0][i] = 1
+      continue
+    }
+    const q = x.map((v) => (v / top) ** (2 * sharpness))
+    const s = q.reduce((a, b) => a + b, 0)
+    q.forEach((v, k) => (shares[k][i] = v / s))
+  }
+  const light = blurGrid(L, w, h, 1)
+  const reach = new Float32Array(n)
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const gx = (light[y * w + Math.min(w - 1, x + 1)] - light[y * w + Math.max(0, x - 1)]) / 2
+      const gy = (light[Math.min(h - 1, y + 1) * w + x] - light[Math.max(0, y - 1) * w + x]) / 2
+      // In the dim a blend of two colors at one lightness reads as neither (a dark color into navy reads grey), so a
+      // dim room's colors change over at most a cell; the full soft blend is for the lit parts.
+      const most = SOFT_RANGE[0] + (SOFT_RANGE[1] - SOFT_RANGE[0]) * smooth(0.4, 0.6, light[y * w + x])
+      reach[y * w + x] = Math.min(Math.max(1, most), Math.max(SOFT_RANGE[0], LIGHT_STEP / Math.max(Math.hypot(gx, gy), 1e-4) / 2))
+    }
+  const sigma = blurGrid(reach, w, h, 2)
+  return shares.map((share) => {
+    const blurred = SOFT_LEVELS.map((s) => blurGrid(share, w, h, s))
+    const out = new Float32Array(n)
+    for (let i = 0; i < n; i++) {
+      const s = Math.min(SOFT_LEVELS[SOFT_LEVELS.length - 1], Math.max(SOFT_LEVELS[0], sigma[i]))
+      let l = 0
+      while (l < SOFT_LEVELS.length - 2 && SOFT_LEVELS[l + 1] < s) l++
+      const t = Math.log(s / SOFT_LEVELS[l]) / Math.log(SOFT_LEVELS[l + 1] / SOFT_LEVELS[l])
+      out[i] = blurred[l][i] * (1 - t) + blurred[l + 1][i] * t
+    }
+    return out
+  })
 }
 
 /** Pairs of colors far apart in hue (60 degrees or more, both with real chroma): their meeting line is a pale bridge. */

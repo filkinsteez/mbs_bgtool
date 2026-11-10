@@ -134,6 +134,16 @@ describe('color stage', () => {
     expect(at(6, 0.85)).toBeGreaterThan(5 * at(5, 0.85))
   })
 
+  it("gives a hot core inside a ring the ring's color, and outside a ring its own", () => {
+    const grid = flatGrid()
+    const halo: StagePart = { kind: 'spot', at: [0.5, 0.5], radius: 0.3, inner: 0.15, want: 'warm' }
+    const core = (at: readonly [number, number]): StagePart => ({ kind: 'spot', at, radius: 0.08, want: 'bright' })
+    const top = (parts: StagePart[], field: number) => Math.max(...buildFields('sunset.merged', parts, grid, 3, 16 / 9)[field].values)
+    expect(top([halo, core([0.5, 0.5])], 3)).toBe(0)
+    expect(top([halo, core([0.5, 0.5])], 2)).toBeGreaterThan(0.8)
+    expect(top([halo, core([0.95, 0.5])], 3)).toBeGreaterThan(0.8)
+  })
+
   it('gives Meta Blue the dark fields no color takes in a pack with no dark color', () => {
     const grid = flatGrid()
     const field = (name: string, want: StageField['want'], v: number): StageField => ({ name, want, values: new Float32Array(grid.width * grid.height).fill(v) })

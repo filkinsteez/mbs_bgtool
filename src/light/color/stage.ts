@@ -9,7 +9,7 @@ import { defaultMix, mixFromShares, type ColorMix } from './mix'
 import { getPack, isPackId, type ColorPack, type PackId } from './packs'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
 import { buildFields, COVERAGE_SPLIT, gridSize, lookParts, VISIBLE, type StageField, type StageGrid } from './stageFields'
-import { assignFields, colorFields, coloredByParts, farPairs, solveWeights, stageColors, STAGE_SHARPNESS, type StageColor } from './stageSolve'
+import { assignFields, colorFields, coloredByParts, farPairs, KIND_TO_NEIGHBOR, softFields, solveWeights, stageColors, STAGE_SHARPNESS, type StageColor } from './stageSolve'
 
 /**
  * The pack every design is drawn in while the color stage is on, so one mood, seed, drag and format give one
@@ -62,8 +62,10 @@ interface Design {
 interface Solved {
   colors: StageColor[]
   assignment: number[]
-  /** Each color's field on the stage grid (`colorFields`), what the shader reads. */
+  /** Each color's field on the stage grid, what the shader reads (in a look colored by its parts, its soft share). */
   values: Float32Array[]
+  /** Whether the look's parts say where colors go (a narrower neutral line where far hues meet). */
+  byParts: boolean
   weights: number[]
   light: number[]
   reads: number[]
@@ -170,11 +172,15 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
   const { fields, grid } = design
   let solved = solves.get(solveKey)
   if (!solved) {
-    const colors = stageColors(pack, mix, coloredByParts(fields))
+    const byParts = coloredByParts(fields)
+    const colors = stageColors(pack, mix, byParts)
     const assignment = assignFields(colors, fields, input.ctx.seed)
     const values = colorFields(fields, assignment, colors)
     const own = values.map((v, k): StageField => ({ name: fields[assignment[k]]?.name ?? 'none', want: fields[assignment[k]]?.want ?? 'any', values: v }))
-    solved = remember(solves, solveKey, { colors, assignment, values, ...solveWeights(grid, own, colors, colors.map((_, k) => k), STAGE_SHARPNESS, coloredByParts(fields)) })
+    const solution = solveWeights(grid, own, colors, colors.map((_, k) => k), STAGE_SHARPNESS, byParts)
+    // A look colored by its parts draws the soft blend: each color's share, spread as far as the light changes.
+    const drawn = byParts ? { values: softFields(grid, values, colors, solution.weights), weights: colors.map(() => 1) } : { values, weights: solution.weights }
+    solved = remember(solves, solveKey, { colors, assignment, byParts, ...solution, ...drawn })
   }
   lastReport = { hexes: solved.colors.map((c) => c.hex), light: solved.light, reads: solved.reads, fields: solved.assignment.map((f) => fields[f]?.name ?? '') }
   const textures = { ...fieldTextures(input.gpu, grid, solved.values), uMixRamps: rampTexture(input.gpu, solved.colors) }
@@ -188,13 +194,14 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
   }
 }
 
-function stageUniforms({ colors, weights }: Solved): UniformMap {
+function stageUniforms({ colors, weights, byParts }: Solved): UniformMap {
   const color = new Float32Array(20)
   const turn = new Float32Array(20)
   const field = new Float32Array(20)
   colors.slice(0, 5).forEach((c, k) => {
     color.set([...c.unit, c.kind], 4 * k)
-    turn.set([c.neighborIndex, c.edge, c.turn[0], c.turn[1]], 4 * k)
+    const range = c.kind === KIND_TO_NEIGHBOR ? c.turn : c.fade
+    turn.set([c.neighborIndex, c.edge, range[0], range[1]], 4 * k)
     field.set([k, weights[k], 0, 0], 4 * k)
   })
   return {
@@ -203,8 +210,10 @@ function stageUniforms({ colors, weights }: Solved): UniformMap {
     uMixTurn: turn,
     uMixField: field,
     uMixFar: farPairs(colors.slice(0, 5)),
-    uMixSharp: STAGE_SHARPNESS,
+    uMixSharp: byParts ? 1 : STAGE_SHARPNESS,
     uMixBridge: 1,
+    uMixNarrow: byParts ? 1 : 0,
+    uMixSoft: byParts ? 1 : 0,
   }
 }
 
