@@ -20,23 +20,30 @@ const elemental = getPack('elemental')
 const total = (shares: readonly number[]) => shares.reduce((a, b) => a + b, 0)
 
 describe('default mix', () => {
-  it('gives Meta Blue 40% and the other colors the rest evenly, in every pack', () => {
+  it('gives Meta Blue 50% and the other colors the rest evenly, in every pack', () => {
     for (const pack of PACKS) {
       const { shares } = defaultMix(pack)
       expect(shares).toHaveLength(pack.colors.length)
       expect(total(shares)).toBeCloseTo(1, 12)
       const blue = metaBlueIndex(pack)
       expect(pack.colors[blue].name).toBe('Meta Blue')
-      expect(shares[blue]).toBeCloseTo(DEFAULT_META_BLUE_SHARE, 12)
+      expect(DEFAULT_META_BLUE_SHARE).toBe(0.5)
+      expect(shares[blue]).toBeCloseTo(0.5, 12)
       const others = shares.filter((_, i) => i !== blue)
-      for (const share of others) expect(share).toBeCloseTo(0.6 / others.length, 12)
+      for (const share of others) expect(share).toBeCloseTo(0.5 / others.length, 12)
     }
+  })
+
+  it('shows as whole percents that sum to 100: thirds and eighths of the rest round by largest remainder', () => {
+    expect(mixPercents(defaultMix(bold))).toEqual([50, 17, 17, 16])
+    expect(mixPercents(defaultMix(elemental))).toEqual([50, 13, 13, 12, 12])
+    expect(mixPercents(defaultMix(getPack('atmospheric')))).toEqual([50, 13, 13, 12, 12])
   })
 
   it('finds Meta Blue by its hex, not its place in the pack', () => {
     const moved = { ...bold, colors: [...bold.colors.slice(1), bold.colors[0]] }
     expect(metaBlueIndex(moved)).toBe(3)
-    expect(defaultMix(moved).shares[3]).toBeCloseTo(0.4, 12)
+    expect(defaultMix(moved).shares[3]).toBeCloseTo(0.5, 12)
   })
 })
 
@@ -44,9 +51,9 @@ describe('setShare', () => {
   it('keeps the other colors in their ratios to each other', () => {
     const mix = setShare(bold, defaultMix(bold), 3, 0.9)
     expect(mix.shares[3]).toBeCloseTo(0.9, 12)
-    expect(mix.shares[0]).toBeCloseTo(0.05, 12)
-    expect(mix.shares[1]).toBeCloseTo(0.025, 12)
-    expect(mix.shares[2]).toBeCloseTo(0.025, 12)
+    expect(mix.shares[0]).toBeCloseTo(0.06, 12)
+    expect(mix.shares[1]).toBeCloseTo(0.02, 12)
+    expect(mix.shares[2]).toBeCloseTo(0.02, 12)
     expect(total(mix.shares)).toBeCloseTo(1, 12)
   })
 
@@ -60,10 +67,10 @@ describe('setShare', () => {
     const off = setShare(elemental, defaultMix(elemental), 2, 0)
     expect(off.shares[2]).toBe(0)
     expect(off.shares[1] / off.shares[3]).toBeCloseTo(1, 12)
-    expect(off.shares[0] / off.shares[1]).toBeCloseTo(0.4 / 0.15, 12)
+    expect(off.shares[0] / off.shares[1]).toBeCloseTo(0.5 / 0.125, 12)
     const on = setShare(elemental, off, 2, 0.2)
     expect(on.shares[2]).toBeCloseTo(0.2, 12)
-    expect(on.shares[0] / on.shares[1]).toBeCloseTo(0.4 / 0.15, 12)
+    expect(on.shares[0] / on.shares[1]).toBeCloseTo(0.5 / 0.125, 12)
   })
 
   it('keeps at least two colors on: the last two never go below 10%', () => {
@@ -80,9 +87,9 @@ describe('setShare', () => {
     const lone = { shares: [0, 0, 0, 1] }
     const mix = setShare(bold, lone, 3, 0.6)
     expect(mix.shares[3]).toBeCloseTo(0.6, 12)
-    expect(mix.shares[0]).toBeCloseTo(0.2, 12)
-    expect(mix.shares[1]).toBeCloseTo(0.1, 12)
-    expect(mix.shares[2]).toBeCloseTo(0.1, 12)
+    expect(mix.shares[0]).toBeCloseTo(0.24, 12)
+    expect(mix.shares[1]).toBeCloseTo(0.08, 12)
+    expect(mix.shares[2]).toBeCloseTo(0.08, 12)
   })
 
   it('moves every share by a small amount for a small slider step', () => {
@@ -111,9 +118,10 @@ describe('Meta Blue switch', () => {
     expect(on.shares[1]).toBeCloseTo(0.25, 12)
   })
 
-  it('turned on with no remembered share gives Meta Blue its default 40%', () => {
+  it('turned on with no remembered share gives Meta Blue its default 50%', () => {
     const on = setMetaBlue(bold, setMetaBlue(bold, defaultMix(bold), false), true)
-    expect(on.shares[0]).toBeCloseTo(0.4, 12)
+    expect(on.shares[0]).toBeCloseTo(0.5, 12)
+    for (const share of on.shares.slice(1)) expect(share).toBeCloseTo(0.5 / 3, 12)
   })
 
   it('leaves the mix as it is when the switch already matches', () => {
@@ -134,7 +142,7 @@ describe('mixColors', () => {
 describe('mix in the URL', () => {
   it('writes whole percents in pack order that sum to 100', () => {
     const mix = setShare(bold, defaultMix(bold), 3, 0.6)
-    expect(formatMix(bold, mix)).toBe('20,10,10,60')
+    expect(formatMix(bold, mix)).toBe('24,8,8,60')
     const thirds = setMetaBlue(bold, defaultMix(bold), false)
     expect(total(mixPercents(thirds))).toBe(100)
     expect(formatMix(bold, thirds)).toBe('0,34,33,33')

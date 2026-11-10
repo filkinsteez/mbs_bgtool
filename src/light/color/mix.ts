@@ -17,7 +17,7 @@ export const MAX_SHARE = 0.9
 /** The panel's slider step. */
 export const SHARE_STEP = 0.05
 /** Meta Blue's share in a pack's default mix; the pack's other colors share the rest evenly. */
-export const DEFAULT_META_BLUE_SHARE = 0.4
+export const DEFAULT_META_BLUE_SHARE = 0.5
 
 const EPSILON = 1e-9
 
