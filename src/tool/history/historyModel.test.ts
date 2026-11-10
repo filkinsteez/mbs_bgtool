@@ -11,6 +11,7 @@ import {
   remove,
   restore,
   setQuery,
+  showing,
   STEP_LIMIT,
   stringifyEntries,
   stringifyPlace,
@@ -134,27 +135,64 @@ describe('history', () => {
     expect(end.back).toHaveLength(last - 1)
   })
 
-  it('takes out an entry with its steps, so Cmd+Z skips it, and shows none when it was the shown one', () => {
+  it('takes out an entry that is not on screen with its steps, and leaves the image as it is', () => {
     const elemental = query(3).replace('pack=bold', 'pack=elemental')
     const history = add(add(add(add(EMPTY_HISTORY, query(1)), query(2)), query(3)), elemental)
     const [third, second] = history.entries
     expect(history.back).toEqual([query(1), query(2), query(3)])
+    const { history: after, query: show } = remove(history, second.id, elemental)
+    expect(show).toBeNull()
+    expect(queries(after)).toEqual([elemental, query(1)])
+    expect(after.current).toBe(third.id)
+    expect(after.back).toEqual([query(1), query(3)])
+    expect(remove(history, 'gone', elemental)).toEqual({ history, query: null })
+  })
 
-    const withoutSecond = remove(history, second.id)
-    expect(queries(withoutSecond)).toEqual([elemental, query(1)])
-    expect(withoutSecond.current).toBe(third.id)
-    expect(withoutSecond.back).toEqual([query(1), query(3)])
+  it('shows the entry in its place when the one on screen is taken out, like closing the active browser tab', () => {
+    const history = add(add(add(EMPTY_HISTORY, query(1)), query(2)), query(3))
+    const [third, second, first] = history.entries
+    const middle = restore(history, second.id)!.history
+    const right = remove(middle, second.id, query(2))
+    expect(right.query).toBe(query(1))
+    expect(right.history.current).toBe(first.id)
+    expect(queries(right.history)).toEqual([query(3), query(1)])
+    const last = remove(restore(history, first.id)!.history, first.id, query(1))
+    expect(last.query).toBe(query(2))
+    expect(last.history.current).toBe(second.id)
+    const front = remove(history, third.id, query(3))
+    expect(front.query).toBe(query(2))
+    const alone = add(EMPTY_HISTORY, query(5))
+    expect(remove(alone, alone.entries[0].id, query(5))).toEqual({ history: EMPTY_HISTORY, query: null })
+  })
 
-    const withoutShown = remove(history, third.id)
-    expect(queries(withoutShown)).toEqual([query(2), query(1)])
-    expect(withoutShown.current).toBeNull()
-    expect(withoutShown.back).toEqual([query(1), query(2)])
-    const back = undo(withoutShown, newId())!
-    expect(back.query).toBe(query(2))
-    expect(back.history.forward).toEqual([])
-    expect(queries(back.history)).toEqual([query(2), query(1)])
+  it('goes back from the entry shown in place of a taken-out one to the steps before, never to the taken-out design', () => {
+    let history = add(add(add(add(EMPTY_HISTORY, query(1)), query(2)), query(1, '&filter=grain&strength=0.5')), query(3))
+    const shown = history.entries[0]
+    history = remove(history, shown.id, query(3)).history
+    expect(queries(history)).toEqual([query(2), query(1, '&filter=grain&strength=0.5')])
+    expect(history.back).toEqual([query(1), query(2), query(1, '&filter=grain&strength=0.5')])
+    const seen = undoAll(history).seen
+    expect(seen).toEqual([query(1, '&filter=grain&strength=0.5'), query(2), query(1)])
+    expect(seen).not.toContain(query(3))
+  })
 
-    expect(remove(history, 'gone')).toBe(history)
+  it('skips steps that would show the state already on screen', () => {
+    const history: History = { ...add(add(EMPTY_HISTORY, query(1)), query(2)), back: [query(1), query(2), query(2)] }
+    const back = undo(history, newId())!
+    expect(back.query).toBe(query(1))
+    expect(back.history.back).toEqual([])
+    expect(back.history.forward).toEqual([query(2)])
+    expect(undo({ ...history, back: [query(2)] }, newId())).toBeNull()
+  })
+
+  it('rings the entry of the design on screen, whichever entry is stored as shown', () => {
+    const history = add(add(add(EMPTY_HISTORY, query(1)), query(2)), query(3))
+    const [third, , first] = history.entries
+    expect(showing(history, designOf(query(3)))).toBe(history)
+    expect(showing(history, designOf(query(3, '&filter=pixel&strength=0.2'))).current).toBe(third.id)
+    expect(showing(history, designOf(query(1).replace('pack=bold', 'pack=elemental'))).current).toBe(first.id)
+    expect(showing(history, designOf(query(9))).current).toBeNull()
+    expect(showing(EMPTY_HISTORY, designOf(query(1)))).toBe(EMPTY_HISTORY)
   })
 
   it('keeps at most STEP_LIMIT steps back', () => {

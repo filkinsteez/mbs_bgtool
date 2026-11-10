@@ -87,32 +87,51 @@ export function restore(history: History, id: string): HistoryMove | null {
   return { history: { ...history, current: id, back: withShown(history.back, currentEntry(history)), forward: [] }, query: entry.query }
 }
 
-/** A step to the last state of `from`; the shown state goes on the other side. A design that left the history comes back first. */
+/**
+ * A step to the last state of `from` that differs from the shown one; the shown state goes on the other side. A design
+ * that left the history comes back first.
+ */
 function move(history: History, from: 'back' | 'forward', newId: string): HistoryMove | null {
-  const steps = history[from]
-  const query = steps.at(-1)
+  const shown = currentEntry(history)
+  const rest = [...history[from]]
+  let query = rest.pop()
+  while (query !== undefined && query === shown?.query) query = rest.pop()
   if (query === undefined) return null
-  const rest = steps.slice(0, -1)
-  const other = withShown(from === 'back' ? history.forward : history.back, currentEntry(history))
+  const other = withShown(from === 'back' ? history.forward : history.back, shown)
   const placed = place(history, query, '', newId)
   return { history: from === 'back' ? { ...placed, back: rest, forward: other } : { ...placed, back: other, forward: rest }, query }
 }
 
+/** Taking out an entry: the history after it, and the state to show, or null when the image stays as it is. */
+export interface HistoryRemoval {
+  history: History
+  query: string | null
+}
+
 /**
- * The history without entry `id`: its design also leaves the steps, so Cmd/Ctrl+Z doesn't bring it back, and when it
- * was the shown entry none is shown.
+ * Takes out entry `id`; its design also leaves the steps, so Cmd/Ctrl+Z doesn't bring it back. When it is the design
+ * on screen (`shownQuery`), the entry that takes its place, the next one or the one before when it was last, is shown,
+ * as when closing the active browser tab. Taking out any other entry leaves the image as it is.
  */
-export function remove(history: History, id: string): History {
-  const entry = history.entries.find((item) => item.id === id)
-  if (!entry) return history
-  const design = designOf(entry.query)
+export function remove(history: History, id: string, shownQuery: string): HistoryRemoval {
+  const index = history.entries.findIndex((item) => item.id === id)
+  if (index < 0) return { history, query: null }
+  const design = designOf(history.entries[index].query)
   const others = (steps: readonly string[]) => steps.filter((step) => designOf(step) !== design)
-  return {
-    entries: history.entries.filter((item) => item !== entry),
-    current: history.current === id ? null : history.current,
-    back: others(history.back),
-    forward: others(history.forward),
-  }
+  const rest = { entries: history.entries.filter((_, i) => i !== index), back: others(history.back), forward: others(history.forward) }
+  if (designOf(shownQuery) !== design) return { history: { ...rest, current: history.current === id ? null : history.current }, query: null }
+  const next = history.entries[index + 1] ?? history.entries[index - 1]
+  return { history: { ...rest, current: next?.id ?? null }, query: next?.query ?? null }
+}
+
+/**
+ * The history as the row shows it: `current` is the entry of `design`, the design on screen (`designOf` its query), or
+ * null when that design isn't in the row.
+ */
+export function showing(history: History, design: string): History {
+  const shown = currentEntry(history)
+  const id = shown && designOf(shown.query) === design ? shown.id : (history.entries.find((entry) => designOf(entry.query) === design)?.id ?? null)
+  return id === history.current ? history : { ...history, current: id }
 }
 
 /** Cmd/Ctrl+Z: the state before the last change, or null when there is none. */

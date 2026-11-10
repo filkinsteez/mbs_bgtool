@@ -1,11 +1,13 @@
-import { useEffect, useLayoutEffect, useState, useSyncExternalStore, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useSyncExternalStore, type RefObject } from 'react'
 import type { Scene } from '@/light'
 import {
+  designOf,
   record,
   redo as redoMove,
   remove as removeEntry,
   restore as restoreMove,
   setQuery,
+  showing,
   undo as undoMove,
   type History,
   type HistoryMove,
@@ -28,31 +30,30 @@ class Recorder {
   private pending: { query: string; thumb: string } | null = null
   private dragging = false
   private pressed = false
-  /** A shown state taken out of the history: it isn't recorded again until the state changes. */
-  private removed: string | null = null
+  /** The last state recorded or taken out: a redraw of it, after a resize say, only refreshes its picture. */
+  private recorded: string | null = null
   private timer: ReturnType<typeof setTimeout> | undefined
 
   see(query: string, scene: Scene): void {
     if (query !== this.query) {
       this.changed = performance.now()
       this.pending = null
-      this.removed = null
     }
     this.query = query
     this.scene = scene
   }
 
   settled(scene: Scene, thumb: string): void {
-    if (scene !== this.scene || this.query === this.removed) return
+    if (scene !== this.scene) return
     this.pending = { query: this.query, thumb }
     this.tryCommit()
   }
 
-  /** The shown state was taken out of the history: a redraw of it, after a resize say, doesn't put it back. */
+  /** The state on screen was taken out of the history: it comes back only with the next change. */
   forget(): void {
     clearTimeout(this.timer)
     this.pending = null
-    this.removed = this.query
+    this.recorded = this.query
   }
 
   hold(kind: 'dragging' | 'pressed', on: boolean): void {
@@ -81,7 +82,13 @@ class Recorder {
     clearTimeout(this.timer)
     const pending = this.pending
     this.pending = null
-    if (pending) writeHistory(record(readHistory(), pending.query, pending.thumb, newId()))
+    if (!pending) return
+    const now = readHistory()
+    const again = pending.query === this.recorded
+    this.recorded = pending.query
+    // A redraw never adds a picture, so one taken out here or in another tab stays out until the next change.
+    if (again && now.entries.find((entry) => entry.id === now.current)?.query !== pending.query) return
+    writeHistory(record(now, pending.query, pending.thumb, newId()))
   }
 }
 
@@ -99,12 +106,13 @@ export interface HistoryOptions {
 }
 
 export interface HistoryControls {
+  /** The history as the row shows it: `current` is the entry of the design on screen, or null when it isn't in the row. */
   history: History
   /** The preview drew the settled frame of `scene`; `thumb` is a small JPEG of it, or ''. */
   onSettle: (scene: Scene, thumb: string) => void
   /** Shows entry `id`. */
   restore: (id: string) => void
-  /** Takes entry `id` out of the history; the image stays as it is. */
+  /** Takes entry `id` out of the history; when it is the design on screen, the entry in its place is shown. */
   remove: (id: string) => void
   /** Cmd/Ctrl+Z; false when there is nothing to go back to. */
   undo: () => boolean
@@ -132,9 +140,15 @@ class HistoryActions {
   readonly remove = (id: string): void => {
     this.recorder.flush()
     const now = readHistory()
-    const shown = now.entries.find((entry) => entry.id === now.current)
-    if (shown?.id === id && shown.query === this.recorder.query) this.recorder.forget()
-    writeHistory(removeEntry(now, id))
+    const entry = now.entries.find((item) => item.id === id)
+    const { history, query } = removeEntry(now, id, this.recorder.query)
+    if (query !== null) {
+      writeHistory(setQuery(history, history.current, this.show(query)))
+      return
+    }
+    // The design on screen was the last picture: the image stays, and a redraw of it doesn't add it back.
+    if (entry && designOf(entry.query) === designOf(this.recorder.query)) this.recorder.forget()
+    writeHistory(history)
   }
 
   readonly undo = (): boolean => this.step(true)
@@ -162,9 +176,13 @@ class HistoryActions {
 
 /** The history of the tool's states, with Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z through it. */
 export function useHistory({ query, scene, dragging, panelRef, show }: HistoryOptions): HistoryControls {
-  const history = useSyncExternalStore(subscribeHistory, readHistory, readServerHistory)
-  const [recorder] = useState(() => new Recorder())
-  const [actions] = useState(() => new HistoryActions(recorder))
+  const stored = useSyncExternalStore(subscribeHistory, readHistory, readServerHistory)
+  const design = designOf(query)
+  const history = useMemo(() => showing(stored, design), [stored, design])
+  // useMemo rather than useState: a hot reload in development then makes new ones from the new code, which use the
+  // store the row reads. Kept ones would lack new methods and write to the store's old copy.
+  const recorder = useMemo(() => new Recorder(), [])
+  const actions = useMemo(() => new HistoryActions(recorder), [recorder])
   const { onSettle, restore, remove, undo, redo } = actions
 
   useLayoutEffect(() => actions.setShow(show))
