@@ -84,6 +84,8 @@ export interface RushLayout {
   reach: number
   hook: [number, number]
   stack: [number, number, number, number]
+  /** A broad swell across the stack, centered on its bright place: center, half-width, how far the ceiling drops. */
+  swell: [number, number, number, number]
   bands: Band[]
   tongues: number[]
   tongueLook: [number, number, number, number]
@@ -457,6 +459,7 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
     reach,
     hook,
     stack,
+    swell: [brightest, 0.4 * across, 0.35, 0],
     bands,
     tongues: new Array(4 * MAX_TONGUES).fill(0),
     tongueLook: [0, 0, 0, 0],
@@ -478,6 +481,7 @@ export function composeRushSplit(hexes: readonly string[], controls: ControlValu
     run: [round4(layout.from[0]), round4(layout.from[1]), round4(layout.angle), round4(layout.reach)],
     hook: layout.hook.map(round4),
     stack: layout.stack.map(round4),
+    swell: layout.swell.map(round4),
     la: pad(B.flatMap((b) => [b.center, b.half, b.widthVary, b.coreWidth]), 4 * MAX_LIGHTS),
     lb: pad(B.flatMap((b) => [b.asym, b.rag, b.split0, b.split1]), 4 * MAX_LIGHTS),
     lc: pad(B.flatMap((b) => [b.luminance * power, b.brightVary, b.coreGain, b.seam ? 2 : b.role === 'white' ? 1 : 0]), 4 * MAX_LIGHTS),

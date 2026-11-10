@@ -38,6 +38,7 @@ export const RUSH_SPLIT_GLSL = /* glsl */ `
 uniform vec4 uRun;                  // start x, start y (short sides from the frame center), direction (radians), reach
 uniform vec2 uHook;                 // how far the flow bends across by its end: by t squared and by t cubed (per reach)
 uniform vec4 uStack;                // fan (widening per reach), warp amount, warp frequency along, warp frequency across
+uniform vec4 uSwell;                // a broad swell across the stack: center (warped), half-width, how far the light's ceiling drops away from it, unused
 uniform vec4 uLA[MAX_LIGHTS];       // center across (warped), half-width, its variation along, core width (share of the half-width)
 uniform vec4 uLB[MAX_LIGHTS];       // side asymmetry (log of left / right), raggedness, split at the start, split at the reach
 uniform vec4 uLC[MAX_LIGHTS];       // luminance (layout's), brightness variation along, core gain, 1 for a white streak, 2 for a seam
@@ -277,7 +278,11 @@ vec3 radiance(vec2 uv, vec2 p) {
   vec3 sum = leadHue / max(luminance(leadHue), 1e-5) * total;
   // A soft shoulder on the streaks' light, below the level where the tone curve turns a near-white color (Ice) flat
   // white, while saturated colors still whiten at their cores. White streaks' cores come on top and reach white.
-  float shoulder = total < 0.5 ? total : 0.5 + 0.4 * (1.0 - exp(-(total - 0.5) / 0.4));
+  // Its ceiling drops a little away from the stack's bright place, so a wide area of strong light still slopes gently
+  // instead of standing flat.
+  float sw = (vw - uSwell.x) / max(uSwell.y, 1e-3);
+  float ceiling = 0.4 * (1.0 - uSwell.z * (1.0 - exp(-0.5 * sw * sw)));
+  float shoulder = total < 0.5 ? total : 0.5 + ceiling * (1.0 - exp(-(total - 0.5) / ceiling));
   sum *= shoulder / max(total, 1e-5);
   return uGround + (sum + hot) * shadow(p);
 }
