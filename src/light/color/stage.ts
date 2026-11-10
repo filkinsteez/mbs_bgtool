@@ -174,7 +174,7 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
     const assignment = assignFields(colors, fields, input.ctx.seed)
     const values = colorFields(fields, assignment, colors)
     const own = values.map((v, k): StageField => ({ name: fields[assignment[k]]?.name ?? 'none', want: fields[assignment[k]]?.want ?? 'any', values: v }))
-    solved = remember(solves, solveKey, { colors, assignment, values, ...solveWeights(grid, own, colors, colors.map((_, k) => k)) })
+    solved = remember(solves, solveKey, { colors, assignment, values, ...solveWeights(grid, own, colors, colors.map((_, k) => k), STAGE_SHARPNESS, coloredByParts(fields)) })
   }
   lastReport = { hexes: solved.colors.map((c) => c.hex), light: solved.light, reads: solved.reads, fields: solved.assignment.map((f) => fields[f]?.name ?? '') }
   const textures = { ...fieldTextures(input.gpu, grid, solved.values), uMixRamps: rampTexture(input.gpu, solved.colors) }

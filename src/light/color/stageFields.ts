@@ -45,13 +45,16 @@ export type FieldWant = 'any' | 'warm' | 'cool' | 'dark' | 'bright' | 'pale' | '
  *   brightest part of the design.
  * A spot with `inner` is a ring from `inner` to `radius` (a halo, the pale sky round a high light).
  * Spots and lines with the same `group` are one light (a Rush streak's pieces and its core): it takes one color.
+ * `strength` (0 to 1, default 1) is how much a part counts: a part that comes, goes or jumps while a line is dragged
+ * should fade its strength, and its color fades in and out with it instead of switching.
  * When any part asks for a color (a `want` other than `any`) or has a group, the look's parts alone say where colors
- * go (partFields): parts with no want or `lead`, grouped or not, are the look's own light, in the lead color; parts
- * that share a want (or a group) are one light in one color; the `dark` parts take the dark colors in turn.
+ * go (partFields): parts with no want or `lead`, grouped or not, are the look's own light, in the lead color; the
+ * parts that ask the same color (a group asks what its first part asks) are one light in one color, shown where that
+ * light is; the `dark` parts share the dark colors by where they are, left and right.
  */
 export type StagePart =
-  | { kind: 'spot'; at: readonly [number, number]; radius: number; stretch?: number; angle?: number; inner?: number; want?: FieldWant; group?: number }
-  | { kind: 'line'; from: readonly [number, number]; to: readonly [number, number]; width: number; want?: FieldWant; group?: number }
+  | { kind: 'spot'; at: readonly [number, number]; radius: number; stretch?: number; angle?: number; inner?: number; want?: FieldWant; group?: number; strength?: number }
+  | { kind: 'line'; from: readonly [number, number]; to: readonly [number, number]; width: number; want?: FieldWant; group?: number; strength?: number }
   | { kind: 'horizon'; light: readonly [number, number] | null; sky: readonly [number, number] }
 
 /** One color field: a value from 0 to 1 per grid cell. */
@@ -308,44 +311,73 @@ const maxInto = (into: Float32Array, values: Float32Array) => {
   for (let i = 0; i < into.length; i++) into[i] = Math.max(into[i], values[i])
 }
 
+type Noise = (u: number, v: number) => number
+
+/** The wants that get their own warp in a look colored by its parts, in the order their noise is drawn. */
+const WARPED: readonly FieldWant[] = ['lead', ...PART_WANTS, 'dark']
+
 /**
- * The fields of a look whose parts say where colors go (the merged looks): the look's own light (parts with no want
- * or `lead`) with everything no other part claims, for the lead color; one per group that asks a color and one for all the parts that
- * share a want, so each is one light in one color; and, when some part is dark, two dark fields that take the dark
- * spots in turn, so two dark colors each get their own (otherwise buildFields adds its two seeded ones). No seeded
- * fields across the light. The list has the same length whatever parts a frame has (a want with no part has an empty
- * field), so no color moves to another field while a line is dragged.
+ * The fields of a look whose parts say where colors go (the merged looks), always the same seven, so no color moves to
+ * another field while a line is dragged: the lead's light (parts with no want or `lead`, and everywhere no part claims
+ * except the look's own dim room); one field per color asked (cool, warm, bright, pale), from every part that asks it
+ * (a group asks what its first part asks); and two dark fields that share the dark spots by where they are, left and
+ * right of their middle. An asked color's field fades out where the design is dim, and the solve keeps the color to its
+ * part's own light, so a small light's color sits on that light, never over a dim face. Each part counts by its strength
+ * and fades as it shrinks to nothing. Each color has its own small warp, so neighbouring color edges are not parallel.
+ * `presence` is how much the look's own dark spots are there (0 to 1): buildFields' seeded dark fields give way to them.
  */
-function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number, nu: (u: number, v: number) => number, nv: (u: number, v: number) => number): StageField[] {
-  const { width: w, height: h } = grid
+function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number, warps: ReadonlyMap<FieldWant, readonly [Noise, Noise]>): { fields: StageField[]; presence: number } {
+  const { width: w, height: h, lightness: L } = grid
   const [fw, fh] = frameShorts(aspect)
+  const warpOf = (want: FieldWant) => warps.get(want) ?? warps.get('lead')!
   const lead = new Float32Array(w * h)
-  const groups = new Map<number, { want: FieldWant; values: Float32Array }>()
   const wants = new Map<FieldWant, Float32Array>(PART_WANTS.map((want) => [want, new Float32Array(w * h)]))
-  const darks = [new Float32Array(w * h), new Float32Array(w * h)]
-  let darkSpots = 0
+  const groupWant = new Map<number, FieldWant>()
+  const darkSpots: { values: Float32Array; x: number; count: number }[] = []
   for (const part of parts) {
     if (part.kind === 'horizon') continue
+    let want = part.want ?? 'any'
+    if (part.group !== undefined) {
+      if (!groupWant.has(part.group)) groupWant.set(part.group, want)
+      want = groupWant.get(part.group) ?? want
+    }
+    const [nu, nv] = warpOf(want === 'any' ? 'lead' : want)
     const values = partField(part, w, h, fw, fh, nu, nv)
-    const want = part.want ?? 'any'
+    const area = values.reduce((a, v) => a + v, 0) / (w * h)
+    const count = Math.min(1, Math.max(0, part.strength ?? 1)) * smooth(0.001, 0.01, area)
+    for (let i = 0; i < w * h; i++) values[i] *= count
     if (want === 'lead' || want === 'any') maxInto(lead, values)
-    else if (part.group !== undefined) {
-      const held = groups.get(part.group)
-      if (held) maxInto(held.values, values)
-      else groups.set(part.group, { want, values })
-    } else if (want === 'dark') maxInto(darks[darkSpots++ % darks.length], values)
+    else if (want === 'dark') darkSpots.push({ values, x: part.kind === 'spot' ? part.at[0] * fw : 0.5 * (part.from[0] + part.to[0]) * fw, count })
     else {
+      // An asked color sits where its part's light is, and fades out with the design's light, never over a dim face.
+      for (let i = 0; i < w * h; i++) values[i] *= smooth(0.3, 0.55, L[i])
       const held = wants.get(want)
       if (held) maxInto(held, values)
     }
   }
-  // The lead's light reaches everywhere no part claims, except into the look's own dim room.
-  for (let i = 0; i < w * h; i++) lead[i] = Math.max(lead[i], LEAD_BASE * (1 - Math.max(darks[0][i], darks[1][i])))
+  // The lead's own parts (Meta Blue's face) stay its own: an asked color gives way on them.
+  for (const values of wants.values()) for (let i = 0; i < w * h; i++) values[i] *= 1 - 0.6 * lead[i]
+  const darks = [new Float32Array(w * h), new Float32Array(w * h)]
+  const total = darkSpots.reduce((a, spot) => a + spot.count, 0)
+  const middle = total > 0 ? darkSpots.reduce((a, spot) => a + spot.count * spot.x, 0) / total : 0.5 * fw
+  const [du] = warpOf('dark')
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x
+      const u = ((x + 0.5) / w) * fw
+      const v = ((y + 0.5) / h) * fh
+      let dark = 0
+      for (const spot of darkSpots) dark = Math.max(dark, spot.values[i])
+      const right = smooth(-0.2, 0.2, u + 0.15 * du(u, v) - middle)
+      darks[0][i] = dark * (1 - right)
+      darks[1][i] = dark * right
+      // The lead's light reaches everywhere no part claims, except into the look's own dim room.
+      lead[i] = Math.max(lead[i], LEAD_BASE * (1 - dark))
+    }
   const fields: StageField[] = [{ name: 'lead', want: 'lead', values: lead }]
-  for (const [group, { want, values }] of [...groups.entries()].sort((a, b) => a[0] - b[0])) fields.push({ name: `group${group}`, want, values })
   for (const [want, values] of wants) fields.push({ name: want, want, values })
-  if (darkSpots) darks.forEach((values, i) => fields.push({ name: `dark${i + 1}`, want: 'dark', values }))
-  return fields
+  darks.forEach((values, i) => fields.push({ name: `dark${i + 1}`, want: 'dark', values }))
+  return { fields, presence: darkSpots.reduce((a, spot) => Math.max(a, spot.count), 0) }
 }
 
 /** A soft band along a line segment. */
@@ -404,8 +436,14 @@ export function buildFields(recipe: RecipeId, parts: readonly StagePart[], grid:
   const fields: StageField[] = []
   const haze = normalizeMax(blurGrid(L, w, h, 0.12 * Math.min(w, h)))
   const byParts = followsParts(parts)
-  if (byParts) fields.push(...partFields(parts, grid, aspect, nu, nv))
-  else if (isSunrise(recipe)) {
+  let presence = 0
+  if (byParts) {
+    const warpRng = mulberry32(Math.imul(seed, 104729) + hashText(recipe) + 1)
+    const warps = new Map(WARPED.map((want) => [want, [makeNoise(warpRng, fw, fh), makeNoise(warpRng, fw, fh)] as const]))
+    const own = partFields(parts, grid, aspect, warps)
+    fields.push(...own.fields)
+    presence = own.presence
+  } else if (isSunrise(recipe)) {
     const horizon = parts.find((part) => part.kind === 'horizon')
     const light = horizon?.kind === 'horizon' && horizon.light ? horizon.light : brightestPoint(grid)
     const sky = horizon?.kind === 'horizon' ? horizon.sky : ([0, -1] as const)
@@ -522,20 +560,31 @@ export function buildFields(recipe: RecipeId, parts: readonly StagePart[], grid:
       fields.push({ name: `part${i + 1}`, want: part.want ?? 'any', values: followLight(values, grid).map((v) => v * fade) })
     }
   }
-  // Dark colors are the room's or the ground's own dark: two broad seeded fields, kept out of a Contour light's haze,
-  // unless the look's parts place its dark spots.
-  const placedDarks = byParts && fields.some((field) => field.want === 'dark')
-  for (let k = 0; k < 2 && !placedDarks; k++) {
+  // Dark colors are the room's or the ground's own dark: two broad seeded fields, kept out of a Contour light's haze.
+  const seeded: Float32Array[] = []
+  for (let k = 0; k < 2; k++) {
     const blob = { cx: -0.15 + rng() * (fw + 0.3), cy: -0.15 + rng() * (fh + 0.3), r: 0.45 + rng() * 0.4, stretch: 1 + rng(), angle: rng() * Math.PI }
     const values = blobField(blob, w, h, fw, fh, nu, nv)
     if (!isSunrise(recipe)) for (let i = 0; i < w * h; i++) values[i] *= 1 - haze[i]
-    fields.push({ name: `dark${k + 1}`, want: 'dark', values })
+    seeded.push(values)
   }
-  // A dark color never sits against bright light, a thin line included: dark fields fade out within two cells of any
-  // cell whose brightest point is past mid lightness. A look's own dark spots are its dim room as drawn, so they stay.
-  if (placedDarks) return fields
+  // A dark color never sits against bright light, a thin line included: seeded dark fields fade out within two cells of
+  // any cell whose brightest point is past mid lightness. A look's own dark spots are its dim room as drawn, so they stay.
   const near = nearPeak(grid, 2)
-  for (const field of fields) if (field.want === 'dark') for (let i = 0; i < w * h; i++) field.values[i] *= 1 - smooth(0.45, 0.7, near[i])
+  const keepOffLight = (values: Float32Array) => {
+    for (let i = 0; i < w * h; i++) values[i] *= 1 - smooth(0.45, 0.7, near[i])
+  }
+  if (byParts) {
+    // The seeded dark fields give way as the look's own dark spots come in.
+    const own = fields.filter((field) => field.want === 'dark')
+    seeded.forEach((values, k) => {
+      keepOffLight(values)
+      for (let i = 0; i < w * h; i++) own[k].values[i] = Math.max(own[k].values[i], values[i] * (1 - presence))
+    })
+    return fields
+  }
+  seeded.forEach((values, k) => fields.push({ name: `dark${k + 1}`, want: 'dark', values }))
+  for (const field of fields) if (field.want === 'dark') keepOffLight(field.values)
   return fields
 }
 

@@ -166,9 +166,9 @@ export function assignFields(colors: readonly StageColor[], fields: readonly Sta
       }
     }
     const free = ranked.filter((c) => out[c] < 0 && wanted(colors[c]))
-    // In a look colored by its parts a warm light takes the color that dims like fire, and the color it dims into
-    // shares it below (Yellow at the core, Orange-red at the edges); with none, the deepest warm color, leaving the
-    // lightest for the bright parts (Tan in the warm glow, Lime on the dome).
+    // In a look colored by its parts a warm light takes the color that dims like fire, which turns into the color it
+    // dims into where the light is lower (Yellow at the core, Orange-red at the edges); with none, the deepest warm
+    // color, leaving the lightest for the bright parts (Tan in the warm glow, Lime on the dome).
     let k = free[0]
     if (byParts && field.want === 'warm') k = free.find((c) => colors[c].kind === KIND_TO_NEIGHBOR) ?? [...free].sort((a, b) => colors[a].lightness - colors[b].lightness)[0]
     // A pack without a warm color lights its warm places with its brightest color left (Atmospheric's Ice).
@@ -182,9 +182,10 @@ export function assignFields(colors: readonly StageColor[], fields: readonly Sta
     const { group } = colors[k]
     const dark = group === 'dark'
     let f = fields.findIndex((field, i) => !used.has(i) && (dark ? field.want === 'dark' : byParts ? field.want === group : field.want !== 'dark'))
-    // A color with no place of its own shares one with a color of its group: two darks in one dark spot, and in a look
-    // colored by its parts two warm colors on one warm light (Yellow at its core, Orange-red at its edges).
-    if (f < 0 && (dark || byParts)) f = fields.findIndex((field) => field.want === group)
+    // A dark color with no dark place of its own shares one with another dark color. Two colors on one field split it
+    // by their weights alone, so in a look colored by its parts no other color shares (Orange-red shows where Yellow
+    // dims).
+    if (f < 0 && dark) f = fields.findIndex((field) => field.want === 'dark')
     if (f < 0 && !byParts) f = fields.findIndex((_, i) => !used.has(i))
     // No place left for this color in this look: it doesn't show.
     if (f < 0) continue
@@ -231,9 +232,11 @@ export interface StageSolution {
  * by its lightness up to SEEN_CAP, so a faint glow counts less than the light itself, as by eye. A cell counts toward
  * the color it reads as (Yellow dimmed into Orange-red as Orange-red, light past full strength as no color); Meta Blue
  * is served first, then every color gets enough to show (see `plan` below). Smooth in the shares: a fixed start and a
- * fixed number of damped steps, so close shares give close weights.
+ * fixed number of damped steps, so close shares give close weights. In a look colored by its parts (`byParts`) every
+ * color but the one holding the lead's light gets no more of the light than its own part's (where its field is past
+ * about a twentieth), so a small light's color stays on that light; the rest goes to Meta Blue.
  */
-export function solveWeights(grid: StageGrid, fields: readonly StageField[], colors: readonly StageColor[], assignment: readonly number[], sharpness = STAGE_SHARPNESS): StageSolution {
+export function solveWeights(grid: StageGrid, fields: readonly StageField[], colors: readonly StageColor[], assignment: readonly number[], sharpness = STAGE_SHARPNESS, byParts = false): StageSolution {
   const K = colors.length
   const L = grid.lightness
   const visible: number[] = []
@@ -242,7 +245,8 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
   const n = Math.max(1e-6, cover.reduce((a, b) => a + b, 0))
   const F = assignment.map((f) => fields[f].values)
   const masks = colors.map((c) => Float32Array.from(visible, (i) => colorMask(c, Math.max(L[i], VISIBLE))))
-  const most = masks.map((m) => m.reduce((a, b, j) => a + b * cover[j], 0) / n)
+  const capped = colors.map((_, k) => byParts && fields[assignment[k]].want !== 'lead')
+  const most = masks.map((m, k) => m.reduce((a, b, j) => a + b * cover[j] * (capped[k] ? smooth(0.01, 0.06, F[k][visible[j]]) : 1), 0) / n)
   const asked = colors.map((c) => c.share)
   const askedTotal = asked.reduce((a, b) => a + b, 0) || 1
   const target = asked.map((s) => s / askedTotal)
@@ -314,7 +318,8 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
    * The light each color should lead in this step. Meta Blue first: enough to read its asked share, at most a quarter
    * of the light more than asked so the others keep room. Then every color asked 10% or more gets enough to read SHOW_FLOOR,
    * and what is left goes by the asked shares; both scaled by how much of each color's light reads as itself. A dark
-   * color gets no more than the dim cells it may take; the rest goes to Meta Blue.
+   * color gets no more than the dim cells it may take, and in a look colored by its parts no color gets more than its
+   * part's light; the rest goes to Meta Blue.
    */
   const plan = (m: ReturnType<typeof measure>): number[] => {
     const readsAsItself = m.area.map((a, k) => (a > 1e-4 ? Math.min(1, Math.max(0.1, m.own[k] / a)) : 1))
@@ -335,7 +340,7 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
       else out[k] = floor[r] + (pool - floorSum) * (extraSum > 1e-9 ? extra[r] / extraSum : target[k] / Math.max(1e-9, 1 - (lead >= 0 ? target[lead] : 0)))
     })
     for (let k = 0; k < K; k++) {
-      if ((colors[k].kind !== KIND_DARK && colors[k].kind !== KIND_BRIGHT) || out[k] <= most[k] * 0.97) continue
+      if ((!capped[k] && colors[k].kind !== KIND_DARK && colors[k].kind !== KIND_BRIGHT) || out[k] <= most[k] * 0.97) continue
       const excess = out[k] - most[k] * 0.97
       out[k] -= excess
       if (lead >= 0) out[lead] += excess

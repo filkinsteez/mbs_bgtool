@@ -78,17 +78,18 @@ describe('color stage', () => {
     expect(names('atmospheric')).toMatchObject({ '#0064E0': 'sky', '#F2F4F7': 'glow', '#6A7788': 'low' })
   })
 
-  it('colors by the parts when they ask: the lead color for the light, one color per group or want, one per dark spot', () => {
+  it('colors by the parts when they ask: the lead color for the light, one field per color asked, darks left and right', () => {
     const grid = flatGrid()
     const streak = (group: number, y: number, want?: 'cool'): StagePart[] => [
       { kind: 'line', from: [0.1, y], to: [0.5, y], width: 0.05, group, want },
       { kind: 'line', from: [0.5, y], to: [0.9, y], width: 0.05, group, want },
-      { kind: 'spot', at: [0.5, y], radius: 0.1, stretch: 3, angle: 0, group, want },
+      { kind: 'spot', at: [0.5, y], radius: 0.1, stretch: 3, angle: 0, group, want: want === undefined ? 'bright' : want },
     ]
-    // A streak that asks no color is the look's own light; one that asks a color is one field.
+    // A streak that asks no color is the look's own light (its core too); one that asks a color is in that color's field.
     const fields = buildFields('contour.streaks', [...streak(1, 0.3), ...streak(2, 0.7, 'cool')], grid, 2, 16 / 9)
-    expect(fields.map((f) => f.name)).toEqual(['lead', 'group2', 'cool', 'warm', 'bright', 'pale', 'dark1', 'dark2'])
+    expect(fields.map((f) => f.name)).toEqual(['lead', 'cool', 'warm', 'bright', 'pale', 'dark1', 'dark2'])
     expect(fields.some((f) => f.name.startsWith('along') || f.name.startsWith('part'))).toBe(false)
+    expect(Math.max(...fields[3].values)).toBe(0)
     const bold = getPack('bold')
     const boldColors = stageColors(bold, defaultMix(bold))
     expect(assignFields(boldColors, fields, 2)[boldColors.findIndex((c) => c.hex === '#0064E0')]).toBe(0)
@@ -113,8 +114,24 @@ describe('color stage', () => {
     for (let seed = 1; seed <= 4; seed++) {
       const at = assignFields(boldColors, streakFields, seed)
       const nameOf = (hex: string) => streakFields[at[boldColors.findIndex((c) => c.hex === hex)]]?.name
-      expect([nameOf('#FFD61E'), nameOf('#FF4F00'), nameOf('#1FCDF0')]).toEqual(['warm', 'warm', 'cool'])
+      // Orange-red shows where Yellow dims, not on a field of its own.
+      expect([nameOf('#FFD61E'), nameOf('#FF4F00'), nameOf('#1FCDF0')]).toEqual(['warm', undefined, 'cool'])
     }
+  })
+
+  it('counts a part by its strength and shares the dark spots between the dark colors by where they are', () => {
+    const grid = flatGrid()
+    const glow = (strength: number): StagePart[] => [{ kind: 'spot', at: [0.5, 0.5], radius: 0.2, want: 'warm', strength }]
+    const peakOf = (parts: StagePart[]) => Math.max(...buildFields('sunset.merged', parts, grid, 3, 16 / 9)[2].values)
+    expect(peakOf(glow(0))).toBe(0)
+    expect(peakOf(glow(0.5))).toBeCloseTo(0.5 * peakOf(glow(1)), 5)
+    const darks = buildFields('sunset.merged', [
+      { kind: 'spot', at: [0.15, 0.8], radius: 0.15, want: 'dark' },
+      { kind: 'spot', at: [0.85, 0.8], radius: 0.15, want: 'dark' },
+    ], grid, 3, 16 / 9)
+    const at = (field: number, x: number) => darks[field].values[Math.floor(0.8 * grid.height) * grid.width + Math.floor(x * grid.width)]
+    expect(at(5, 0.15)).toBeGreaterThan(5 * at(6, 0.15))
+    expect(at(6, 0.85)).toBeGreaterThan(5 * at(5, 0.85))
   })
 
   it('gives Meta Blue the dark fields no color takes in a pack with no dark color', () => {
