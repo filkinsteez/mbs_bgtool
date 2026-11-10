@@ -88,27 +88,6 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
     for (int k = 0; k < 5; k++) p[k] = k == best ? 1.0 : 0.0;
     s = 1.0;
   }
-  // With the soft blend, two far hues sharing a pixel at mid lightness would mix into grey, lavender or pink: their
-  // shares sharpen there, so that meeting stays narrow. Near black, toward white and between near hues it stays soft.
-  if (uMixSoft > 0.5) {
-    float far = 0.0;
-    for (int i = 0; i < 5; i++) {
-      for (int j = 0; j < 5; j++) {
-        if (j <= i || j >= uMixCount) continue;
-        if (((uMixFar >> (i * 5 + j)) & 1) == 0) continue;
-        far += 4.0 * p[i] * p[j] / (s * s);
-      }
-    }
-    float mid = smoothstep(0.25, 0.4, L) * (1.0 - smoothstep(0.6, 0.75, L));
-    float g = 1.0 + mid * smoothstep(0.05, 0.3, min(far, 1.0));
-    float t = 0.0;
-    for (int k = 0; k < 5; k++) {
-      if (k >= uMixCount) continue;
-      p[k] = pow(p[k] / s, g);
-      t += p[k];
-    }
-    s = max(t, 1e-30);
-  }
   // Each side keeps its own color up to the meeting line (shares squared); with the soft blend (uMixSoft) the
   // shares already say how gradually one color changes into the next, and are drawn as they are.
   vec3 m = vec3(0.0);
