@@ -23,6 +23,7 @@ export const PANEL_LABELS: Readonly<Record<string, string>> = Object.fromEntries
 export const MOOD_OPTIONS = [
   { value: 'sunset', label: 'Sunrise' },
   { value: 'contour', label: 'Contour' },
+  { value: 'rush', label: 'Rush' },
 ] satisfies { value: MoodId; label: string }[]
 
 export const PACK_OPTIONS = PACKS.map((pack) => ({ value: pack.id, label: pack.name }))

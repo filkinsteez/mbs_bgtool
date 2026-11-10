@@ -289,22 +289,30 @@ describe('the merged Sunrise look behind sunrise=merged', () => {
   })
 })
 
-describe("Rush's look behind rush=split", () => {
-  it('draws Rush whichever mood the panel shows while the link has rush=split, and keeps the switch in the link', () => {
-    const on = parseQuery(new URLSearchParams('mood=contour&look=rim&pack=elemental&rush=split&seed=5&format=9x16'))
-    expect(on.mood).toBe('contour')
-    expect(on.look).toBe('contour.rim')
-    expect(sceneLook(on)).toBe('rush.split')
-    expect(sceneLook({ ...on, mood: 'sunset', look: 'sunset.bands' })).toBe('rush.split')
-    expect(toQuery(on)).toBe('mood=contour&look=rim&pack=elemental&rush=split&seed=5&format=9x16')
+describe('Rush, the third mood', () => {
+  it('draws rush.split at every seed, and the link says mood=rush', () => {
+    const rush = parseQuery(new URLSearchParams('mood=rush&pack=elemental&seed=5&format=9x16'))
+    expect(rush.mood).toBe('rush')
+    expect(rush.look).toBe('rush.split')
+    expect(sceneLook(rush)).toBe('rush.split')
+    expect(toQuery(rush)).toBe('mood=rush&look=split&pack=elemental&seed=5&format=9x16')
+    expect(parseQuery(new URLSearchParams(toQuery(rush)))).toEqual(rush)
+    for (const seed of [SEED_MIN, 2, 3, 4, 57, SEED_MAX]) expect(shownLook('rush', seed), `seed ${seed}`).toBe('rush.split')
   })
 
-  it("is off by default: without it a link opens as before, and look=split alone opens the seed's look", () => {
-    const plain = parseQuery(new URLSearchParams('mood=contour&pack=elemental&seed=5&format=9x16'))
-    expect(plain).not.toHaveProperty('rush')
-    expect(sceneLook(plain)).toBe(plain.look)
+  it('opens old links with rush=split in Rush, whatever their mood, and leaves the switch out of the link', () => {
+    const old = parseQuery(new URLSearchParams('mood=contour&look=rim&pack=elemental&rush=split&seed=5&format=9x16'))
+    expect(old).toEqual(parseQuery(new URLSearchParams('mood=rush&pack=elemental&seed=5&format=9x16')))
+    expect(old).not.toHaveProperty('rush')
+    expect(toQuery(old)).toBe('mood=rush&look=split&pack=elemental&seed=5&format=9x16')
+    expect(parseQuery({ rush: 'split' }).mood).toBe('rush')
+  })
+
+  it("ignores other rush values, and look=split in another mood opens that mood's seed look", () => {
+    const query = { mood: 'contour', pack: 'elemental', seed: '5', format: '9x16' }
+    const plain = parseQuery(query)
+    for (const value of ['1', 'Split', 'merged', '']) expect(parseQuery({ ...query, rush: value }), value).toEqual(plain)
     expect(parseQuery(new URLSearchParams('mood=contour&look=split&pack=elemental&seed=5&format=9x16'))).toEqual(plain)
-    expect(parseQuery(new URLSearchParams('mood=rush&pack=elemental&seed=5&format=9x16')).mood).toBe(DEFAULT_STATE.mood)
-    for (const value of ['1', 'Split', 'merged', '']) expect(parseQuery({ rush: value }), value).not.toHaveProperty('rush')
+    expect(parseQuery(new URLSearchParams('mood=rush&look=rim&pack=elemental&seed=5&format=9x16')).look).toBe('rush.split')
   })
 })

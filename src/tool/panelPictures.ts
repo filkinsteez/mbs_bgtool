@@ -1,4 +1,5 @@
-import { recipesForMood, type MoodId } from '@/light'
+import type { MoodId } from '@/light'
+import { moodLooks } from './seedLook'
 
 /**
  * The pictures on the panel's Mood buttons: fixed renders made by `scripts/light/panel-pictures.mjs`, not live, and
@@ -6,4 +7,4 @@ import { recipesForMood, type MoodId } from '@/light'
  */
 const FOLDER = '/panel'
 
-export const moodPicture = (mood: MoodId) => `${FOLDER}/${recipesForMood(mood)[0].id.replace('.', '-')}.webp`
+export const moodPicture = (mood: MoodId) => `${FOLDER}/${moodLooks(mood)[0].replace('.', '-')}.webp`

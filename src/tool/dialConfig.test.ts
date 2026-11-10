@@ -37,10 +37,11 @@ describe('panel controls', () => {
     DialStore.unregisterPanel(id)
   })
 
-  it('offer Sunrise and Contour as the moods, with their code ids kept', () => {
+  it('offer Sunrise, Contour and Rush as the moods, with their code ids kept', () => {
     expect(MOOD_OPTIONS).toEqual([
       { value: 'sunset', label: 'Sunrise' },
       { value: 'contour', label: 'Contour' },
+      { value: 'rush', label: 'Rush' },
     ])
   })
 })

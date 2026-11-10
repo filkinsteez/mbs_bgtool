@@ -14,11 +14,12 @@ const LOOK_SIZE = { width: 384, height: 216 }
 /** The pack every picture is drawn in (owner, 2026-11-06). */
 const PACK_ID = 'atmospheric'
 /** The moods the panel shows. */
-const MOODS = ['sunset', 'contour']
+const MOODS = ['sunset', 'contour', 'rush']
 /** The seed each picture uses, by look; 1 if not listed. */
 const SEEDS = {
   'sunset.bands': 1,
   'contour.halo': 1,
+  'rush.split': 1,
 }
 
 const argv = process.argv.slice(2)
@@ -35,12 +36,12 @@ const written = []
 try {
   const { PACKS } = await harness.ssr('/src/light/color/packs.ts')
   const { DEFAULT_CONTROLS } = await harness.ssr('/src/light/scene.ts')
-  const { recipesForMood } = await harness.ssr('/src/light/recipes/index.ts')
+  const { moodLooks } = await harness.ssr('/src/tool/seedLook.ts')
   const { buildScene } = await harness.ssr('/src/tool/controls.ts')
   const { withFilter } = await harness.ssr('/src/tool/filterControl.ts')
   const pack = PACKS.find((p) => p.id === PACK_ID)
   for (const mood of MOODS) {
-    const look = recipesForMood(mood)[0].id
+    const look = moodLooks(mood)[0]
     const seed = seedOverride ? Number(seedOverride) : (SEEDS[look] ?? 1)
     const scene = withFilter(buildScene(look, pack, seed, DEFAULT_CONTROLS, 16 / 9), { filter: 'none', strength: 0 })
     const image = await harness.render({ scene, ...LOOK_SIZE, supersample: 2 })
