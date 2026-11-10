@@ -78,35 +78,109 @@ const GLARE_TABLE: readonly (readonly [number, readonly number[]])[] = [
 
 /** Glare weights per level for a near length, interpolated in log length between the table's rows. */
 export function glareLevelWeights(length: number): number[] {
-  const first = GLARE_TABLE[0][0]
-  const last = GLARE_TABLE[GLARE_TABLE.length - 1][0]
+  return tableWeights(GLARE_TABLE, length)
+}
+
+/**
+ * Level weights of the veil, by its reach R: non-negative least-squares fits of (1 + r / R)^-3 / (pi R^2) on the
+ * point and the line spread from 0.003 to 0.45 of the short side, normalized to sum 1 (within 5% of the shape at
+ * 0.02, 9% at 0.04).
+ */
+const VEIL_TABLE: readonly (readonly [number, readonly number[]])[] = [
+  [0.005, [0.1193, 0.2355, 0.2183, 0.1878, 0.1121, 0.0694, 0.0291, 0.0285]],
+  [0.01, [0.0295, 0.1163, 0.198, 0.2402, 0.1796, 0.1248, 0.0553, 0.0563]],
+  [0.02, [0.0047, 0.0319, 0.1032, 0.2156, 0.2333, 0.2026, 0.0992, 0.1096]],
+  [0.04, [0.0006, 0.0058, 0.0286, 0.1153, 0.2109, 0.2725, 0.1595, 0.2067]],
+]
+
+/** Level weights for a table of reaches, interpolated in log reach between its rows. */
+function tableWeights(table: readonly (readonly [number, readonly number[]])[], length: number): number[] {
+  const first = table[0][0]
+  const last = table[table.length - 1][0]
   const x = Math.log(Math.min(last, Math.max(first, length)))
   let k = 0
-  while (k < GLARE_TABLE.length - 2 && x > Math.log(GLARE_TABLE[k + 1][0])) k++
-  const [l0, w0] = GLARE_TABLE[k]
-  const [l1, w1] = GLARE_TABLE[k + 1]
+  while (k < table.length - 2 && x > Math.log(table[k + 1][0])) k++
+  const [l0, w0] = table[k]
+  const [l1, w1] = table[k + 1]
   const t = Math.min(1, Math.max(0, (x - Math.log(l0)) / (Math.log(l1) - Math.log(l0))))
   return w0.map((w, i) => w + (w1[i] - w) * t)
 }
 
+/** Veil weights per level for a reach. */
+export function veilLevelWeights(reach: number): number[] {
+  return tableWeights(VEIL_TABLE, reach)
+}
+
 /**
- * The share of light the lens spreads and the per-level factors of the one pyramid that carries both the
- * recipe's bloom and the camera's glare. Two spreads in a row keep (1 - bloom)(1 - glare) of the light sharp;
- * the rest goes to the two kernels, half of the light both touch to each.
+ * The share of light the lens spreads and the per-level factors of the one pyramid that carries the recipe's
+ * bloom, the camera's glare and the veil. Two spreads in a row keep (1 - first)(1 - second) of the light sharp;
+ * the rest goes to the two kernels, half of the light both touch to each. The veil comes after bloom and glare.
  */
 export function lensSpread(lens: LensSettings): { mix: number; factors: Rgb[] } {
   const a = Math.min(1, Math.max(0, lens.bloom))
   const b = Math.min(1, Math.max(0, lens.glare))
+  const v = Math.min(1, Math.max(0, lens.veil ?? 0))
   const mix = a + b - a * b
-  if (mix <= 0) return { mix: 0, factors: [] }
-  const bloom = bloomLevelFactors(lens)
-  const glare = glareLevelWeights(lens.glareLength)
-  const sa = (a * (1 - b / 2)) / mix
-  const sb = (b * (1 - a / 2)) / mix
-  return {
-    mix,
-    factors: bloom.map((f, i) => [sa * f[0] + sb * glare[i], sa * f[1] + sb * glare[i], sa * f[2] + sb * glare[i]] as Rgb),
+  let factors: Rgb[] = []
+  if (mix > 0) {
+    const bloom = bloomLevelFactors(lens)
+    const glare = glareLevelWeights(lens.glareLength)
+    const sa = (a * (1 - b / 2)) / mix
+    const sb = (b * (1 - a / 2)) / mix
+    factors = bloom.map((f, i) => [sa * f[0] + sb * glare[i], sa * f[1] + sb * glare[i], sa * f[2] + sb * glare[i]] as Rgb)
   }
+  if (v <= 0) return mix > 0 ? { mix, factors } : { mix: 0, factors: [] }
+  const veil = veilLevelWeights(lens.veilReach ?? 0.02)
+  const all = mix + v - mix * v
+  const sm = (mix * (1 - v / 2)) / all
+  const sv = (v * (1 - mix / 2)) / all
+  return {
+    mix: all,
+    factors: veil.map((w, i) => {
+      const f = factors[i] ?? [0, 0, 0]
+      return [sm * f[0] + sv * w, sm * f[1] + sv * w, sm * f[2] + sv * w] as Rgb
+    }),
+  }
+}
+
+/** How strongly the brighter of a pixel's own light and the spread light leads its color: weights go as luminance to this power. */
+export const SPREAD_LEAD_POWER = 4
+/** The same for the lights a place's spread light comes from; lower, so the weights stay inside half-float range. */
+const LEAD_FEED_POWER = 3
+/** Luminance that weighs 1 in the lead weights, so they stay inside half-float range for lights up to 10 times it. */
+const SPREAD_LEAD_LEVEL = 0.25
+/** A white light's lead weight against a pure color's of the same luminance. */
+const SPREAD_LEAD_WHITE = 0.05
+
+/**
+ * CPU twin of the composite's leadMix, for tests: a pixel's own light and the light the lens spreads onto it (whose
+ * color is `spreadHue`, any luminance), added up in luminance and colored by whichever brings more, weighed as
+ * luminance to the power p.
+ */
+export function leadMix(own: Rgb, spread: Rgb, spreadHue: Rgb, p = SPREAD_LEAD_POWER): Rgb {
+  const lum = (c: Rgb) => c[0] * LUMA[0] + c[1] * LUMA[1] + c[2] * LUMA[2]
+  const yo = lum(own)
+  const ys = lum(spread)
+  const top = Math.max(yo, ys)
+  if (top <= 0) return own.map((v, i) => v + spread[i]) as Rgb
+  const sh = lum(spreadHue) > 0 ? spreadHue.map((v) => v / lum(spreadHue)) : spread.map((v) => v / Math.max(ys, 1e-12))
+  const wo = (yo / top) ** p
+  const ws = (ys / top) ** p
+  const hue = own.map((v, i) => (wo * (v / Math.max(yo, 1e-12)) + ws * sh[i]) / (wo + ws)) as Rgb
+  const yh = Math.max(lum(hue), 1e-6)
+  return hue.map((v) => ((yo + ys) * v) / yh) as Rgb
+}
+
+/**
+ * Level weights for the spread light's lead color: the spread's own weights one level finer. A light's share in a
+ * place is its spread there times its luminance; weighing hues by that share to the power p is close to weighing
+ * them by its luminance to the power p through a kernel about half as wide.
+ */
+export function spreadLeadFactors(factors: readonly Rgb[]): number[] {
+  const luminanceWeights = factors.map((f) => f[0] * LUMA[0] + f[1] * LUMA[1] + f[2] * LUMA[2])
+  const out = luminanceWeights.map((_, i) => luminanceWeights[i + 1] ?? 0)
+  out[0] += luminanceWeights[0]
+  return out
 }
 
 /** Gaussian weights over the pyramid levels around a (fractional) level, summing to 1. */
@@ -224,6 +298,26 @@ void main() {
 }
 `
 
+const LEAD_FEED_SHADER =
+  GLSL_HEADER +
+  /* glsl */ `
+uniform sampler2D uSrc;
+out vec4 fragColor;
+const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+// Each texel's hue (its light at luminance 1) times its weight in the spread light's lead color, and the weight:
+// (luminance / ${SPREAD_LEAD_LEVEL})^${LEAD_FEED_POWER}, kept inside half-float range, times how colored the light
+// is (1 for a pure color, ${SPREAD_LEAD_WHITE} for white), so a pale light's glow takes the color of a colored
+// neighbour's instead of reading grey in the dark.
+void main() {
+  vec3 c = max(texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0).rgb, vec3(0.0));
+  float y = dot(c, LUMA);
+  float top = max(c.r, max(c.g, c.b));
+  float purity = top > 0.0 ? 1.0 - min(c.r, min(c.g, c.b)) / top : 0.0;
+  float w = min(pow(y / ${SPREAD_LEAD_LEVEL}, ${LEAD_FEED_POWER.toFixed(1)}), 60000.0) * mix(${SPREAD_LEAD_WHITE}, 1.0, purity * purity);
+  fragColor = y > 0.0 ? vec4(c / y * w, w) : vec4(0.0);
+}
+`
+
 /**
  * The light's own level, from halationTint (the light's own hex): its luminance and its largest channel. A pixel is k
  * times the light's level when its luminance or its largest channel, whichever is more, is k times the light's. The
@@ -286,9 +380,11 @@ export const LENS_COMPOSITE_GLSL =
   TONE_CURVE_GLSL +
   /* glsl */ `
 uniform sampler2D uBloomTex;
+uniform sampler2D uLeadTex;
 uniform sampler2D uHalationTex;
 uniform sampler2D uHalationSurround;
 uniform float uBloomMix;
+uniform float uSpreadLead; // 0: the spread light mixes in as it is; else the power its lead color is weighed by
 uniform float uHalation;
 uniform vec2 uHalationLevel; // the light's own luminance and largest channel (halationTint)
 uniform vec3 uHalationDriftColor; // halationDriftTint at luminance 1
@@ -296,12 +392,33 @@ uniform float uExposure;
 uniform float uLensVignette;
 uniform vec2 uLensVignetteAxes; // frame proportions scaled so the corners are at distance 1
 
+// The pixel's own light and the light the lens spreads onto it, added up in luminance, in the color of whichever
+// brings more (weighed as luminance to the power p); the spread light's own color is that of the light that brings
+// the most of it here (lead: hue times weight, and the weight).
+vec3 leadMix(vec3 own, vec3 spread, vec4 lead, float p) {
+  float yo = luminance(own);
+  float ys = luminance(spread);
+  float top = max(yo, ys);
+  if (top <= 0.0) return own + spread;
+  vec3 spreadHue = lead.a > 0.0 ? lead.rgb / lead.a : spread / max(ys, 1e-12);
+  spreadHue /= max(luminance(spreadHue), 1e-6);
+  // Weights relative to the brighter, so they never both round to zero in the dark.
+  float wo = pow(yo / top, p);
+  float ws = pow(ys / top, p);
+  vec3 hue = (wo * own / max(yo, 1e-12) + ws * spreadHue) / (wo + ws);
+  return (yo + ys) * hue / max(luminance(hue), 1e-6);
+}
+
 vec3 lensAndTone(vec3 radiance, vec2 uv) {
   vec3 c = radiance;
   if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0);
   float exposure = exp2(uExposure);
   c = max(c, vec3(0.0)) * exposure;
-  if (uBloomMix > 0.0) c = mix(c, sampleSmooth(uBloomTex, uv) * exposure, uBloomMix);
+  if (uBloomMix > 0.0) {
+    vec3 spread = sampleSmooth(uBloomTex, uv) * exposure;
+    if (uSpreadLead > 0.0) c = leadMix(c * (1.0 - uBloomMix), spread * uBloomMix, sampleSmooth4(uLeadTex, uv), uSpreadLead);
+    else c = mix(c, spread, uBloomMix);
+  }
   if (uHalation > 0.0) {
     // Not over the hot core itself (only light above the light's own level fades it), and held back only where
     // the wide surroundings are brighter than 0.15 of that level, so a light on a bright background does not
@@ -410,6 +527,8 @@ void main() {
 
 export interface LensOutput {
   bloom: Target | null
+  /** With the veil on: the spread light's lead color (hue times weight, and the weight), else null. */
+  lead: Target | null
   halation: Target | null
   /** Luminance of the wide surroundings (scene clamped to nominal, about 0.03 of the short side blur). */
   surround: Target | null
@@ -425,6 +544,14 @@ export function runLens(gpu: Gpu, base: Target, lens: LensSettings, exposure: nu
   const spread = lensSpread(lens)
   const bloom = spread.mix > 0 ? pyramid(gpu, base, spread.factors) : null
   if (bloom) profiler.mark('lens bloom', bloom)
+  let lead: Target | null = null
+  if (bloom && (lens.veil ?? 0) > 0) {
+    const feed = gpu.acquire(base.width, base.height)
+    gpu.draw(gpu.program(LEAD_FEED_SHADER), feed, { textures: { uSrc: base } })
+    lead = pyramid(gpu, feed, spreadLeadFactors(spread.factors).map((w) => [w, w, w, w]))
+    gpu.release(feed)
+    profiler.mark('lens lead', lead)
+  }
   let halation: Target | null = null
   let surround: Target | null = null
   if (lens.halation > 0) {
@@ -458,7 +585,7 @@ export function runLens(gpu: Gpu, base: Target, lens: LensSettings, exposure: nu
     gpu.release(small)
     profiler.mark('lens halation', surround)
   }
-  return { bloom, halation, surround }
+  return { bloom, lead, halation, surround }
 }
 
 /** Blurs `base` over the levels, `factors` per level for red, green, blue and the fourth channel (0 when not given). */

@@ -13,10 +13,15 @@ import {
   halationLevel,
   halationLevelFactors,
   halationStart,
+  leadMix,
   lensBaseSize,
+  lensSpread,
   levelForRadius,
+  spreadLeadFactors,
+  veilLevelWeights,
 } from './lens'
 import { paperToeInverse, TONE_CROSSTALK, TONE_TIE_BAND, toneCurve } from './output'
+import { buildFlowShader, FLOW_TAPS } from './passes'
 import { designFrame, lensBaseFromFrame, radianceScaleFor } from './programRenderer'
 import { coerceParam, recipeContext, resolveScene } from './resolve'
 
@@ -276,6 +281,70 @@ describe('lens weights', () => {
   it('works on a 512 px short side at any output size', () => {
     expect(lensBaseSize(925, 1001)).toEqual({ width: 512, height: 554 })
     expect(lensBaseSize(3840, 2160)).toEqual({ width: 910, height: 512 })
+  })
+})
+
+describe('veil', () => {
+  const lens = { ...DEFAULT_LENS, bloom: 0.04, glare: 0.06 }
+
+  it('is off by default and leaves the bloom and glare spread as it was', () => {
+    expect(DEFAULT_LENS.veil).toBe(0)
+    const before = lensSpread(lens)
+    expect(lensSpread({ ...lens, veil: 0, veilReach: 0.04 })).toEqual(before)
+    expect(before.mix).toBeCloseTo(0.04 + 0.06 - 0.04 * 0.06, 9)
+  })
+
+  it('spreads its share of the light over levels that keep the total, wider with its reach', () => {
+    for (const reach of [0.005, 0.007, 0.01, 0.02, 0.03, 0.04]) expect(veilLevelWeights(reach).reduce((a, b) => a + b, 0)).toBeCloseTo(1, 3)
+    const center = (w: number[]) => w.reduce((sum, v, level) => sum + v * level, 0)
+    expect(center(veilLevelWeights(0.04))).toBeGreaterThan(center(veilLevelWeights(0.02)))
+    expect(center(veilLevelWeights(0.02))).toBeGreaterThan(center(veilLevelWeights(0.005)))
+    const spread = lensSpread({ ...lens, veil: 0.2 })
+    expect(spread.mix).toBeCloseTo(1 - (1 - 0.04) * (1 - 0.06) * (1 - 0.2), 9)
+    expect(spread.factors.reduce((sum, f) => sum + luminance(f), 0)).toBeCloseTo(1, 3)
+  })
+
+  it("colors the spread light by the light that brings the most of it, so two colors' glows never mix into a third hue", () => {
+    const blue = hexToLinear('#0064E0')
+    const red = hexToLinear('#FF4F00')
+    const hue = (c: readonly number[]) => linearToOklch(c)[2]
+    // Meta Blue's own light with Orange-red's glow at half its luminance stays Meta Blue's hue within a few degrees.
+    const glow = red.map((v) => (v * 0.5 * luminance(blue)) / luminance(red)) as [number, number, number]
+    const mixed = leadMix(blue, glow, red)
+    expect(Math.abs(hue(mixed) - hue(blue))).toBeLessThan(6)
+    const added = blue.map((v, i) => v + glow[i])
+    expect(Math.abs(hue(added) - hue(blue))).toBeGreaterThan(20)
+    // Brightness is the sum of the two whatever their colors, so a pack swap keeps the design.
+    expect(luminance(mixed)).toBeCloseTo(luminance(blue) + luminance(glow), 9)
+    // Two lights of one color add as light does.
+    const same = leadMix(blue, blue.map((v) => v * 0.3) as [number, number, number], blue)
+    same.forEach((v, i) => expect(v).toBeCloseTo(blue[i] * 1.3, 9))
+    // In the dark, far below where the weights would round to zero, it still gives finite light.
+    for (const scale of [1e-6, 1e-12, 1e-30]) {
+      const dim = leadMix(blue.map((v) => v * scale) as [number, number, number], red.map((v) => v * scale * 0.5) as [number, number, number], red)
+      dim.forEach((v) => expect(Number.isFinite(v)).toBe(true))
+      expect(luminance(dim)).toBeCloseTo(scale * (luminance(blue) + 0.5 * luminance(red)), 12)
+    }
+    expect(leadMix([0, 0, 0], [0, 0, 0], red)).toEqual([0, 0, 0])
+  })
+
+  it('weighs the lead color one level finer than the spread', () => {
+    const factors = lensSpread({ ...lens, veil: 0.3 }).factors
+    const lead = spreadLeadFactors(factors)
+    expect(lead.reduce((a, b) => a + b, 0)).toBeCloseTo(factors.reduce((sum, f) => sum + luminance(f), 0), 9)
+    expect(lead[0]).toBeCloseTo(luminance(factors[0]) + luminance(factors[1]), 9)
+    for (let i = 1; i < 7; i++) expect(lead[i]).toBeCloseTo(luminance(factors[i + 1]), 9)
+    expect(lead[7]).toBe(0)
+  })
+})
+
+describe('flow blur', () => {
+  it('builds its pass from the GLSL that gives the direction of the flow, with no recipe needed', () => {
+    const glsl = 'uniform vec2 uWind;\nvec2 flowDirection(vec2 p) { return uWind; }\n'
+    const shader = buildFlowShader(glsl)
+    expect(shader).toContain(glsl)
+    expect(shader).toContain('flowDirection(p)')
+    expect(shader).toContain(`k <= ${FLOW_TAPS}`)
   })
 })
 

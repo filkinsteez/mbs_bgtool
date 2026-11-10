@@ -1,4 +1,4 @@
-import type { PostPass, RecipeContext } from '../scene'
+import type { PostPass, RecipeContext, UniformMap } from '../scene'
 import type { Gpu, Target } from './gl'
 import { CHUNK_LIBRARY, GLSL_HEADER } from './glsl'
 import { NO_PROFILE, type Profiler } from './profile'
@@ -234,6 +234,62 @@ void main() {
 }
 `
 
+/** Taps on each side of a flow blur pass; the along part runs twice, the first at a fifth of the width. */
+export const FLOW_TAPS = 24
+
+// Gathers uSrc along flowDirection through this pixel (uFlowAcross 0) with a gaussian of sigma uFlowSigma out to 3
+// sigma, in midpoint steps that keep the direction's sense, or straight across the flow (uFlowAcross 1). Positions
+// are frame points in short sides from the center, as the radiance pass sees them.
+const FLOW_MAIN = /* glsl */ `
+uniform sampler2D uSrc;
+uniform float uFlowSigma;
+uniform int uFlowAcross;
+out vec4 fragColor;
+vec2 flowAt(vec2 p) {
+  vec2 d = flowDirection(p);
+  float n = length(d);
+  return n > 1e-6 ? d / n : vec2(0.0);
+}
+vec2 flowUv(vec2 p) { return p / uFrameAspect + 0.5; }
+void main() {
+  vec2 uv0 = gl_FragCoord.xy / vec2(textureSize(uSrc, 0));
+  vec2 p0 = (uv0 - 0.5) * uFrameAspect;
+  vec2 d0 = flowAt(p0);
+  float flowStep = 3.0 * uFlowSigma / float(${FLOW_TAPS});
+  vec4 sum = texture(uSrc, uv0);
+  float total = 1.0;
+  if (dot(d0, d0) > 0.0) {
+    for (int side = -1; side <= 1; side += 2) {
+      vec2 p = p0;
+      vec2 prev = uFlowAcross == 1 ? vec2(-d0.y, d0.x) * float(side) : d0 * float(side);
+      for (int k = 1; k <= ${FLOW_TAPS}; k++) {
+        if (uFlowAcross == 1) {
+          p += prev * flowStep;
+        } else {
+          vec2 a = flowAt(p);
+          if (dot(a, prev) < 0.0) a = -a;
+          vec2 b = flowAt(p + a * (0.5 * flowStep));
+          if (dot(b, a) < 0.0) b = -b;
+          if (dot(b, b) == 0.0) break;
+          p += b * flowStep;
+          prev = b;
+        }
+        float s = float(k) * flowStep;
+        float w = exp(-0.5 * s * s / (uFlowSigma * uFlowSigma));
+        sum += w * texture(uSrc, flowUv(p));
+        total += w;
+      }
+    }
+  }
+  fragColor = sum / total;
+}
+`
+
+/** The pass shader for a flow blur whose `glsl` defines `vec2 flowDirection(vec2 p)` and declares its uniforms. */
+export function buildFlowShader(glsl: string): string {
+  return GLSL_HEADER + 'uniform vec2 uFrameAspect;\nuniform int uSeed;\n' + CHUNK_LIBRARY + glsl + FLOW_MAIN
+}
+
 /**
  * Runs a recipe's post passes on its radiance image. Returns the input itself
  * when every pass is a no-op; otherwise a new target the caller releases.
@@ -288,6 +344,27 @@ export function runPostPasses(gpu: Gpu, input: Target, passes: readonly PostPass
             swap(out)
           }
         }
+        break
+      }
+      case 'flowBlur': {
+        const { along, across } = pass.settings(ctx)
+        if (!(along > 0) && !(across > 0)) break
+        const program = gpu.program(buildFlowShader(pass.glsl))
+        const uniforms: UniformMap = { ...(pass.uniforms?.(ctx) ?? {}), uFrameAspect: aspect, uSeed: ctx.seed }
+        const blur = (sigma: number, acrossFlow: boolean) => {
+          const out = gpu.acquire(current.width, current.height)
+          gpu.draw(program, out, {
+            textures: { uSrc: current },
+            uniforms: { ...uniforms, uFlowSigma: sigma, uFlowAcross: acrossFlow ? 1 : 0 },
+          })
+          swap(out)
+        }
+        // The fine pass smooths what the wide one's taps step over, so their sum is still a gaussian of sigma along.
+        if (along > 0) {
+          blur(along / 5, false)
+          blur(along * Math.sqrt(24 / 25), false)
+        }
+        if (across > 0) blur(across, true)
         break
       }
       default: {

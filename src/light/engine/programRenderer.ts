@@ -10,11 +10,12 @@ import {
   lensBaseSize,
   lensSpread,
   runLens,
+  SPREAD_LEAD_POWER,
   TEXEL_COMPOSITE_SHADER,
   TEXTURE_COMPOSITE_SHADER,
 } from './lens'
 import { prepareOutputFilters, PRESENT_SHADER, RESOLVE_X_SHADER } from './output'
-import { AREA_RESAMPLE_SHADER, POST_MAX_SHORT_SIDE, runPostPasses } from './passes'
+import { AREA_RESAMPLE_SHADER, buildFlowShader, POST_MAX_SHORT_SIDE, runPostPasses } from './passes'
 import { createProfiler, NO_PROFILE } from './profile'
 import { buildRecipeShader, type RecipeShaderMode } from './recipeShader'
 import { recipeContext, resolveScene, type SceneInput } from './resolve'
@@ -179,6 +180,7 @@ export class ProgramRenderer {
     const sources = recipeShaderModes(program).map((mode) => buildRecipeShader(program, mode))
     // Drawn on large 1x frames with the lens on (`reuse` in renderNow).
     if (!program.post?.length) sources.push(TEXEL_COMPOSITE_SHADER, BASE_FROM_RADIANCE_SHADER)
+    for (const pass of program.post ?? []) if (pass.kind === 'flowBlur') sources.push(buildFlowShader(pass.glsl))
     this.gpu.prepare(sources)
     return sources
   }
@@ -286,11 +288,12 @@ export class ProgramRenderer {
       })
       mark.mark('lens base', base)
     }
-    const lens = base ? runLens(gpu, base, resolved.lens, resolved.output.exposure, mark) : { bloom: null, halation: null, surround: null }
+    const lens = base ? runLens(gpu, base, resolved.lens, resolved.output.exposure, mark) : { bloom: null, lead: null, halation: null, surround: null }
     gpu.release(base)
 
     const lensUniforms: UniformMap = {
       uBloomMix: lens.bloom ? spreadMix : 0,
+      uSpreadLead: lens.lead ? SPREAD_LEAD_POWER : 0,
       uHalation: lens.halation ? resolved.lens.halation : 0,
       uHalationLevel: halationLevel(resolved.lens),
       uHalationDriftColor: halationDriftColor(resolved.lens),
@@ -301,6 +304,7 @@ export class ProgramRenderer {
     }
     const lensTextures: Record<string, Target> = {
       uBloomTex: lens.bloom ?? this.black,
+      uLeadTex: lens.lead ?? this.black,
       uHalationTex: lens.halation ?? this.black,
       uHalationSurround: lens.surround ?? this.black,
     }
@@ -379,6 +383,7 @@ export class ProgramRenderer {
     gpu.release(sceneTile)
     gpu.release(resolveTile)
     gpu.release(lens.bloom)
+    gpu.release(lens.lead)
     gpu.release(lens.halation)
     gpu.release(lens.surround)
     gpu.release(postScene)

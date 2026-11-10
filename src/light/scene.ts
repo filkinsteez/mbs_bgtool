@@ -129,6 +129,16 @@ export interface LensSettings {
   /** Length of the glare's near spread, as a fraction of the short side; 0.0025 to 0.016. */
   glareLength: number
   /**
+   * Share of all light the haze and lens carry far, 0..1 (0 off): each light's glow reaches the colors around it,
+   * falling as (1 + r / veilReach)^-3, and the total light stays. While it is on, the light the lens spreads keeps
+   * the color of the light that brings the most of it to each place, so where two colors' glows overlap neither
+   * turns into a third hue between them: the overlap fades through dark or brightens toward white along the
+   * leading light's own path. Brightness follows the light alone, so a pack swap only recolors.
+   */
+  veil: number
+  /** The veil's reach, as a fraction of the short side; 0.005 to 0.04. Half its light lands within 2.4 times it. */
+  veilReach: number
+  /**
    * Soft darkening toward the frame corners, 0..1, in linear light before
    * the tone curve: light is multiplied by (1 + d^2)^(-2 vignette), with d
    * the distance from the center that is 1 at the corners (a lens's cos^4
@@ -173,6 +183,8 @@ export const DEFAULT_LENS: LensSettings = {
   halationSpread: 0.67,
   glare: 0.06,
   glareLength: 0.0025,
+  veil: 0,
+  veilReach: 0.02,
   vignette: 0,
 }
 
@@ -205,6 +217,8 @@ export const LENS_NUMBERS: readonly NumericSetting<NumericKeys<LensSettings>>[] 
   { key: 'halationSpread', label: 'Halation spread', min: 0, max: 1, step: 0.01 },
   { key: 'glare', label: 'Glare', min: 0, max: 0.5, step: 0.005 },
   { key: 'glareLength', label: 'Glare length', min: 0.0025, max: 0.016, step: 0.0005 },
+  { key: 'veil', label: 'Veil', min: 0, max: 0.6, step: 0.005 },
+  { key: 'veilReach', label: 'Veil reach', min: 0.005, max: 0.04, step: 0.0005 },
   { key: 'vignette', label: 'Vignette', min: 0, max: 1, step: 0.01 },
 ]
 
@@ -289,6 +303,18 @@ export type PostPass =
   | { kind: 'gaussianBlur'; settings: (ctx: RecipeContext) => { radius: number } }
   | { kind: 'directionalBlur'; settings: (ctx: RecipeContext) => { angle: number; length: number } }
   | { kind: 'radialBlur'; settings: (ctx: RecipeContext) => { center: readonly number[]; amount: number } }
+  /**
+   * A soft blur that follows the light's own flow. `glsl` defines `vec2 flowDirection(vec2 p)` (p a frame point in
+   * short sides from the center, as the radiance pass sees it; any length, and zero leaves a point unblurred) and
+   * declares the uniforms it reads, which `uniforms` gives. The light is gathered along the curve through each point
+   * with a gaussian of sigma `along`, then straight across it with sigma `across` (both in short sides; 0 skips it).
+   */
+  | {
+      kind: 'flowBlur'
+      glsl: string
+      uniforms?: (ctx: RecipeContext) => UniformMap
+      settings: (ctx: RecipeContext) => { along: number; across: number }
+    }
 
 /**
  * One blur of the recipe's light, handed to its `combine` function. `radius`
