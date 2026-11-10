@@ -6,10 +6,12 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
 import { list, parseArgs } from './lib/args.mjs'
-import { LABELS, mixByName, READ, readAs, rulesFor, sharesOf } from './lib/color-read.mjs'
+import { BLUE_LIGHT, blueLight, blueVerdict, LABELS, mixByName, READ, readAs, rulesFor, sharesOf } from './lib/color-read.mjs'
 import { startHarness } from './lib/harness.mjs'
 
 const LOOKS = ['sunset.bands', 'sunset.ramp', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
+// The merged looks (the tool's sunrise=merged and contour=merged switches) are measured when named; `all` is the seven.
+const MERGED = ['sunset.merged', 'contour.merged']
 const PACK_IDS = ['bold', 'elemental', 'atmospheric']
 // The palette check's test drags (palette-check.mjs DRAGS), in frame units as in the URL.
 const DRAGS = {
@@ -152,23 +154,32 @@ async function files(rulesById) {
     const packId = typeof args.pack === 'string' ? args.pack : PACK_IDS.find((p) => name.includes(p))
     if (!packId) continue
     const { data, info } = await sharp(path.join(dir, name)).removeAlpha().raw().toBuffer({ resolveWithObject: true })
-    const r = sharesOf(rulesById[packId], data, info.width * info.height, Boolean(args.maps))
-    rows.push({ file: name, pack: packId, lit: +r.lit.toFixed(4), shares: round(r.shares) })
+    const r = sharesOf(rulesById[packId], data, info.width * info.height, true)
+    rows.push({ file: name, pack: packId, lit: +r.lit.toFixed(4), shares: round(r.shares), blue: blueOf(rulesById[packId], data, info.width, info.height, r.labels) })
     if (args.maps) items.push({ title: name.replace(/\.(png|jpe?g)$/i, ''), png: await sharp(path.join(dir, name)).png().toBuffer(), labels: r.labels, rules: rulesById[packId], shares: r.shares, w: info.width, h: info.height })
   }
   await fs.writeFile(path.join(outDir, 'shares.json'), JSON.stringify(rows, null, 1))
-  await fs.writeFile(path.join(outDir, 'shares.txt'), `${rows.map((r) => `${r.file}: lit ${pct(r.lit)} | ${shareText(rulesById[r.pack], r.shares)}`).join('\n')}\n`)
+  await fs.writeFile(path.join(outDir, 'shares.txt'), `${rows.map((r) => `${r.file}: lit ${pct(r.lit)} | ${shareText(rulesById[r.pack], r.shares)} | ${blueText(r.blue)}`).join('\n')}\n`)
   if (args.maps) for (let i = 0; i < items.length; i += 12) await drawSheet(items.slice(i, i + 12), path.join(outDir, `maps-${String(i / 12 + 1).padStart(2, '0')}.jpg`), `${path.basename(dir)}: frames and what each pixel reads as (grey: grey or pale bridge; magenta: another color; black: none)`)
   console.log(`${rows.length} files: ${path.relative(process.cwd(), path.join(outDir, 'shares.txt'))}`)
 }
 const round = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, +v.toFixed(4)]))
+// Whether Meta Blue carries light (lib/color-read.mjs, blueLight and BLUE_LIGHT): its numbers, whether the rule
+// applies (Meta Blue on 10% or more of the lit pixels) and the reasons it fails.
+function blueOf(rules, rgb, width, height, labels) {
+  const light = blueLight(rules, rgb, width, height, labels)
+  if (!light) return null
+  const { applies, reasons } = blueVerdict(light)
+  return { ...round(light), applies, fails: reasons }
+}
+const blueText = (b) => (!b ? 'no Meta Blue' : !b.applies ? 'Meta Blue light: not judged (under 10%)' : `Meta Blue light: ${b.fails.length ? b.fails.join(', ') : 'carries light'} (spread ${b.spread.toFixed(2)}, peak ${b.peak >= 0 ? '+' : ''}${b.peak.toFixed(2)}, borrowed ${b.borrowed.toFixed(2)})`)
 
 // The looks at HEAD: each look, pack, seed, format and view, rendered as the tool shows it.
 async function looksRun(harness, rulesById, getPack) {
   const lookArg = list(args.look)
   if (!lookArg.length) throw new Error('usage: color-shares.mjs --look <contour.beam|beam|...|all> [--seeds 1-8] [--drag default,owner|all] [--format 16x9,9x16] [--maps] [--out dir]; or --files <dir> [--pack id] [--maps]; or --swatches')
   const looks = lookArg.includes('all') ? LOOKS : lookArg.map((l) => (l.includes('.') ? l : LOOKS.find((id) => id.endsWith(`.${l}`)) ?? l))
-  for (const look of looks) if (!LOOKS.includes(look)) throw new Error(`Unknown look ${look}`)
+  for (const look of looks) if (!LOOKS.includes(look) && !MERGED.includes(look)) throw new Error(`Unknown look ${look}`)
   const seeds = list(args.seeds ?? '1-8').flatMap((part) => {
     const [a, b = a] = part.split('-').map(Number)
     return Array.from({ length: b - a + 1 }, (_, i) => a + i)
@@ -211,9 +222,9 @@ async function looksRun(harness, rulesById, getPack) {
             const scene = stage ? stage.withColorMix(built, pack, mix) : built
             const image = await harness.render({ scene, width, height, supersample: 2 })
             const rgb = await sharp(image.data, { raw: { width, height, channels: 4 } }).removeAlpha().raw().toBuffer()
-            const r = sharesOf(rulesById[packId], rgb, width * height, Boolean(args.maps))
+            const r = sharesOf(rulesById[packId], rgb, width * height, true)
             const flags = !mixName || mixName === 'default' ? flagsOf(pack, r.shares) : []
-            frames.push({ look, pack: packId, seed, format, view, lit: +r.lit.toFixed(4), asked: round(asked), shares: round(r.shares), flags })
+            frames.push({ look, pack: packId, seed, format, view, lit: +r.lit.toFixed(4), asked: round(asked), shares: round(r.shares), flags, blue: blueOf(rulesById[packId], rgb, width, height, r.labels) })
             if (args.maps) items.push({ title: `${packId} s${seed} ${format.replace('x', ':')} ${view}`, png: await sharp(rgb, { raw: { width, height, channels: 3 } }).png().toBuffer(), labels: r.labels, rules: rulesById[packId], shares: r.shares, flags, w: width, h: height })
           }
         }
@@ -253,6 +264,17 @@ function summaryOf(frames, looks, formats, views, seeds, getPack, rulesById, mix
       lines.push('')
     }
   }
+  lines.push('## Meta Blue carries light', '', `Judged where Meta Blue covers ${pct(BLUE_LIGHT.applies)} or more of the lit pixels (owner, 2026-11-09 10:05 PM): it carries light when its lightness spreads ${BLUE_LIGHT.spread} or more (else flat), its brightest tenth reaches its hex's lightness (else dim), and under ${pct(BLUE_LIGHT.borrowed)} of that brightest tenth sits next to another color's lighter light (else borrowed). Each cell: frames where it carries light, of those judged, and the others by reason.`, '', '| Look | Bold | Elemental | Atmospheric |', '| --- | --- | --- | --- |')
+  for (const look of looks) {
+    const cells = PACK_IDS.map((packId) => {
+      const set = frames.filter((f) => f.look === look && f.pack === packId && f.blue?.applies)
+      const by = (reason) => set.filter((f) => f.blue.fails.includes(reason)).length
+      return `${set.filter((f) => !f.blue.fails.length).length} of ${set.length} (flat ${by('flat')}, dim ${by('dim')}, borrowed ${by('borrowed')})`
+    })
+    lines.push(`| ${look} | ${cells.join(' | ')} |`)
+  }
+  const judged = frames.filter((f) => f.blue?.applies)
+  lines.push('', `All: Meta Blue carries light in ${judged.filter((f) => !f.blue.fails.length).length} of ${judged.length} judged frames; ${frames.length - judged.length} not judged.`, '')
   return `${lines.join('\n')}\n`
 }
 

@@ -18,6 +18,8 @@ import { raw } from './lib/images.mjs'
 import { loadReferences } from './lib/references.mjs'
 
 const LOOKS = ['sunset.ramp', 'sunset.bands', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
+// The merged looks (the tool's sunrise=merged and contour=merged switches) are checked when named; `all` is the seven.
+const MERGED = ['sunset.merged', 'contour.merged']
 const PACK_ORDER = ['bold', 'elemental', 'atmospheric']
 
 // Thresholds, set by eye on the coordinator's shots (artifacts/coordinator/bands-bug, palette-now, palette-now-contour).
@@ -225,7 +227,7 @@ if (!lookArg.length && !refArg.length) {
   process.exit(1)
 }
 const looks = lookArg.includes('all') ? LOOKS : lookArg.map((l) => (l.includes('.') ? l : LOOKS.find((id) => id.endsWith(`.${l}`)) ?? l))
-for (const look of looks) if (!LOOKS.includes(look)) throw new Error(`Unknown look ${look}`)
+for (const look of looks) if (!LOOKS.includes(look) && !MERGED.includes(look)) throw new Error(`Unknown look ${look}`)
 // Seeds 1-40 in both formats by default, as agents check before each commit (SHARED.md, 11:40 PM 2026-11-06);
 // --holdout checks seeds 41-80, which nobody tunes against. --seeds and --portrait set how many.
 const firstSeed = args.holdout ? 41 : 1
@@ -273,6 +275,7 @@ for (const pair of list(args.at)) {
   controls[name] = Number(value)
 }
 if (dev && list(args.at).length) throw new Error('--at does not apply with --dev: the tool page sends its own fixed intensity, softness and mood control')
+if (dev && looks.some((look) => MERGED.includes(look))) throw new Error('--dev does not reach the merged looks: render them with the harness (no --dev)')
 // --mix <default|blue-off|Cyan:0.6>: the shared color stage on at that mix, as the tool draws with colormix=1 (each
 // design drawn in the stage's design pack and given the frame's pack colors), judged with the mix rule (T.mix).
 const mixName = typeof args.mix === 'string' ? args.mix : null
@@ -1263,7 +1266,7 @@ try {
   // --- getting the frames ---
   // Every frame at the default light, then at each test drag (its id ends in the drag's name).
   const frameList = (look) => {
-    const short = look.split('.')[1]
+    const short = MERGED.includes(look) ? look.replace('.', '-') : look.split('.')[1]
     const frames = []
     for (const drag of [null, ...drags]) {
       const end = drag ? `-${drag}` : ''

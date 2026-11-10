@@ -12,6 +12,8 @@ import { mixByName } from './lib/color-read.mjs'
 import { startHarness } from './lib/harness.mjs'
 
 const LOOKS = ['sunset.bands', 'sunset.ramp', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
+// The merged looks (the tool's sunrise=merged and contour=merged switches) are checked when named; `all` is the seven.
+const MERGED = ['sunset.merged', 'contour.merged']
 const PACK_IDS = ['bold', 'elemental', 'atmospheric']
 // The palette check's test drags (palette-check.mjs DRAGS), in frame units as in the URL.
 const DRAGS = {
@@ -50,7 +52,7 @@ if (!lookArg.length) {
   process.exit(2)
 }
 const looks = lookArg.includes('all') ? LOOKS : lookArg.map((l) => (l.includes('.') ? l : LOOKS.find((id) => id.endsWith(`.${l}`)) ?? l))
-for (const look of looks) if (!LOOKS.includes(look)) throw new Error(`Unknown look ${look}: give ${LOOKS.join(', ')} or all`)
+for (const look of looks) if (!LOOKS.includes(look) && !MERGED.includes(look)) throw new Error(`Unknown look ${look}: give ${[...LOOKS, ...MERGED].join(', ')} or all`)
 const seeds = list(args.seeds ?? '1-8').flatMap((part) => {
   const [a, b = a] = part.split('-').map(Number)
   if (!Number.isInteger(a) || !Number.isInteger(b) || b < a) throw new Error(`--seeds takes seeds and ranges, for example 1-8,15: ${part}`)

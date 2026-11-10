@@ -106,7 +106,7 @@ Renders the fixed pictures on the tool panel's Mood tiles into `public/panel/` (
 ### Palette check
 
 ```sh
-node scripts/light/palette-check.mjs --look <ramp|bands|blooms|rim|halo|beam|streaks|all>[,...]
+node scripts/light/palette-check.mjs --look <ramp|bands|blooms|rim|halo|beam|streaks|sunset.merged|contour.merged|all>[,...]
   [--from <dir> | --dev [--url http://localhost:3000]] [--holdout] [--seeds 40] [--portrait 40] [--alike-seeds 8]
   [--maps] [--label text] [--out dir] [--drags owner,mirror,above,side|all|none] [--drag-renders | --all-renders]
   [--rule new|old] [--lens-edge 0.165] [--tails drift|strict] [--dim strict] [--haze strict|narrow] [--main bright|own]
@@ -189,7 +189,7 @@ One look (1,200 frames) takes about 80 s to check with `--all-renders` from a fr
 ### Same design
 
 ```sh
-node scripts/light/same-design.mjs --look <contour.beam|beam|...|all>[,...] [--seeds 1-8] [--drag default,owner|all]
+node scripts/light/same-design.mjs --look <contour.beam|beam|...|sunset.merged|contour.merged|all>[,...] [--seeds 1-8] [--drag default,owner|all]
   [--format 16x9,9x16,1x1,4x5] [--colors 1FCDF0,FFD61E,FF4F00] [--mix [default,blue-off,Cyan:0.6]] [--intensity 0.5]
   [--out dir] [--keep] [--from dir] [--sheet all]
 ```
@@ -206,7 +206,7 @@ Two frames differ in design when, in Contour, layout is over 0.12 or light over 
 ### Color shares
 
 ```sh
-node scripts/light/color-shares.mjs --look <contour.beam|beam|...|all>[,...] [--seeds 1-8] [--drag default,owner|all]
+node scripts/light/color-shares.mjs --look <contour.beam|beam|...|sunset.merged|contour.merged|all>[,...] [--seeds 1-8] [--drag default,owner|all]
   [--format 16x9,9x16] [--mix default|blue-off|Cyan:0.6] [--maps] [--out dir]
 node scripts/light/color-shares.mjs --files <dir> [--pack bold|elemental|atmospheric] [--maps] [--out dir]
 node scripts/light/color-shares.mjs --swatches [--out dir]
@@ -219,7 +219,15 @@ What the picture shows, for checking the color mix (owner, 2026-11-09: at the de
 - Yellow, Lime and Tan count only down to 1 stop under their hex (dim, they read olive or brown), and more than 0.1 darker than their hex only while nearly as pure as the hex dimmed (85% of its chroma for its lightness); warm colors darker than their hex turn at most 5 degrees away from red. So deep red counts as Orange-red, rust and brick don't, and Yellow dimming like fire counts as whatever it reads as: Orange-red, deep red, or nothing. From L 0.75, hues under 35 are pink or salmon, not Orange-red. Forest and Plum count up to 1 stop over their hex.
 - Atmospheric's Ice, Steel, Slate and Near-black are told apart by lightness, each up to halfway to the next, and greyed blues go to them by lightness too.
 
-Set by eye on swatches (`--swatches`: Oklab hue against lightness at five chromas, with each swatch's label) and on label maps of HEAD frames and the Color agent's prototype tiles (`artifacts/compare/rounds/23/`). `--maps` draws each frame next to its label map (each pixel in the color it reads as; grey for grey, magenta for other, black for none) and its share bar. With `--look` it renders the tool's scene for each look, pack, seed, format and view and writes `summary.md` (per look, pack, format and view: each entry's median share over the seeds, with the range, next to the default mix's asked shares, Meta Blue 50% and the other colors even) and `shares.json` (every frame, with its flags: Meta Blue under 45% or a pack color under 5%). `--mix` turns the shared color stage on at that mix, as `same-design.mjs --mix` does (each design drawn in the stage's design pack and given the pack's colors), and the summary puts the mix's own shares next to the measured ones; the flags are for the default mix. With `--files` it judges images in a folder, each in the pack named in its file name. All seven looks, seeds 1-8, two formats and two views (672 frames) take about 40 s. The reading itself is in `lib/color-read.mjs`, which the palette check's `--mix` uses too.
+Set by eye on swatches (`--swatches`: Oklab hue against lightness at five chromas, with each swatch's label) and on label maps of HEAD frames and the Color agent's prototype tiles (`artifacts/compare/rounds/23/`). `--maps` draws each frame next to its label map (each pixel in the color it reads as; grey for grey, magenta for other, black for none) and its share bar. With `--look` it renders the tool's scene for each look, pack, seed, format and view and writes `summary.md` (per look, pack, format and view: each entry's median share over the seeds, with the range, next to the default mix's asked shares, Meta Blue 50% and the other colors even) and `shares.json` (every frame, with its flags: Meta Blue under 45% or a pack color under 5%). `--mix` turns the shared color stage on at that mix, as `same-design.mjs --mix` does (each design drawn in the stage's design pack and given the pack's colors), and the summary puts the mix's own shares next to the measured ones; the flags are for the default mix. With `--files` it judges images in a folder, each in the pack named in its file name. All seven looks, seeds 1-8, two formats and two views (672 frames) take about 40 s. The reading itself is in `lib/color-read.mjs`, which the palette check's `--mix` uses too. The merged looks (the tool's `sunrise=merged` and `contour=merged`) are measured when named (`sunset.merged`, `contour.merged`, here and in the palette check and `same-design.mjs`); `all` is the seven looks.
+
+Each frame also says whether Meta Blue carries light (owner, 2026-11-09 10:05 PM: "not sure i like how blue is just a solid field and the rest of the colors grab attention"), judged where Meta Blue reads on 10% or more of the lit pixels (`blue` in `shares.json`, a table at the end of `summary.md`, `BLUE_LIGHT` in `lib/color-read.mjs`). Meta Blue carries light when:
+
+- its lightness spreads 0.25 or more (5th to 95th percentile over its pixels; otherwise `flat`);
+- its brightest tenth reaches its hex's lightness (otherwise `dim`);
+- under 30% of that brightest tenth lies within 3% of the short side of a lighter pixel of another chromatic color (another pack color or `other`; otherwise `borrowed`, Meta Blue lit only where it meets another color's light). White, grey and Atmospheric's greys don't count, so a blue glow around a white core is Meta Blue's own.
+
+Set by eye in compare round 24 (`artifacts/compare/rounds/24/blue-calib-default/`). Even skies and haze fields spread 0.08 to 0.18, and dim navy fields stay 0.2 under the hex. The owner's screenshot is one example: its navy field brightens only into the Cyan band, so 43% of its brightest Meta Blue is borrowed, and it spreads 0.52. Bold skies lit only where they meet Cyan or Yellow borrow 36 to 48%; frames whose blue has its own light borrow 0 to 26%. Where the brightest Meta Blue sits against the frame's edge was tried and left out: a beam entering from the top edge has its brightest part there and still glows.
 
 ## Metrics (`metrics.json`)
 

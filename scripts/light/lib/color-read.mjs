@@ -147,6 +147,74 @@ export function sharesOf(rules, rgb, n, wantMap = false) {
   return { shares, lit: lit / n, labels }
 }
 
+// How Meta Blue carries light (owner, 2026-11-09 10:05 PM: "not sure i like how blue is just a solid field and the
+// rest of the colors grab attention"), over the pixels that read as Meta Blue (`labels` from sharesOf): their share
+// of the visibly lit pixels; the spread of their Oklab lightness (5th to 95th percentile); the share of them within
+// 0.04 of their median lightness (one flat level); how far the brightest tenth's lightness lies above Meta Blue's
+// hex; and `borrowed`, the share of that brightest tenth lying within 3% of the short side of a lit pixel at least
+// 0.05 lighter that reads as another chromatic color (another pack color or `other`; white, grey and Atmospheric's
+// greys are left out, so a blue glow around a white core is Meta Blue's own): Meta Blue lit only where it meets
+// another color's light. Null for a pack without Meta Blue.
+export function blueLight(rules, rgb, width, height, labels) {
+  if (!rules.blue) return null
+  const n = width * height
+  const L = new Float32Array(n)
+  const values = []
+  let lit = 0
+  for (let p = 0; p < n; p++) {
+    if (labels[p] === 'none') continue
+    lit++
+    L[p] = oklab([LIN[rgb[3 * p]], LIN[rgb[3 * p + 1]], LIN[rgb[3 * p + 2]]])[0]
+    if (labels[p] === rules.blue.name) values.push([L[p], p])
+  }
+  const share = lit ? values.length / lit : 0
+  if (values.length < 50) return { share, spread: 0, flat: 1, peak: -1, borrowed: 0 }
+  values.sort((x, y) => x[0] - y[0])
+  const at = (q) => values[Math.min(values.length - 1, Math.floor(q * values.length))][0]
+  const median = at(0.5)
+  const brightest = values.slice(Math.floor(0.9 * values.length))
+  const others = new Set(rules.chromatic.filter((c) => c !== rules.blue).map((c) => c.name).concat('other'))
+  const r = Math.max(1, Math.round(0.03 * Math.min(width, height)))
+  let borrowed = 0
+  for (const [Lb, p] of brightest) {
+    const x0 = p % width
+    const y0 = Math.floor(p / width)
+    search: for (let y = Math.max(0, y0 - r); y <= Math.min(height - 1, y0 + r); y++) {
+      for (let x = Math.max(0, x0 - r); x <= Math.min(width - 1, x0 + r); x++) {
+        const q = y * width + x
+        if (others.has(labels[q]) && L[q] >= Lb + 0.05) {
+          borrowed++
+          break search
+        }
+      }
+    }
+  }
+  return {
+    share,
+    spread: at(0.95) - at(0.05),
+    flat: values.filter(([v]) => Math.abs(v - median) <= 0.04).length / values.length,
+    peak: brightest[Math.floor(brightest.length / 2)][0] - rules.blue.L0,
+    borrowed: borrowed / brightest.length,
+  }
+}
+
+// Meta Blue carries light (set by eye in compare round 24 on frames with the color stage on and off, and on the
+// owner's 10:05 PM screenshot, which fails as `borrowed`) when it covers `applies` or more of the lit pixels and:
+// its lightness spreads `spread` or more (even skies and haze fields spread 0.08 to 0.18; skies and glows with light
+// in them 0.28 and more), its brightest tenth reaches its hex's lightness (dim navy fields stay 0.2 under it), and
+// under `borrowed` of that brightest tenth sits next to another color's lighter light (the screenshot 0.43, Bold
+// skies lit only where they meet Cyan or Yellow 0.36 to 0.48, frames with their own blue light 0 to 0.26).
+export const BLUE_LIGHT = { applies: 0.1, spread: 0.25, peak: 0, borrowed: 0.3 }
+// The reasons Meta Blue doesn't carry light (`flat`, `dim`, `borrowed`), and whether the rule applies at all.
+export function blueVerdict(light) {
+  if (!light || light.share < BLUE_LIGHT.applies) return { applies: false, reasons: [] }
+  const reasons = []
+  if (light.spread < BLUE_LIGHT.spread) reasons.push('flat')
+  if (light.peak < BLUE_LIGHT.peak) reasons.push('dim')
+  if (light.borrowed >= BLUE_LIGHT.borrowed) reasons.push('borrowed')
+  return { applies: true, reasons }
+}
+
 // A color mix by name, from src/light/color/mix.ts: `default`, `blue-off` (Meta Blue at 0%), or `<color>:<share>`
 // such as `Cyan:0.6`, set on the default mix with the others keeping their ratios; null when the pack has no such
 // color.
