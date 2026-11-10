@@ -1,4 +1,4 @@
-import type { ColorMixSettings, RecipeContext, RecipeProgram, UniformMap } from '../scene'
+import type { ColorMixSettings, LensSettings, RecipeContext, RecipeProgram, UniformMap } from '../scene'
 import { frameAspect } from './frame'
 import { CONTEXT_LOST_MESSAGE, Gpu, LightEngineError, type Target } from './gl'
 import {
@@ -106,16 +106,16 @@ export function designFrame(aspect: number): { size: [number, number]; inShorts:
  * it from designFrame, with the scattered light drawn for that frame, never from the output: every size of a format
  * (the preview's canvas, an export, a check) then gets the same colors, whichever size was drawn first.
  */
-function prepareStage(gpu: Gpu, program: RecipeProgram, ctx: RecipeContext, settings: ColorMixSettings, engine: EngineUniforms, exposure: number): PreparedColorStage | null {
+function prepareStage(gpu: Gpu, program: RecipeProgram, ctx: RecipeContext, settings: ColorMixSettings, engine: EngineUniforms, exposure: number, lens: LensSettings): PreparedColorStage | null {
   const { size, inShorts } = designFrame(ctx.aspect)
   const designEngine: EngineUniforms = (w, h, origin, pixel, subsamples) => ({ ...engine(w, h, origin, pixel, subsamples), uFrameAspect: inShorts })
   const exposureScale = 2 ** exposure
   // A design the stage already keeps is not read again, so it needs no scattered light.
   if (!colorStageNeedsDesign(program, ctx, exposureScale))
-    return prepareColorStage({ gpu, program, ctx, settings, engine: designEngine, scatterUniforms: {}, scatterTextures: {}, exposureScale })
+    return prepareColorStage({ gpu, program, ctx, settings, engine: designEngine, scatterUniforms: {}, scatterTextures: {}, exposureScale, lens })
   const scatter = runScatter(gpu, program, ctx, size[0], size[1], designEngine, NO_PROFILE)
   try {
-    return prepareColorStage({ gpu, program, ctx, settings, engine: designEngine, scatterUniforms: scatter.uniforms, scatterTextures: scatter.textures, exposureScale })
+    return prepareColorStage({ gpu, program, ctx, settings, engine: designEngine, scatterUniforms: scatter.uniforms, scatterTextures: scatter.textures, exposureScale, lens })
   } finally {
     scatter.release()
   }
@@ -210,7 +210,7 @@ export class ProgramRenderer {
     // Scattered light first: blurred copies of the recipe's light that its combine function reads.
     const scatter = runScatter(gpu, program, ctx, renderWidth, renderHeight, engine, mark)
     // The shared color stage (scene.colorMix): recolors the scene radiance before post passes and the lens.
-    const stage = scene.colorMix ? prepareStage(gpu, program, ctx, scene.colorMix, engine, resolved.output.exposure) : null
+    const stage = scene.colorMix ? prepareStage(gpu, program, ctx, scene.colorMix, engine, resolved.output.exposure, resolved.lens) : null
     if (stage) stageUniforms = stage.uniforms
     const recipeTextures = stage ? { ...scatter.textures, ...stage.textures } : scatter.textures
 

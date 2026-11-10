@@ -23,6 +23,13 @@ export interface StageGrid {
   coverage: Float32Array
   /** Each cell's brightest point, as a lightness: a thin bright line counts here even where it barely moves the mean. */
   peak: Float32Array
+  /**
+   * The light as the picture shows it, after the lens and the tone curve, as a lightness (at least `lightness`). In a
+   * look colored by its parts, the colors' lightness masks and the soft blend's spread key on it.
+   */
+  seen?: Float32Array
+  /** The light the lens adds to each cell (its glow round brighter light), as luminance after exposure. */
+  glow?: Float32Array
 }
 
 /** Points per cell side where the design is read for `coverage`. */
@@ -302,6 +309,9 @@ export function followsParts(parts: readonly StagePart[]): boolean {
 /** The lead color's field where no part reaches: under every part's own light, so the parts win where they are. */
 const LEAD_BASE = 0.3
 
+/** The share of LEAD_BASE the lead's field keeps inside a look's dark spots. */
+const LEAD_FLOOR = 0.25
+
 /**
  * The wants a part field can have besides the lead's and dark, in the order colors are given to them: the groups'
  * first, then bright, so it takes a light color no group asked for, then pale.
@@ -329,7 +339,8 @@ const WARPED: readonly FieldWant[] = ['lead', ...PART_WANTS, 'dark']
  * so a look with one dark spot keeps a seeded place for its second dark color.
  */
 function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number, warps: ReadonlyMap<FieldWant, readonly [Noise, Noise]>): { fields: StageField[]; presence: number[] } {
-  const { width: w, height: h, lightness: L } = grid
+  const { width: w, height: h } = grid
+  const L = grid.seen ?? grid.lightness
   const [fw, fh] = frameShorts(aspect)
   const warpOf = (want: FieldWant) => warps.get(want) ?? warps.get('lead')!
   const lead = new Float32Array(w * h)
@@ -378,12 +389,15 @@ function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number
     maxInto(darks[s % 2], spot.values)
     presence[s % 2] = Math.max(presence[s % 2], spot.count)
   })
-  // The lead's light reaches everywhere no part claims, except into the look's own dim room.
+  // The lead's light reaches everywhere no part claims, and into the look's own dim room at LEAD_FLOOR of that, so a
+  // dark color takes the room as the light falls off to its own lightness, not along the dark spot's outline.
   // Where an asked part meets the dim room the lead's light gives way, so the colors on either side meet there
   // instead of a strip of the lead between them.
+  const meet = new Float32Array(w * h)
+  for (let i = 0; i < w * h; i++) meet[i] = smooth(0.1, 0.4, Math.min(asked[i], Math.max(darks[0][i], darks[1][i])))
   for (let i = 0; i < w * h; i++) {
     const dark = Math.max(darks[0][i], darks[1][i])
-    lead[i] = Math.max(lead[i], LEAD_BASE * (1 - dark) * (1 - smooth(0.1, 0.4, Math.min(asked[i], dark))))
+    lead[i] = Math.max(lead[i], LEAD_BASE * (1 - (1 - LEAD_FLOOR) * dark) * (1 - meet[i]))
   }
   const fields: StageField[] = [{ name: 'lead', want: 'lead', values: lead }]
   for (const [want, values] of wants) fields.push({ name: want, want, values })

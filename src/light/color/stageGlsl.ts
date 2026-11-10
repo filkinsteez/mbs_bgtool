@@ -63,9 +63,11 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
   float y = dot(rad, LUMA);
   if (uMixCount <= 0 || y <= 1e-8) return radiance;
   float yE = y * uExposureScale;
-  float L = pow(yE, 1.0 / 3.0);
   vec4 fa = sampleSmooth4(uMixFieldsA, uv);
   vec4 fb = sampleSmooth4(uMixFieldsB, uv);
+  // With the soft blend the lightness masks key on the light as the picture shows it: the pixel's own light and the
+  // glow the lens adds round brighter light (fb.y), so a dark color stays where the picture is dim.
+  float L = pow(uMixSoft > 0.5 ? yE + max(fb.y, 0.0) : yE, 1.0 / 3.0);
   float p[5];
   float s = 0.0;
   float bestValue = -1.0;

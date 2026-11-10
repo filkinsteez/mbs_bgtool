@@ -1,14 +1,15 @@
 import type { Gpu, Target } from '../engine/gl'
+import { lensSpread, levelSigma } from '../engine/lens'
 import { toneCurve } from '../engine/output'
 import { runPostPasses } from '../engine/passes'
 import { NO_PROFILE } from '../engine/profile'
 import { buildRecipeShader } from '../engine/recipeShader'
 import { lightnessOnlyParams } from '../recipes/sunset/merged'
-import { isRecipeId, type ColorMixSettings, type RecipeContext, type RecipeId, type RecipeProgram, type Scene, type UniformMap } from '../scene'
+import { isRecipeId, type ColorMixSettings, type LensSettings, type RecipeContext, type RecipeId, type RecipeProgram, type Scene, type UniformMap } from '../scene'
 import { defaultMix, mixFromShares, type ColorMix } from './mix'
 import { getPack, isPackId, type ColorPack, type PackId } from './packs'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
-import { buildFields, COVERAGE_SPLIT, gridSize, lookParts, VISIBLE, type StageField, type StageGrid } from './stageFields'
+import { blurGrid, buildFields, COVERAGE_SPLIT, GRID_SHORT, gridSize, lookParts, VISIBLE, type StageField, type StageGrid } from './stageFields'
 import { assignFields, colorFields, coloredByParts, farPairs, KIND_TO_NEIGHBOR, softFields, solveWeights, stageColors, STAGE_SHARPNESS, type StageColor } from './stageSolve'
 
 /**
@@ -52,6 +53,8 @@ export interface ColorStageInput {
   scatterUniforms: UniformMap
   scatterTextures: Record<string, Target>
   exposureScale: number
+  /** The scene's lens, so the stage reads the light as the picture shows it, after the lens's spread. */
+  lens?: LensSettings
 }
 
 interface Design {
@@ -62,7 +65,10 @@ interface Design {
 interface Solved {
   colors: StageColor[]
   assignment: number[]
-  /** Each color's field on the stage grid, what the shader reads (in a look colored by its parts, its soft share). */
+  /**
+   * Each color's field on the stage grid, what the shader reads (in a look colored by its parts, its soft share, then
+   * the light as the picture shows it).
+   */
   values: Float32Array[]
   /** Whether the look's parts say where colors go (a narrower neutral line where far hues meet). */
   byParts: boolean
@@ -134,11 +140,37 @@ function readDesign(input: ColorStageInput): StageGrid | null {
       peak[i] = Math.max(peak[i], v)
       if (Math.cbrt(v) >= VISIBLE) coverage[i] += 1 / points
     }
+  const spread = afterLens(lightness, w, h, input.lens)
+  const glow = new Float32Array(w * h)
+  const seen = new Float32Array(w * h)
   for (let i = 0; i < w * h; i++) {
+    glow[i] = Math.max(0, spread[i] - lightness[i])
+    seen[i] = Math.cbrt(lightness[i] + glow[i])
     lightness[i] = Math.cbrt(lightness[i])
     peak[i] = Math.cbrt(peak[i])
   }
-  return { width: w, height: h, lightness, coverage, peak }
+  return { width: w, height: h, lightness, coverage, peak, seen, glow }
+}
+
+/**
+ * Each cell's luminance after the lens spreads part of the light over its levels (its bloom and the camera's glare),
+ * as the picture shows it.
+ */
+function afterLens(luminance: Float32Array, w: number, h: number, lens: LensSettings | undefined): Float32Array {
+  const spread = lens ? lensSpread(lens) : { mix: 0, factors: [] }
+  const out = Float32Array.from(luminance)
+  if (spread.mix > 0) {
+    const levels = spread.factors.map((f, i) => ({ weight: 0.2126 * f[0] + 0.7152 * f[1] + 0.0722 * f[2], sigma: levelSigma(i) * GRID_SHORT }))
+    const total = levels.reduce((a, l) => a + l.weight, 0) || 1
+    out.fill(0)
+    for (const { weight, sigma } of levels) {
+      if (weight <= 0) continue
+      const blurred = sigma < 0.3 ? luminance : blurGrid(luminance, w, h, sigma)
+      for (let i = 0; i < w * h; i++) out[i] += (spread.mix * weight * blurred[i]) / total
+    }
+    for (let i = 0; i < w * h; i++) out[i] += (1 - spread.mix) * luminance[i]
+  }
+  return out
 }
 
 function designKey(input: Pick<ColorStageInput, 'program' | 'ctx' | 'exposureScale'>): string {
@@ -178,8 +210,15 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
     const values = colorFields(fields, assignment, colors)
     const own = values.map((v, k): StageField => ({ name: fields[assignment[k]]?.name ?? 'none', want: fields[assignment[k]]?.want ?? 'any', values: v }))
     const solution = solveWeights(grid, own, colors, colors.map((_, k) => k), STAGE_SHARPNESS, byParts)
-    // A look colored by its parts draws the soft blend: each color's share, spread as far as the light changes.
-    const drawn = byParts ? { values: softFields(grid, values, colors, solution.weights), weights: colors.map(() => 1) } : { values, weights: solution.weights }
+    // A look colored by its parts draws the soft blend: each color's share, spread as far as the light changes, then
+    // the light as the picture shows it, which its lightness masks key on.
+    const soft = byParts ? softFields(grid, values, colors, solution.weights) : []
+    const drawn = byParts
+      ? {
+          values: [...Array.from({ length: 5 }, (_, k) => soft[k] ?? new Float32Array(grid.width * grid.height)), grid.glow ?? new Float32Array(grid.width * grid.height)],
+          weights: colors.map(() => 1),
+        }
+      : { values, weights: solution.weights }
     solved = remember(solves, solveKey, { colors, assignment, byParts, ...solution, ...drawn })
   }
   lastReport = { hexes: solved.colors.map((c) => c.hex), light: solved.light, reads: solved.reads, fields: solved.assignment.map((f) => fields[f]?.name ?? '') }
@@ -265,7 +304,10 @@ function rampTexture(gpu: Gpu, colors: readonly StageColor[]): Target {
   return target
 }
 
-/** Each color's field as two four-channel textures on the stage grid (colors 0-3 and 4), row 0 at the top like a render. */
+/**
+ * Each color's field as two four-channel textures on the stage grid (colors 0-3, then 4 and, in a look colored by
+ * its parts, the light as the picture shows it), row 0 at the top like a render.
+ */
 function fieldTextures(gpu: Gpu, grid: StageGrid, fields: readonly Float32Array[]): Record<string, Target> {
   const { width: w, height: h } = grid
   const gl = gpu.gl

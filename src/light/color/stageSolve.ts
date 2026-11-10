@@ -252,7 +252,9 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
   const cover = Float32Array.from(visible, (i) => grid.coverage[i] * Math.min(L[i], SEEN_CAP))
   const n = Math.max(1e-6, cover.reduce((a, b) => a + b, 0))
   const F = assignment.map((f) => fields[f].values)
-  const masks = colors.map((c) => Float32Array.from(visible, (i) => colorMask(c, Math.max(L[i], VISIBLE))))
+  // In a look colored by its parts the colors' lightness masks key on the light as the picture shows it.
+  const S = byParts ? (grid.seen ?? L) : L
+  const masks = colors.map((c) => Float32Array.from(visible, (i) => colorMask(c, Math.max(S[i], VISIBLE))))
   const capped = colors.map((_, k) => byParts && fields[assignment[k]].want !== 'lead')
   const most = masks.map((m, k) => m.reduce((a, b, j) => a + b * cover[j] * (capped[k] ? smooth(0.01, 0.06, F[k][visible[j]]) : 1), 0) / n)
   const asked = colors.map((c) => c.share)
@@ -285,7 +287,7 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
     const own = new Float32Array(visible.length)
     const down = new Float32Array(visible.length)
     visible.forEach((i, j) => {
-      const l = Math.max(L[i], VISIBLE)
+      const l = Math.max(S[i], VISIBLE)
       const seen = 1 - smooth(0.95, 1.1, l)
       const self = itself(c, l)
       own[j] = seen * self
@@ -374,17 +376,24 @@ const LIGHT_STEP = 0.08
 /** The shortest and longest distance, in grid cells, over which a color changes into the next (soft blend). */
 const SOFT_RANGE = [1, 2] as const
 
+/** The longest distance, in grid cells, over which a dark color comes in as the light falls off into the dim. */
+const DARK_SOFT_REACH = 2
+
 /** Blur widths, in grid cells, that the soft blend interpolates between. */
-const SOFT_LEVELS = [0.5, 1, 2]
+const SOFT_LEVELS = [0.5, 1, 2, 4]
 
 /**
  * The soft blend, for a look colored by its parts: each color's share of each grid cell as the firm blend draws it,
- * then spread over the distance the design's light changes by LIGHT_STEP there: far where the light is nearly even,
- * a short way at a rim or a fast falloff. So a color changes into the next as gradually as the light does, never as a
- * firm outline round a part on even light. The shader draws these shares as they are.
+ * then spread over the distance the light as the picture shows it (after the lens) changes by LIGHT_STEP there: far
+ * where the light is nearly even, a short way at a rim or a fast falloff. So a color changes into the next as
+ * gradually as the light does, never as a firm outline round a part on even light. In the dim a lit color's blend
+ * with navy reads as neither, so there it changes over at most a cell; a dark color is the dim end of a light and
+ * comes in over the whole falloff, up to DARK_SOFT_REACH cells. The shader draws these shares as they are,
+ * sharpening only where far hues meet at mid lightness.
  */
 export function softFields(grid: StageGrid, values: readonly Float32Array[], colors: readonly StageColor[], weights: readonly number[], sharpness = STAGE_SHARPNESS): Float32Array[] {
-  const { width: w, height: h, lightness: L } = grid
+  const { width: w, height: h } = grid
+  const L = grid.seen ?? grid.lightness
   const n = w * h
   const shares = colors.map(() => new Float32Array(n))
   for (let i = 0; i < n; i++) {
@@ -402,17 +411,19 @@ export function softFields(grid: StageGrid, values: readonly Float32Array[], col
   }
   const light = blurGrid(L, w, h, 1)
   const reach = new Float32Array(n)
+  const darkReach = new Float32Array(n)
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
       const gx = (light[y * w + Math.min(w - 1, x + 1)] - light[y * w + Math.max(0, x - 1)]) / 2
       const gy = (light[Math.min(h - 1, y + 1) * w + x] - light[Math.max(0, y - 1) * w + x]) / 2
-      // In the dim a blend of two colors at one lightness reads as neither (a dark color into navy reads grey), so a
-      // dim room's colors change over at most a cell; the full soft blend is for the lit parts.
+      const far = LIGHT_STEP / Math.max(Math.hypot(gx, gy), 1e-4) / 2
       const most = SOFT_RANGE[0] + (SOFT_RANGE[1] - SOFT_RANGE[0]) * smooth(0.4, 0.6, light[y * w + x])
-      reach[y * w + x] = Math.min(Math.max(1, most), Math.max(SOFT_RANGE[0], LIGHT_STEP / Math.max(Math.hypot(gx, gy), 1e-4) / 2))
+      reach[y * w + x] = Math.min(Math.max(1, most), Math.max(SOFT_RANGE[0], far))
+      darkReach[y * w + x] = Math.min(DARK_SOFT_REACH, Math.max(SOFT_RANGE[0], far))
     }
-  const sigma = blurGrid(reach, w, h, 2)
-  return shares.map((share) => {
+  const sigmas = [blurGrid(reach, w, h, 2), blurGrid(darkReach, w, h, 2)]
+  return shares.map((share, k) => {
+    const sigma = sigmas[colors[k].kind === KIND_DARK ? 1 : 0]
     const blurred = SOFT_LEVELS.map((s) => blurGrid(share, w, h, s))
     const out = new Float32Array(n)
     for (let i = 0; i < n; i++) {
