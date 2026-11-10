@@ -88,12 +88,12 @@ const unitLuminance = (c: readonly number[]): Rgb => {
  * warm) or, from a grey, the next darker grey: Yellow into Orange-red, Cyan into Meta Blue, Lime into Forest, Ice into
  * Steel, Slate and Near-black. A saturated warm color with nowhere darker to go ends in deep red, as fire does. Meta
  * Blue and Tan have no steps and keep their own hue (Tan reads brown dim, so its bands fall off steeply instead). A
- * step takes over below the level where the light is as dark as that color, well before it (fifth root), so Lime
- * turns toward Forest before it reads olive.
+ * step takes over a little above the level where the light is as dark as that color (square root), so a dark color
+ * (Forest, Plum) never shows much brighter than itself, where its hue reads mint.
  */
 function dimPath(c: Info, all: readonly Info[]): { hue: Rgb; at: number }[] {
   const near = (from: Info, d: Info) => (grey(from) ? grey(d) : d.C >= 0.04 && !mutedWarm(d) && hueGap(from.h, d.h) < 70)
-  const stepAt = (y: number) => clamp((y / Math.max(c.Y, 1e-6)) ** 0.2, 0.15, 0.88)
+  const stepAt = (y: number) => clamp(Math.sqrt(y / Math.max(c.Y, 1e-6)), 0.1, 0.88)
   const steps: { hue: Rgb; at: number }[] = []
   let from = c
   while (steps.length < DIM_STEPS) {
@@ -174,15 +174,15 @@ export function rushColors(hexes: readonly string[], shares?: readonly number[])
       const step = paths[k]?.[j]
       ramp.push(...(step ? [...step.hue.map(round4), round4(step.at)] : [0, 0, 0, 0]))
     }
-  // A white streak's edges take the cool and warm streaks' colors (Cyan and Yellow in Bold) and the others sit only in
-  // its white middle, so its edges never tint it pink or lavender. Where one color takes both (Lime, Ice), all sit in
-  // the middle.
+  // A white streak's edges: the cool streaks' color on one side and the warm streaks' on the other (Cyan and Yellow in
+  // Bold). Where one color takes both (Lime, Ice), the other side takes the deep streaks' color (Tan, Steel). The
+  // others stay out of it (0.5).
   const colorFor = (place: number) => {
     for (let k = 0; k < count; k++) if (place < cellEnd[k]) return k
     return count - 1
   }
   const coolK = colorFor(0.58)
-  const warmK = colorFor(0.74)
+  const warmK = colorFor(0.74) === coolK ? colorFor(0.92) : colorFor(0.74)
   const places = lights.map((_, k) => (coolK === warmK ? 0.5 : k === coolK ? 0 : k === warmK ? 1 : 0.5))
   const ground = darks[0]?.hex ?? lights[0].hex
   return {

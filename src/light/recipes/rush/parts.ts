@@ -50,11 +50,14 @@ export function rushParts(params: Params, aspect: number): StagePart[] {
   }
   // One group per streak (its pieces and its core are one light with one color), lead streaks first, so the first
   // group, which the stage gives the lead color, is a lead streak.
+  // Seams (place -2), the white lines where two streaks meet, are no parts: they take no color.
+  const isSeam = (i: number) => lf[4 * i + 3] < -1.5
   const isLead = (i: number) => lf[4 * i + 3] >= 0 && lf[4 * i + 3] < 0.5
-  const order = [...Array(lights).keys()].sort((a, b) => Number(isLead(b)) - Number(isLead(a)) || a - b)
+  const order = [...Array(lights).keys()].filter((i) => !isSeam(i)).sort((a, b) => Number(isLead(b)) - Number(isLead(a)) || a - b)
   const groupOf = new Map(order.map((i, rank) => [i, rank]))
   const parts: StagePart[] = []
   for (let i = 0; i < lights; i++) {
+    if (isSeam(i)) continue
     const group = groupOf.get(i) ?? i
     const [center, half, , coreWidth] = la.slice(4 * i, 4 * i + 4)
     const [fadeIn, fadeLen] = le.slice(4 * i, 4 * i + 2)

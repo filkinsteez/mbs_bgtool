@@ -18,15 +18,19 @@ const LINES: ControlValues['drag'][] = [
   { from: [0.9, 0.5], to: [0.1, 0.5] },
 ]
 
-// The params the colors set: which color each streak takes (every fourth number of `le`), a white streak's color
-// places and levels, each color's dim path, how many colors there are and how lit the ground is.
+// The params the colors set: which color each streak takes (every fourth number of `le`, and of `lg` for a seam's
+// second side), a white streak's edge colors and levels, each color's dim path, how many colors there are and how lit
+// the ground is.
 const COLOR_KEYS = new Set(['spectrum', 'fringe', 'ramp', 'comps', 'groundLevel'])
 const designOf = (params: Record<string, ParamValue>) =>
   Object.fromEntries(
     Object.entries(params)
       .filter(([key]) => !COLOR_KEYS.has(key))
-      .map(([key, value]) => [key, key === 'le' && Array.isArray(value) ? value.filter((_, i) => i % 4 !== 3) : value]),
+      .map(([key, value]) => [key, (key === 'le' || key === 'lg') && Array.isArray(value) ? value.filter((_, i) => i % 4 !== 3) : value]),
   )
+// Streaks that are parts for the color stage: all but the seams (place -2).
+const streaksOf = (params: Record<string, ParamValue>) =>
+  (params.lf as number[]).filter((place, i) => i % 4 === 3 && i < 4 * (params.lights as number) && place > -1.5).length
 
 describe('Rush split', () => {
   it("uses only the pack's own colors, and black for no light", () => {
@@ -60,9 +64,9 @@ describe('Rush split', () => {
 
   it("gives a white streak's edges the cool and warm streaks' colors, and puts the others only in its middle", () => {
     expect(rushColors(hexesOf('bold')).spectrum).toEqual([0.5, 0, 1, 0.5])
-    // Lime and Ice take both the cool and the warm streaks, so every color sits in the middle.
-    expect(rushColors(hexesOf('elemental')).spectrum.slice(0, 3)).toEqual([0.5, 0.5, 0.5])
-    expect(rushColors(hexesOf('atmospheric')).spectrum.slice(0, 3)).toEqual([0.5, 0.5, 0.5])
+    // Lime and Ice take both the cool and the warm streaks, so the other edge takes the deep streaks' Tan and Steel.
+    expect(rushColors(hexesOf('elemental')).spectrum.slice(0, 3)).toEqual([0.5, 0, 1])
+    expect(rushColors(hexesOf('atmospheric')).spectrum.slice(0, 3)).toEqual([0.5, 0, 1])
   })
 
   it('dims each color through darker colors of its own pack, and keeps Meta Blue and Tan as they are', () => {
@@ -91,7 +95,7 @@ describe('Rush split', () => {
       const { params } = composeRushSplit(hexesOf('bold'), CONTROLS, seed, 16 / 9)
       const parts = rushParts(params, 16 / 9)
       const groups = [...new Set(parts.map((p) => (p.kind === 'horizon' ? -1 : p.group)))].sort((a, b) => (a ?? 0) - (b ?? 0))
-      expect(groups).toEqual([...Array(params.lights as number).keys()])
+      expect(groups).toEqual([...Array(streaksOf(params)).keys()])
       const lf = params.lf as number[]
       const first = parts.findIndex((p) => p.kind !== 'horizon' && p.group === 0)
       const place = lf[4 * Math.floor(first / 7) + 3]
@@ -105,9 +109,9 @@ describe('Rush split', () => {
         for (const drag of LINES) {
           const { params } = composeRushSplit(hexesOf('bold'), { ...CONTROLS, drag }, seed, aspect)
           const parts = rushParts(params, aspect)
-          const lights = params.lights as number
-          expect(parts.filter((p) => p.kind === 'line')).toHaveLength(6 * lights)
-          expect(parts.filter((p) => p.kind === 'spot')).toHaveLength(lights)
+          const streaks = streaksOf(params)
+          expect(parts.filter((p) => p.kind === 'line')).toHaveLength(6 * streaks)
+          expect(parts.filter((p) => p.kind === 'spot')).toHaveLength(streaks)
           for (const part of parts) {
             if (part.kind === 'line') {
               expect([...part.from, ...part.to, part.width].every(Number.isFinite)).toBe(true)
