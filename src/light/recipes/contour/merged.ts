@@ -42,6 +42,9 @@ const unitParams = (i: number): ParamSpec[] => [
   { kind: 'vector', key: `e${i}StopAt2`, label: `Unit ${i} stops 5-8 along the curve`, min: 0, max: 1, step: 0.0001, default: [1, 1, 1, 1] },
   { kind: 'vector', key: `e${i}StopColor`, label: `Unit ${i} stops 1-4 slot (1 none, 10a+b bridge)`, min: 1, max: 99, step: 1, default: [2, 1, 1, 1] },
   { kind: 'vector', key: `e${i}StopColor2`, label: `Unit ${i} stops 5-8 slot`, min: 1, max: 99, step: 1, default: [1, 1, 1, 1] },
+  { kind: 'vector', key: `e${i}StopGain`, label: `Unit ${i} stops 1-4 level`, min: 0, max: 4, step: 0.0001, default: [1, 1, 1, 1] },
+  { kind: 'vector', key: `e${i}StopGain2`, label: `Unit ${i} stops 5-8 level`, min: 0, max: 4, step: 0.0001, default: [1, 1, 1, 1] },
+  { kind: 'number', key: `e${i}StopContour`, label: `Unit ${i} contour its stops are on (-1 the light's)`, min: -1, max: 16, step: 1, default: -1 },
   ...driftParams(`e${i}Drift`, `Unit ${i} dim light`),
 ]
 
@@ -80,6 +83,16 @@ const params: ParamSpec[] = [
   { kind: 'number', key: 'rayLevel', label: 'Rays level', min: 0, max: 8, step: 0.001, default: 0.9 },
   { kind: 'number', key: 'rayReach', label: 'Rays reach (short sides)', min: 0.05, max: 3, step: 0.001, default: 0.5 },
   { kind: 'number', key: 'rayUnit', label: 'Rays take this unit color', min: 1, max: UNITS, step: 1, default: 1 },
+  { kind: 'number', key: 'secondUnit', label: 'Unit that is the second light (0 none)', min: 0, max: UNITS, step: 1, default: 0 },
+  { kind: 'vector', key: 'secondAt', label: 'Second light, from the origin', min: -40, max: 40, step: 0.0001, default: [-40, -40] },
+  { kind: 'vector', key: 'faceDir', label: 'Into the face at the light', min: -1, max: 1, step: 0.0001, default: [0, 1] },
+  { kind: 'number', key: 'secondCore', label: 'Second light core line (times the main one)', min: 0, max: 2, step: 0.01, default: 1 },
+  { kind: 'number', key: 'secondPale', label: 'Second light haze and face in the key color (share)', min: 0, max: 1, step: 0.01, default: 0 },
+  { kind: 'number', key: 'gapAt', label: 'The main light goes dark here along the edge (-1 nowhere)', min: -1, max: 1, step: 0.0001, default: -1 },
+  { kind: 'number', key: 'gapContour', label: 'Contour of that gap', min: 0, max: 16, step: 1, default: 0 },
+  { kind: 'number', key: 'gapDark', label: 'Gap dark half length', min: 0, max: 2, step: 0.0001, default: 0.05 },
+  { kind: 'number', key: 'gapFade', label: 'Gap fade length', min: 0, max: 2, step: 0.0001, default: 0.1 },
+  { kind: 'number', key: 'secondFar', label: 'Second light haze and face (times the main ones, reach halved)', min: 0, max: 2, step: 0.01, default: 1 },
   { kind: 'number', key: 'gain', label: 'Overall gain', min: 0, max: 20, step: 0.001, default: 1 },
   { kind: 'number', key: 'soften', label: 'Overall width', min: 0.05, max: 16, step: 0.001, default: 1 },
 ]
@@ -125,10 +138,11 @@ function unitStops(ctx: RecipeContext, i: number): EmissionStop[] {
   const count = Math.round(ctx.num(`e${i}Stops`))
   const at = [...ctx.vec(`e${i}StopAt`), ...ctx.vec(`e${i}StopAt2`)]
   const slots = [...ctx.vec(`e${i}StopColor`), ...ctx.vec(`e${i}StopColor2`)].map(Math.round)
+  const gains = [...ctx.vec(`e${i}StopGain`), ...ctx.vec(`e${i}StopGain2`)]
   return Array.from({ length: count }, (_, k) => {
     const s = slots[k]
     const color = s >= 10 ? bridge(litSlot(ctx, Math.floor(s / 10)), litSlot(ctx, s % 10)) : litSlot(ctx, s)
-    return { t: at[k], color, gain: 1 }
+    return { t: at[k], color, gain: gains[k] ?? 1 }
   })
 }
 
@@ -151,39 +165,51 @@ export function mergedEmitters(ctx: RecipeContext): EmitterSettings[] {
   const fades = ctx
     .vec('tipAt')
     .flatMap((t, i) => (t >= 0 ? [{ contour: Math.round(tipContour[i]), t, dark: ctx.num('tipDark'), fade: ctx.num('tipFade') }] : []))
+  // Along the second light's stretch the other units go dark, so each light keeps one color there.
+  const gapAt = ctx.num('gapAt')
+  const gap = gapAt >= 0 ? [{ contour: Math.round(ctx.num('gapContour')), t: gapAt, dark: ctx.num('gapDark'), fade: ctx.num('gapFade') }] : []
   const keySlot = ctx.num('keySlot')
   return Array.from({ length: UNITS }, (_, k) => {
     const i = k + 1
     if (!ctx.bool(`e${i}On`)) return { shape: null, anchor: at, stops: [], near: [], far: [], maskShift: [0, 0], maskGrow: 0 }
     // An accent's wide light (its haze and the face it lights) takes the key's color at the same luminance, so the
     // face and the far haze read as the key's light instead of a mix of every color, and no brightness changes.
-    const accent = Math.round(ctx.num(`e${i}Own`)) !== Math.round(keySlot) && Math.round(ctx.num(`e${i}Rest`)) === 1
+    // The second light is lit by its own stops along the edge, not by the main light's fields, and keeps its own
+    // color from its dim ends to its hot core.
+    const second = Math.round(ctx.num('secondUnit')) === i
+    const free = <T extends { light: number }>(part: T): T => (second ? { ...part, light: 0 } : part)
+    const accent = !second && Math.round(ctx.num(`e${i}Own`)) !== Math.round(keySlot) && Math.round(ctx.num(`e${i}Rest`)) === 1
     const farPale = [0.5, 0.8, 1]
     // Its wide glow mostly too, so an accent shows as a colored core on the edge, and its dim tail over the key's
     // face never mixes to a third hue.
     const nearPale = [0, 0.75, 0]
+    const ownContour = Math.round(ctx.num(`e${i}StopContour`))
     return {
       shape,
       anchor: at,
       stops: unitStops(ctx, i),
-      stopContour,
+      stopContour: ownContour >= 0 ? ownContour : stopContour,
       restStops: [{ t: 0, color: litSlot(ctx, ctx.num(`e${i}Rest`)), gain: 1 }],
-      fades,
+      fades: second ? fades : [...fades, ...gap],
       // The drift measures the light against the color's own level, so a color under the stand-in's lightness dims
       // through its darker neighbour where its light is low.
       own: slotColor(ctx, ctx.num(`e${i}Own`)),
       near: [1, 2, 3].map((n) => {
-        const part = readNear(ctx, `n${n}`, soften, gain)
+        const read = free(readNear(ctx, `n${n}`, soften, gain))
+        const part = second && n === 1 ? { ...read, weight: read.weight * ctx.num('secondCore') } : read
         return accent ? { ...part, pale: nearPale[n - 1] } : part
       }),
       far: [1, 2, 3].map((n) => {
-        const f = readFar(ctx, `f${n}`, soften, gain)
+        const read = free(readFar(ctx, `f${n}`, soften, gain))
+        // The second light's haze and face may take the key's color at the same luminance, so its own color stays on
+        // its stretch of the edge and never mixes over the key's face.
+        const f = second ? { ...read, weight: read.weight * ctx.num('secondFar'), sigma: read.sigma * 0.5, pale: ctx.num('secondPale') * farPale[n - 1] } : read
         return accent ? { ...f, pale: farPale[n - 1] } : f
       }),
       maskShift: [0, 0],
       maskGrow: 0,
       drift: readDrift(ctx, `e${i}Drift`),
-      ...(accent ? { pale: litSlot(ctx, keySlot) } : {}),
+      ...(accent || (second && ctx.num('secondPale') > 0) ? { pale: litSlot(ctx, keySlot) } : {}),
     }
   })
 }

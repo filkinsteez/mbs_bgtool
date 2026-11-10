@@ -25,9 +25,12 @@ import { outlineTips } from './rim'
 import {
   META_LOGO_LANDMARKS,
   META_LOGO_PARTS,
+  contourLength,
+  contourPoint,
   primitiveLength,
   primitivePoint,
   segment,
+  windingNumber,
   type Contour,
   type Primitive,
   type Shape,
@@ -117,7 +120,7 @@ function logoTooWide(spec: MergedShapeSpec, anchor: Vec2, aspect: number): boole
   )
 }
 
-function placeLayout(def: LayoutDef, aspect: number, jitter: Jitter): { spec: MergedShapeSpec; anchor: Vec2 } {
+function placeLayout(def: LayoutDef, aspect: number, jitter: Jitter, homeAt: number): { spec: MergedShapeSpec; anchor: Vec2 } {
   const [fw, fh] = frameSize(aspect)
   const at = aspect < 1 && def.tallTarget ? def.tallTarget : def.target
   const target: Vec2 = [(at[0] + jitter.shift[0]) * (fw / 2), (at[1] + jitter.shift[1]) * (fh / 2)]
@@ -153,8 +156,23 @@ function placeLayout(def: LayoutDef, aspect: number, jitter: Jitter): { spec: Me
     size *= 1.15
     placed = place(size)
   }
+  // A crop whose light (the seed's place along the visible edge) sits to one side moves part of the way toward the
+  // middle (not a horizon or a wash, whose edge sits low on purpose), unless that would show more of the logo.
+  if (!def.outside) {
+    const mid = pointAlong(longestRun(visibleRuns(buildMergedShape(placed.spec), placed.anchor, aspect)), homeAt)
+    const off = mid ? Math.hypot(mid[0], mid[1]) : 0
+    if (mid && off > RECENTRE_FROM) {
+      const k = Math.min(RECENTRE_MAX, 0.6 * (off - RECENTRE_FROM)) / off
+      const moved = { spec: placed.spec, anchor: [placed.anchor[0] - k * mid[0], placed.anchor[1] - k * mid[1]] as Vec2 }
+      if (!(def.kind === 'logo' && logoTooWide(moved.spec, moved.anchor, aspect))) placed = moved
+    }
+  }
   return placed
 }
+
+/** Re-centring: from how far off the middle (short sides) the visible edge's midpoint moves in, and at most how far. */
+const RECENTRE_FROM = 0.15
+const RECENTRE_MAX = 0.3
 
 /**
  * The seed's design, from the seed alone. Seeds that share a shape (seed, seed + 9, ...) differ in which part of the
@@ -181,7 +199,10 @@ export function seedDesign(seed: number) {
   // far into the face the light reaches.
   const jitter: Jitter = { turn, shift, scale, mirror, slide: lerp(-1, 1, rand()) }
   const face = { faceDraw: rand(), faceReachDraw: rand() }
-  return { layout: (((s - 1) % LAYOUTS.length) + LAYOUTS.length) % LAYOUTS.length, jitter, ...draws, ...face }
+  // The second light: which side it takes (the other edge when one shows, else the far stretch), where along it, how
+  // strong and how long.
+  const second = { secondSide: rand(), secondAt: rand(), secondGain: rand(), secondWidth: rand() }
+  return { layout: (((s - 1) % LAYOUTS.length) + LAYOUTS.length) % LAYOUTS.length, jitter, ...draws, ...face, ...second }
 }
 
 /** Index into MERGED_SHAPES of the seed's shape. */
@@ -377,6 +398,8 @@ interface ColorPlan {
   units: Unit[]
   stretches: Stretch[]
   key: number
+  /** The unit that is the second light (left out of the stretches), or -1. */
+  second: number
   /** Dark room tints near the light and away from it: color index, or -1 for black. */
   ground: { near: number; far: number }
 }
@@ -420,8 +443,14 @@ function planColors(colors: readonly string[], shares: readonly number[], keyDra
   const shownTotal = units.flatMap((u) => u.colors).reduce((s, i) => s + share(i), 0) || 1
   const width = (i: number) => share(i) / shownTotal
 
+  // The second light takes the warmest other unit (red over blue; else the lightest) and leaves the core's accents.
+  const warmth = (i: number) => warmthOf(colors[i])
+  const second = units
+    .map((_, k) => k)
+    .filter((k) => k !== keyUnit)
+    .sort((a, b) => warmth(units[b].own) - warmth(units[a].own) || L(colors[units[b].own]) - L(colors[units[a].own]))[0] ?? -1
   // Far out of focus an accent spreads over the key's light, so there only colors that mix clean with the key show.
-  const accents = units.map((_, k) => k).filter((k) => k !== keyUnit && (!cleanOnly || mixesClean(colors[units[k].own], colors[key])))
+  const accents = units.map((_, k) => k).filter((k) => k !== keyUnit && k !== second && (!cleanOnly || mixesClean(colors[units[k].own], colors[key])))
   // With accents on both sides the key's partner gets no stretch, so the key's unit turns only four times and its
   // eight stops reach both ends of the edge.
   const keyPartners = accents.length >= 2 ? [] : units[keyUnit].colors.filter((i) => i !== key)
@@ -456,7 +485,7 @@ function planColors(colors: readonly string[], shares: readonly number[], keyDra
   const byShare = [...darks].sort((a, b) => shares[b] - shares[a])
   const near = byShare.find((i) => mixesClean(colors[i], colors[key])) ?? -1
   const far = byShare.find((i) => i !== near) ?? near
-  return { units, stretches, key, ground: { near, far } }
+  return { units, stretches, key, second, ground: { near, far } }
 }
 
 // ---------------------------------------------------------------------------
@@ -491,6 +520,20 @@ const ROOM_L = 0.05
 const STAND_IN = '#0064E0'
 /** How much farther the second edge must be than the nearest (frame units) before the accents show in full. */
 const BETWEEN = 0.25
+
+/** Emitter units in the recipe (merged.ts UNITS). */
+const MERGED_UNITS = 3
+/** The second light along its edge: stop offsets (times its half length) and levels (times its peak). */
+const SECOND_SHAPE = [-1, -0.6, -0.3, 0, 0.3, 0.6, 1]
+const SECOND_LEVEL = [0, 0.15, 0.55, 1, 0.55, 0.15, 0]
+/** How far the second light keeps from the frame's sides (short sides). */
+const SECOND_MARGIN = 0.12
+/** The second light's core line and its wide light (haze, face), against the main light's: a smaller light whose
+ * core turns white only at its peak. */
+const SECOND_CORE = 0.25
+const SECOND_FAR = 0.35
+/** Red over blue in sRGB: above zero for warm colors. */
+const warmthOf = (hex: string) => parseInt(hex.slice(1, 3), 16) - parseInt(hex.slice(5, 7), 16)
 
 /** The face's light (times the layout's fill) and how far into the face it reaches (short sides). */
 const FACE = 0.1
@@ -535,7 +578,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const shares = input.shares ?? defaultShares(colors)
   const design = seedDesign(seed)
   const def = LAYOUTS[input.layout ?? design.layout]
-  const { spec, anchor } = placeLayout(def, aspect, design.jitter)
+  const { spec, anchor } = placeLayout(def, aspect, design.jitter, Math.min(0.75, Math.max(0.25, def.hotAt + design.hotShift)))
   const shape0 = buildMergedShape(spec)
   const runs = visibleRuns(shape0, anchor, aspect)
   const run = longestRun(runs)
@@ -654,6 +697,85 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     })
   })
 
+  // The second light: a smaller, dimmer light of another color from another side, on the other edge in the crop when
+  // one shows, else on the far stretch of the light's own edge. It is placed from the seed's place for the main light,
+  // not the dragged one, so a drag never moves it in a jump, and it fades out as the main light comes near it.
+  const runLength = (r: Vec2[]) => r.slice(1).reduce((s, p, i) => s + Math.hypot(p[0] - r[i][0], p[1] - r[i][1]), 0)
+  // The seed's own place for the main light, without the controls, so nothing a drag moves can move the second light.
+  const seedHome = pointAlong(clearRun.length > 1 ? clearRun : run, Math.min(0.75, Math.max(0.25, def.hotAt + design.hotShift))) ?? anchor
+  const homeContour = nearestOnContours(drawn, anchorR, seedHome).contour
+  const shown = runs.filter((r) => r.length > 3).map((r) => ({ r, contour: nearestOnContours(drawn, anchorR, r[Math.floor(r.length / 2)]).contour }))
+  const other = shown.filter((x) => x.contour !== homeContour && runLength(x.r) > 0.4).sort((a, b) => runLength(b.r) - runLength(a.r))[0]
+  // Kept inside the frame (SECOND_MARGIN from its sides), so its hot core shows.
+  const inFrame = (p: Vec2) => Math.abs(p[0]) <= fw / 2 - SECOND_MARGIN && Math.abs(p[1]) <= fh / 2 - SECOND_MARGIN
+  const insideRun = (r: Vec2[]) => r.filter(inFrame)
+  let secondPoint: Vec2 | null = null
+  const otherIn = other ? insideRun(other.r) : []
+  if (otherIn.length > 3 && design.secondSide < 0.65) secondPoint = pointAlong(otherIn, lerp(0.3, 0.7, design.secondAt))
+  else {
+    const homeRun = shown.filter((x) => x.contour === homeContour).map((x) => x.r).sort((a, b) => Math.min(...a.map((p) => dist2(p, seedHome))) - Math.min(...b.map((p) => dist2(p, seedHome))))[0] ?? run
+    const i0 = homeRun.reduce((best, p, i) => (dist2(p, seedHome) < dist2(homeRun[best], seedHome) ? i : best), 0)
+    const arms = [homeRun.slice(0, i0 + 1).reverse(), homeRun.slice(i0)].map(insideRun).sort((a, b) => runLength(b) - runLength(a))
+    // The longer arm first, then the shorter one, then the other edge: the first place far enough from the main light.
+    const tries = [
+      arms[0].length > 3 ? pointAlong(arms[0], lerp(0.45, 0.8, design.secondAt)) : null,
+      arms[1].length > 3 ? pointAlong(arms[1], lerp(0.6, 0.9, design.secondAt)) : null,
+      otherIn.length > 3 ? pointAlong(otherIn, lerp(0.3, 0.7, design.secondAt)) : null,
+    ]
+    secondPoint = tries.find((p): p is Vec2 => !!p && Math.sqrt(dist2(p, seedHome)) >= 0.3) ?? null
+  }
+  if (secondPoint && Math.sqrt(dist2(secondPoint, seedHome)) < 0.3) secondPoint = null
+  const host = plan.second >= 0 ? plan.second : plan.units.length < MERGED_UNITS ? plan.units.length : -1
+  const secondParams: Record<string, ParamValue> = { secondUnit: 0, secondAt: [-40, -40] }
+  if (secondPoint && host >= 0) {
+    const on2 = nearestOnContours(drawn, anchorR, secondPoint)
+    const halfLength = lerp(0.1, 0.2, design.secondWidth) * (def.wash ? 2.2 : 1)
+    const tSpan = halfLength / (contourLength(drawn.contours[on2.contour]) || 1)
+    const peak = lerp(0.5, 0.8, design.secondGain) * smooth01(0.2, 0.4, Math.sqrt(dist2(hot, secondPoint)))
+    const at = SECOND_SHAPE.map((o) => round4(Math.min(0.999, Math.max(0.001, on2.ts[on2.contour] + o * tSpan))))
+    const gains = SECOND_LEVEL.map((g) => round4(g * peak))
+    // The unit's warmest color (Orange-red rather than the Yellow it dims through).
+    const warmest = (members: number[]) => members.reduce((a, b) => (warmthOf(colors[b]) > warmthOf(colors[a]) ? b : a))
+    const own = slotOf(plan.second >= 0 ? warmest(plan.units[plan.second].colors) : plan.key)
+    const e = host + 1
+    delete unitParams[`e${e}Drift`]
+    delete unitParams[`e${e}DriftShape`]
+    Object.assign(unitParams, {
+      [`e${e}On`]: true,
+      [`e${e}Own`]: own,
+      [`e${e}Rest`]: 1,
+      [`e${e}Stops`]: SECOND_SHAPE.length,
+      [`e${e}StopAt`]: at.slice(0, 4),
+      [`e${e}StopAt2`]: [...at.slice(4), 1],
+      [`e${e}StopColor`]: [own, own, own, own],
+      [`e${e}StopColor2`]: [own, own, own, 1],
+      [`e${e}StopGain`]: gains.slice(0, 4),
+      [`e${e}StopGain2`]: [...gains.slice(4), 0],
+      [`e${e}StopContour`]: on2.contour,
+    })
+    Object.assign(secondParams, {
+      secondUnit: e,
+      secondAt: [round4(secondPoint[0] - anchorR[0]), round4(secondPoint[1] - anchorR[1])],
+      secondCore: SECOND_CORE,
+      gapAt: round4(on2.ts[on2.contour]),
+      gapContour: on2.contour,
+      gapDark: round4(0.35 * halfLength),
+      gapFade: round4(0.9 * halfLength),
+      // In a wash it is a soft glow inside the gradient, as wide as the main light's. Its haze and face take the key's
+      // color at the same luminance, so its own color stays on its stretch of the edge (over the key's light it read
+      // purple or olive) and the color stage colors the glow from its part.
+      secondFar: def.wash ? 0.8 : SECOND_FAR,
+      secondPale: 1,
+    })
+  }
+  // Into the face at the light (for the color stage's parts): the side of the edge the face is on.
+  const tangent = contourPoint(drawn.contours[onDrawn.contour], tHot).tangent
+  const normal: Vec2 = [-tangent[1], tangent[0]]
+  const probe: Vec2 = [hot[0] - anchorR[0] + 0.02 * normal[0], hot[1] - anchorR[1] + 0.02 * normal[1]]
+  const inside = Math.abs(windingNumber(drawn.contours.flatMap((c) => c.primitives), probe)) > 0.5
+  const faceSign = (inside ? 1 : -1) * (def.outside && !def.wash ? -1 : 1)
+  const faceDir = [round4(faceSign * normal[0]), round4(faceSign * normal[1])]
+
   // In focus, Rim's hot core: the core line 8 times the light's level where it is strongest, so it overexposes to
   // white and the light's color shows in the falloff beside it.
   const hotCore = blur <= 1
@@ -695,6 +817,8 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     tipFade: round4(TIP_FADE * soften),
     keySlot: slotOf(plan.key),
     ...unitParams,
+    ...secondParams,
+    faceDir,
     ...parts,
     // Scatter blurs from 0.01 to about 0.33 of the short side (times the softness), so the face's light falls off
     // across it instead of filling it flat.
@@ -762,10 +886,11 @@ const vec = (params: Readonly<Record<string, ParamValue>>, key: string, fallback
 }
 
 /**
- * Where the merged look's light is, from its params: first the light with the face it lights (the lead color's, so it
- * carries light as a gradient, not only along the line), then the far stretch of the outline, where the light along
- * the edge is dimmer (another color, where the light would put it). Two parts, as the stage lays its own fields along
- * the bright outline and keeps eight fields in all. Nothing here reads the colors.
+ * Where the merged look's light is, from its params, always three parts in this order: the second light where it
+ * lights its edge and face (a warm color: Yellow, Orange-red, Lime, Tan, or the brightest left, Atmospheric's Ice); the
+ * dim lit room, the face's deep far side past the bright part near the edge (a dark color: Forest, Plum, Slate,
+ * Near-black); the main light with the face it lights (a cool color, so Meta Blue, the largest share, carries the
+ * face's gradient). With no second light its part sits off the frame and fades out. Nothing here reads the colors.
  */
 export function mergedParts(params: Readonly<Record<string, ParamValue>>, aspect: number): StagePart[] {
   const [fw, fh] = frameSize(aspect)
@@ -774,25 +899,14 @@ export function mergedParts(params: Readonly<Record<string, ParamValue>>, aspect
   const lightAt = vec(params, 'light1At', [0, 0])
   const hot: Vec2 = [anchor[0] + lightAt[0], anchor[1] + lightAt[1]]
   const frame = (p: Vec2): [number, number] => [round4(p[0] / fw + 0.5), round4(p[1] / fh + 0.5)]
-  const side = num(params, 'f3Side', 1) === 2 ? -1 : 1
-  const toMiddle: Vec2 = [anchor[0] - hot[0], anchor[1] - hot[1]]
-  const len = Math.hypot(toMiddle[0], toMiddle[1]) || 1
-  const inward: Vec2 = [(side * toMiddle[0]) / len, (side * toMiddle[1]) / len]
-  const into = 0.15 + 0.3 * num(params, 'f3Width', 0.35) * Math.min(1, num(params, 'soften', 1))
-  const parts: StagePart[] = [{ kind: 'spot', at: frame([hot[0] + inward[0] * into, hot[1] + inward[1] * into]), radius: round4(into + 0.12), want: 'any' }]
-  // The far stretch: the outer half of the longer arm of the visible edge from the light.
-  const kind = MERGED_SHAPE_KINDS[Math.min(MERGED_SHAPE_KINDS.length - 1, Math.max(0, Math.round(num(params, 'shape', 1)) - 1))]
-  const spec: MergedShapeSpec = { kind, size: num(params, 'size', 1), radius: num(params, 'radius', 0.3), rotate: num(params, 'rotate', 0), flip: params.flip === true }
-  const runs = visibleRuns(buildMergedShape(spec), anchor, aspect)
-  const d2 = (p: Vec2) => (p[0] - hot[0]) ** 2 + (p[1] - hot[1]) ** 2
-  const run = runs.reduce<Vec2[]>((best, r) => (best.length === 0 || (r.length > 1 && Math.min(...r.map(d2)) < Math.min(...best.map(d2))) ? r : best), [])
-  if (run.length > 3) {
-    const i0 = run.reduce((bi, p, i) => (d2(p) < d2(run[bi]) ? i : bi), 0)
-    const arms = [run.slice(0, i0 + 1).reverse(), run.slice(i0)]
-    const arm = arms[0].length >= arms[1].length ? arms[0] : arms[1]
-    const from = pointAlong(arm, 0.55)
-    const to = pointAlong(arm, 1)
-    if (arm.length > 3 && from && to) parts.push({ kind: 'line', from: frame(from), to: frame(to), width: 0.14, want: 'any' })
-  }
-  return parts
+  const into = vec(params, 'faceDir', [0, 1])
+  const step = (from: Vec2, d: number): Vec2 => [from[0] + into[0] * d, from[1] + into[1] * d]
+  const reach = num(params, 'f3Width', 0.45) * Math.min(1, num(params, 'soften', 1))
+  const secondAt = vec(params, 'secondAt', [-40, -40])
+  const second: Vec2 = [anchor[0] + secondAt[0], anchor[1] + secondAt[1]]
+  return [
+    { kind: 'spot', at: frame(step(second, 0.05)), radius: 0.16, want: 'warm' },
+    { kind: 'spot', at: frame(step(hot, 0.12 + reach)), radius: round4(0.18 + 0.5 * reach), want: 'dark' },
+    { kind: 'spot', at: frame(step(hot, 0.15)), radius: 0.3, want: 'cool' },
+  ]
 }

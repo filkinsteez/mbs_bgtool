@@ -21,7 +21,8 @@ const LISTS: string[][] = [
 const CONTROLS: ControlValues = { intensity: 0.5, softness: 0.7, mood: 0.5 }
 const OWNER: ControlValues = { ...CONTROLS, drag: { from: [1.011, 1.224], to: [-0.078, -0.067] } }
 /** Params that place the shape and the light and set its brightness and widths; the rest only say which color goes where. */
-const isLayout = (key: string) => !/^e\d/.test(key) && !['keySlot', 'groundNear', 'groundFar', 'air1Color', 'air2Color', 'air3Color', 'rayUnit'].includes(key)
+const isLayout = (key: string) =>
+  !/^e\d/.test(key) && !['keySlot', 'groundNear', 'groundFar', 'air1Color', 'air2Color', 'air3Color', 'rayUnit', 'secondUnit'].includes(key)
 const layoutOf = (params: Record<string, ParamValue>) => Object.fromEntries(Object.entries(params).filter(([key]) => isLayout(key)))
 
 describe('contour.merged', () => {
@@ -91,14 +92,17 @@ describe('contour.merged', () => {
     }
   })
 
-  it('gives the color stage the light with its face, then the far stretch of the edge', () => {
+  it('gives the color stage the second light, the dim room and the main light, and has a second light in every list', () => {
     for (const aspect of [16 / 9, 9 / 16]) {
       for (let seed = 1; seed <= 18; seed++) {
+        const seconds = LISTS.map((colors) => composeMerged({ colors, controls: CONTROLS, seed, aspect }).params)
         const { params } = composeMerged({ colors: LISTS[0], controls: CONTROLS, seed, aspect })
         const parts = mergedParts(params, aspect)
-        expect(parts[0].kind, `seed ${seed}`).toBe('spot')
-        expect(parts.slice(1).map((p) => p.kind), `seed ${seed}`).toEqual(parts.length > 1 ? ['line'] : [])
+        expect(parts.map((p) => (p.kind === 'horizon' ? 'horizon' : p.want)), `seed ${seed}`).toEqual(['warm', 'dark', 'cool'])
         for (const part of parts) expect(JSON.stringify(part)).not.toMatch(/null|NaN/)
+        // The second light is part of the design: there in every list or in none, at the same place.
+        expect(new Set(seconds.map((p) => Number(p.secondUnit) > 0)).size, `seed ${seed}`).toBe(1)
+        expect(new Set(seconds.map((p) => JSON.stringify(p.secondAt))).size, `seed ${seed}`).toBe(1)
       }
     }
   })
