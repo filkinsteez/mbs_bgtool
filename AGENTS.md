@@ -37,6 +37,10 @@ Later on 2026-11-02 the owner asked for crops of the Meta logo outline as Contou
   of a source adds up, seen through haze and a lens. No glow computed
   from the distance to the nearest edge: it makes creases at corners
   and pinch points that real light never has.
+- No light at pinch points (owner, 2026-11-09: "no light at these pinch
+  points for contour rim"). Along a Contour outline the light fades to
+  dark before a sharp tip or a corner that turns sharply, and the hot
+  spot stays on smooth stretches.
 - Reference images are visual targets only. Never feed reference pixels
   to the renderer.
 - Every visual change gets a visual audit: render it, put it next to the
