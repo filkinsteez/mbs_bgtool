@@ -82,6 +82,12 @@ export interface StageField {
    * color (Cyan, and Orange-red where Yellow dims), which keeps its share down to black at the light that is there.
    */
   reach?: Float32Array
+  /**
+   * A dark field as a dark color takes it (partFields): kept to its lines and their faint glow (onTheLine), so the color
+   * is a dim stretch of the line and not a wash over the face beside it. Meta Blue, taking a dark field in a pack with
+   * no dark color, keeps `values`.
+   */
+  onLine?: Float32Array
 }
 
 export function isSunrise(recipe: RecipeId): boolean {
@@ -373,6 +379,7 @@ function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number
   const reaches = new Map<FieldWant, Float32Array>(PART_WANTS.map((want) => [want, new Float32Array(w * h)]))
   const groupWant = new Map<number, FieldWant>()
   const darkSpots: Float32Array[] = []
+  const darkLines: Float32Array[] = []
   // Where the asked parts reach, before their colors fade with the design's light.
   const asked = new Float32Array(w * h)
   const wanted = new Set<FieldWant>()
@@ -390,8 +397,10 @@ function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number
     const count = Math.min(1, Math.max(0, part.strength ?? 1)) * smooth(0.001, 0.01, area)
     for (let i = 0; i < w * h; i++) values[i] *= count
     if (want === 'lead' || want === 'any') maxInto(lead, values)
-    else if (want === 'dark') darkSpots.push(values)
-    else {
+    else if (want === 'dark') {
+      darkSpots.push(values)
+      darkLines.push(part.kind === 'line' ? onTheLine(values, count) : values)
+    } else {
       // An asked color sits where its part's light is, and fades out with the design's light, never over a dim face;
       // the field before that fade is kept as its reach.
       wanted.add(want)
@@ -424,6 +433,8 @@ function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number
   }
   const darks = [new Float32Array(w * h), new Float32Array(w * h)]
   darkSpots.forEach((values, s) => maxInto(darks[s % 2], values))
+  const onLines = [new Float32Array(w * h), new Float32Array(w * h)]
+  darkLines.forEach((values, s) => maxInto(onLines[s % 2], values))
   // The lead's light reaches everywhere no part claims, and into the look's own dim room at LEAD_FLOOR of that, so a
   // dark color takes the room as the light falls off to its own lightness, not along the dark spot's outline.
   // Where an asked part meets the dim room the lead's light gives way, so the colors on either side meet there
@@ -436,8 +447,17 @@ function partFields(parts: readonly StagePart[], grid: StageGrid, aspect: number
   }
   const fields: StageField[] = [{ name: 'lead', want: 'lead', values: lead }]
   for (const [want, values] of wants) if (wanted.has(want)) fields.push({ name: want, want, values, reach: reaches.get(want) })
-  darks.forEach((values, i) => fields.push({ name: `dark${i + 1}`, want: 'dark', values }))
+  darks.forEach((values, i) => fields.push({ name: `dark${i + 1}`, want: 'dark', values, onLine: onLines[i] }))
   return fields
+}
+
+/**
+ * A dark line's field kept to the line and its faint glow: across the line it falls off twice as fast as the part's own
+ * band (its square, at the part's strength), so a dark color is a dim stretch of the line and doesn't spread over the
+ * dim face beside it. Along the line it stays as it is: the color's own lightness keeps it to where the line is dim.
+ */
+function onTheLine(values: Float32Array, strength: number): Float32Array {
+  return values.map((v) => (v * v) / Math.max(strength, 1e-6))
 }
 
 /**

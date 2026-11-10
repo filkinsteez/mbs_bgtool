@@ -297,10 +297,11 @@ export function assignFields(colors: readonly StageColor[], fields: readonly Sta
 /**
  * Each color's field on the stage grid. The dark fields no color takes (more dark spots than dark colors) go to the
  * dark colors in turn; in a pack with no dark color Meta Blue takes them, so the dark there is Meta Blue's own navy
- * and not a dim neighbor's brown.
+ * and not a dim neighbor's brown. A dark color takes a dark field as it lies on its lines (StageField.onLine).
  */
 export function colorFields(fields: readonly StageField[], assignment: readonly number[], colors: readonly StageColor[]): Float32Array[] {
-  const out = assignment.map((f, k) => (f >= 0 ? ((colors[k].keepsDark && fields[f].reach) || fields[f].values) : new Float32Array(fields[0]?.values.length ?? 0)))
+  const own = (field: StageField, k: number) => (colors[k].keepsDark && field.reach) || (colors[k].kind === KIND_DARK && field.onLine) || field.values
+  const out = assignment.map((f, k) => (f >= 0 ? own(fields[f], k) : new Float32Array(fields[0]?.values.length ?? 0)))
   const taken = new Set(assignment)
   const spare = fields.filter((field, i) => field.want === 'dark' && !taken.has(i))
   const darks = colors.flatMap((c, k) => (c.kind === KIND_DARK && assignment[k] >= 0 ? [k] : []))
@@ -312,7 +313,8 @@ export function colorFields(fields: readonly StageField[], assignment: readonly 
     const k = takers[s % takers.length]
     if (!copied.has(k)) out[k] = Float32Array.from(out[k])
     copied.add(k)
-    for (let i = 0; i < out[k].length; i++) out[k][i] = Math.max(out[k][i], field.values[i])
+    const values = own(field, k)
+    for (let i = 0; i < out[k].length; i++) out[k][i] = Math.max(out[k][i], values[i])
   })
   return out
 }
