@@ -21,6 +21,7 @@ import {
   visibleRuns,
 } from './curveCompose'
 import { buildMergedShape, MERGED_SHAPE_KINDS, startLater, type MergedShapeSpec } from './mergedShapes'
+import { outlineTips } from './rim'
 import {
   META_LOGO_LANDMARKS,
   META_LOGO_PARTS,
@@ -481,6 +482,31 @@ const STAND_IN = '#0064E0'
 /** How much farther the second edge must be than the nearest (frame units) before the accents show in full. */
 const BETWEEN = 0.25
 
+/**
+ * No light at a pinch point (the owner, 2026-11-09): where the outline turns sharply (outlineTips, as Rim finds them),
+ * every unit's own light goes out within TIP_DARK of the tip along the outline and comes back over TIP_FADE (both
+ * times the Softness width), and the hot spot keeps TIP_CLEAR from every tip. Rim's numbers.
+ */
+const TIP_DARK = 0.04
+const TIP_FADE = 0.12
+const TIP_CLEAR = 0.2
+const TIPS = 4
+
+/** The stretches of a run where `keep` holds. */
+function keptStretches(run: readonly Vec2[], keep: (p: Vec2) => boolean): Vec2[][] {
+  const out: Vec2[][] = []
+  let current: Vec2[] = []
+  for (const p of run) {
+    if (keep(p)) current.push(p)
+    else if (current.length) {
+      out.push(current)
+      current = []
+    }
+  }
+  if (current.length) out.push(current)
+  return out
+}
+
 const smooth01 = (a: number, b: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
   return t * t * (3 - 2 * t)
@@ -498,8 +524,17 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const [fw, fh] = frameSize(aspect)
   // The mood control (Light position; the tool holds it at 0.5) moves the light along the edge from the seed's place.
   const homeAt = Math.min(0.85, Math.max(0.15, def.hotAt + design.hotShift + 0.4 * (controls.mood - 0.5)))
-  const home = pointAlong(run, homeAt) ?? anchor
-  const dragged = controls.drag ? dragLight(controls.drag, runs, aspect) : null
+  // The hot spot stays on a smooth stretch: along the longest stretch of the run clear of every sharp tip, and a drag
+  // counts outline points near a tip less (fading in from half of TIP_CLEAR to TIP_CLEAR), as Rim's does.
+  const tips = outlineTips(shape0, anchor, aspect)
+  const tipDistance = (p: Vec2) => Math.min(Infinity, ...tips.map((tip) => Math.hypot(tip.at[0] - p[0], tip.at[1] - p[1])))
+  const clearRun = longestRun(keptStretches(run, (p) => tipDistance(p) >= TIP_CLEAR))
+  const home = pointAlong(clearRun.length > 1 ? clearRun : run, homeAt) ?? anchor
+  const awayFromTips = (p: Vec2) => {
+    const t = Math.min(1, Math.max(0, (tipDistance(p) / TIP_CLEAR - 0.5) * 2))
+    return 0.02 + 0.98 * t * t * (3 - 2 * t)
+  }
+  const dragged = controls.drag ? dragLight(controls.drag, runs, aspect, tips.length ? awayFromTips : undefined) : null
   const hot = dragged?.hot ?? home
   const gain = geo(controls.intensity, 0.35, 1, 2.8)
   const blur = def.blur ?? 1
@@ -521,6 +556,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const merged = mergedShape(spec, anchorR, aspect)
   const starts = nearestOnContours(merged, anchorR, hot).ts.map((t) => round4(t - 0.5))
   const drawn = startedShape(merged, starts)
+  const drawnTips = outlineTips(drawn, anchorR, aspect)
   const onDrawn = nearestOnContours(drawn, anchorR, hot)
   const tHot = onDrawn.ts[onDrawn.contour]
   // The visible piece the light is on, and its ends measured along the light's own contour (signed, within half a
@@ -619,6 +655,11 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     flip: spec.flip,
     starts: [...starts, 0, 0, 0].slice(0, 3),
     stopContour: onDrawn.contour,
+    // The light goes out before each sharp tip of the outline as drawn; the unlit stretch widens with the glow.
+    tipAt: Array.from({ length: TIPS }, (_, i) => (drawnTips[i] ? round4(drawnTips[i].t) : -1)),
+    tipContour: Array.from({ length: TIPS }, (_, i) => drawnTips[i]?.contour ?? 0),
+    tipDark: round4(TIP_DARK * soften),
+    tipFade: round4(TIP_FADE * soften),
     keySlot: slotOf(plan.key),
     ...unitParams,
     ...parts,

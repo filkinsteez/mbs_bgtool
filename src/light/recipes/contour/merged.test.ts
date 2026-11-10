@@ -44,7 +44,7 @@ describe('contour.merged', () => {
     }
   })
 
-  it('fits every outline into its emitter, with stops only on the contour the light is on', () => {
+  it('fits every outline into its emitter, with stops only on the contour the light is on and fades at its tips', () => {
     for (const aspect of [16 / 9, 9 / 16]) {
       for (const controls of [CONTROLS, OWNER]) {
         for (let seed = 1; seed <= 27; seed++) {
@@ -60,7 +60,9 @@ describe('contour.merged', () => {
           }
           const shape = startedShape(mergedShape(spec, [(at[0] - 0.5) * fw, (at[1] - 0.5) * fh], aspect), params.starts as number[])
           const stops = Array.from({ length: 8 }, (_, k) => ({ t: 0.3 + 0.05 * k, color: [1, 1, 1], gain: 1 }))
-          const pieces = outlinePieces({ shape, stops, stopContour: params.stopContour as number, restStops: [stops[0]] })
+          const tipContour = params.tipContour as number[]
+          const fades = (params.tipAt as number[]).flatMap((t, i) => (t >= 0 ? [{ contour: tipContour[i], t, dark: params.tipDark as number, fade: params.tipFade as number }] : []))
+          const pieces = outlinePieces({ shape, stops, stopContour: params.stopContour as number, restStops: [stops[0]], fades })
           expect(pieces.length, `seed ${seed}`).toBeLessThanOrEqual(MERGED_LAYOUT.primitives)
         }
       }

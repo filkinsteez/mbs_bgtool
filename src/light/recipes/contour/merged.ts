@@ -54,6 +54,10 @@ const params: ParamSpec[] = [
   { kind: 'boolean', key: 'flip', label: 'Mirror', default: false },
   { kind: 'vector', key: 'starts', label: 'Contour starts 1-3', min: -2, max: 2, step: 0.0001, default: [0, 0, 0] },
   { kind: 'number', key: 'stopContour', label: 'Contour the light is on', min: 0, max: 8, step: 1, default: 0 },
+  { kind: 'vector', key: 'tipAt', label: 'Sharp tips along their contours, where the light goes out (0..1, -1 none)', min: -1, max: 1, step: 0.0001, default: [-1, -1, -1, -1] },
+  { kind: 'vector', key: 'tipContour', label: 'Contours of the sharp tips', min: 0, max: 8, step: 1, default: [0, 0, 0, 0] },
+  { kind: 'number', key: 'tipDark', label: 'Unlit stretch either side of a tip', min: 0, max: 1, step: 0.0005, default: 0 },
+  { kind: 'number', key: 'tipFade', label: 'Fade before the unlit stretch', min: 0, max: 1, step: 0.0005, default: 0 },
   { kind: 'number', key: 'keySlot', label: 'The key color slot (the light along the edge)', min: 1, max: COLORS, step: 1, default: 2 },
   ...[1, 2, 3].flatMap(unitParams),
   ...nearParams('n1', 'Core', { Weight: 2.5, Width: 0.0008, Shape: 8, Light: 2 }),
@@ -143,6 +147,10 @@ export function mergedEmitters(ctx: RecipeContext): EmitterSettings[] {
   }
   const shape = startedShape(mergedShape(spec, anchor, ctx.aspect), ctx.vec('starts'))
   const stopContour = Math.round(ctx.num('stopContour'))
+  const tipContour = ctx.vec('tipContour')
+  const fades = ctx
+    .vec('tipAt')
+    .flatMap((t, i) => (t >= 0 ? [{ contour: Math.round(tipContour[i]), t, dark: ctx.num('tipDark'), fade: ctx.num('tipFade') }] : []))
   const keySlot = ctx.num('keySlot')
   return Array.from({ length: UNITS }, (_, k) => {
     const i = k + 1
@@ -163,6 +171,7 @@ export function mergedEmitters(ctx: RecipeContext): EmitterSettings[] {
       stops: on ? unitStops(ctx, i) : dark,
       stopContour,
       restStops: on ? [{ t: 0, color: litSlot(ctx, ctx.num(`e${i}Rest`)), gain: 1 }] : dark,
+      fades,
       // The drift measures the light against the color's own level, so a color under the stand-in's lightness dims
       // through its darker neighbour where its light is low.
       own: slotColor(ctx, ctx.num(`e${i}Own`)),
