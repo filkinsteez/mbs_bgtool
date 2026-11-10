@@ -8,6 +8,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
 import { list, parseArgs } from './lib/args.mjs'
+import { mixByName } from './lib/color-read.mjs'
 import { startHarness } from './lib/harness.mjs'
 
 const LOOKS = ['sunset.bands', 'sunset.ramp', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
@@ -163,16 +164,6 @@ function compare(a, b, limits) {
   return { ...m, differs: m.layout > limits.layout || m.light > limits.light, score: +score.toFixed(3) }
 }
 
-// A mix by name, from src/light/color/mix.ts: `default`, `blue-off` (Meta Blue at 0%), or `<color>:<share>` such as
-// `Cyan:0.6`, set on the default mix with the others keeping their ratios; null when the pack has no such color.
-function mixByName(mixes, pack, name) {
-  if (name === 'default') return mixes.defaultMix(pack)
-  if (name === 'blue-off') return mixes.setMetaBlue(pack, mixes.defaultMix(pack), false)
-  const [color, share] = name.split(':')
-  const index = pack.colors.findIndex((c) => c.name.toLowerCase() === color.toLowerCase())
-  if (index < 0 || !(Number(share) >= 0)) return null
-  return mixes.setShare(pack, mixes.defaultMix(pack), index, Number(share))
-}
 const mixLabel = (name) => (name === 'default' ? 'default mix' : name === 'blue-off' ? 'Meta Blue off' : `${name.split(':')[0]} ${Math.round(Number(name.split(':')[1]) * 100)}%`)
 
 // --- render and compare ---

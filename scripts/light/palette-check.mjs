@@ -12,6 +12,7 @@ import path from 'node:path'
 import { chromium } from '@playwright/test'
 import sharp from 'sharp'
 import { list, parseArgs } from './lib/args.mjs'
+import { mixByName, rulesFor, sharesOf } from './lib/color-read.mjs'
 import { ROOT, startHarness } from './lib/harness.mjs'
 import { raw } from './lib/images.mjs'
 import { loadReferences } from './lib/references.mjs'
@@ -149,6 +150,11 @@ const T = {
   // that calls those Ice calls the rim-edge and radial-streaks examples Ice in Atmospheric too, and the check would
   // fail the references it was built from (artifacts/compare/rounds/14/check/MAIN-LIGHT.md).
   bright: { share: 0.005, onPath: 0.7, whiteL: 0.9, whiteC: 0.03 },
+  // With the color stage on (--mix), the owner's rule of 2026-11-09 10:01 PM (every picture shows all of its pack's
+  // colors) as the coordinator set it at 11:24 PM: every color the mix asks at `mix.asked` or more reads at
+  // `mix.reads` or more of the frame's visibly lit pixels, by color-shares' reading (lib/color-read.mjs). It replaces
+  // the rules on which pack colors show, and Contour's main light per seed is not checked (Meta Blue leads).
+  mix: { asked: 0.1, reads: 0.05 },
 }
 // Hues that are neither neighbour, so a lens edge never excuses them (SHARED.md palette rules).
 const THIRD_HUES = new Set(['pink', 'salmon', 'mauve', 'lavender', 'purple', 'magenta', 'mauve-grey', 'indigo'])
@@ -267,6 +273,9 @@ for (const pair of list(args.at)) {
   controls[name] = Number(value)
 }
 if (dev && list(args.at).length) throw new Error('--at does not apply with --dev: the tool page sends its own fixed intensity, softness and mood control')
+// --mix <default|blue-off|Cyan:0.6>: the shared color stage on at that mix, as the tool draws with colormix=1 (each
+// design drawn in the stage's design pack and given the frame's pack colors), judged with the mix rule (T.mix).
+const mixName = typeof args.mix === 'string' ? args.mix : null
 // The lens's radius follows Softness: R = 0.045 to 0.12 of the short side; a lens edge may be 2R wide.
 T.lensEdge = 2 * (0.045 + 0.075 * controls.softness)
 if (typeof args['lens-edge'] === 'string') T.lensEdge = Number(args['lens-edge'])
@@ -1050,7 +1059,7 @@ try {
   // The colors only one pack has (every pack shares Meta Blue).
   const OWN_COLORS = Object.fromEntries(PACK_ORDER.map((id) => [id, classifiers[id].colors.map((c) => c.name).filter((name) => PACK_ORDER.every((other) => other === id || !classifiers[other].colors.some((c) => c.name === name)))]))
   // A frame's fails, each with a short reason (`reasons`, same order) for counting. `drag` is the test drag it is at.
-  function judge(look, packId, m, { drag = null } = {}) {
+  function judge(look, packId, m, { drag = null, mix = null } = {}) {
     const k = classifiers[packId]
     const sunset = look.startsWith('sunset.')
     const fails = []
@@ -1107,7 +1116,11 @@ try {
       fail('wide outside area', `wide ${named} ${pct(m.wideShare)} (largest ${pct(m.largestPatch)})`)
     }
     if (m.darkLine >= T.darkLine) notes.push(`thin dark ${m.darkLineNames[0]?.name ?? ''} line ${pct(m.darkLine)}`)
-    if (sunset && drag) {
+    if (mix) {
+      for (const [name, asked] of Object.entries(mix.asked)) {
+        if (asked >= T.mix.asked && (mix.shares[name] ?? 0) < T.mix.reads) fail('asked color under 5%', `${name} reads ${pct(mix.shares[name] ?? 0)} (asked ${pct(asked)})`)
+      }
+    } else if (sunset && drag) {
       // Under a drag (12:45 PM): two pack colors over a visible share, one of them its pack's own (Bold's warm light
       // is, overexposed or pale too). Two of Atmospheric's greys count as two colors only when they are two tones: a
       // flat grey field with a faint gradient is one.
@@ -1130,7 +1143,8 @@ try {
       if (WARM[packId].length && warm.length === 0) fail('no warm color', 'no warm color')
       if (packId === 'bold' && WARM.bold.every((name) => m.own[name] >= T.present)) fail('two warm colors', 'two warm colors (Yellow and Orange-red)')
       if (packId === 'elemental' && warm.length > 1) notes.push('Lime and Tan together (open question 7)')
-    } else {
+    }
+    if (!sunset) {
       if (m.base.share >= 0.05 && m.base.outside >= T.baseOutside) fail('base outside the pack', `base is ${m.base.names[0]?.name} (${pct(m.base.outside)} of the base)`)
       if (m.lit.share >= 0.01 && m.lit.outside >= T.litOutside) fail('light outside the pack', `light goes ${m.lit.names[0]?.name} (${pct(m.lit.outside)} of the lit area)`)
       m.mainLight = m.source
@@ -1261,12 +1275,18 @@ try {
     return frames
   }
   const RENDER = { '16x9': { width: 640, height: 360 }, '9x16': { width: 360, height: 640 } }
+  // --mix: the stage (src/light/color/stage.ts) and the mix of each pack, with what it asks of each color.
+  const stage = mixName && rendering ? await harness.ssr('/src/light/color/stage.ts').catch(() => null) : null
+  if (mixName && rendering && !stage?.withColorMix) throw new Error('--mix: this checkout has no color stage yet (src/light/color/stage.ts with withColorMix and COLOR_DESIGN_PACK)')
+  const mixes = mixName ? await harness.ssr('/src/light/color/mix.ts') : null
+  const mixOf = (packId) => (mixName ? mixByName(mixes, getPack(packId), mixName) : null)
+  const readRules = Object.fromEntries(PACK_ORDER.map((id) => [id, rulesFor(getPack(id))]))
   // The tool's controls for a frame: at a test drag, the line and the mood control set from its start, as the tool
-  // has them right after that drag.
+  // has them right after that drag (with the stage on, from the design pack the tool draws in).
   const controlsOf = (look, f) => {
     if (!f.drag) return controls
     const { width, height } = RENDER[f.format]
-    return controlsForDrag(look, getPack(f.pack), f.seed, controls, width / height, clampDrag(DRAGS[f.drag]))
+    return controlsForDrag(look, getPack(stage ? stage.COLOR_DESIGN_PACK : f.pack), f.seed, controls, width / height, clampDrag(DRAGS[f.drag]))
   }
 
   let page = null
@@ -1278,7 +1298,9 @@ try {
     const [mood, short] = look.split('.')
     const c = controlsOf(look, f)
     const line = f.drag ? `&from=${c.drag.from.join(',')}&to=${c.drag.to.join(',')}` : ''
-    await page.goto(`${devUrl}/?mood=${mood}&look=${short}&pack=${f.pack}&seed=${f.seed}&format=${f.format}${line}`, { waitUntil: 'load', timeout: 90000 })
+    const mixParam = mixName ? mixes.formatMix(getPack(f.pack), mixOf(f.pack)) : null
+    const stageQuery = mixName ? `&colormix=1${mixParam ? `&mix=${mixParam}` : ''}` : ''
+    await page.goto(`${devUrl}/?mood=${mood}&look=${short}&pack=${f.pack}&seed=${f.seed}&format=${f.format}${line}${stageQuery}`, { waitUntil: 'load', timeout: 90000 })
     // The drag hint ("Drag to reposition the gradient") sits over the middle of the image until the first drag in a
     // browser, so every fresh page would show it.
     await page.addStyleTag({ content: '.tool-hint{display:none!important}' })
@@ -1303,12 +1325,17 @@ try {
   if (looks.length) await fs.mkdir(path.join(outDir, 'renders'), { recursive: true })
   if (maps) await fs.mkdir(path.join(outDir, 'maps'), { recursive: true })
   const report = { source: sourceLabel, startedAt: startedAt.toISOString(), thresholds: T, drags: Object.fromEntries(drags.map((d) => [d, DRAGS[d]])), looks: {} }
-  const summary = [`# Palette check: ${sourceLabel}`, '', `Started ${startedAt.toISOString()}. Controls: intensity ${controls.intensity}, softness ${controls.softness}, mood ${controls.mood}. Rule: ${rule}${rule === 'new' ? `, lens edges up to ${+T.lensEdge.toFixed(3)} of the short side` : ''}; warm tails: ${tailRule}; dim colors: ${dimRule ? 'navy rule (1:40 PM)' : 'strict'}; ${hazeLabel}; ${mainLabel}.${chromaFactors.length > 1 ? ` Also judged with chroma scaled by ${chromaFactors.slice(1).join(', ')}.` : ''} Test drags: ${drags.length ? drags.map(dragText).join('; ') : 'none'}. Thresholds in \`palette-check.mjs\` (T).`, '']
+  const summary = [`# Palette check: ${sourceLabel}`, '', `Started ${startedAt.toISOString()}. Controls: intensity ${controls.intensity}, softness ${controls.softness}, mood ${controls.mood}. Rule: ${rule}${rule === 'new' ? `, lens edges up to ${+T.lensEdge.toFixed(3)} of the short side` : ''}; warm tails: ${tailRule}; dim colors: ${dimRule ? 'navy rule (1:40 PM)' : 'strict'}; ${hazeLabel}; ${mainLabel}.${chromaFactors.length > 1 ? ` Also judged with chroma scaled by ${chromaFactors.slice(1).join(', ')}.` : ''} Test drags: ${drags.length ? drags.map(dragText).join('; ') : 'none'}.${mixName ? ` Color stage on at the mix \`${mixName}\`: every color the mix asks at ${pct(T.mix.asked)} or more must read at ${pct(T.mix.reads)} or more of the visibly lit pixels; the rules on which pack colors show and Contour's main light per seed are off.` : ''} Thresholds in \`palette-check.mjs\` (T).`, '']
   for (const look of looks) {
     const started = Date.now()
     const frames = frameList(look)
     for (const f of frames) {
       f.file = fromDir ? path.join(fromDir, `${f.id}.png`) : null
+      // A mix naming a color the pack doesn't have leaves that pack's frames out.
+      if (mixName && !mixOf(f.pack)) {
+        f.missing = true
+        continue
+      }
       if (fromDir) {
         if (!existsSync(f.file)) f.missing = true
         f.src = f.file
@@ -1317,15 +1344,24 @@ try {
       if (dev) f.src = await devShot(look, f)
       else {
         const exportSize = EXPORT_SIZES[f.format.replace('x', ':')]
-        const scene = buildScene(look, getPack(f.pack), f.seed, controlsOf(look, f), exportSize.width / exportSize.height)
-        f.sceneHexes = scene.colors
+        const built = buildScene(look, getPack(stage ? stage.COLOR_DESIGN_PACK : f.pack), f.seed, controlsOf(look, f), exportSize.width / exportSize.height)
+        const scene = stage ? stage.withColorMix(built, getPack(f.pack), mixOf(f.pack)) : built
+        // With the stage on the scene's slot colors are the design pack's, not the colors shown, so the drift rule
+        // (which reads them) is left out.
+        f.sceneHexes = stage ? null : scene.colors
         f.src = await raw(await harness.render({ scene, ...RENDER[f.format], supersample: 2 })).png().toBuffer()
       }
     }
     for (const f of frames) {
       if (f.missing) continue
       f.m = await analyse(f.src, f.pack, f.sceneHexes ?? null, maps ? path.join(outDir, 'maps', `${f.id}.png`) : null, look.startsWith('contour.'))
-      Object.assign(f, judge(look, f.pack, f.m, { drag: f.drag }))
+      if (mixName) {
+        const { data, info } = await sharp(f.src).removeAlpha().resize(320, 320, { fit: 'inside' }).raw().toBuffer({ resolveWithObject: true })
+        const pack = getPack(f.pack)
+        const shares = sharesOf(readRules[f.pack], data, info.width * info.height).shares
+        f.mix = { asked: Object.fromEntries(pack.colors.map((c, i) => [c.name, +mixOf(f.pack).shares[i].toFixed(4)])), shares: Object.fromEntries(Object.entries(shares).map(([k, v]) => [k, +v.toFixed(4)])) }
+      }
+      Object.assign(f, judge(look, f.pack, f.m, { drag: f.drag, mix: f.mix ?? null }))
     }
     // Renders of the frames the sheets show (the first seeds and every failing frame), or of every frame.
     for (const f of frames) {
@@ -1395,7 +1431,7 @@ try {
         const scaled = []
         for (const f of frames.filter((x) => x.pack === pack && x.m && !x.drag)) {
           const m = await analyse(f.src, f.pack, f.sceneHexes ?? null, null, contour, { chroma })
-          scaled.push({ ...f, m, ...judge(look, f.pack, m) })
+          scaled.push({ ...f, m, ...judge(look, f.pack, m, { mix: f.mix ?? null }) })
         }
         const failing = scaled.filter((f) => f.fails.length)
         const litChroma = scaled.map((f) => f.m.lit.chroma).filter((c) => c !== null).sort((x, y) => x - y)
@@ -1493,10 +1529,10 @@ try {
     const offered = offeredLights(k)
     const mains = packFrames.filter((f) => f.format === '16x9').map((f) => f.m.mainLight && asLight(k, f.m.mainLight)).filter(Boolean)
     const counts = Object.fromEntries(offered.map((name) => [name, mains.filter((x) => x === name).length]))
-    return { offered, counts, missing: contour ? offered.filter((name) => !counts[name]) : [] }
+    return { offered, counts, missing: contour && !mixName ? offered.filter((name) => !counts[name]) : [] }
   }
   function mainLightLine(row) {
-    return `Main light across seeds ${firstSeed}-${lastSeed(seeds)}: ${Object.entries(row.counts).map(([nm, c]) => `${nm} ${c}`).join(', ')}${row.missing.length ? `; never ${row.missing.join(', ')}: FAIL` : ''}.`
+    return `Main light across seeds ${firstSeed}-${lastSeed(seeds)}: ${Object.entries(row.counts).map(([nm, c]) => `${nm} ${c}`).join(', ')}${row.missing.length ? `; never ${row.missing.join(', ')}: FAIL` : mixName ? ' (not checked with the color stage on)' : ''}.`
   }
   function skyLine(packFrames) {
     const over = packFrames.filter((f) => f.m.skyFull > T.sky.share)
@@ -1539,9 +1575,10 @@ try {
     const width = LEFT + shownWidth + extraWidth + 40
     const height = 70 + groups.reduce((s, g) => s + groupHeight(g), 0) + 10
     const dragged = Boolean(groups[0].drag)
+    const mixFails = `, a color the mix asks at ${pct(T.mix.asked)}+ reading under ${pct(T.mix.reads)}`
     const lookFails = look.startsWith('sunset.')
-      ? dragged ? `, under 2 pack colors over ${pct(T.drag.visible)}, no color only the pack has` : ', under 3 pack colors, no Meta Blue, no warm color, two warm colors (Bold)'
-      : `, no pack color, base or light outside the pack${dragged ? '' : ', a pack light color never used across seeds'}`
+      ? mixName ? mixFails : dragged ? `, under 2 pack colors over ${pct(T.drag.visible)}, no color only the pack has` : ', under 3 pack colors, no Meta Blue, no warm color, two warm colors (Bold)'
+      : `, no pack color, base or light outside the pack${mixName ? mixFails : dragged ? '' : ', a pack light color never used across seeds'}`
     const comp = [
       { input: textSvg([{ text: `${look}: palette check${dragged ? ' at the test drags' : ''}`, color: '#fff' }], width, 22, 16), left: 12, top: 8 },
       { input: textSvg([sourceLabel, `Rule: ${rule}${rule === 'new' ? ` (lens edges up to ${+T.lensEdge.toFixed(3)} of the short side)` : ''}. Bar: each pack color's share in its hex, then clean mixes (grey), lens edges (teal grey), pale bridges (light grey), white, the dark base (black), and outside colors (red). A red frame fails. Fail: a wide outside area ${pct(T.largestPatch)}+ (or ${pct(T.wideShare)}+ in all), nearly black, flat white ${pct(T.flatWhite)}+${lookFails}.`], width, 34, 11, '#aaa'), left: 12, top: 30 },
@@ -1583,7 +1620,7 @@ try {
         const row = g.rows[pack]
         if (row) {
           if (contour && row.counts) {
-            const counts = `Main light per seed (16:9): ${Object.entries(row.counts).map(([nm, c]) => `${nm} ${c}`).join(', ')}${row.missing.length ? `. Never lit with ${row.missing.join(', ')}: FAIL` : '. Every light color used.'}`
+            const counts = `Main light per seed (16:9): ${Object.entries(row.counts).map(([nm, c]) => `${nm} ${c}`).join(', ')}${row.missing.length ? `. Never lit with ${row.missing.join(', ')}: FAIL` : mixName ? '. Not checked with the color stage on.' : '. Every light color used.'}`
             comp.push({ input: textSvg([{ text: counts, color: row.missing.length ? '#ff7070' : '#8c8' }], width - LEFT, LINE, 11), left: LEFT, top: below })
             below += LINE
           }
