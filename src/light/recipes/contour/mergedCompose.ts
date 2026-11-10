@@ -889,8 +889,8 @@ const vec = (params: Readonly<Record<string, ParamValue>>, key: string, fallback
  * Where the merged look's light is, from its params, always three parts in this order: the second light where it
  * lights its edge and face (a warm color: Yellow, Orange-red, Lime, Tan, or the brightest left, Atmospheric's Ice); the
  * dim lit room, the face's deep far side past the bright part near the edge (a dark color: Forest, Plum, Slate,
- * Near-black); the main light with the face it lights (a cool color, so Meta Blue, the largest share, carries the
- * face's gradient). With no second light its part sits off the frame and fades out. Nothing here reads the colors.
+ * Near-black); the main light with the face it lights. With no second light its part sits off the frame and fades
+ * out. Nothing here reads the colors.
  */
 export function mergedParts(params: Readonly<Record<string, ParamValue>>, aspect: number): StagePart[] {
   const [fw, fh] = frameSize(aspect)
@@ -907,6 +907,6 @@ export function mergedParts(params: Readonly<Record<string, ParamValue>>, aspect
   return [
     { kind: 'spot', at: frame(step(second, 0.05)), radius: 0.16, want: 'warm' },
     { kind: 'spot', at: frame(step(hot, 0.12 + reach)), radius: round4(0.18 + 0.5 * reach), want: 'dark' },
-    { kind: 'spot', at: frame(step(hot, 0.15)), radius: 0.3, want: 'cool' },
+    { kind: 'spot', at: frame(step(hot, 0.15)), radius: 0.3, want: 'any' },
   ]
 }

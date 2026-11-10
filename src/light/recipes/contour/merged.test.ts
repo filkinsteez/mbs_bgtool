@@ -98,7 +98,7 @@ describe('contour.merged', () => {
         const seconds = LISTS.map((colors) => composeMerged({ colors, controls: CONTROLS, seed, aspect }).params)
         const { params } = composeMerged({ colors: LISTS[0], controls: CONTROLS, seed, aspect })
         const parts = mergedParts(params, aspect)
-        expect(parts.map((p) => (p.kind === 'horizon' ? 'horizon' : p.want)), `seed ${seed}`).toEqual(['warm', 'dark', 'cool'])
+        expect(parts.map((p) => (p.kind === 'horizon' ? 'horizon' : p.want)), `seed ${seed}`).toEqual(['warm', 'dark', 'any'])
         for (const part of parts) expect(JSON.stringify(part)).not.toMatch(/null|NaN/)
         // The second light is part of the design: there in every list or in none, at the same place.
         expect(new Set(seconds.map((p) => Number(p.secondUnit) > 0)).size, `seed ${seed}`).toBe(1)
