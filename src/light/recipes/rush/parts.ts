@@ -1,6 +1,6 @@
 import type { FieldWant, StagePart } from '../../color/stageFields'
 import type { ParamValue } from '../../scene'
-import { MAX_LIGHTS } from './split-shader'
+import { MAX_LIGHTS, SOFT_TURN, bendAt, softClamp } from './split-shader'
 
 /** Line pieces per streak, across the part of the run the frame sees. */
 const PIECES = 6
@@ -44,8 +44,7 @@ export function rushParts(params: Params, aspect: number): StagePart[] {
   const u0 = Math.max(Math.min(...us), -0.5 * reach)
   const u1 = Math.min(Math.max(...us), 1.6 * reach)
   const toFrame = (u: number, across: number): [number, number] => {
-    const t = Math.min(1.6, Math.max(-0.5, u / reach))
-    const v = across + (hookSquare * t * t + hookCube * t * t * t) * reach
+    const v = across + bendAt(u / reach, hookSquare, hookCube) * reach
     const x = fx + u * dir[0] + v * nrm[0]
     const y = fy + u * dir[1] + v * nrm[1]
     return [Math.round((x / (2 * hx) + 0.5) * 1e4) / 1e4, Math.round((y / (2 * hy) + 0.5) * 1e4) / 1e4]
@@ -65,10 +64,10 @@ export function rushParts(params: Params, aspect: number): StagePart[] {
     const [fadeIn, fadeLen] = le.slice(4 * i, 4 * i + 2)
     const [drift, bow, corePlace, place] = lf.slice(4 * i, 4 * i + 4)
     const taper = lg[4 * i] ?? 0
-    const taperAt = (u: number) => Math.exp(taper * (Math.min(1.3, Math.max(-0.3, u / reach)) - 0.5))
+    const taperAt = (u: number) => Math.exp(taper * (softClamp(u / reach, -0.3, 1.3, SOFT_TURN) - 0.5))
     const want: { line?: FieldWant; core?: FieldWant } = isBridge(i) ? { line: 'bright' } : wantOf(place)
     const acrossAt = (u: number, offset = 0) => {
-      const scale = Math.max(1 + fan * Math.min(1.5, Math.max(-0.3, u / reach)), 0.25)
+      const scale = Math.max(1 + fan * softClamp(u / reach, -0.3, 1.5, SOFT_TURN), 0.25)
       return { across: (center + offset * half + u * (drift + u * bow)) * scale, scale }
     }
     for (let k = 0; k < PIECES; k++) {
@@ -95,11 +94,14 @@ export function rushParts(params: Params, aspect: number): StagePart[] {
       group,
       ...(want.core ? { want: want.core } : {}),
     })
-    if (place < 0) continue
-    // Where a colored streak's light falls off on each side (1.2 to 2 half-widths out, at about 25% down to 5%), its
-    // dim end asks for a dark color (Forest, Plum, Slate, Near-black), in a group of its own after the streaks' and
-    // bridges' groups, so a dark color is the dim end of this light, never a slab or a blob in the black.
-    for (const side of [-1, 1]) {
+    // Where a colored streak's light falls off into darkness (a side facing the frame's edge or the dark room, lg's
+    // fourth number: 1 the low side, 2 the high side; 1.2 to 2 half-widths out, at about 25% down to 5%), its dim end
+    // asks for a dark color (Forest, Plum, Slate, Near-black), in a group of its own after the streaks' and bridges'
+    // groups, so a dark color is the dim end of this light, never a slab or a blob in the black. A side facing a
+    // neighbour hands over to the neighbour's light instead.
+    const steep = place < 0 ? 0 : (lg[4 * i + 3] ?? 0)
+    const darkSides = [...(steep % 2 >= 1 ? [-1] : []), ...(steep >= 2 ? [1] : [])]
+    for (const side of darkSides) {
       for (let k = 0; k < PIECES; k++) {
         const ua = u0 + ((u1 - u0) * k) / PIECES
         const ub = u0 + ((u1 - u0) * (k + 1)) / PIECES

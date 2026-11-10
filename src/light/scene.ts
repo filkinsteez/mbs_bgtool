@@ -1,7 +1,7 @@
 import type { ColorPack, PackId } from './color/packs'
 import type { Rgb } from './color/srgb'
 
-/** `rush` has no panel tile yet: its one look shows only behind `rush=split`. */
+/** `rush` has one look, `rush.split`, on the panel's third mood tile. */
 export type MoodId = 'sunset' | 'contour' | 'rush'
 
 /**

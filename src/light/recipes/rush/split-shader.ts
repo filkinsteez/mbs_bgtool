@@ -1,5 +1,23 @@
 export const MAX_LIGHTS = 11
 export const MAX_TONGUES = 4
+/** How far (in run lengths) the ends of a bend, fan or taper round off, so a band turns in a wide arc, never a corner. */
+export const SOFT_TURN = 0.4
+
+/** The steepest the flow's bend gets, per run length: a wide arc, never a fold. */
+export const BEND_SLOPE = 0.8
+
+/** The flow's bend at t (run lengths along it), per run length: the shader's `bendArc` and `bendLean`. */
+export function bendAt(t: number, arc: number, lean: number): number {
+  return arc * BEND_SLOPE * BEND_SLOPE * (Math.sqrt(1 + (t * t) / (BEND_SLOPE * BEND_SLOPE)) - 1) + (lean * t * t * t) / (1 + t * t)
+}
+
+/** A clamp whose ends round off over `k`; the shader's `softClamp`, for the parts and the layout. */
+export function softClamp(x: number, lo: number, hi: number, k: number): number {
+  let h = Math.min(1, Math.max(0, 0.5 + (0.5 * (x - lo)) / k))
+  const above = lo + (x - lo) * h + k * h * (1 - h)
+  h = Math.min(1, Math.max(0, 0.5 - (0.5 * (above - hi)) / k))
+  return hi + (above - hi) * h - k * h * (1 - h)
+}
 
 /**
  * Rush: light moving too fast to hold its shape. Streaks of light fill the frame side by side: one or two wide soft
@@ -43,6 +61,20 @@ uniform vec4 uTongueLook;           // edge softness, depth, wander, unused
 uniform int uTongues;
 
 vec3 compColor(int k) { return k == 0 ? uC0 : k == 1 ? uC1 : k == 2 ? uC2 : uC3; }
+#define SOFT_TURN ${SOFT_TURN.toFixed(2)}
+#define BEND_SLOPE ${BEND_SLOPE.toFixed(2)}
+// The flow's bend: one wide arc that grows like t squared near the start and straightens to a slope of at most
+// BEND_SLOPE per run length, and a lean that tips it to one side, so a band never folds back or turns a corner.
+float bendArc(float t) { return BEND_SLOPE * BEND_SLOPE * (sqrt(1.0 + t * t / (BEND_SLOPE * BEND_SLOPE)) - 1.0); }
+float bendLean(float t) { return t * t * t / (1.0 + t * t); }
+// A clamp whose ends round off over k (a smooth max with lo, then a smooth min with hi), so a band turns in a wide arc
+// where a bend, fan or taper stops growing, never in a corner.
+float softClamp(float x, float lo, float hi, float k) {
+  float h = clamp(0.5 + 0.5 * (x - lo) / k, 0.0, 1.0);
+  float above = mix(lo, x, h) + k * h * (1.0 - h);
+  h = clamp(0.5 - 0.5 * (above - hi) / k, 0.0, 1.0);
+  return mix(hi, above, h) - k * h * (1.0 - h);
+}
 // A color's hue (at luminance 1) at a level of its light: its own at the peak, then each step of its dim path in turn.
 vec3 dimHue(int k, float level) {
   vec3 c = compColor(k);
@@ -84,9 +116,8 @@ vec3 radiance(vec2 uv, vec2 p) {
   float v = dot(q, nrm);
   float reach = max(uRun.w, 1e-3);
   float t = u / reach;
-  float tb = clamp(t, -0.5, 1.6);
-  v -= (uHook.x * tb * tb + uHook.y * tb * tb * tb) * reach;
-  float vs = v / max(1.0 + uStack.x * clamp(t, -0.3, 1.5), 0.25);
+  v -= (uHook.x * bendArc(t) + uHook.y * bendLean(t)) * reach;
+  float vs = v / max(1.0 + uStack.x * softClamp(t, -0.3, 1.5, SOFT_TURN), 0.25);
   float vw = vs + uStack.y * valueNoise(vec2(u * uStack.z, vs * uStack.w), uSeed + 7);
   // Each light's luminance here and what sets its hue: a pack color (its index, and its luminance at the peak), whose
   // hue is read once all the light here is added up, or a fixed hue (white streaks, bridges; color -1).
@@ -122,7 +153,8 @@ vec3 radiance(vec2 uv, vec2 p) {
     float fadeOut = 1.0 - smoothstep(E.z - E.y, E.z + E.y, u);
     // The streak's dim skirt: its light reaching across the room beside it, each side at its own level, in the darkest
     // color of its dim path (navy, deep red, Forest, Slate), so the room between streaks is dimly lit, not black.
-    float skirt = (s0 < 0.0 ? H.x : H.y) * exp(-abs(s0) / max(A.y * H.z, 1e-4));
+    // Rounded through the middle (no cusp), and from one side's level to the other's smoothly.
+    float skirt = mix(H.x, H.y, 0.5 + 0.5 * tanh(s0 / max(A.y, 1e-4))) * exp(-sqrt(s0 * s0 + 0.25 * A.y * A.y) / max(A.y * H.z, 1e-4));
     float skirtLum = C.x * skirt * fadeIn * fadeOut;
     int k = int(E.w + 0.5);
     col[i] = k;
@@ -135,15 +167,21 @@ vec3 radiance(vec2 uv, vec2 p) {
     }
     float s = s0 - Dl.y * valueNoise(vec2(u * 1.3, fi * 4.7), uSeed + 31 + i);
     // Each streak widens or narrows along the flow by its own taper, so neighbouring edges are never parallel.
-    float halfW = A.y * max(0.3, 1.0 + A.z * valueNoise(vec2(u * 1.1 + 7.1, fi * 2.7), uSeed + 61 + i)) * exp(G.x * (clamp(t, -0.3, 1.3) - 0.5));
+    float halfW = A.y * max(0.6, 1.0 + A.z * valueNoise(vec2(u * 1.1 + 7.1, fi * 2.7), uSeed + 61 + i)) * exp(G.x * (softClamp(t, -0.3, 1.3, SOFT_TURN) - 0.5));
     // Each side of the streak has its own width, wandering along it.
-    float sideScale = exp(s < 0.0 ? B.x : -B.x) * (1.0 + B.y * valueNoise(vec2(u * 5.5, fi * 4.1 + (s < 0.0 ? 1.0 : 2.0)), uSeed + 71 + i));
+    // The two sides blend into each other across the middle, so there is no crease along the band.
+    float side = tanh(s / max(0.4 * halfW, 1e-4));
+    float wobble = mix(valueNoise(vec2(u * 5.5, fi * 4.1 + 1.0), uSeed + 71 + i), valueNoise(vec2(u * 5.5, fi * 4.1 + 2.0), uSeed + 71 + i), 0.5 + 0.5 * side);
+    float sideScale = exp(-B.x * side) * (1.0 + B.y * wobble);
     float x = s / max(halfW * sideScale, 1e-4);
     float ta = max(u, 0.0) / max(reach, 1.0);
     // Along its length a streak's light rises in bright patches and dips only a little between them, so a light color
     // brightens toward white rather than dimming toward olive.
+    // A light color's light (the cool and warm roles: Lime, Ice, Cyan, Yellow) dips least, since it reads olive or grey
+    // as soon as it dims.
     float swing = valueNoise(vec2(u * 1.6 + 11.0, fi * 6.1), uSeed + 83 + i);
-    float env = fadeIn * fadeOut * max(0.0, 1.0 + C.y * (swing > 0.0 ? swing : 0.35 * swing)) / (1.0 + 0.3 * ta * ta);
+    float dip = F.w > 0.5 && F.w < 0.85 ? 0.2 : 0.5;
+    float env = fadeIn * fadeOut * max(0.0, 1.0 + C.y * (swing > 0.0 ? swing : dip * swing)) / (1.0 + 0.3 * ta * ta);
     if (env < 1e-4) {
       total += skirtLum;
       continue;
@@ -164,11 +202,13 @@ vec3 radiance(vec2 uv, vec2 p) {
       total += lum[i];
       continue;
     }
-    // A streak: a body falling off to its skirt at its edges (softer in a wide band), and a hot core. Every color but
-    // the lead (Meta Blue, which dims softly into navy) keeps a broad bright top and falls steeply at its sides, so it
-    // never sits at mid lightness over a wide area (Lime would read olive, Tan grey-brown).
+    // A streak: a body falling off to its skirt at its edges (softer in a wide band), and a hot core. A side facing
+    // darkness (G.w: 1 the low side, 2 the high side) of every color but the lead (Meta Blue, which dims softly into
+    // navy) keeps a broad bright top and falls steeply, so it never sits at mid lightness over a wide area (Lime would
+    // read olive, Tan grey-brown); a side facing a neighbour falls softly into the neighbour's light.
     float x2 = x * x;
-    float body = exp(-G.y * (F.w > 0.5 ? 0.4 * x2 + 0.9 * x2 * x2 : x2));
+    float steepSide = s < 0.0 ? mod(G.w, 2.0) : floor(G.w / 2.0);
+    float body = exp(-G.y * (F.w > 0.5 && steepSide > 0.5 ? 0.6 * x2 + 0.6 * x2 * x2 : x2));
     float cx = (s / max(halfW, 1e-4) - F.z) / A.w;
     float coreShape = exp(-0.5 * cx * cx);
     float profile = body;
@@ -204,12 +244,12 @@ vec3 radiance(vec2 uv, vec2 p) {
     } else if (C.z > 0.0) {
       // A lead streak's core in its own color, hottest at one place along it (H.w) and on its bright side, so the
       // light goes toward a lighter blue and white only at the hottest point.
-      float along = (u - H.w) / (0.6 * reach);
+      float along = (u - H.w) / (1.8 * reach);
       coreLum[i] = C.x * C.z * coreShape * body * env * grad * exp(-along * along);
     }
   }
   // Where lights overlap, the overlap is their light added up, lighter than each alone. Its hue is the stronger
-  // light's (each counts by its luminance to the eighth power, so two hues never mix into a third), and a pack color
+  // light's (each counts by its luminance to the sixteenth power, so two hues never mix into a third), and a pack color
   // is read at the light here: bright where lights overlap, dimming along its own path (Lime into Forest) only where
   // the light really falls.
   vec3 leadSum = vec3(0.0);
@@ -225,7 +265,9 @@ vec3 radiance(vec2 uv, vec2 p) {
       share *= share;
       hot += own / max(luminance(own), 1e-5) * coreLum[i] * share * share;
     }
-    float w = lum[i] * lum[i] * 30.0;
+    float w = lum[i] * 6.0;
+    w *= w;
+    w *= w;
     w *= w;
     w *= w;
     leadSum += h / max(luminance(h), 1e-5) * w;

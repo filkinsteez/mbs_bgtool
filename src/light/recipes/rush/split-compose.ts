@@ -1,7 +1,7 @@
 import type { ColorPack } from '../../color/packs'
 import type { ComposeInput, Composition, ControlValues, ParamValue } from '../../scene'
 import { colorAt, rushColors, STAND_IN_WHITE, standInLuminance } from './colors'
-import { MAX_LIGHTS, MAX_TONGUES } from './split-shader'
+import { MAX_LIGHTS, MAX_TONGUES, SOFT_TURN, bendAt, softClamp } from './split-shader'
 
 const round4 = (v: number) => Math.round(v * 1e4) / 1e4
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
@@ -71,6 +71,8 @@ interface Band {
   skirtLength?: number
   /** A lead band's hottest place along the run (where its core is brightest). */
   hotAt?: number
+  /** Which sides fall steeply, facing the frame's edge or the dark room: 1 the low side, 2 the high side, 3 both. */
+  steep?: number
 }
 
 /** Streaks across the frame at most, before accents and seams. */
@@ -131,25 +133,22 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
       reach = Math.max(0.25, length)
     }
   }
-  // A big sweep that bends more and more toward the far end in some seeds, a near-straight flow in others.
-  const curvy = random() < 0.4
-  const hook: [number, number] = [either(random) * (curvy ? lerp(0.2, 0.45, random()) : lerp(0, 0.08, random())), curvy ? either(random) * lerp(0.05, 0.2, random()) : 0]
+  // Every flow bends in a wide arc: a big sweep in about half of the seeds, a gentle one in the others, never straight.
+  const curvy = random() < 0.55
+  const hook: [number, number] = [either(random) * (curvy ? lerp(0.35, 0.7, random()) : lerp(0.18, 0.32, random())), curvy ? either(random) * lerp(0.05, 0.25, random()) : 0]
   // How much of the stack is lit and where, from the seed (a stream of its own). Half of the seeds have a white bridge
-  // and soft streaks that fill the stack edge to edge and run straighter; most others have no bridge and a band of
-  // streaks that fills 58-78% of it along one side with dark room beyond, which a curving flow turns into a broad bright
-  // curve with a dark side. One frame-wide feature per seed, so no seed reads as another one moved.
+  // and soft streaks that fill the stack edge to edge; most others have no bridge and a band of streaks that fills
+  // 67-80% of it along one side with dark room beyond, which the arc turns into a broad bright curve with a dark side.
+  // One frame-wide feature per seed, so no seed reads as another one moved.
   const coverRandom = seededRandom(seed, 0x5f17)
   const hasBridge = coverRandom() < 0.5
   const edgeToEdge = hasBridge || coverRandom() < 0.3
-  const coverShare = edgeToEdge ? 1 : lerp(0.58, 0.78, coverRandom())
+  const coverShare = edgeToEdge ? 1 : lerp(0.67, 0.8, coverRandom())
   const brightAt = lerp(0.25, 0.75, coverRandom())
   const cover = { share: coverShare, from: coverRandom() < 0.5 ? 0 : 1 - coverShare, at: brightAt }
-  if (edgeToEdge) {
-    hook[0] *= 0.7
-    hook[1] *= 0.7
-  }
-  // A third of the seeds fan out strongly, as from a point behind the start, off the frame.
-  const fan = random() < 0.35 ? lerp(0.8, 1.5, random()) : lerp(-0.2, 0.6, random())
+  // Half of the seeds fan out strongly, as from a point behind the start, off the frame; in the others the stack
+  // narrows a little or widens mildly along the flow.
+  const fan = random() < 0.5 ? lerp(0.8, 1.6, random()) : lerp(-0.15, 0.4, random())
   // Where the frame lies across a flow (with the bend and the fan) and along it, over a grid of points. The stack
   // spans most of it, not the far corners, so no streak sits only in a corner.
   const measure = (f: readonly number[], d: readonly number[], nr: readonly number[], r: number) => {
@@ -163,9 +162,8 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
         const u = (x - f[0]) * d[0] + (y - f[1]) * d[1]
         near = Math.min(near, u)
         far = Math.max(far, u)
-        const t = Math.min(1.6, Math.max(-0.5, u / r))
-        const v = (x - f[0]) * nr[0] + (y - f[1]) * nr[1] - (hook[0] * t * t + hook[1] * t * t * t) * r
-        acrossAt.push(v / Math.max(1 + fan * Math.min(1.5, Math.max(-0.3, u / r)), 0.25))
+        const v = (x - f[0]) * nr[0] + (y - f[1]) * nr[1] - bendAt(u / r, hook[0], hook[1]) * r
+        acrossAt.push(v / Math.max(1 + fan * softClamp(u / r, -0.3, 1.5, SOFT_TURN), 0.25))
       }
     acrossAt.sort((a, b) => a - b)
     return { lo: acrossAt[Math.floor(0.03 * (acrossAt.length - 1))], hi: acrossAt[Math.ceil(0.97 * (acrossAt.length - 1))], near, far }
@@ -220,7 +218,7 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
   const baseWidths = roles.map((r, i) =>
     i === dominantAt
       ? lerp(0.45, 0.6, random())
-      : scale * (r === 'lead' ? lerp(0.22, 0.32, random()) : r === 'white' ? lerp(0.16, 0.24, random()) : r === 'deep' ? lerp(0.09, 0.14, random()) : lerp(0.16, 0.26, random())),
+      : scale * (r === 'lead' ? lerp(0.22, 0.32, random()) : r === 'white' ? lerp(0.16, 0.24, random()) : r === 'deep' ? lerp(0.12, 0.18, random()) : lerp(0.16, 0.26, random())),
   )
   // Widths vary a lot within a frame: in a broad seed one band is much wider than the rest, and every other band is
   // narrower by its own amount. These draws come from a separate random stream, so the draws above and below stay as
@@ -242,7 +240,7 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
     .flatMap((r, i) => (r !== roles[i] && r !== 'white' && roles[i] !== 'white' ? [i] : []))
     .sort((a, b) => Math.abs(pairAt(a) - brightest) - Math.abs(pairAt(b) - brightest))
   const bridgeAt = new Set(candidates.slice(0, hasBridge ? 1 : 0))
-  const gaps = gapDraws.map((d, i) => (bridgeAt.has(i) ? lerp(0.14, 0.26, d[1]) : lerp(0.06, 0.3, d[1])))
+  const gaps = gapDraws.map((d, i) => (bridgeAt.has(i) ? lerp(0.14, 0.26, d[1]) : lerp(0.02, 0.16, d[1])))
   const total = widths.reduce((a, w) => a + w, 0) + gaps.reduce((a, g) => a + g, 0)
   // The bands fill the lit share of the stack; the rest, on the dark side, is room lit only by the outer band's skirt.
   const unit = (cover.share * across) / total
@@ -257,11 +255,10 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
     at += width + (gaps[i] ?? 0) * unit
     const white = role === 'white'
     const falloff = role === 'deep' ? lerp(2, 2.8, random()) : lerp(0.75, 1.1, random())
-    // Each colored band's light is a broad soft swell 1.8 to 2.2 times as wide as its place in the stack, so
-    // neighbours overlap and add up, the way light moving too fast to hold its shape spreads, with soft dips between
-    // swells where colors hand over. A white streak stays a highlight about as wide as its place (a wide one would be
-    // flat white).
-    const half = ((white ? 0.6 : 1) * lerp(1.8, 2.2, extra()) * 0.5 * width) / reachTo(0.3, falloff)
+    // Each colored band's light is a broad soft swell 2.1 to 2.5 times as wide as its place in the stack, so neighbours
+    // overlap and add up, the way light moving too fast to hold its shape spreads. A white streak is a little narrower
+    // and dimmer than white, so it never reads as a flat white field.
+    const half = ((white ? 0.8 : 1) * lerp(2.1, 2.5, extra()) * 0.5 * width) / reachTo(0.3, falloff)
     // A white band stays near-white across, with its cool and warm colors only at its edges.
     const split1 = white ? half * lerp(0.6, 0.9, random()) : 0
     bands.push({
@@ -269,7 +266,7 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
       center,
       half,
       // Each band pinches and widens along its length, so neighbouring edges converge and spread.
-      widthVary: lerp(0.25, 0.45, random()),
+      widthVary: lerp(0.12, 0.22, random()),
       // A lead band (Meta Blue) carries its own light: a bright core on one side of its swell, hottest at one place
       // along it, going toward a lighter blue and white only at the hottest point, with a dim navy side.
       coreWidth: role === 'lead' ? lerp(0.6, 0.8, random()) : 0.5,
@@ -278,20 +275,21 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
       split0: split1 * lerp(0.4, 0.7, random()),
       split1,
       luminance: white
-        ? STAND_IN_WHITE * lerp(0.9, 1.05, random())
+        ? STAND_IN_WHITE * lerp(0.7, 0.82, random())
         : // Cool and warm bands near their color's own lightness (Lime, Ice), so they never read dim (olive, grey); deep
           // bands at about their own (Orange-red, Tan, Steel). Meta Blue's wide swell adds onto its neighbours'.
           standInLuminance(PLACE[role]) * (role === 'lead' ? SWELL_SHARE * lerp(0.85, 1.7, random()) : role === 'cool' ? lerp(0.95, 1.25, random()) : role === 'warm' ? lerp(0.9, 1.15, random()) : lerp(0.8, 1.05, random())),
       // Each band's light rises and falls along its length in its own way, so no seed reads as another one moved.
       brightVary: lerp(0.55, 0.8, random()),
-      coreGain: role === 'lead' ? lerp(3.5, 5, random()) : white ? 0.15 : 0,
+      coreGain: role === 'lead' ? lerp(2.5, 3.5, random()) : white ? 0.15 : 0,
       // Every swell is brighter on one side than the other, so no area of a color is flat: Meta Blue's strongly (its
-      // navy side), the others gently, since a light color's dim side would read olive (Lime) or grey-brown (Tan).
-      gradient: either(random) * (role === 'lead' ? lerp(0.6, 0.95, random()) : lerp(0.15, 0.35, random())),
+      // navy side), the others gently and light colors least, since a light color's dim side would read olive (Lime)
+      // or grey-brown (Tan).
+      gradient: either(random) * (role === 'lead' ? lerp(0.25, 0.45, random()) : role === 'cool' || role === 'warm' ? lerp(0.05, 0.15, random()) : lerp(0.15, 0.35, random())),
       wander: lerp(0.004, 0.012, random()),
       // Fine streaks along the motion, visible but soft.
-      texture: lerp(0.18, 0.3, random()),
-      textureFreq: lerp(25, 50, random()),
+      texture: lerp(0.03, 0.06, random()),
+      textureFreq: lerp(8, 16, random()),
       fadeIn: lerp(-0.3, 0.05, random()) * reach,
       fadeLen: lerp(0.1, 0.25, random()) * reach,
       // A short dragged line still has its streaks cross the whole frame.
@@ -304,6 +302,12 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
       falloff,
     })
   }
+  // Only a side that faces darkness (the outermost bands' outer sides: the frame's edge or the dark room) falls steeply,
+  // so a light color there doesn't sit at mid lightness. Between neighbours the sides fall softly, since their light
+  // adds up and stays bright where one color hands over to the next.
+  bands.forEach((b, i) => {
+    b.steep = (i === 0 ? 1 : 0) + (i === bands.length - 1 ? 2 : 0)
+  })
   // Where two colors would mix outside the pack, one band's light fills the trough (a lead band's, else the one before)
   // and the other falls off steeply on that side, so the trough reads as one color dimming (navy, deep red), not a mix.
   const steepLeft = bands.map(() => false)
@@ -326,25 +330,17 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
     else if (steepRight[i]) b.asym = 0.25
   })
   // Each band drifts and bows its own way, so no two run as one family of parallel curves. A band never closes in on
-  // its neighbour to less than 60% of their distance (they would merge into one), except in a quarter of the seeds,
-  // where one pair that blends cleanly crosses within the frame.
-  const clean = bands.slice(1).flatMap((b, i) => (clashes(bands[i].role, b.role) ? [] : [i]))
-  const crossAt = clean.length > 0 && random() < 0.25 ? clean[Math.floor(random() * clean.length)] : -1
+  // its neighbour to less than 75% of their distance and no two cross, so bands never squeeze into a wedge or a pinch.
   for (let i = 0; i + 1 < bands.length; i++) {
     const a = bands[i]
     const b = bands[i + 1]
     const apart = b.center - a.center
-    if (i === crossAt) {
-      b.drift = a.drift - (1.6 * apart) / Math.max(uFar - Math.max(uNear, 0), 0.5)
-      b.bow = a.bow
-      continue
-    }
     let closest = 0
     for (let k = 0; k <= 8; k++) {
       const u = lerp(uNear, uFar, k / 8)
       closest = Math.min(closest, u * (b.drift - a.drift) + u * u * (b.bow - a.bow))
     }
-    const f = closest < -0.4 * apart ? (0.4 * apart) / -closest : 1
+    const f = closest < -0.25 * apart ? (0.25 * apart) / -closest : 1
     b.drift = a.drift + f * (b.drift - a.drift)
     b.bow = a.bow + f * (b.bow - a.bow)
   }
@@ -365,7 +361,7 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
     const level = roomBelow || roomAbove ? 0.5 * drawnLevel : drawnLevel
     const length = roomBelow || roomAbove ? 0.5 * drawnLength : drawnLength
     if (b.role === 'white') return
-    const fills = (pair: number, steep: boolean) => pair !== crossAt && !bridgeAt.has(pair) && steep
+    const fills = (pair: number, steep: boolean) => !bridgeAt.has(pair) && steep
     const low = i === 0 ? level : fills(i - 1, steepRight[i - 1]) ? 0.2 * level : 0
     const high = i === bands.length - 1 ? level : fills(i, steepLeft[i + 1]) ? 0.2 * level : 0
     if (low === 0 && high === 0) return
@@ -376,12 +372,12 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
   // lighter than both sides in every pack. It runs along the line where their edges (at 30% of their light) meet,
   // fitted at three places, and spans most of the gap between them.
   const edgeAt = (b: Band, side: 1 | -1, u: number) => {
-    const t = Math.min(1.3, Math.max(-0.3, u / reach))
+    const t = softClamp(u / reach, -0.3, 1.3, SOFT_TURN)
     return b.center + u * (b.drift + u * b.bow) + side * b.half * Math.exp(b.taper * (t - 0.5) - side * b.asym) * reachTo(0.3, b.falloff)
   }
   const seams: Band[] = []
   for (let i = 0; i + 1 < bands.length; i++) {
-    if (!bridgeAt.has(i) || i === crossAt) continue
+    if (!bridgeAt.has(i)) continue
     const a = bands[i]
     const b = bands[i + 1]
     const [u0, u1, u2] = [uNear, 0.5 * (uNear + uFar), uFar]
@@ -488,7 +484,7 @@ export function composeRushSplit(hexes: readonly string[], controls: ControlValu
     ld: pad(B.flatMap((b) => [b.gradient, b.wander, b.texture, b.textureFreq]), 4 * MAX_LIGHTS),
     le: pad(B.flatMap((b) => [b.fadeIn, b.fadeLen, b.fadeOut, b.seam ? colorOf(b.seam[0]) : b.role === 'white' ? 0 : colorOf(b.role)]), 4 * MAX_LIGHTS),
     lf: pad(B.flatMap((b) => [b.drift, b.bow, b.corePlace, b.seam ? -2 : b.role === 'white' ? -1 : PLACE[b.role]]), 4 * MAX_LIGHTS),
-    lg: pad(B.flatMap((b) => [b.taper, b.falloff, b.fringeDir ?? 1, b.seam ? colorOf(b.seam[1]) : 0]), 4 * MAX_LIGHTS),
+    lg: pad(B.flatMap((b) => [b.taper, b.falloff, b.fringeDir ?? 1, b.seam ? colorOf(b.seam[1]) : (b.steep ?? 0)]), 4 * MAX_LIGHTS),
     lh: pad(B.flatMap((b) => [b.skirt?.[0] ?? 0, b.skirt?.[1] ?? 0, b.skirtLength ?? 1, b.hotAt ?? 0]), 4 * MAX_LIGHTS),
     lights: B.length,
     spectrum: colors.spectrum,

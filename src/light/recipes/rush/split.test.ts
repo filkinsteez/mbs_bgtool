@@ -31,9 +31,15 @@ const designOf = (params: Record<string, ParamValue>) =>
 // Streaks with a core spot for the color stage: all but the bridges (place -2), which are line pieces only.
 const streaksOf = (params: Record<string, ParamValue>) =>
   (params.lf as number[]).filter((place, i) => i % 4 === 3 && i < 4 * (params.lights as number) && place > -1.5).length
-// Colored streaks (not white, not a bridge), which add dim flank parts asking for a dark color.
-const coloredOf = (params: Record<string, ParamValue>) =>
-  (params.lf as number[]).flatMap((place, i) => (i % 4 === 3 && i < 4 * (params.lights as number) && place >= 0 ? [(i - 3) / 4] : []))
+// Colored streaks (not white, not a bridge) with a side facing darkness (lg's fourth number: 1 the low side, 2 the
+// high side), each such side adding dim flank parts that ask for a dark color: [streak, sides].
+const darkSidesOf = (params: Record<string, ParamValue>) =>
+  (params.lf as number[]).flatMap((place, i) => {
+    if (i % 4 !== 3 || i >= 4 * (params.lights as number) || place < 0) return []
+    const steep = (params.lg as number[])[i]
+    const sides = (steep % 2 >= 1 ? 1 : 0) + (steep >= 2 ? 1 : 0)
+    return sides > 0 ? [[(i - 3) / 4, sides]] : []
+  })
 
 describe('Rush split', () => {
   it("uses only the pack's own colors, and black for no light", () => {
@@ -99,7 +105,7 @@ describe('Rush split', () => {
       const parts = rushParts(params, 16 / 9)
       const lights = params.lights as number
       const groups = [...new Set(parts.map((p) => (p.kind === 'horizon' ? -1 : p.group)))].sort((a, b) => (a ?? 0) - (b ?? 0))
-      expect(groups).toEqual([...Array(lights).keys(), ...coloredOf(params).map((i) => lights + i)])
+      expect(groups).toEqual([...Array(lights).keys(), ...darkSidesOf(params).map(([i]) => lights + i)])
       // A lead streak's parts ask for nothing (the stage gives the first group the lead color).
       const lightParts = parts.flatMap((p) => (p.kind === 'horizon' ? [] : [p]))
       expect(lightParts.filter((p) => p.group === 0).every((p) => p.want === undefined), `s${seed}`).toBe(true)
@@ -113,7 +119,7 @@ describe('Rush split', () => {
         for (const drag of LINES) {
           const { params } = composeRushSplit(hexesOf('bold'), { ...CONTROLS, drag }, seed, aspect)
           const parts = rushParts(params, aspect)
-          expect(parts.filter((p) => p.kind === 'line')).toHaveLength(6 * (params.lights as number) + 12 * coloredOf(params).length)
+          expect(parts.filter((p) => p.kind === 'line')).toHaveLength(6 * (params.lights as number) + 6 * darkSidesOf(params).reduce((n, [, sides]) => n + sides, 0))
           expect(parts.filter((p) => p.kind === 'spot')).toHaveLength(streaksOf(params))
           for (const part of parts) {
             if (part.kind === 'line') {
