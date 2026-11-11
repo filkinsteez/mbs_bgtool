@@ -203,20 +203,28 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
       t += p[k];
     }
     s = max(t, 1e-30);
-    // The meeting's own line: the light rises and whitens only where two far hues share the pixel (4 pi pj), most
-    // where they split it evenly, so a band keeps its own color and the design's light up to the meeting.
+    // Where two far hues share the pixel (4 pi pj), the lighter color's light spills over the darker one: each color's
+    // share counts by its own brightness, as much as the two overlap, so across the overlap the lighter color holds
+    // most of it and fades into the darker one, with no white line and no lift along the meeting.
     float split = 0.0;
     for (int i = 0; i < 5; i++) {
       for (int j = 0; j < 5; j++) {
         if (j <= i || j >= uMixCount) continue;
-        if (((uMixFar >> (i * 5 + j)) & 1) == 0) continue;
+        if (((uMixFar >> (i * 5 + j)) & 1) == 0 || uMixColor[i].a > 2.5 || uMixColor[j].a > 2.5) continue;
         split += 4.0 * p[i] * p[j] / (s * s);
       }
     }
-    float seam = min(split, 1.0);
-    bridge *= seam;
-    rise *= seam;
-    onLine = smoothstep(0.0, 1.0, bridge);
+    float spill = min(split, 1.0);
+    float u = 0.0;
+    for (int k = 0; k < 5; k++) {
+      if (k >= uMixCount) continue;
+      p[k] *= mix(1.0, uMixField[k].z, spill);
+      u += p[k];
+    }
+    s = max(u, 1e-30);
+    bridge = 0.0;
+    rise = 0.0;
+    onLine = 0.0;
   }
   // Each side keeps its own color up to the meeting line (shares squared); with the soft blend (uMixSoft) the
   // shares already say how gradually one color changes into the next, and are drawn as they are.
@@ -244,7 +252,7 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
   b = min(b, 1.0);
   // Far hues meet through neutral along a narrow line, so they never mix into mauve, indigo or teal.
   // With the soft blend the line whitens only where the design is light; in the dim it would read as a grey line.
-  m = mix(m, vec3(1.0), uMixBridge * b * b * (uMixSoft > 0.5 ? smoothstep(0.45, 0.75, L) : 1.0));
+  if (uMixSoft < 0.5) m = mix(m, vec3(1.0), uMixBridge * b * b);
   if (onLine > 0.0 || onDark > 0.0) {
     // On a dark line each color is taken at the dimmed light, so it follows its own dim path (its ramp and turn).
     float yAt = mix(yE, yDark, onDark);

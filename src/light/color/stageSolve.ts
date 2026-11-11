@@ -723,8 +723,41 @@ export function softFields(grid: StageGrid, values: readonly Float32Array[], col
       if (colors[k].kind !== KIND_DARK) o[i] *= scale
     })
   }
+  spillOver(out, colors, w, h)
   return out
 }
+
+/**
+ * Where two light colors far apart in hue meet (farPairs, neither a dark color), the lighter one's share spreads over
+ * the darker one's side, as its share blurred by SPILL_SPREAD grid cells (a Gaussian's sigma), taken from the darker
+ * one's share only: a blob's color fades into the sky as gradually as its light does, with no white line between.
+ */
+function spillOver(out: Float32Array[], colors: readonly StageColor[], w: number, h: number): void {
+  const far = farPairs(colors.slice(0, 5))
+  const n = Math.min(5, colors.length, out.length)
+  for (let a = 0; a < n; a++)
+    for (let b = a + 1; b < n; b++) {
+      if (((far >> (a * 5 + b)) & 1) === 0 || colors[a].kind === KIND_DARK || colors[b].kind === KIND_DARK) continue
+      const [lighter, darker] = colors[a].lightness >= colors[b].lightness ? [a, b] : [b, a]
+      const strength = smooth(SPILL_RATIO[0], SPILL_RATIO[1], (colors[lighter].lightness / colors[darker].lightness) ** 3)
+      if (strength <= 0) continue
+      const wide = blurGrid(out[lighter], w, h, SPILL_SPREAD)
+      for (let i = 0; i < out[lighter].length; i++) {
+        const moved = strength * Math.min(out[darker][i], Math.max(0, wide[i] - out[lighter][i]))
+        out[lighter][i] += moved
+        out[darker][i] -= moved
+      }
+    }
+}
+
+/** How far, in grid cells, a lighter color's share spreads over a far-hue darker neighbor's side (spillOver). */
+const SPILL_SPREAD = 2
+
+/**
+ * How many times brighter (luminance) the lighter color must be for its share to spread over the darker one's side:
+ * none at the first, all from the second, so Yellow spreads over Meta Blue (about 5 times) but not over Cyan (1.4).
+ */
+const SPILL_RATIO = [1.5, 3] as const
 
 /** Luminance added to every cell's light when light colors spread by the light (softFields), so the dark spreads evenly. */
 const LIGHT_FLOOR = 1e-3

@@ -490,7 +490,7 @@ function stageUniforms({ colors, weights, byParts }: Solved): UniformMap {
     color.set([...c.unit, c.kind], 4 * k)
     const range = c.kind === KIND_TO_NEIGHBOR ? c.turn : c.fade
     turn.set([c.neighborIndex, c.edge, range[0], range[1]], 4 * k)
-    field.set([k, weights[k], 0, 0], 4 * k)
+    field.set([k, weights[k], c.lightness ** 3, 0], 4 * k)
   })
   return {
     uMixCount: Math.min(5, colors.length),
