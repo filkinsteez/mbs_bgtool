@@ -91,7 +91,20 @@ Contour's Halo layout of separate circles (a big ring with smaller rings beside 
   arrow and stack along it (owner, 2026-11-11: "here i'm dragging left to
   right and the gradient is drawing bottom to top. it should follow the
   drag direction of the arrow"). The horizon tilt limits of 2026-11-04 no
-  longer apply to Sunrise.
+  longer apply to Sunrise. The owner repeated it on 2026-11-11 at 2:46 PM:
+  "sunrise drag control is not respecting drag direction again. i thought
+  we fixed this? fix it."
+  - The light is strongest where the drag starts and runs along the arrow;
+    at the arrow's end the gradient has reached its far colors.
+  - Drag left to right: upright bands, stacked left to right.
+  - Drag bottom to top: level bands, stacked bottom to top.
+  - Drag on a diagonal: bands at right angles to that diagonal, stacked
+    along it. Drags from a corner give bands across the frame, not fans or
+    a V.
+  - The bands stay organic: they curve and drift and are never parallel.
+  - A drag never changes which colors show or their shares.
+  - A test in the repo checks the direction. Don't change Sunrise's drag
+    handling unless it passes.
 - Rush is soft, with its light smeared along each band like a long
   exposure (owner, 2026-11-11, approving the round 27 candidate: "Yes,
   this is it"). A few seeds may look alike in Rush ("OK, a few
