@@ -176,8 +176,8 @@ const RECENTRE_MAX = 0.3
 
 /** The rings beside a rings layout's big ring (short sides): their radius, how far along the big ring from the main
  * light's place, and the gap between them and the big ring. */
-const RINGS_RADIUS = [0.2, 0.32]
-const RINGS_ALONG = [0.45, 0.7]
+const RINGS_RADIUS = [0.3, 0.42]
+const RINGS_ALONG = [0.55, 0.8]
 const RINGS_GAP = [0.12, 0.22]
 
 /**
@@ -578,9 +578,9 @@ const COOL_PEAK = [0.38, 0.5]
 const STRETCH_FAR = 0.2
 /** A second light that is a ring of its own (another edge, clear of the main one): its haze and face light and their
  * reach (times the main light's), and how wide its color stage parts are, so its color fills its halo. */
-const RING_FAR = 0.2
-const RING_REACH = 0.5
-const RING_PART_WIDTH = 0.09
+const RING_FAR = 0.45
+const RING_REACH = 0.8
+const RING_PART_WIDTH = 0.16
 /** How far a ring's stretch keeps from the main light's edge (short sides): nearer, its halo met the main light's. */
 const RING_CLEAR = 0.4
 /** How far a ring's stretch keeps from the main light's edge (short sides) to be warm: its halo and the main light's
@@ -660,6 +660,12 @@ const DARK_SAMPLES = 160
 const DARK_PART_WIDTH = 0.035
 const DARK2_HALF = 0.19
 const DARK2_PART_WIDTH = 0.042
+/** The dim room round the lit shapes asks for the pack's dark colors (Forest and Plum, Slate and Near-black; Meta
+ * Blue's navy in a pack with none) over a soft spot this wide (short sides) round each dark stretch, so the stage
+ * paints the dim haze and face there in them instead of grey; the stage keeps a dark color to where the light is dim.
+ * The first is wider: the second (the darker color, Plum or Near-black) takes the dimmest light wherever both reach. */
+const DARK_SPOT = [0.28, 0.16]
+const DARK_WASH = true
 /** How far into the face the main light's part sits from the light. */
 const LEAD_INTO = 0.15
 /** The main light hands over to the second light along the line: it is dark over this share of the second light's half
@@ -730,7 +736,8 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const shape0 = buildMergedShape(spec)
   const runs = visibleRuns(shape0, anchor, aspect)
   // The main light is on the layout's own shape (a rings layout's big ring), never on a ring beside it.
-  const run = longestRun(def.kind === 'rings' ? visibleRuns(buildMergedShape(placed.spec), anchor, aspect) : runs)
+  const mainRuns = def.kind === 'rings' ? visibleRuns(buildMergedShape(placed.spec), anchor, aspect) : runs
+  const run = longestRun(mainRuns)
   const [fw, fh] = frameSize(aspect)
   // The mood control (Light position; the tool holds it at 0.5) moves the light along the edge from the seed's place.
   // The seed's place stays in the middle half of the visible edge, so the face it lights is in the frame.
@@ -774,17 +781,20 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   // cut through the stops). A ring beside a rings layout's big ring starts at its side facing the main light, away
   // from its own light on its far side.
   const seedPlace = pointAlong(clearRun.length > 1 ? clearRun : run, Math.min(0.75, Math.max(0.25, def.hotAt + design.hotShift))) ?? anchor
-  const fromHot = nearestOnContours(merged, anchorR, hot)
+  // A rings layout's main light stays on its big ring (contour 0) wherever it is dragged; crossing onto a small ring,
+  // its stops jumped to another contour.
+  const onLightContour = (n: ReturnType<typeof nearestOnContours>) => (def.kind === 'rings' ? { ...n, contour: 0 } : n)
+  const fromHot = onLightContour(nearestOnContours(merged, anchorR, hot))
   const fromSeed = nearestOnContours(merged, anchorR, seedPlace)
   const starts = fromHot.ts.map((t, i) => round4(i === fromHot.contour ? t - 0.5 : fromSeed.ts[i] - (def.kind === 'rings' && i > 0 ? 0 : 0.5)))
   const drawn = startedShape(merged, starts)
   const drawnTips = outlineTips(drawn, anchorR, aspect)
-  const onDrawn = nearestOnContours(drawn, anchorR, hot)
+  const onDrawn = onLightContour(nearestOnContours(drawn, anchorR, hot))
   const tHot = onDrawn.ts[onDrawn.contour]
   // The visible piece the light is on, and its ends measured along the light's own contour (signed, within half a
   // turn), so the stops' span moves smoothly with the light.
   const dist2 = (a: Vec2, b: Vec2) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2
-  const lit = runs.reduce<Vec2[]>((best, r) => {
+  const lit = mainRuns.reduce<Vec2[]>((best, r) => {
     const near = (rr: Vec2[]) => Math.min(...rr.map((p) => dist2(p, hot)))
     return best.length === 0 || (r.length > 1 && near(r) < near(best)) ? r : best
   }, run)
@@ -1381,6 +1391,11 @@ export function mergedParts(params: Readonly<Record<string, ParamValue>>): Stage
     const v = vec(params, key, PART_OFF)
     return { kind: 'line', from: [v[0], v[1]], to: [v[2], v[3]], width, want, strength }
   }
+  // A dark stretch as a soft spot round its middle, so its dark color takes the dim room there, not only the line.
+  const darkSpot = (key: string, radius: number): StagePart => {
+    const v = vec(params, key, PART_OFF)
+    return { kind: 'spot', at: [(v[0] + v[2]) / 2, (v[1] + v[3]) / 2], radius, want: 'dark', strength: 1 }
+  }
   const spot = (key: string, want: FieldWant, strength = 1): StagePart => {
     const v = vec(params, key, PART_OFF)
     return { kind: 'spot', at: [v[0], v[1]], radius: Math.max(0.01, v[2]), want, strength }
@@ -1405,8 +1420,7 @@ export function mergedParts(params: Readonly<Record<string, ParamValue>>): Stage
     ...seconds.map((s) => s.cool),
     line('partCool', 'cool'),
     line('partCool2', 'cool'),
-    line('partDark', 'dark', 1, DARK_PART_WIDTH),
-    line('partDark2', 'dark', 1, DARK2_PART_WIDTH),
+    ...(DARK_WASH ? [darkSpot('partDark', DARK_SPOT[0]), darkSpot('partDark2', DARK_SPOT[1])] : [line('partDark', 'dark', 1, DARK_PART_WIDTH), line('partDark2', 'dark', 1, DARK2_PART_WIDTH)]),
     ...thirds.map((s) => s.own),
     ...thirds.map((s) => s.pale),
   ]
