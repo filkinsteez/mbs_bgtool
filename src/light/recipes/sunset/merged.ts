@@ -989,9 +989,11 @@ vec3 auxRadiance(vec2 uv, vec2 p) {
     gDeepWave = 0.75 * gradientNoise(q * 1.2 + vec2(2.6, 6.3), uHorizonSeed + 89) + 0.45 * gradientNoise(q * 2.3 + vec2(5.8, 0.3), uHorizonSeed + 101);
     gDeepSoft = 0.5 + 0.5 * gradientNoise(q * 1.1 + vec2(7.4, 1.8), uHorizonSeed + 97);
   }
-  // The ground's edge drifts off the horizon line and its softness changes along its length.
+  // The ground's edge drifts off the horizon line and its softness changes along its length. The drift changes slowly
+  // enough that a dip is never narrower than about a short side: where the color stage paints the sky's light in a
+  // narrow dip, the dip's bottom closes in a V.
   float edgeSoft = uGround.w * (0.4 + 1.2 * (0.5 + 0.5 * gradientNoise(vec2(a * 1.3 + 3.9, 8.8), uHorizonSeed + 69)));
-  float edgeOff = 1.2 * uGround.w * gradientNoise(vec2(a * 1.6 + 6.2, 1.4), uHorizonSeed + 71);
+  float edgeOff = 1.2 * uGround.w * gradientNoise(vec2(a * 1.0 + 6.2, 1.4), uHorizonSeed + 71);
   float edge = smoothstep(-0.5 * uPixel - edgeSoft, 0.5 * uPixel + edgeSoft, h - edgeOff);
   if (uLightnessOnly == 1) {
     float L = skyLightness(a, h);
