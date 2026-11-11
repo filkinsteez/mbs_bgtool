@@ -186,7 +186,7 @@ function cellHash(cell: number, salt: number): number {
 }
 
 /** Smooth seeded value noise over the frame in short-side units, about one bump per 0.6. Returns -1..1. */
-function makeNoise(rng: () => number, fw: number, fh: number): (u: number, v: number) => number {
+export function makeNoise(rng: () => number, fw: number, fh: number): (u: number, v: number) => number {
   const cell = 0.6
   const nx = Math.ceil((fw + 1) / cell) + 3
   const ny = Math.ceil((fh + 1) / cell) + 3

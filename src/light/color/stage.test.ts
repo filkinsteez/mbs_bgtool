@@ -294,7 +294,7 @@ describe('color stage', () => {
     }
   })
 
-  it('marks meeting lines only where far hues trade places quickly: thin, none between near hues, none in a broad mix', () => {
+  it('spills light across a meeting only where far hues trade places quickly: soft, uneven, none between near hues, none in a broad mix', () => {
     const grid = flatGrid(16 / 9)
     const { width: w, height: h } = grid
     const colors = stageColors(getPack('bold'), defaultMix(getPack('bold')), true)
@@ -308,16 +308,20 @@ describe('color stage', () => {
         for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out[y * w + x] = k === a ? step(soft)(x) : k === b ? 1 - step(soft)(x) : 0
         return out
       })
-    // Meta Blue meeting Yellow over about a cell: a line a few cells wide in the middle, nothing at the sides.
+    // Meta Blue meeting Yellow over about a cell: a spill that peaks at the meeting, fades into both sides and is gone at
+    // the frame's sides; along the meeting its strength drifts, so it is no even band.
     const line = meetingLines(grid, shares(blue, yellow, 1), colors)
     const row = Array.from({ length: w }, (_, x) => line[Math.floor(h / 2) * w + x])
-    expect(Math.max(...row)).toBeGreaterThan(0.9)
-    expect(row.filter((v) => v > 0.5).length).toBeLessThanOrEqual(4)
-    expect(row[0] + row[w - 1]).toBe(0)
+    const peak = row.indexOf(Math.max(...row))
+    expect(Math.max(...row)).toBeGreaterThan(0.3)
+    expect(Math.abs(peak - w / 2)).toBeLessThanOrEqual(2)
+    expect(row[0] + row[w - 1]).toBeLessThan(1e-3)
+    const along = Array.from({ length: h }, (_, y) => line[y * w + peak])
+    expect(Math.max(...along)).toBeGreaterThan(1.2 * Math.min(...along))
     // Near hues (Meta Blue and Cyan) make no line, and neither does a mix that changes over most of the frame.
     expect(Math.max(...meetingLines(grid, shares(blue, cyan, 1), colors))).toBe(0)
     expect(Math.max(...meetingLines(grid, shares(blue, yellow, 30), colors))).toBeLessThan(0.05)
-    // A Yellow streak across Meta Blue: one two cells wide keeps its color (no line), one ten cells wide gets a line
+    // A Yellow streak across Meta Blue: one two cells wide keeps its color (no spill), one ten cells wide gets a spill
     // along each side.
     const streak = (cells: number) =>
       colors.map((_, k) => {
@@ -330,7 +334,7 @@ describe('color stage', () => {
         return out
       })
     expect(Math.max(...meetingLines(grid, streak(2), colors))).toBeLessThan(0.1)
-    expect(Math.max(...meetingLines(grid, streak(10), colors))).toBeGreaterThan(0.9)
+    expect(Math.max(...meetingLines(grid, streak(10), colors))).toBeGreaterThan(0.3)
   })
 
   it('turns on only through withColorMix, and leaves the recipe shaders as they were without it', () => {

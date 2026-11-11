@@ -1,6 +1,6 @@
 import type { Gpu, Target } from '../engine/gl'
 import { glowDimUniforms, lensSpread, levelSigma } from '../engine/lens'
-import { meetBridge } from '../engine/meet'
+import { MEET_BRIDGE_PRESENT } from '../engine/meet'
 import { toneCurve } from '../engine/output'
 import { runPostPasses } from '../engine/passes'
 import { NO_PROFILE } from '../engine/profile'
@@ -10,7 +10,7 @@ import { isRecipeId, type ColorMixSettings, type LensSettings, type RecipeContex
 import { defaultMix, mixFromShares, type ColorMix } from './mix'
 import { getPack, isPackId, type ColorPack, type PackId } from './packs'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
-import { blurGrid, buildFields, COVERAGE_SPLIT, GRID_SHORT, gridSize, lightSlope, lookParts, VISIBLE, type StageField, type StageGrid } from './stageFields'
+import { blurGrid, buildFields, COVERAGE_SPLIT, GRID_SHORT, gridSize, lightSlope, lookParts, makeNoise, mulberry32, VISIBLE, type StageField, type StageGrid } from './stageFields'
 import { assignFields, colorFields, coloredByParts, farPairs, KIND_DARK, KIND_TO_NEIGHBOR, softFields, solveWeights, stageColors, stageDimPaths, STAGE_SHARPNESS, type StageColor } from './stageSolve'
 
 /**
@@ -96,13 +96,42 @@ const LINE_REACH = 0.06
 const LINE_HOLD = [0.2, 0.5] as const
 
 /**
- * Where two of the pack's light colors far apart in hue (farPairs, not the dark colors) meet in a look colored by its
- * parts: a thin line along which their soft shares are equal (meetBridge, MEET_BRIDGE_WIDTH to either side), only
- * where the shares trade places quickly (LINE_SLOPE) and each color holds its own side (LINE_REACH). The strongest of
- * every pair, per grid cell. The light along it rises in the shader (owner, 2026-11-10: the meeting reads lighter
- * instead of grey, by an amount that may differ by pack); everything else keeps the design's light.
+ * How far the spill reaches into the two colors' hand-over: how evenly a cell splits between them (4 sa sc / (sa + sc)²,
+ * 1 where they are equal) to this power, times 1 to 1 + SPILL_NARROWS as it drifts along the meeting.
  */
-export function meetingLines(grid: StageGrid, shares: readonly Float32Array[], colors: readonly StageColor[]): Float32Array {
+const SPILL_OVERLAP = 0.75
+const SPILL_NARROWS = 2
+/** How much of the spill drops away on the lighter color's own side of a meeting. */
+const SPILL_LIGHT_SIDE = 0.8
+/**
+ * The light's change per grid cell (grid.slope) over which a falloff already separates the two colors, as round a
+ * blob's own edge: there the spill goes from all of it to SPILL_ON_FALLOFF of it.
+ */
+const SPILL_FALLOFF = [0.015, 0.05] as const
+const SPILL_ON_FALLOFF = 0.6
+/** How much the spill's strength drifts along a meeting (1 down to 1 - SPILL_DRIFT), per SPILL_DRIFT_SIZE short sides. */
+const SPILL_DRIFT = 0.25
+const SPILL_DRIFT_SIZE = 0.25
+/**
+ * The spill's blur, in grid cells (a Gaussian's sigma), so its light fades into both sides of the meeting, and the gain
+ * after it, so a wide meeting keeps its full spill while a narrow one gets less.
+ */
+const SPILL_SOFT = 1.5
+const SPILL_GAIN = 2
+
+/**
+ * Where two of the pack's light colors far apart in hue (farPairs, not the dark colors) meet in a look colored by its
+ * parts, the light spills across the meeting (owner, 2026-11-10: the meeting reads lighter instead of grey, by an
+ * amount that may differ by pack; coordinator 11:24 PM: light spilling across a meeting, not an outline round a shape).
+ * The spill follows the two colors' hand-over (SPILL_OVERLAP), only where their shares trade places quickly (LINE_SLOPE)
+ * and each holds its own side (LINE_REACH); the strongest of every pair, per grid cell. It lies mostly over the darker
+ * color (SPILL_LIGHT_SIDE), so the lighter shape keeps its color up to the meeting and its light fades out over its
+ * neighbor; it is weaker where the light's own falloff already separates the colors (SPILL_FALLOFF); its reach and
+ * strength drift along the meeting (seeded by the design, so every pack drifts alike); and it is blurred (SPILL_SOFT),
+ * so it never makes an even ring round a shape. The light rises with it in the shader; elsewhere the design's light
+ * stays.
+ */
+export function meetingLines(grid: StageGrid, shares: readonly Float32Array[], colors: readonly StageColor[], seed = 1): Float32Array {
   const { width: w, height: h } = grid
   const perShort = Math.min(w, h)
   const reach = LINE_REACH * perShort
@@ -113,6 +142,14 @@ export function meetingLines(grid: StageGrid, shares: readonly Float32Array[], c
     const t = Math.min(1, Math.max(0, (v - lo) / (hi - lo)))
     return t * t * (3 - 2 * t)
   }
+  // makeNoise has a bump every 0.6 of its units, so the frame is scaled to put one every SPILL_DRIFT_SIZE short sides.
+  const scale = 0.6 / SPILL_DRIFT_SIZE / perShort
+  const rng = mulberry32(Math.imul(seed, 7919) + 11)
+  const narrows = makeNoise(rng, w * scale, h * scale)
+  const weakens = makeNoise(rng, w * scale, h * scale)
+  const power = new Float32Array(w * h)
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) power[y * w + x] = SPILL_OVERLAP * (1 + SPILL_NARROWS * (0.5 + 0.5 * narrows((x + 0.5) * scale, (y + 0.5) * scale)))
   for (let a = 0; a < n; a++)
     for (let c = a + 1; c < n; c++) {
       if (((far >> (a * 5 + c)) & 1) === 0 || colors[a].kind === KIND_DARK || colors[c].kind === KIND_DARK) continue
@@ -146,10 +183,25 @@ export function meetingLines(grid: StageGrid, shares: readonly Float32Array[], c
           const ny = gy / g
           const held = Math.min(dAt(x + reach * nx, y + reach * ny), -dAt(x - reach * nx, y - reach * ny))
           const i = y * w + x
-          out[i] = Math.max(out[i], meetBridge(sa[i], sc[i], slope) * t * t * (3 - 2 * t) * smooth(held, LINE_HOLD))
+          const pair = sa[i] + sc[i]
+          const balance = pair > 1e-6 ? (4 * sa[i] * sc[i]) / (pair * pair) : 0
+          const present = smooth(Math.min(sa[i], sc[i]), MEET_BRIDGE_PRESENT)
+          // The lighter color's light spills over the darker one: on the lighter color's own side the spill drops away,
+          // so the lighter shape keeps its color up to the meeting and its light fades out over its neighbor.
+          const lighterLeads = (colors[a].lightness >= colors[c].lightness ? 1 : -1) * (sa[i] - sc[i])
+          const side = 1 - SPILL_LIGHT_SIDE * smooth(lighterLeads, [0, 0.5])
+          out[i] = Math.max(out[i], balance ** power[i] * present * side * t * t * (3 - 2 * t) * smooth(held, LINE_HOLD))
         }
     }
-  return out
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x
+      if (out[i] <= 0) continue
+      const falloff = smooth(grid.slope?.[i] ?? 0, SPILL_FALLOFF)
+      const along = 1 - SPILL_DRIFT * (0.5 - 0.5 * weakens((x + 0.5) * scale, (y + 0.5) * scale))
+      out[i] *= (1 - (1 - SPILL_ON_FALLOFF) * falloff) * along
+    }
+  return blurGrid(out, w, h, SPILL_SOFT).map((v) => Math.min(1, SPILL_GAIN * v))
 }
 
 /**
@@ -313,7 +365,7 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
           weights: colors.map(() => 1),
         }
       : { values, weights: solution.weights }
-    const bridge = byParts ? meetingLines(grid, soft, colors) : new Float32Array(grid.width * grid.height)
+    const bridge = byParts ? meetingLines(grid, soft, colors, input.ctx.seed) : new Float32Array(grid.width * grid.height)
     solved = remember(solves, solveKey, { colors, assignment, byParts, ...solution, ...drawn, bridge })
   }
   lastReport = { hexes: solved.colors.map((c) => c.hex), light: solved.light, reads: solved.reads, fields: solved.assignment.map((f) => fields[f]?.name ?? '') }
