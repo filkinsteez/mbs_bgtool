@@ -315,7 +315,7 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
         ? STAND_IN_WHITE * lerp(0.7, 0.82, random())
         : // Cool and warm bands near their color's own lightness (Lime, Ice), so they never read dim (olive, grey); deep
           // bands at about their own (Orange-red, Tan, Steel). Meta Blue's wide swell adds onto its neighbours'.
-          standInLuminance(PLACE[role]) * (role === 'lead' ? SWELL_SHARE * lerp(0.85, 1.7, random()) : role === 'cool' ? lerp(0.95, 1.25, random()) : role === 'warm' ? lerp(0.9, 1.15, random()) : lerp(0.8, 1.05, random())),
+          standInLuminance(PLACE[role]) * (role === 'lead' ? SWELL_SHARE * lerp(0.95, 1.8, random()) : role === 'cool' ? lerp(0.95, 1.25, random()) : role === 'warm' ? lerp(0.9, 1.15, random()) : lerp(0.8, 1.05, random())),
       // Each band's light rises and falls along its length in its own way, so no seed reads as another one moved.
       brightVary: lerp(0.55, 0.8, random()),
       coreGain: role === 'lead' ? lerp(2.5, 3.5, random()) : white ? 0.15 : 0,
