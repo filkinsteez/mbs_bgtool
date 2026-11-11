@@ -879,7 +879,11 @@ float skyLightness(float a, float h) {
   L = uKind == 1 ? mix(L, max(L, gHaloLight), gHalo) : mix(L, warmLight, warmAt(a, h));
   L = mix(L, uDome.z, domeAt(a, h));
   // Below the horizon line the sky's light rises to white over a short distance.
-  L = mix(L, 0.97, 1.0 - smoothstep(-0.3 * paleScale, 0.0, h));
+  // Further below, it falls back and then to the sky's dim far light, so a frame dragged far below the horizon keeps a
+  // dim area instead of washing out to white.
+  float below = max(-h, 0.0) / max(0.3 * paleScale, 0.02);
+  L = mix(L, 0.97, smoothstep(0.0, 1.0, below) * (1.0 - smoothstep(1.5, 4.0, below)));
+  L = mix(L, uSkyL.w, smoothstep(2.5, 6.0, below));
   return min(L, 0.97);
 }
 
