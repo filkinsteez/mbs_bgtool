@@ -8,6 +8,19 @@ const PACKS = ['bold', 'elemental', 'atmospheric'].map((id) => getPack(id as 'bo
 const ASPECTS = [16 / 9, 9 / 16]
 const SEEDS = Array.from({ length: 24 }, (_, i) => i + 1)
 const OWNER_LINE = { from: [1.011, 1.224] as [number, number], to: [-0.078, -0.067] as [number, number] }
+// Lines for the drag direction test (frame units, y down), with the owner's: the corner drag above and its mirror, and
+// the left-to-right drag of 2026-11-11 9:29 AM.
+const DIRECTION_LINES: Record<string, { from: [number, number]; to: [number, number] }> = {
+  'left to right': { from: [0.1, 0.5], to: [0.9, 0.5] },
+  'right to left': { from: [0.9, 0.5], to: [0.1, 0.5] },
+  'bottom to top': { from: [0.5, 0.9], to: [0.5, 0.1] },
+  'top to bottom': { from: [0.5, 0.1], to: [0.5, 0.9] },
+  'up and to the right': { from: [0.1, 0.9], to: [0.9, 0.1] },
+  'down and to the right': { from: [0.1, 0.1], to: [0.9, 0.9] },
+  "owner's corner drag": OWNER_LINE,
+  'mirrored corner drag': { from: [-0.011, 1.224], to: [1.078, -0.067] },
+  "owner's left-to-right drag": { from: [-0.001, 0.418], to: [0.62, 0.428] },
+}
 
 // Everything in the params but how far each part's color may dim, which comes from the colors.
 const designOf = (params: Record<string, unknown>) => Object.fromEntries(Object.entries(params).filter(([key]) => key !== 'lowest' && key !== 'broadOn'))
@@ -52,6 +65,50 @@ describe('merged Sunrise', () => {
           if (horizon?.kind !== 'horizon' || !horizon.light) throw new Error('no light')
           for (const v of horizon.light) expect(v, `s${seed} ${aspect.toFixed(2)} ${drag ? 'line' : 'default'}`).toBeGreaterThanOrEqual(-0.06)
           for (const v of horizon.light) expect(v, `s${seed} ${aspect.toFixed(2)} ${drag ? 'line' : 'default'}`).toBeLessThanOrEqual(1.06)
+        }
+  })
+
+  // The owner's rule (2026-11-11 9:29 AM and 2:46 PM; AGENTS.md): a drag sets the gradient like a design tool's gradient
+  // tool. The bands stack along the sky's height above the horizon line, read here from the composed design on a grid
+  // over the frame (the horizon line as the shader draws it, without its small drift). Across the frame that height
+  // must change mostly along the line and little across it, rise from the line's start toward its end, and the light
+  // must sit on the start's side of the frame.
+  it('follows the drag arrow: bands at right angles to the line, stacked along it from the light at its start', () => {
+    const bow = (a: number) => (a * a) / Math.sqrt(1 + a ** 4)
+    const cells = 24
+    const step = 0.01
+    for (const [name, drag] of Object.entries(DIRECTION_LINES))
+      for (const seed of SEEDS)
+        for (const aspect of ASPECTS) {
+          const { params } = composeMerged({ pack: PACKS[0], controls: { ...CONTROLS, drag }, seed, aspect })
+          const frameW = Math.max(aspect, 1)
+          const frameH = Math.max(1 / aspect, 1)
+          const line = [(drag.to[0] - drag.from[0]) * frameW, (drag.to[1] - drag.from[1]) * frameH]
+          const along = [line[0] / Math.hypot(line[0], line[1]), line[1] / Math.hypot(line[0], line[1])]
+          const sun = params.sun as number[]
+          const up = params.up as number[]
+          const [off, bend, lean] = params.horizon as number[]
+          const height = (x: number, y: number) => {
+            const d = [x - sun[0], y - sun[1]]
+            const a = -d[0] * up[1] + d[1] * up[0]
+            return d[0] * up[0] + d[1] * up[1] - (off + bend * bow(a) + lean * a)
+          }
+          let rise = 0
+          let alongChange = 0
+          let acrossChange = 0
+          for (let i = 0; i < cells; i++)
+            for (let j = 0; j < cells; j++) {
+              const x = ((i + 0.5) / cells - 0.5) * frameW
+              const y = ((j + 0.5) / cells - 0.5) * frameH
+              const ahead = height(x + step * along[0], y + step * along[1]) - height(x - step * along[0], y - step * along[1])
+              rise += ahead
+              alongChange += Math.abs(ahead)
+              acrossChange += Math.abs(height(x - step * along[1], y + step * along[0]) - height(x + step * along[1], y - step * along[0]))
+            }
+          const label = `${name}, s${seed} ${aspect > 1 ? '16:9' : '9:16'}`
+          expect(acrossChange / alongChange, `${label}: change across the line against along it`).toBeLessThan(0.35)
+          expect(rise / alongChange, `${label}: the bands stack from the line's start toward its end`).toBeGreaterThan(0.5)
+          expect(sun[0] * along[0] + sun[1] * along[1], `${label}: the light sits on the start's side`).toBeLessThan(0)
         }
   })
 })
