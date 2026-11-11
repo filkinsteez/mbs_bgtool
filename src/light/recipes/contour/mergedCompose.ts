@@ -553,6 +553,9 @@ const RING_REACH = 0.5
 const RING_PART_WIDTH = 0.09
 /** How far a ring's stretch keeps from the main light's edge (short sides): nearer, its halo met the main light's. */
 const RING_CLEAR = 0.4
+/** How far a ring's stretch keeps from the main light's edge (short sides) to be warm: its halo and the main light's
+ * haze then stay apart. */
+const WARM_RING_CLEAR = 0.7
 /** Another edge's own light: its half length (this share of its visible length, within these bounds), how far its
  * hottest place keeps from the main light, and its core line (times the main one). */
 const EDGE_SHARE = 0.33
@@ -855,7 +858,10 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     ringLight = !def.wash && edgeLight && blur <= WARM_BLUR && stretchPoints.every((p) => homeRun.every((q) => dist2(p, q) >= RING_CLEAR * RING_CLEAR))
     // A ring is cool (Cyan, Ice): a cool halo meets the main light's blue cleanly and keeps its hue in dim light, where
     // a warm one read red, and mauve wherever a drag brought the main light near it.
-    edgeWarm = !def.wash && blur <= WARM_BLUR && !ringLight && (!edgeLight || clearOfMain)
+    // A ring far enough from the main light's edge that the two halos stay apart may be warm again (Orange-red round a
+    // Yellow core), since faint warm light over faint blue haze is what read mauve or as a hard edge.
+    const farRing = ringLight && stretchPoints.every((p) => homeRun.every((q) => dist2(p, q) >= WARM_RING_CLEAR * WARM_RING_CLEAR))
+    edgeWarm = !def.wash && blur <= WARM_BLUR && (!ringLight || farRing) && (!edgeLight || clearOfMain)
     // A cool light stays dimmer than the main light's glow: through the stage only its hottest part takes its color
     // and the rest of it is Meta Blue, which would then be Meta Blue's brightest light, lit only beside another color.
     // A ring is as bright as a warm light, so a light color reads as itself in its halo (Lime only shows near its own
