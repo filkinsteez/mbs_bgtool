@@ -463,6 +463,46 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
       })
     }
   }
+  // Every other seed carries one or two thin hot streaks too, over its widest lead band on the side away from the
+  // nearest band of another color (beside it a thin blue line turns a deep red mauve, or cuts a sharp line through
+  // pale Ice), so a few thin streaks run among the broad bands as in a long exposure of moving light. From a stream
+  // of their own, so the draws above stay as they were.
+  const host = dominantAt < 0 ? [...bands].filter((b) => b.role === 'lead').sort((a, b) => b.half - a.half)[0] : undefined
+  if (host) {
+    const thin = seededRandom(seed, 0x71a5)
+    const count = Math.min(1 + Math.floor(thin() * 2), MAX_LIGHTS - bands.length - seams.length)
+    const others = bands.filter((b) => b.role !== 'lead')
+    const nearest = others.sort((a, b) => Math.abs(a.center - host.center) - Math.abs(b.center - host.center))[0]
+    const away = nearest ? Math.sign(host.center - nearest.center) || 1 : either(thin)
+    for (let k = 0; k < count; k++) {
+      bands.push({
+        role: 'lead',
+        center: host.center + away * (k === 0 ? lerp(0.05, 0.3, thin()) : lerp(0.35, 0.55, thin())) * host.half,
+        half: lerp(0.01, 0.018, thin()),
+        widthVary: 0.1,
+        coreWidth: 0.6,
+        asym: 0,
+        rag: 0.03,
+        split0: 0,
+        split1: 0,
+        luminance: standInLuminance(PLACE.lead) * lerp(1.3, 1.7, thin()),
+        brightVary: lerp(0.2, 0.4, thin()),
+        coreGain: lerp(1.5, 2.5, thin()),
+        gradient: 0,
+        wander: lerp(0.003, 0.008, thin()),
+        texture: 0.05,
+        textureFreq: 40,
+        fadeIn: lerp(-0.3, 0.05, thin()) * reach,
+        fadeLen: lerp(0.1, 0.25, thin()) * reach,
+        fadeOut: Math.max(lerp(1, 1.6, thin()) * reach, drag ? uFar + 0.15 : 0),
+        drift: host.drift,
+        bow: host.bow,
+        corePlace: 0,
+        taper: 0,
+        falloff: 1.6,
+      })
+    }
+  }
   bands.push(...seams)
   // No shadow tongues: on a lit frame they read as smudges.
   return {
