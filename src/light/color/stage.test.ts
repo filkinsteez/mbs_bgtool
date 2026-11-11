@@ -6,7 +6,7 @@ import { getRecipe } from '../recipes'
 import { RECIPE_IDS, type RecipeId, type Scene } from '../scene'
 import { defaultMix, mixFromShares, setMetaBlue, setShare } from './mix'
 import { getPack } from './packs'
-import { COLOR_DESIGN_PACK, colorRamp, darkMeetingLines, meetingLines, RAMP_STEPS, withColorMix } from './stage'
+import { COLOR_DESIGN_PACK, colorRamp, darkMeetingLines, meetingLift, meetingLines, RAMP_STEPS, withColorMix } from './stage'
 import { buildFields, gridSize, lookParts, type StageField, type StageGrid, type StagePart } from './stageFields'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
 import { hexToLinear } from './srgb'
@@ -300,7 +300,7 @@ describe('color stage', () => {
   it('keeps the design lightness under any mix: the default, Meta Blue off and one color at 60%', () => {
     // The shader's last step, which alone sets the output's luminance: any blend of colors, at the design's luminance,
     // raised only on a meeting line (meetBridgeLight, which leaves the luminance as it is where there is no line).
-    expect(COLOR_STAGE_GLSL).toContain('return m / max(dot(m, LUMA), 1e-6) * y * meetBridgeLight(yE, bridge) / max(yE, 1e-8) * yDark / max(yE, 1e-8);')
+    expect(COLOR_STAGE_GLSL).toContain('return m / max(dot(m, LUMA), 1e-6) * y * meetBridgeLight(yE, rise) / max(yE, 1e-8) * yDark / max(yE, 1e-8);')
     for (const y of [0.001, 0.1, 0.6, 1.4]) expect(meetBridgeLight(y, 0)).toBe(y)
     for (const y of [0.001, 0.1, 0.6, 1.4]) expect(meetDarkLight(y, 0)).toBe(y)
     const luma = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
@@ -361,6 +361,27 @@ describe('color stage', () => {
       })
     expect(Math.max(...meetingLines(grid, streak(2), colors))).toBeLessThan(0.1)
     expect(Math.max(...meetingLines(grid, streak(10), colors))).toBeGreaterThan(0.3)
+  })
+
+  it("lifts a bright meeting toward the lighter color's light and leaves a dim one alone", () => {
+    const grid = flatGrid(16 / 9)
+    const { width: w, height: h } = grid
+    const colors = stageColors(getPack('bold'), defaultMix(getPack('bold')), true)
+    const blue = colors.findIndex((c) => c.hex === '#0064E0')
+    const yellow = colors.findIndex((c) => c.hex === '#FFD61E')
+    const shares = colors.map((_, k) => {
+      const out = new Float32Array(w * h)
+      for (let y = 0; y < h; y++)
+        for (let x = 0; x < w; x++) {
+          const s = 1 / (1 + Math.exp(x - w / 2))
+          out[y * w + x] = k === yellow ? s : k === blue ? 1 - s : 0
+        }
+      return out
+    })
+    // Yellow on the left, in the lighter light; Meta Blue on the right.
+    const shown = (left: number, right: number) => ({ ...grid, seen: Float32Array.from({ length: w * h }, (_, i) => (i % w < w / 2 ? left : right)) })
+    expect(Math.max(...meetingLift(shown(0.85, 0.7), shares, colors))).toBeGreaterThan(0.3)
+    expect(Math.max(...meetingLift(shown(0.3, 0.25), shares, colors))).toBe(0)
   })
 
   it('marks a dark line only where a light color meets a dark color far from it in hue', () => {
