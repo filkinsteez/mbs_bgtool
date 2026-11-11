@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { composeScene } from '../compose'
+import { meetBridgeLight } from '../engine/meet'
 import { buildRecipeShader } from '../engine/recipeShader'
 import { getRecipe } from '../recipes'
 import { RECIPE_IDS, type RecipeId, type Scene } from '../scene'
 import { defaultMix, mixFromShares, setMetaBlue, setShare } from './mix'
 import { getPack } from './packs'
-import { COLOR_DESIGN_PACK, colorRamp, RAMP_STEPS, withColorMix } from './stage'
+import { COLOR_DESIGN_PACK, colorRamp, meetingLines, RAMP_STEPS, withColorMix } from './stage'
 import { buildFields, gridSize, lookParts, type StageField, type StageGrid, type StagePart } from './stageFields'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
 import { hexToLinear } from './srgb'
@@ -259,8 +260,10 @@ describe('color stage', () => {
   })
 
   it('keeps the design lightness under any mix: the default, Meta Blue off and one color at 60%', () => {
-    // The shader's last step, which alone sets the output's luminance: any blend of colors, at the design's luminance.
-    expect(COLOR_STAGE_GLSL).toContain('return m / max(dot(m, LUMA), 1e-6) * y;')
+    // The shader's last step, which alone sets the output's luminance: any blend of colors, at the design's luminance,
+    // raised only on a meeting line (meetBridgeLight, which leaves the luminance as it is where there is no line).
+    expect(COLOR_STAGE_GLSL).toContain('return m / max(dot(m, LUMA), 1e-6) * y * meetBridgeLight(yE, bridge) / max(yE, 1e-8);')
+    for (const y of [0.001, 0.1, 0.6, 1.4]) expect(meetBridgeLight(y, 0)).toBe(y)
     const luma = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
     const atLuminance = (m: readonly number[], y: number) => m.map((v) => (v / Math.max(luma(m), 1e-6)) * y)
     for (const packId of ['bold', 'elemental', 'atmospheric'] as const) {
@@ -276,6 +279,45 @@ describe('color stage', () => {
           for (const y of [0.001, 0.02, 0.1, 0.3, 0.6, 0.95, 1.4]) expect(luma(atLuminance(m, y))).toBeCloseTo(y, 6)
       }
     }
+  })
+
+  it('marks meeting lines only where far hues trade places quickly: thin, none between near hues, none in a broad mix', () => {
+    const grid = flatGrid(16 / 9)
+    const { width: w, height: h } = grid
+    const colors = stageColors(getPack('bold'), defaultMix(getPack('bold')), true)
+    const blue = colors.findIndex((c) => c.hex === '#0064E0')
+    const yellow = colors.findIndex((c) => c.hex === '#FFD61E')
+    const cyan = colors.findIndex((c) => c.hex === '#1FCDF0')
+    const step = (soft: number) => (x: number) => 1 / (1 + Math.exp((x - w / 2) / soft))
+    const shares = (a: number, b: number, soft: number) =>
+      colors.map((_, k) => {
+        const out = new Float32Array(w * h)
+        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out[y * w + x] = k === a ? step(soft)(x) : k === b ? 1 - step(soft)(x) : 0
+        return out
+      })
+    // Meta Blue meeting Yellow over about a cell: a line a few cells wide in the middle, nothing at the sides.
+    const line = meetingLines(grid, shares(blue, yellow, 1), colors)
+    const row = Array.from({ length: w }, (_, x) => line[Math.floor(h / 2) * w + x])
+    expect(Math.max(...row)).toBeGreaterThan(0.9)
+    expect(row.filter((v) => v > 0.5).length).toBeLessThanOrEqual(4)
+    expect(row[0] + row[w - 1]).toBe(0)
+    // Near hues (Meta Blue and Cyan) make no line, and neither does a mix that changes over most of the frame.
+    expect(Math.max(...meetingLines(grid, shares(blue, cyan, 1), colors))).toBe(0)
+    expect(Math.max(...meetingLines(grid, shares(blue, yellow, 30), colors))).toBeLessThan(0.05)
+    // A Yellow streak across Meta Blue: one two cells wide keeps its color (no line), one ten cells wide gets a line
+    // along each side.
+    const streak = (cells: number) =>
+      colors.map((_, k) => {
+        const out = new Float32Array(w * h)
+        for (let y = 0; y < h; y++)
+          for (let x = 0; x < w; x++) {
+            const s = step(0.7)(x - cells / 2) * (1 - step(0.7)(x + cells / 2))
+            out[y * w + x] = k === yellow ? s : k === blue ? 1 - s : 0
+          }
+        return out
+      })
+    expect(Math.max(...meetingLines(grid, streak(2), colors))).toBeLessThan(0.1)
+    expect(Math.max(...meetingLines(grid, streak(10), colors))).toBeGreaterThan(0.9)
   })
 
   it('turns on only through withColorMix, and leaves the recipe shaders as they were without it', () => {

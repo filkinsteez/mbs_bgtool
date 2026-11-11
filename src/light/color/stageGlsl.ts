@@ -1,3 +1,4 @@
+import { MEET_GLSL } from '../engine/meet'
 import { DIM_TURN, PAIR_GAP, PAIR_PRESENT, PAIR_THIN, PAIR_WIDTH } from './stageSolve'
 
 /**
@@ -7,16 +8,18 @@ import { DIM_TURN, PAIR_GAP, PAIR_PRESENT, PAIR_THIN, PAIR_WIDTH } from './stage
 const LINE_LIGHTER = [0.04, 0.12] as const
 
 /**
- * The color stage in GLSL: `vec3 colorStage(vec2 uv, vec3 radiance)` keeps each pixel's luminance exactly and gives it
+ * The color stage in GLSL: `vec3 colorStage(vec2 uv, vec3 radiance)` keeps each pixel's luminance and gives it
  * the colors of the color fields (two textures of four fields on the stage grid, one per color), weighted and added like
  * overlapping light. Each color is shown the way the engine draws a light of it at that lightness (its ramp, measured
  * from the tone curve: Meta Blue runs navy, Meta Blue, a lighter blue, white), so a color keeps its own hue from dim to
  * bright and goes white only where the design does. Yellow dims like fire into Orange-red; light colors (Cyan, Lime,
  * Ice, Tan) go only where the design is about as light, dark colors only where it is as dim. Where two colors far
- * apart in hue meet, the line goes neutral. Needs LUMA and sampleSmooth4 from the chunk library, and uExposureScale
- * from the engine.
+ * apart in hue meet, the line goes neutral; in a look colored by its parts it goes white and its light rises along that
+ * thin line (the meeting lines, owner 2026-11-10), so the meeting reads lighter, not grey. Needs LUMA, sampleSmooth4
+ * and bsplineWeights from the chunk library, and uExposureScale from the engine.
  */
 export const COLOR_STAGE_GLSL = /* glsl */ `
+${MEET_GLSL}
 uniform sampler2D uMixFieldsA;
 uniform sampler2D uMixFieldsB;
 uniform sampler2D uMixRamps;
@@ -29,8 +32,29 @@ uniform float uMixSharp;
 uniform float uMixBridge;
 uniform float uMixNarrow;
 uniform float uMixSoft;
+uniform vec2 uMixBridgeSize;
 
 const int MIX_RAMP_STEPS = 32;
+
+// The meeting lines on the stage grid (in the ramp texture below its five rows), read with the same cubic B-spline as
+// the fields (sampleSmooth4), from 16 texels.
+float mixBridgeAt(vec2 uv) {
+  if (uMixBridgeSize.x < 0.5) return 0.0;
+  vec2 st = uv * uMixBridgeSize - 0.5;
+  vec2 f = fract(st);
+  ivec2 base = ivec2(floor(st)) - 1;
+  vec4 wx = bsplineWeights(f.x);
+  vec4 wy = bsplineWeights(f.y);
+  ivec2 last = ivec2(uMixBridgeSize) - 1;
+  float sum = 0.0;
+  for (int j = 0; j < 4; j++) {
+    int y = clamp(base.y + j, 0, last.y);
+    float row = 0.0;
+    for (int i = 0; i < 4; i++) row += wx[i] * texelFetch(uMixRamps, ivec2(clamp(base.x + i, 0, last.x), 5 + y), 0).r;
+    sum += wy[j] * row;
+  }
+  return sum;
+}
 
 float mixFieldValue(int index, vec4 a, vec4 b) {
   vec4 src = index < 4 ? a : b;
@@ -75,6 +99,10 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
   float yE = y * uExposureScale;
   vec4 fa = sampleSmooth4(uMixFieldsA, uv);
   vec4 fb = sampleSmooth4(uMixFieldsB, uv);
+  // On a meeting line of two far hues (none in dim light, where a lifted middle still reads grey), every color's share
+  // meets softly through white (meetColors5) and the light rises (meetBridgeLight).
+  float bridge = mixBridgeAt(uv) * meetBridgeLit(yE);
+  float onLine = smoothstep(0.0, 1.0, bridge);
   // With the soft blend the lightness masks key on the light as the picture shows it: the pixel's own light and the
   // glow the lens adds round brighter light (fb.y), so a dark color stays where the picture is dim.
   float L = pow(uMixSoft > 0.5 ? yE + max(fb.y, 0.0) : yE, 1.0 / 3.0);
@@ -151,7 +179,7 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
       }
     }
     float mid = smoothstep(0.25, 0.4, L) * (1.0 - smoothstep(0.65, 0.9, L));
-    float g = 1.0 + mid * smoothstep(0.05, 0.3, min(far, 1.0));
+    float g = 1.0 + (1.0 - onLine) * mid * smoothstep(0.05, 0.3, min(far, 1.0));
     float t = 0.0;
     for (int k = 0; k < 5; k++) {
       if (k >= uMixCount) continue;
@@ -187,7 +215,18 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
   // Far hues meet through neutral along a narrow line, so they never mix into mauve, indigo or teal.
   // With the soft blend the line whitens only where the design is light; in the dim it would read as a grey line.
   m = mix(m, vec3(1.0), uMixBridge * b * b * (uMixSoft > 0.5 ? smoothstep(0.45, 0.75, L) : 1.0));
-  // The design's luminance exactly, whatever the colors and the mix, so the light and dark layout never moves.
-  return m / max(dot(m, LUMA), 1e-6) * y;
+  if (onLine > 0.0) {
+    vec3 cs[5];
+    float qs[5];
+    for (int k = 0; k < 5; k++) {
+      cs[k] = k < uMixCount ? mixColorAt(k, L, yE, near[k]) : vec3(1.0);
+      qs[k] = k < uMixCount ? (uMixSoft > 0.5 ? p[k] : p[k] * p[k]) : 0.0;
+    }
+    vec3 met = meetColors5(cs, qs, uMixCount, 1.5);
+    m = mix(m / max(dot(m, LUMA), 1e-6), met / max(dot(met, LUMA), 1e-6), onLine);
+  }
+  // The design's luminance, whatever the colors and the mix, so the light and dark layout never moves; only a meeting
+  // line's light rises.
+  return m / max(dot(m, LUMA), 1e-6) * y * meetBridgeLight(yE, bridge) / max(yE, 1e-8);
 }
 `
