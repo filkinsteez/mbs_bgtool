@@ -100,8 +100,10 @@ describe('contour.merged', () => {
         const { params } = composeMerged({ colors: LISTS[0], controls: CONTROLS, seed, aspect })
         const parts = mergedParts(params)
         const wants = parts.map((p) => (p.kind === 'horizon' ? 'horizon' : p.want))
-        // The second light's sixteen pieces ask for the warm color, the other warm color and a cool one, walking along it.
-        expect(wants, `seed ${seed}`).toEqual(['any', ...Array(16).fill('warm'), ...Array(16).fill('warm2'), ...Array(16).fill('cool'), 'cool', 'cool', 'dark', 'dark'])
+        // The second light's sixteen pieces ask for the warm color, the other warm color (a ring of its own: a light color
+        // that isn't warm) and a cool one, walking along it.
+        expect(['warm2', 'pale'], `seed ${seed}`).toContain(wants[17])
+        expect(wants, `seed ${seed}`).toEqual(['any', ...Array(16).fill('warm'), ...Array(16).fill(wants[17]), ...Array(16).fill('cool'), 'cool', 'cool', 'dark', 'dark'])
         for (const part of parts) expect(JSON.stringify(part)).not.toMatch(/null|NaN/)
         // The parts are part of the design: the same in every list, and the second light there in every list or none.
         expect(new Set(seconds.map((p) => Number(p.secondUnit) > 0)).size, `seed ${seed}`).toBe(1)

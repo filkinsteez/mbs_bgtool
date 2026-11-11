@@ -539,6 +539,13 @@ const COOL_PEAK = [0.38, 0.5]
 /** Outside a wash its haze and face light against the main light's: its own glow carries its color, and a wide dim
  * halo around it would take the main light's color through the stage. */
 const STRETCH_FAR = 0.2
+/** A second light that is a ring of its own (another edge, clear of the main one): its haze and face light and their
+ * reach (times the main light's), and how wide its color stage parts are, so its color fills its halo. */
+const RING_FAR = 0.2
+const RING_REACH = 0.5
+const RING_PART_WIDTH = 0.09
+/** How far a ring's stretch keeps from the main light's edge (short sides): nearer, its halo met the main light's. */
+const RING_CLEAR = 0.4
 /** Another edge's own light: its half length (this share of its visible length, within these bounds), how far its
  * hottest place keeps from the main light, and its core line (times the main one). */
 const EDGE_SHARE = 0.33
@@ -821,6 +828,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   // edge; so the frame shows the pack's warm color beside the main light's and its accents' (the owner, 2026-11-10
   // 7:08 PM: the frames showed one color). Elsewhere it is cool.
   let edgeWarm = false
+  let ringLight = false
   if (secondPoint && host >= 0) {
     const on2 = nearestOnContours(drawn, anchorR, secondPoint)
     const tSpan = halfLength / (contourLength(drawn.contours[on2.contour]) || 1)
@@ -833,7 +841,14 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
       return [q[0] + anchorR[0], q[1] + anchorR[1]] as Vec2
     })
     const clearOfMain = stretchPoints.every((p) => homeRun.every((q) => dist2(p, q) >= WARM_CLEAR * WARM_CLEAR))
-    edgeWarm = !def.wash && blur <= WARM_BLUR && (!edgeLight || clearOfMain)
+    // On another edge well clear of the main one and in focus it is a ring of its own, like the moodboard's separate
+    // colored rings: a halo as wide and strong as the main light's, in its own color. On the main light's own line its
+    // halo would lie over the main light's and the two would add up to mauve or maroon, so there it keeps the narrow
+    // glow.
+    ringLight = !def.wash && edgeLight && blur <= WARM_BLUR && stretchPoints.every((p) => homeRun.every((q) => dist2(p, q) >= RING_CLEAR * RING_CLEAR))
+    // A ring is cool (Cyan, Ice): a cool halo meets the main light's blue cleanly and keeps its hue in dim light, where
+    // a warm one read red, and mauve wherever a drag brought the main light near it.
+    edgeWarm = !def.wash && blur <= WARM_BLUR && !ringLight && (!edgeLight || clearOfMain)
     // A cool light stays dimmer than the main light's glow: through the stage only its hottest part takes its color
     // and the rest of it is Meta Blue, which would then be Meta Blue's brightest light, lit only beside another color.
     const peak = (def.wash ? lerp(0.5, 0.75, design.secondGain) : edgeWarm ? lerp(WARM_PEAK[0], WARM_PEAK[1], design.secondGain) : lerp(COOL_PEAK[0], COOL_PEAK[1], design.secondGain)) * near
@@ -842,12 +857,15 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     // The pack's warm or bright color: the unit's warmest (Orange-red) along the stretch and its brightest at the core
     // (Yellow); a wash's glow takes the brightest, like the poster's yellow glow in the blue.
     const members = plan.second >= 0 ? plan.units[plan.second].colors : [plan.key]
-    // A cool one takes the pack's lightest light color that isn't warm (Cyan, Ice), or the key's where there is none
-    // (Elemental), as the stage colors it.
-    const coolest = colors
-      .map((_, i) => i)
-      .filter((i) => i !== plan.key && shares[i] > 0.001 && L(colors[i]) >= LIGHT_L && !(chroma(colors[i]) > 0.04 && hue(colors[i]) >= 20 && hue(colors[i]) <= 140))
-      .sort((a, b) => L(colors[b]) - L(colors[a]))[0] ?? plan.key
+    // A cool one takes the pack's lightest light color that isn't warm (Cyan, Ice); where there is none (Elemental) the
+    // pack's lightest light color besides the key's (Lime), never the key's, which would only make the frame bluer. Only
+    // the color changes with the pack: the light is a cool light's in every pack.
+    const lightOthers = colors.map((_, i) => i).filter((i) => i !== plan.key && shares[i] > 0.001 && L(colors[i]) >= LIGHT_L)
+    const byLightness = (a: number, b: number) => L(colors[b]) - L(colors[a])
+    const coolest =
+      lightOthers.filter((i) => !(chroma(colors[i]) > 0.04 && hue(colors[i]) >= 20 && hue(colors[i]) <= 140)).sort(byLightness)[0] ??
+      lightOthers.sort(byLightness)[0] ??
+      plan.key
     const cool = !def.wash && !edgeWarm
     const warmest = slotOf(cool ? coolest : members.reduce((a, b) => (warmthOf(colors[b]) > warmthOf(colors[a]) ? b : a)))
     const brightest = slotOf(cool ? coolest : members.reduce((a, b) => (L(colors[b]) > L(colors[a]) ? b : a)))
@@ -886,8 +904,8 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
       secondCore: edgeLight ? EDGE_CORE : SECOND_CORE,
       // A cool one's glow is a little wider than the main one's, so its color reads in it; a warm one keeps the narrow
       // glow: wider, its color reached the main light's and mixed to mauve or indigo.
-      secondGlow: round4(def.wash || edgeWarm ? 1 / MAIN_GLOW : EDGE_GLOW),
-      secondGlowWeight: round4((def.wash || edgeWarm ? SECOND_GLOW_WEIGHT : EDGE_GLOW_WEIGHT) / MAIN_GLOW_WEIGHT),
+      secondGlow: round4(ringLight ? 1 : def.wash || edgeWarm ? 1 / MAIN_GLOW : EDGE_GLOW),
+      secondGlowWeight: round4(ringLight ? 1 : (def.wash || edgeWarm ? SECOND_GLOW_WEIGHT : EDGE_GLOW_WEIGHT) / MAIN_GLOW_WEIGHT),
       // Its glow lies on both sides of its line.
       secondGlowSide: def.wash ? -1 : 0,
       // Along the second light's stretch the main light's line hands over to it: dark round the second light's middle
@@ -903,7 +921,8 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
       // own fill so the frame keeps its blue.
       // A wash's glow takes the key's color at the same luminance (in its own color it read green, teal or mauve), and
       // the color stage colors it from its warm part.
-      secondFar: def.wash ? 0.8 : STRETCH_FAR,
+      secondFar: def.wash ? 0.8 : ringLight ? RING_FAR : STRETCH_FAR,
+      ...(ringLight ? { secondReach: RING_REACH } : {}),
       secondPale: def.wash ? 1 : 0,
     })
   }
@@ -956,7 +975,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     const p = contourPoint(c, c.closed ? t - Math.floor(t) : Math.min(1, Math.max(0, t))).point
     return [p[0] + anchorR[0], p[1] + anchorR[1]]
   }
-  const partParams: Record<string, ParamValue> = { partSecond: SECOND_OFF, partWarmFade: 0, partWarmSide: 1, partEdgeWarm: 0 }
+  const partParams: Record<string, ParamValue> = { partSecond: SECOND_OFF, partWarmFade: 0, partWarmSide: 1, partEdgeWarm: 0, partSecondWidth: ringLight ? RING_PART_WIDTH : WARM_PART_WIDTH, partRing: ringLight ? 1 : 0 }
   if (secondOn && Number(secondParams.secondUnit) > 0) {
     const { contour, t, tSpan, near } = secondOn
     // Points at equal steps along it, so each piece stays on the light it colors and the colors can cross-fade.
@@ -1132,6 +1151,9 @@ export function mergedParts(params: Readonly<Record<string, ParamValue>>): Stage
   const warmSign = Number(params.partWarmSide ?? 1) > 0.5 ? 1 : -1
   // Where the second light may not be warm (out of focus, or near the main edge) every piece asks the cool color.
   const warmOk = Number(params.partEdgeWarm ?? 0) > 0.5
+  // A ring of its own has wider parts, so its color fills its halo.
+  const partWidth = Math.min(0.3, Math.max(0.01, Number(params.partSecondWidth ?? WARM_PART_WIDTH)))
+  const ring = Number(params.partRing ?? 0) > 0.5
   const given = vec(params, 'partSecond', SECOND_OFF)
   const path = given.length === SECOND_OFF.length ? given : SECOND_OFF
   const lead = vec(params, 'partLead', PART_OFF)
@@ -1150,10 +1172,13 @@ export function mergedParts(params: Readonly<Record<string, ParamValue>>): Stage
     // part, so its colors don't take the main light's brightest light.
     const fromLead = Math.hypot((path[2 * i] + path[2 * i + 2]) / 2 - lead[0], (path[2 * i + 1] + path[2 * i + 3]) / 2 - lead[1])
     const end = (1 - SECOND_END_TAPER[1] * smoothstep(SECOND_END_TAPER[0], 1, Math.abs(u))) * smoothstep(LEAD_CLEAR[0], LEAD_CLEAR[1], fromLead)
-    const piece = (want: FieldWant, strength: number): StagePart => ({ kind: 'line', from: [path[2 * i], path[2 * i + 1]], to: [path[2 * i + 2], path[2 * i + 3]], width: WARM_PART_WIDTH, want, strength })
+    const piece = (want: FieldWant, strength: number): StagePart => ({ kind: 'line', from: [path[2 * i], path[2 * i + 1]], to: [path[2 * i + 2], path[2 * i + 3]], width: partWidth, want, strength })
     return {
       warm: piece('warm', end * fading * fading * warmShare),
-      warm2: piece('warm2', end * fading * fading * warm2Share),
+      // A ring asks for a light color that isn't warm (`pale`) along with the cool one: where the pack has a cool color
+      // the cool ask takes it first (Cyan, Ice) and `pale` gets none; where it has none, `pale` takes Lime, so the ring
+      // is never Meta Blue. Without a `warm2` ask Lime is left for it.
+      warm2: ring ? piece('pale', end * fading * coolShare) : piece('warm2', end * fading * fading * warm2Share),
       cool: piece('cool', end * fading * coolShare),
     }
   })

@@ -92,6 +92,8 @@ const params: ParamSpec[] = [
   { kind: 'number', key: 'partWarmFade', label: 'Color stage: second light strength', min: 0, max: 1, step: 0.0001, default: 0 },
   { kind: 'number', key: 'partWarmSide', label: 'Color stage: which half of the second light asks a warm color (1 the second, 0 the first)', min: 0, max: 1, step: 1, default: 1 },
   { kind: 'number', key: 'partEdgeWarm', label: 'Color stage: the second light may ask a warm color (1) or only a cool one (0)', min: 0, max: 1, step: 1, default: 0 },
+  { kind: 'number', key: 'partSecondWidth', label: 'Color stage: how wide the second light\'s parts are (short sides)', min: 0.01, max: 0.3, step: 0.0001, default: 0.05 },
+  { kind: 'number', key: 'partRing', label: 'Color stage: the second light is a ring of its own on another edge (1) or not (0)', min: 0, max: 1, step: 1, default: 0 },
   { kind: 'vector', key: 'partCool', label: 'Color stage: main light far stretch, first piece', min: -9, max: 9, step: 0.0001, default: [-9, -9, -9, -9] },
   { kind: 'vector', key: 'partCool2', label: 'Color stage: main light far stretch, second piece', min: -9, max: 9, step: 0.0001, default: [-9, -9, -9, -9] },
   { kind: 'vector', key: 'partDark', label: 'Color stage: dim stretch of outline on the other edge (or the main edge)', min: -9, max: 9, step: 0.0001, default: [-9, -9, -9, -9] },
