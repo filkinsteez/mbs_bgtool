@@ -4,6 +4,7 @@ import type { ColorPack } from '../../color/packs'
 import { defaultMix, mixColors } from '../../color/mix'
 import { hexToLinear, type Rgb } from '../../color/srgb'
 import type { ComposeInput, Composition, ControlValues, ParamSpec, RecipeContext, RecipeDefinition, UniformMap } from '../../scene'
+import { MEET_GLSL } from '../../engine/meet'
 import { bridgeLight } from './bands-light'
 
 /**
@@ -656,7 +657,13 @@ function uniforms(ctx: RecipeContext): UniformMap {
   }
 }
 
+/** How narrowly the sky's far-apart parts hand over (meetColors5's sharpness; 1 would follow the parts' soft edges). */
+const SKY_MEET_SHARPNESS = 3
+/** The most a light middle may raise the sky's OKLab lightness (Compare's same-design allowance on a meeting line). */
+const SKY_BRIDGE_RISE = 0.15
+
 const FRAGMENT = /* glsl */ `
+${MEET_GLSL}
 uniform float uLevel;
 uniform int uKind;           // 0 low sun, 1 high light, 2 side light, 3 plain gradient
 uniform vec2 uSun;
@@ -683,6 +690,7 @@ float gHalo = 0.0;           // round a high light: the warm glow at this pixel
 float gHaloOuter = 0.0;      // round a high light: the warm glow's wider, dimmer outer light at this pixel
 float gHaloLight = 0.0;      // round a high light: the warm glow's lightness at this pixel, falling from the light
 float gPatch = 0.0;          // round a high light: Meta Blue's lit patch at this pixel
+float gSkyBridge = 0.0;      // how much of a light middle this pixel gets where two far-apart parts meet (skyHue)
 float gPaleWave = 0.0;       // round a high or side light: how far the pale sky's edge bulges out (+) or dips in (-) here
 float gPaleSoft = 0.5;       // round a high or side light: how soft the pale sky's edge is here (0 to 1)
 float gPaleAway = 1.0;       // beside a side light: how far the place in the frame shapes the pale sky's edge (0 by the light)
@@ -853,9 +861,21 @@ float groundLightness(float a, float depth) {
   return L + 0.02 * gradientNoise(vec2(a * 1.3 + 9.1, depth * 2.0 + 1.7), uHorizonSeed + 7) + 0.02 * domeAt(a, 0.0) * exp(-depth / 0.15);
 }
 
+// How much of a light middle a point gets where two of the sky's parts meet, from their shares of the light (sa, sb)
+// and colors at luminance 1: along the line where the two lead equally (meetBridge on each one's share of the pair,
+// the slope read from this pixel's neighbours, per short side), where together they give a fair part of the light
+// (the gap and the deep sky take the rest), their colors are far apart in hue and the shares change at all.
+float skyBridge(float sa, float sb, vec3 ca, vec3 cb) {
+  float pair = sa + sb;
+  float pa = sa / max(pair, 1e-6);
+  float diff = 2.0 * pa - 1.0;
+  float slope = length(vec2(dFdx(diff), dFdy(diff))) / max(uPixel, 1e-6);
+  return meetApart(ca, cb) * meetBridge(pa, 1.0 - pa, slope) * smoothstep(0.15, 0.4, pair) * smoothstep(0.25, 0.75, slope);
+}
+
 // The color each part gives, blended like overlapping light; where two far hues meet, a pale light between them.
 // The fourth value is how far below its own light the blend may go.
-vec4 skyHue(float a, float h) {
+vec4 skyHue(float a, float h, float L) {
   float dome = domeAt(a, h);
   float inner = smoothstep(0.35, 0.85, dome);
   float warmPart = clamp(max(smoothstep(0.3, 0.8, warmAt(a, h)), smoothstep(0.1, 0.45, dome)), 0.0, 1.0);
@@ -864,11 +884,46 @@ vec4 skyHue(float a, float h) {
   float palePart = smoothstep(0.4, 0.8, pale) * (1.0 - warmPart);
   float skyPart = (1.0 - smoothstep(0.05, 0.4, pale)) * (1.0 - warmPart);
   float gap = max(0.0, 1.0 - warmPart - palePart - skyPart);
-  vec3 col = uSky * skyPart + uPaleColor * palePart + warmColor * warmPart + mix(uBridgePale, uBridgeWarm, warmPart) * gap;
+  vec3 bridgeColor = mix(uBridgePale, uBridgeWarm, warmPart);
   float lowest = uLowest.x * skyPart + uLowest.w * palePart + mix(uLowest.z, uLowest.y, inner) * warmPart + 0.5 * gap;
   float d = deepAt(a, skyHeight(a, h));
-  return vec4(mix(col, uDeepColor, d * d), mix(clamp(lowest, 0.2, 0.9), 0.3, d));
+  float deep = d * d;
+  vec3 added = mix(uSky * skyPart + uPaleColor * palePart + warmColor * warmPart + bridgeColor * gap, uDeepColor, deep);
+  // The parts' colors meet by the shared rule (meetColors5), each counted by its part and its color's luminance: near
+  // hues mix as their light adds, as before; far hues hand over through white instead of grey or pink, more narrowly
+  // than the parts' soft edges (SKY_MEET_SHARPNESS). The gap's own bridge light stays a color where the warm band
+  // meets the sky (a pale warm light) and where the sky and the pale sky are near hues; where they are far apart (Lime
+  // and Meta Blue) it was the grey between them, and gives way to the light middle, though it still counts in the
+  // luminance. The added light's luminance is kept, so atLightness's limits see the same brightness.
+  vec3 cs[5];
+  float qs[5];
+  cs[0] = uSky;
+  cs[1] = uPaleColor;
+  cs[2] = warmColor;
+  cs[3] = bridgeColor;
+  cs[4] = uDeepColor;
+  float ws[5];
+  ws[0] = skyPart * (1.0 - deep);
+  ws[1] = palePart * (1.0 - deep);
+  ws[2] = warmPart * (1.0 - deep);
+  ws[3] = gap * mix(1.0 - meetApart(uSky / max(luminance(uSky), 1e-6), uPaleColor / max(luminance(uPaleColor), 1e-6)), 1.0, warmPart) * (1.0 - deep);
+  ws[4] = deep;
+  float total = 0.0;
+  for (int k = 0; k < 5; k++) {
+    float y = max(luminance(cs[k]), 1e-6);
+    qs[k] = ws[k] * y;
+    cs[k] /= y;
+    total += qs[k];
+  }
+  vec3 met = meetColors5(cs, qs, 5, ${SKY_MEET_SHARPNESS.toFixed(1)});
+  // In dim sky (the deep top, the far dim side) a white middle would read grey: there the light adds as before.
+  met = mix(added / max(luminance(added), 1e-6), met / max(luminance(met), 1e-6), meetBridgeLit(L * L * L * uLevel * uExposureScale));
+  // A light middle along the line where two far-apart parts lead equally (skyBridge), read in auxRadiance.
+  float t = max(total, 1e-6);
+  gSkyBridge = max(max(skyBridge(qs[0] / t, qs[1] / t, cs[0], cs[1]), skyBridge(qs[0] / t, qs[2] / t, cs[0], cs[2])), skyBridge(qs[1] / t, qs[2] / t, cs[1], cs[2]));
+  return vec4(met * luminance(added), mix(clamp(lowest, 0.2, 0.9), 0.3, d));
 }
+
 
 // A color shown at a lightness: scaled in linear light to that luminance. Light that only reads as itself when bright
 // (Yellow, Lime, Ice) never goes far below its own level; dark colors never far above theirs; a blue brightens at most
@@ -940,8 +995,14 @@ vec3 auxRadiance(vec2 uv, vec2 p) {
     if (uGroundOn == 1) L = mix(groundLightness(a, -h), L, edge);
     return vec3(L * L * L) * uLevel;
   }
-  vec4 hue = skyHue(a, h);
-  vec3 col = atLightness(hue.rgb, skyLightness(a, h), hue.a);
+  float skyL = skyLightness(a, h);
+  vec4 hue = skyHue(a, h, skyL);
+  vec3 col = atLightness(hue.rgb, skyL, hue.a);
+  // Where two far-apart parts meet the light rises along that thin line (owner, 2026-11-10), by at most
+  // SKY_BRIDGE_RISE in OKLab L (Compare's same-design allowance there), and not where the sky is dim.
+  float shown = luminance(col) * uLevel * uExposureScale;
+  float lifted = min(meetBridgeLight(shown, gSkyBridge * meetBridgeLit(shown)), pow(pow(max(shown, 0.0), 1.0 / 3.0) + ${SKY_BRIDGE_RISE.toFixed(2)}, 3.0));
+  col *= lifted / max(shown, 1e-8);
   if (uGroundOn == 1) {
     vec3 ground = atLightness(mix(uBankColor, uNearColor, smoothstep(0.03, 0.15, -h)), groundLightness(a, -h), 0.05);
     col = mix(ground, col, edge);
