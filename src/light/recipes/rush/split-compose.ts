@@ -29,11 +29,12 @@ function seededRandom(seed: number, salt: number): () => number {
 
 /**
  * A streak's role, as a place in the spectrum the color list fills: lead (the first color; Meta Blue at the default
- * mix), cool, warm (Yellow's place in Bold, so a warm streak's core is Yellow and it dims into Orange-red) and deep
- * (the last color); white is all of the spectrum.
+ * mix), cool (the second color), warm (Yellow's place in Bold, so a warm streak's core is Yellow and it dims into
+ * Orange-red; the third color, Tan or Steel, in a pack of three light colors) and deep (the last color); white is all
+ * of the spectrum. The color stage gives a warm streak the same color (parts.ts).
  */
 type Role = 'lead' | 'cool' | 'warm' | 'deep' | 'white'
-const PLACE: Record<Exclude<Role, 'white'>, number> = { lead: 0.25, cool: 0.58, warm: 0.74, deep: 0.92 }
+const PLACE: Record<Exclude<Role, 'white'>, number> = { lead: 0.25, cool: 0.58, warm: 0.79, deep: 0.92 }
 
 interface Band {
   role: Role
@@ -321,7 +322,7 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
       // Every swell is brighter on one side than the other, so no area of a color is flat: Meta Blue's strongly (its
       // navy side), the others gently and light colors least, since a light color's dim side would read olive (Lime)
       // or grey-brown (Tan).
-      gradient: either(random) * (role === 'lead' ? lerp(0.1, 0.25, random()) : role === 'cool' || role === 'warm' ? lerp(0.05, 0.15, random()) : lerp(0.15, 0.35, random())),
+      gradient: either(random) * (role === 'lead' ? lerp(0.06, 0.18, random()) : role === 'cool' || role === 'warm' ? lerp(0.05, 0.15, random()) : lerp(0.15, 0.35, random())),
       wander: lerp(0.004, 0.012, random()),
       // Fine streaks along the motion, visible but soft.
       texture: lerp(0.03, 0.06, random()),
