@@ -299,10 +299,12 @@ const mainRule = args.main === 'own' ? 'own' : args.main === 'bright' ? 'bright'
 const dragArg = list(args.drags)
 const drags = !dragArg.length || dragArg.includes('all') ? Object.keys(DRAGS) : dragArg.includes('none') ? [] : dragArg
 for (const d of drags) if (!(d in DRAGS)) throw new Error(`Unknown drag ${d}: give ${Object.keys(DRAGS).join(', ')}, all or none`)
-// renders/ keeps the default light's frames the sheets show; --drag-renders keeps those of the drags too, and
-// --all-renders every frame.
+// A run writes palette.json, summary.md and the sheets, and keeps renders only when asked (a full run's renders came
+// to 70-220 MB): --renders keeps the default light's frames the sheets show and every failing frame in renders/,
+// --drag-renders those of the drags too, and --all-renders every frame.
 const dragRenders = Boolean(args['drag-renders'])
 const allRenders = Boolean(args['all-renders'])
+const keepRenders = Boolean(args.renders) || dragRenders || allRenders
 // Control values for the render (--at intensity=1,softness=0,horizon=0.3; horizon or light is the mood control).
 const controls = { intensity: 0.5, softness: 0.5, mood: 0.5 }
 for (const pair of list(args.at)) {
@@ -1439,7 +1441,7 @@ try {
   }
 
   if (refArg.length) await checkReferences()
-  if (looks.length) await fs.mkdir(path.join(outDir, 'renders'), { recursive: true })
+  if (looks.length) await fs.mkdir(keepRenders ? path.join(outDir, 'renders') : outDir, { recursive: true })
   if (maps) await fs.mkdir(path.join(outDir, 'maps'), { recursive: true })
   const report = { source: sourceLabel, startedAt: startedAt.toISOString(), thresholds: T, drags: Object.fromEntries(drags.map((d) => [d, DRAGS[d]])), looks: {} }
   const summary = [`# Palette check: ${sourceLabel}`, '', `Started ${startedAt.toISOString()}. Controls: intensity ${controls.intensity}, softness ${controls.softness}, mood ${controls.mood}. Rule: ${rule}${rule === 'new' ? `, lens edges up to ${+T.lensEdge.toFixed(3)} of the short side` : ''}; warm tails: ${tailRule}; dim colors: ${dimRule ? 'navy rule (1:40 PM)' : 'strict'}; ${hazeLabel}; ${mainLabel}.${chromaFactors.length > 1 ? ` Also judged with chroma scaled by ${chromaFactors.slice(1).join(', ')}.` : ''} Test drags: ${drags.length ? drags.map(dragText).join('; ') : 'none'}.${mixName ? ` Color stage on at the mix \`${mixName}\`: every color the mix asks at ${pct(T.mix.asked)} or more must read at ${pct(T.mix.reads)} or more of the visibly lit pixels and Meta Blue, where the mix asks it at 50% or more, at ${pct(T.mix.blue)} or more (${reading === 'blend' ? `the blend-aware reading: a pixel in a soft blend between two pack colors counts toward both, when each also reads as itself on one area of ${+(BLEND.own * 100).toFixed(1)}% or more of the lit pixels` : 'each pixel read as one label'}), and where Meta Blue reads on ${pct(BLUE_LIGHT.applies)} or more of them it must carry light (its lightness spreads ${BLUE_LIGHT.spread} or more, its brightest tenth reaches its hex, and under ${pct(BLUE_LIGHT.borrowed)} of that tenth sits beside another color's lighter light); the rules on which pack colors show, Contour's main light per seed and the full-strength Meta Blue share are off.` : ''} Thresholds in \`palette-check.mjs\` (T).`, '']
@@ -1484,9 +1486,9 @@ try {
       }
       Object.assign(f, judge(look, f.pack, f.m, { drag: f.drag, mix: f.mix ?? null }))
     }
-    // Renders of the frames the sheets show (the first seeds and every failing frame), or of every frame.
+    // With --renders, renders of the frames the sheets show (the first seeds and every failing frame), or of every frame.
     for (const f of frames) {
-      if (fromDir || f.missing) continue
+      if (!keepRenders || fromDir || f.missing) continue
       const keep = allRenders || ((!f.drag || dragRenders) && (shownOnSheet(f) || f.fails.length > 0))
       if (!keep) continue
       f.file = path.join(outDir, 'renders', `${f.id}.png`)
