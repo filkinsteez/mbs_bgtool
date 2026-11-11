@@ -751,7 +751,10 @@ float paleAt(float a, float h) {
   float top = paleTop(a);
   float softBy = 0.5 + 0.5 * gradientNoise(vec2(a * 0.9 + 3.7, 8.2), uHorizonSeed + 29);
   if (uKind == 1 || uKind == 2) {
-    top *= 1.0 + (uKind == 1 ? 0.6 : 0.4) * gPaleWave;
+    // Round a high light a narrow pale lobe still bends by a fair distance in the frame, not only by its own small
+    // share, so its long sides never run straight.
+    float bend = uKind == 1 ? max(0.6 * top, 0.25) : 0.4 * top;
+    top = max(top + bend * gPaleWave, 0.4 * top);
     softBy = mix(softBy, gPaleSoft, gPaleAway);
   }
   float soft = top * (0.2 + 0.5 * uPale.w * softBy);
