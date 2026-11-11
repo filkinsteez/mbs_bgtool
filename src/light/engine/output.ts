@@ -71,8 +71,17 @@ export const TONE_WARM_HUES = [-40, -25, 100, 112] as const
  * 94, where sRGB still leaves bright Yellow some chroma (0.10 at 1.5x, against 0.08 held at 96 and 0.17 as lemon).
  */
 export const TONE_WARM_LIMIT = 100
-/** Halvings of the chroma search, and how far past 0 or 1 a channel may be and still count as inside sRGB. */
-const TONE_GAMUT_STEPS = 12
+/**
+ * Halvings of the chroma search (6 leave it within 1/64 of the curve's chroma, under 0.004), and how far past 0 or 1 a
+ * channel may be and still count as inside sRGB. Each pixel above the knee in a held band pays for them, so the 12
+ * there were before (2026-11-10) made bright frames up to three times slower to draw.
+ */
+const TONE_GAMUT_STEPS = 6
+/**
+ * A hold that would turn the curve's hue by less than this (radians, 0.3 degrees) is left out, and it fades in to
+ * four times that, so the pixel keeps o where the hold would change it least and nothing jumps.
+ */
+const TONE_HOLD_SKIP = 0.005
 const TONE_GAMUT_SLACK = 1e-4
 
 const glslFloat = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v))
@@ -99,6 +108,11 @@ vec3 toneFromOklab(vec3 lab) {
   return vec3(dot(lms, vec3(4.0767416621, -3.3077115913, 0.2309699292)), dot(lms, vec3(-1.2684380046, 2.6097574011, -0.3413193965)), dot(lms, vec3(-0.0041960863, -0.7034186147, 1.707614701)));
 }
 
+// How far a color is past sRGB's edge: above 0 outside, at most 0 inside.
+float toneOver(vec3 c) {
+  return max(max(c.r, max(c.g, c.b)) - 1.0, -min(c.r, min(c.g, c.b)));
+}
+
 bool toneInside(vec3 c) {
   return all(greaterThanEqual(c, vec3(-${glslFloat(TONE_GAMUT_SLACK)}))) && all(lessThanEqual(c, vec3(1.0 + ${glslFloat(TONE_GAMUT_SLACK)})));
 }
@@ -121,8 +135,11 @@ vec3 toneHoldHue(vec3 r, vec3 o) {
   if (chroma < 1e-6) return o;
   float curveHue = atan(lab.z, lab.y);
   float h;
+  float turned = 1.0;
   if (hold > 0.0) {
     float d = mod(curveHue - hue + ${glslFloat(3 * Math.PI)}, ${glslFloat(2 * Math.PI)}) - ${glslFloat(Math.PI)};
+    turned = abs(hold * d);
+    if (turned < ${glslFloat(TONE_HOLD_SKIP)}) return o;
     h = hue + (1.0 - hold) * d;
   } else {
     float past = degrees(curveHue) - max(${glslFloat(TONE_WARM_LIMIT)}, signedDeg);
@@ -139,14 +156,17 @@ vec3 toneHoldHue(vec3 r, vec3 o) {
       if (toneInside(toneFromOklab(vec3(lab.x, mid * dir)))) lo = mid;
       else hi = mid;
     }
-    held = toneFromOklab(vec3(lab.x, lo * dir));
+    // Between the last chroma inside and the first outside, where the edge crosses (so the result moves smoothly).
+    float overLo = toneOver(toneFromOklab(vec3(lab.x, lo * dir)));
+    float overHi = toneOver(toneFromOklab(vec3(lab.x, hi * dir)));
+    held = toneFromOklab(vec3(lab.x, (lo + (hi - lo) * clamp(-overLo / max(overHi - overLo, 1e-9), 0.0, 1.0)) * dir));
   }
   held = max(held, vec3(0.0));
   float target = luminance(o);
   held *= target / max(luminance(held), 1e-9);
   float top = maxComponent(held);
   if (top > 1.0) held = target + (held - target) * (1.0 - target) / (top - target);
-  return saturate(held);
+  return mix(o, saturate(held), smoothstep(${glslFloat(TONE_HOLD_SKIP)}, ${glslFloat(4 * TONE_HOLD_SKIP)}, turned));
 }
 
 vec3 toneCurve(vec3 c) {
@@ -234,6 +254,7 @@ function toneFromOklab(L: number, a: number, b: number): [number, number, number
 }
 
 const toneInside = (c: readonly number[]) => c.every((v) => v >= -TONE_GAMUT_SLACK && v <= 1 + TONE_GAMUT_SLACK)
+const toneOver = (c: readonly number[]) => Math.max(Math.max(c[0], c[1], c[2]) - 1, -Math.min(c[0], c[1], c[2]))
 
 const smoothBetween = (a: number, b: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
@@ -261,9 +282,12 @@ export function toneHoldHue(r: readonly number[], o: readonly number[]): [number
   if (chroma < 1e-6) return [o[0], o[1], o[2]]
   const curveHue = Math.atan2(lab[2], lab[1])
   let h: number
+  let turned = 1
   if (hold > 0) {
     const turn = curveHue - hue + 3 * Math.PI
     const d = turn - 2 * Math.PI * Math.floor(turn / (2 * Math.PI)) - Math.PI
+    turned = Math.abs(hold * d)
+    if (turned < TONE_HOLD_SKIP) return [o[0], o[1], o[2]]
     h = hue + (1 - hold) * d
   } else {
     const past = (curveHue * 180) / Math.PI - Math.max(TONE_WARM_LIMIT, signedDeg)
@@ -280,7 +304,9 @@ export function toneHoldHue(r: readonly number[], o: readonly number[]): [number
       if (toneInside(at(mid))) lo = mid
       else hi = mid
     }
-    held = at(lo)
+    const overLo = toneOver(at(lo))
+    const overHi = toneOver(at(hi))
+    held = at(lo + (hi - lo) * Math.min(1, Math.max(0, -overLo / Math.max(overHi - overLo, 1e-9))))
   }
   held = held.map((v) => Math.max(v, 0)) as [number, number, number]
   const target = toneLuminance(o)
@@ -288,7 +314,8 @@ export function toneHoldHue(r: readonly number[], o: readonly number[]): [number
   held = held.map((v) => v * scale) as [number, number, number]
   const top = Math.max(held[0], held[1], held[2])
   if (top > 1) held = held.map((v) => target + ((v - target) * (1 - target)) / (top - target)) as [number, number, number]
-  return [0, 1, 2].map((i) => Math.min(1, Math.max(0, held[i]))) as [number, number, number]
+  const fade = smoothBetween(TONE_HOLD_SKIP, 4 * TONE_HOLD_SKIP, turned)
+  return [0, 1, 2].map((i) => o[i] + (Math.min(1, Math.max(0, held[i])) - o[i]) * fade) as [number, number, number]
 }
 
 /** Mitchell-Netravali (B = C = 1/3) weights, support |x| < 2. */
