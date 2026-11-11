@@ -1,4 +1,4 @@
-import type { ColorPack, PackColor } from './packs'
+import { hueOrder, type ColorPack, type PackColor, type PackId } from './packs'
 
 /** How much of the picture each pack color gets: one share per pack color, in pack order, summing to 1. 0 is off. */
 export interface ColorMix {
@@ -14,17 +14,26 @@ export interface MixColor {
 export const META_BLUE_HEX = '#0064E0'
 /** The most one color can have, so at least two colors are always on. */
 export const MAX_SHARE = 0.9
-/** The panel's slider step. */
-export const SHARE_STEP = 0.05
+/**
+ * The share a color's slider moves in, per pack: one Nth of the picture in a pack of N colors (owner, 2026-11-11
+ * 8:38 AM: "segmented. so in 25% increments", "or 20 if there are 5 colors").
+ */
+export const MIX_STEPS: Readonly<Record<PackId, number>> = { bold: 0.25, elemental: 0.2, atmospheric: 0.2 }
 /** Meta Blue's share in a pack's default mix; the pack's other colors share the rest evenly. */
 export const DEFAULT_META_BLUE_SHARE = 0.5
 /** The fewest colors a mix has on. */
 export const MIN_COLORS_ON = 2
 
 const EPSILON = 1e-9
+/** Shares closer than this to a step count as on it, so float error never skips or repeats a step. */
+const ON_STEP = 1e-6
 
 export function metaBlueIndex(pack: ColorPack): number {
   return pack.colors.findIndex((color) => color.hex.toUpperCase() === META_BLUE_HEX)
+}
+
+export function mixStep(pack: ColorPack): number {
+  return MIX_STEPS[pack.id]
 }
 
 export function defaultMix(pack: ColorPack): ColorMix {
@@ -42,23 +51,81 @@ function normalized(shares: readonly number[]): number[] {
   return shares.map((share) => share / total)
 }
 
+/** The other colors' shares with color `index` at 0; the default mix's when all of them are off. */
+function othersOf(pack: ColorPack, mix: ColorMix, index: number): number[] {
+  const others = mix.shares.map((share, i) => (i === index ? 0 : share))
+  return sum(others) > EPSILON ? others : defaultMix(pack).shares.map((share, i) => (i === index ? 0 : share))
+}
+
+/** The lowest share color `index` can have with the others keeping their ratios and none above MAX_SHARE. */
+function lowestShare(pack: ColorPack, mix: ColorMix, index: number): number {
+  const others = othersOf(pack, mix, index)
+  return Math.max(0, 1 - MAX_SHARE / (Math.max(...others) / sum(others)))
+}
+
 /**
  * Sets one color's share. The other colors keep their ratios to each other and fill the rest; if all of them were
  * off, they come back in the default mix's ratios. The value is held between 0 and MAX_SHARE, and above the share
  * that would push another color over MAX_SHARE (the last two colors on never go below 10% each).
  */
 export function setShare(pack: ColorPack, mix: ColorMix, index: number, value: number): ColorMix {
-  const count = pack.colors.length
-  if (index < 0 || index >= count) throw new Error(`No color ${index} in ${pack.id}`)
-  const othersNow = mix.shares.map((share, i) => (i === index ? 0 : share))
-  const fallback = defaultMix(pack).shares.map((share, i) => (i === index ? 0 : share))
-  const others = sum(othersNow) > EPSILON ? othersNow : fallback
+  if (index < 0 || index >= pack.colors.length) throw new Error(`No color ${index} in ${pack.id}`)
+  const others = othersOf(pack, mix, index)
   const othersTotal = sum(others)
-  const largestRatio = Math.max(...others) / othersTotal
-  const lowest = Math.max(0, 1 - MAX_SHARE / largestRatio)
-  const share = Math.min(MAX_SHARE, Math.max(lowest, Number.isFinite(value) ? value : 0))
+  const share = Math.min(MAX_SHARE, Math.max(lowestShare(pack, mix, index), Number.isFinite(value) ? value : 0))
   const shares = others.map((other, i) => (i === index ? share : (other / othersTotal) * (1 - share)))
   return { shares: normalized(shares) }
+}
+
+/**
+ * The lowest and highest share color `index` can be set to on its pack's steps: up to one step short of the whole
+ * picture, and down to 0 (off) unless that would leave fewer than two colors on or push another color over
+ * MAX_SHARE, then to the first step above.
+ */
+export function stepRange(pack: ColorPack, mix: ColorMix, index: number): readonly [number, number] {
+  const step = mixStep(pack)
+  const highest = 1 - step
+  const lowest = Math.max(0, Math.ceil(lowestShare(pack, mix, index) / step - ON_STEP)) * step
+  return [Math.min(lowest, highest), highest]
+}
+
+/** Sets color `index` to the step nearest `value` within its range (stepRange); the others keep their ratios. */
+export function setStep(pack: ColorPack, mix: ColorMix, index: number, value: number): ColorMix {
+  const step = mixStep(pack)
+  const [lowest, highest] = stepRange(pack, mix, index)
+  return setShare(pack, mix, index, Math.min(highest, Math.max(lowest, Math.round(value / step) * step)))
+}
+
+/**
+ * The step a key moves color `index` to, or null for other keys: an arrow or Page key moves one step from the step at
+ * or past its share, Home and End go to the ends of its range (stepRange).
+ */
+export function stepForKey(pack: ColorPack, mix: ColorMix, index: number, key: string): number | null {
+  const step = mixStep(pack)
+  const share = mix.shares[index]
+  const [lowest, highest] = stepRange(pack, mix, index)
+  let next: number
+  switch (key) {
+    case 'ArrowRight':
+    case 'ArrowUp':
+    case 'PageUp':
+      next = (Math.floor(share / step + ON_STEP) + 1) * step
+      break
+    case 'ArrowLeft':
+    case 'ArrowDown':
+    case 'PageDown':
+      next = (Math.ceil(share / step - ON_STEP) - 1) * step
+      break
+    case 'Home':
+      next = lowest
+      break
+    case 'End':
+      next = highest
+      break
+    default:
+      return null
+  }
+  return Math.min(highest, Math.max(lowest, next))
 }
 
 export function isColorOn(mix: ColorMix, index: number): boolean {
@@ -112,11 +179,17 @@ export function mixColors(pack: ColorPack, mix: ColorMix): MixColor[] {
   return pack.colors.map((color, index) => ({ color, share: mix.shares[index] })).filter((entry) => entry.share > EPSILON)
 }
 
-/** Whole percents that sum to 100, by largest remainder, for labels and the URL. */
-export function mixPercents(mix: ColorMix): number[] {
+/**
+ * Whole percents in pack order that sum to 100, by largest remainder, for labels and the URL; of equal remainders the
+ * color first in hue order gets the extra percent, so the rows read the same way down whatever the pack order.
+ */
+export function mixPercents(pack: ColorPack, mix: ColorMix): number[] {
   const exact = mix.shares.map((share) => share * 100)
   const percents = exact.map(Math.floor)
-  const order = exact.map((value, index) => ({ index, rest: value - Math.floor(value) })).sort((a, b) => b.rest - a.rest || a.index - b.index)
+  const rank = new Map(hueOrder(pack).map((index, place) => [index, place]))
+  const order = exact
+    .map((value, index) => ({ index, rest: value - Math.floor(value) }))
+    .sort((a, b) => b.rest - a.rest || (rank.get(a.index) ?? a.index) - (rank.get(b.index) ?? b.index))
   const missing = 100 - sum(percents)
   for (let k = 0; k < missing; k++) percents[order[k % order.length].index]++
   return percents
@@ -134,16 +207,39 @@ export function mixFromShares(pack: ColorPack, shares: readonly number[]): Color
   return { shares: result }
 }
 
-/** Reads `mix=` (whole percents in pack order, for example "40,20,20,20"). Missing or invalid gives the default. */
-export function parseMix(pack: ColorPack, param: string | null | undefined): ColorMix {
-  if (!param) return defaultMix(pack)
-  const parts = param.split(',')
-  if (parts.some((part) => !/^\d{1,3}$/.test(part.trim()))) return defaultMix(pack)
-  return mixFromShares(pack, parts.map((part) => Number(part.trim()))) ?? defaultMix(pack)
+/** A pack color's key in a link's mix=: its name in lower case with hyphens for spaces ("meta-blue", "orange-red"). */
+export function mixKey(color: PackColor): string {
+  return color.name.toLowerCase().replace(/\s+/g, '-')
 }
 
-/** The `mix=` value, or null for the pack's default mix so default links carry no `mix=`. */
+/**
+ * Reads `mix=`: each color that is on as its key and whole percent ("meta-blue:25,cyan:75"), in any order; colors it
+ * doesn't name are off. Missing, unreadable, or not a valid mix for the pack gives the pack's default mix.
+ */
+export function parseMix(pack: ColorPack, param: string | null | undefined): ColorMix {
+  if (!param) return defaultMix(pack)
+  const shares = pack.colors.map(() => 0)
+  const named = new Set<number>()
+  for (const part of param.split(',')) {
+    const match = /^([a-z-]+):(\d{1,3})$/.exec(part.trim())
+    const index = match ? pack.colors.findIndex((color) => mixKey(color) === match[1]) : -1
+    if (!match || index < 0 || named.has(index)) return defaultMix(pack)
+    named.add(index)
+    shares[index] = Number(match[2])
+  }
+  return mixFromShares(pack, shares) ?? defaultMix(pack)
+}
+
+/**
+ * The `mix=` value: each color that is on, in hue order, as its key and whole percent ("meta-blue:25,cyan:75"), so a
+ * link keeps its colors whatever the pack order. Null for the pack's default mix, so default links carry no mix=.
+ */
 export function formatMix(pack: ColorPack, mix: ColorMix): string | null {
-  const value = mixPercents(mix).join(',')
-  return value === mixPercents(defaultMix(pack)).join(',') ? null : value
+  const percents = mixPercents(pack, mix)
+  const defaults = mixPercents(pack, defaultMix(pack))
+  if (percents.every((percent, i) => percent === defaults[i])) return null
+  return hueOrder(pack)
+    .filter((index) => percents[index] > 0)
+    .map((index) => `${mixKey(pack.colors[index])}:${percents[index]}`)
+    .join(',')
 }

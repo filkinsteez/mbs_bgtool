@@ -365,12 +365,13 @@
   color: var(--dial-text-tertiary);
 }
 
-.tool-mix-quarter {
+/* A line at each step the slider moves in. */
+.tool-mix-step {
   position: absolute;
   top: 0;
   bottom: 0;
   width: 1px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.14);
   pointer-events: none;
 }
 

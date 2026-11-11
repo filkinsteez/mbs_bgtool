@@ -3,6 +3,7 @@ import {
   DEFAULT_META_BLUE_SHARE,
   MAX_SHARE,
   MIN_COLORS_ON,
+  MIX_STEPS,
   canTurnOff,
   colorsOn,
   defaultMix,
@@ -13,13 +14,18 @@ import {
   mixColors,
   mixForPack,
   mixFromShares,
+  mixKey,
   mixPercents,
+  mixStep,
   parseMix,
   setColorOn,
   setMetaBlue,
   setShare,
+  setStep,
+  stepForKey,
+  stepRange,
 } from './mix'
-import { PACKS, getPack, type ColorPack } from './packs'
+import { HUE_ORDER, PACKS, getPack, hueOrder, type ColorPack } from './packs'
 
 const bold = getPack('bold')
 const elemental = getPack('elemental')
@@ -41,10 +47,11 @@ describe('default mix', () => {
     }
   })
 
-  it('shows as whole percents that sum to 100: thirds and eighths of the rest round by largest remainder', () => {
-    expect(mixPercents(defaultMix(bold))).toEqual([50, 17, 17, 16])
-    expect(mixPercents(defaultMix(elemental))).toEqual([50, 13, 13, 12, 12])
-    expect(mixPercents(defaultMix(getPack('atmospheric')))).toEqual([50, 13, 13, 12, 12])
+  it('shows as whole percents that sum to 100: thirds and eighths of the rest round by largest remainder, ties first in hue order', () => {
+    const inHueOrder = (pack: ColorPack) => hueOrder(pack).map((i) => mixPercents(pack, defaultMix(pack))[i])
+    expect(inHueOrder(bold)).toEqual([50, 17, 17, 16])
+    expect(inHueOrder(elemental)).toEqual([13, 13, 12, 50, 12])
+    expect(inHueOrder(atmospheric)).toEqual([50, 13, 13, 12, 12])
   })
 
   it('finds Meta Blue by its hex, not its place in the pack', () => {
@@ -179,7 +186,7 @@ describe("each color's switch", () => {
     let mix = setColorOn(bold, defaultMix(bold), yellow, false)
     mix = setColorOn(bold, mix, red, false)
     mix = setShare(bold, mix, cyan, 0.75)
-    const percents = mixPercents(mix)
+    const percents = mixPercents(bold, mix)
     expect([blue, cyan, yellow, red].map((i) => percents[i])).toEqual([25, 75, 0, 0])
   })
 
@@ -202,16 +209,73 @@ describe('a new pack', () => {
     expect(next.shares[blue]).toBeCloseTo(0.3, 12)
     next.shares.forEach((share, i) => i !== blue && expect(share).toBeCloseTo(0.7 / 4, 12))
     const back = mixForPack(elemental, next, bold)
-    expect(mixPercents(back)[metaBlueIndex(bold)]).toBe(30)
-    expect([...mixPercents(back)].sort((a, b) => a - b)).toEqual([23, 23, 24, 30])
+    expect(mixPercents(bold, back)[metaBlueIndex(bold)]).toBe(30)
+    expect([...mixPercents(bold, back)].sort((a, b) => a - b)).toEqual([23, 23, 24, 30])
   })
 
   it('keeps Meta Blue off, with the other colors even', () => {
     const next = mixForPack(bold, setMetaBlue(bold, defaultMix(bold), false), elemental)
     expect(next.shares[metaBlueIndex(elemental)]).toBe(0)
-    expect(mixPercents(next).filter((percent) => percent !== 0)).toEqual([25, 25, 25, 25])
-    expect([...mixPercents(mixForPack(elemental, next, bold))].sort((a, b) => a - b)).toEqual([0, 33, 33, 34])
+    expect(mixPercents(elemental, next).filter((percent) => percent !== 0)).toEqual([25, 25, 25, 25])
+    expect([...mixPercents(bold, mixForPack(elemental, next, bold))].sort((a, b) => a - b)).toEqual([0, 33, 33, 34])
     expect(mixForPack(elemental, setShare(elemental, next, at(elemental, 'Lime'), 0.6), atmospheric).shares[metaBlueIndex(atmospheric)]).toBe(0)
+  })
+})
+
+describe('hue order', () => {
+  it('names every pack color once, puts Elemental as Tan, Lime, Forest, Meta Blue, Plum, and leaves the pack lists as they are', () => {
+    for (const pack of PACKS) {
+      expect([...HUE_ORDER[pack.id]].sort()).toEqual(pack.colors.map((color) => color.name).sort())
+      expect([...hueOrder(pack)].sort()).toEqual(pack.colors.map((_, i) => i))
+    }
+    expect(HUE_ORDER.elemental).toEqual(['Tan', 'Lime', 'Forest', 'Meta Blue', 'Plum'])
+    expect(HUE_ORDER.bold).toEqual(['Meta Blue', 'Cyan', 'Yellow', 'Orange-red'])
+    expect(HUE_ORDER.atmospheric).toEqual(['Meta Blue', 'Ice', 'Steel', 'Slate', 'Near-black'])
+  })
+})
+
+describe('steps', () => {
+  it('are one Nth of the picture in a pack of N colors: a quarter in Bold, a fifth in Elemental and Atmospheric', () => {
+    expect(MIX_STEPS).toEqual({ bold: 0.25, elemental: 0.2, atmospheric: 0.2 })
+    for (const pack of PACKS) expect(mixStep(pack)).toBeCloseTo(1 / pack.colors.length, 12)
+  })
+
+  it('set a color to the nearest step, up to one step short of the whole picture, the others keeping their ratios', () => {
+    const cyan = at(bold, 'Cyan')
+    const mix = setStep(bold, defaultMix(bold), cyan, 0.3)
+    expect(mix.shares[cyan]).toBeCloseTo(0.25, 12)
+    expect(mixPercents(bold, mix)).toEqual([45, 25, 15, 15])
+    expect(setStep(bold, mix, cyan, 1).shares[cyan]).toBeCloseTo(0.75, 12)
+    expect(setStep(bold, mix, cyan, 0.1).shares[cyan]).toBe(0)
+    const lime = at(elemental, 'Lime')
+    expect(setStep(elemental, defaultMix(elemental), lime, 0.95).shares[lime]).toBeCloseTo(0.8, 12)
+  })
+
+  it('keep the last two colors on at a step or more', () => {
+    const [blue, cyan, yellow, red] = ['Meta Blue', 'Cyan', 'Yellow', 'Orange-red'].map((name) => at(bold, name))
+    let sketch = setColorOn(bold, defaultMix(bold), yellow, false)
+    sketch = setStep(bold, setColorOn(bold, sketch, red, false), cyan, 0.75)
+    expect(mixPercents(bold, sketch)[blue]).toBe(25)
+    expect(stepRange(bold, sketch, blue)).toEqual([0.25, 0.75])
+    expect(stepForKey(bold, sketch, blue, 'ArrowLeft')).toBeCloseTo(0.25, 12)
+    expect(stepForKey(bold, sketch, blue, 'Home')).toBeCloseTo(0.25, 12)
+    expect(setStep(bold, sketch, blue, 0).shares[blue]).toBeCloseTo(0.25, 12)
+    expect(stepRange(bold, sketch, yellow)[0]).toBe(0)
+  })
+
+  it("move one step per arrow key from the step at or past the share, so a five-color pack's default Meta Blue goes from 50% to 60 or 40%", () => {
+    const blue = metaBlueIndex(elemental)
+    expect(stepForKey(elemental, defaultMix(elemental), blue, 'ArrowRight')).toBeCloseTo(0.6, 12)
+    expect(stepForKey(elemental, defaultMix(elemental), blue, 'ArrowLeft')).toBeCloseTo(0.4, 12)
+    const lime = at(elemental, 'Lime')
+    expect(stepForKey(elemental, defaultMix(elemental), lime, 'ArrowRight')).toBeCloseTo(0.2, 12)
+    expect(stepForKey(elemental, defaultMix(elemental), lime, 'ArrowLeft')).toBe(0)
+    const boldBlue = metaBlueIndex(bold)
+    expect(stepForKey(bold, defaultMix(bold), boldBlue, 'ArrowUp')).toBeCloseTo(0.75, 12)
+    expect(stepForKey(bold, defaultMix(bold), boldBlue, 'PageDown')).toBeCloseTo(0.25, 12)
+    expect(stepForKey(bold, defaultMix(bold), boldBlue, 'End')).toBeCloseTo(0.75, 12)
+    expect(stepForKey(bold, defaultMix(bold), boldBlue, 'Home')).toBe(0)
+    expect(stepForKey(bold, defaultMix(bold), boldBlue, 'Enter')).toBeNull()
   })
 })
 
@@ -225,12 +289,20 @@ describe('mixColors', () => {
 })
 
 describe('mix in the URL', () => {
-  it('writes whole percents in pack order that sum to 100', () => {
-    const mix = setShare(bold, defaultMix(bold), 3, 0.6)
-    expect(formatMix(bold, mix)).toBe('24,8,8,60')
+  it('writes each color that is on by name, in hue order, in whole percents that sum to 100', () => {
+    const mix = setShare(bold, defaultMix(bold), at(bold, 'Orange-red'), 0.6)
+    expect(formatMix(bold, mix)).toBe('meta-blue:24,cyan:8,yellow:8,orange-red:60')
     const thirds = setMetaBlue(bold, defaultMix(bold), false)
-    expect(total(mixPercents(thirds))).toBe(100)
-    expect(formatMix(bold, thirds)).toBe('0,34,33,33')
+    expect(total(mixPercents(bold, thirds))).toBe(100)
+    expect(formatMix(bold, thirds)).toBe('cyan:34,yellow:33,orange-red:33')
+    const tanUp = setShare(elemental, defaultMix(elemental), at(elemental, 'Tan'), 0.4)
+    expect(formatMix(elemental, tanUp)).toBe('tan:40,lime:9,forest:9,meta-blue:34,plum:8')
+  })
+
+  it('keys each color by its name in lower case with hyphens', () => {
+    expect(PACKS.flatMap((pack) => pack.colors.map(mixKey))).toEqual(
+      expect.arrayContaining(['meta-blue', 'cyan', 'yellow', 'orange-red', 'lime', 'forest', 'tan', 'plum', 'ice', 'steel', 'slate', 'near-black']),
+    )
   })
 
   it('writes nothing for the default mix, and reads a missing mix= as the default', () => {
@@ -242,23 +314,24 @@ describe('mix in the URL', () => {
     }
   })
 
-  it('round trips a written mix', () => {
-    const mix = setShare(elemental, setMetaBlue(elemental, defaultMix(elemental), false), 1, 0.45)
+  it('round trips a written mix, and reads the colors in any order', () => {
+    const mix = setShare(elemental, setMetaBlue(elemental, defaultMix(elemental), false), at(elemental, 'Lime'), 0.4)
     const text = formatMix(elemental, mix)
-    expect(text).not.toBeNull()
+    expect(text).toBe('tan:20,lime:40,forest:20,plum:20')
     expect(formatMix(elemental, parseMix(elemental, text))).toBe(text)
+    expect(formatMix(elemental, parseMix(elemental, 'plum:20,forest:20,lime:40,tan:20'))).toBe(text)
   })
 
-  it('gives the default for a mix= that does not fit the pack', () => {
-    for (const bad of ['40,20,20', '40,20,20,20,0', 'a,b,c,d', '100,0,0,0', '95,5,0,0', '0,0,0,0', '-5,35,35,35', '40;20;20;20', '40,20,,40']) {
-      expect(parseMix(bold, bad).shares).toEqual(defaultMix(bold).shares)
+  it('gives the default for a mix= that does not fit the pack, and for the old positional mix=', () => {
+    for (const bad of ['40,20,20,20', '0,34,33,33', 'a,b,c,d', 'cyan:100', 'meta-blue:95,cyan:5', 'cyan:0,yellow:0', 'cyan:40,cyan:60', 'lime:50,cyan:50', 'Cyan:50,Yellow:50', 'cyan:-5,yellow:50', 'cyan;50,yellow;50', 'cyan:50,,yellow:50']) {
+      expect(parseMix(bold, bad).shares, bad).toEqual(defaultMix(bold).shares)
     }
   })
 
   it('accepts a mix= whose percents add up to a little more or less than 100', () => {
-    const mix = parseMix(bold, '20,10,10,61')
+    const mix = parseMix(bold, 'meta-blue:20,cyan:10,yellow:10,orange-red:61')
     expect(total(mix.shares)).toBeCloseTo(1, 12)
-    expect(mix.shares[3]).toBeCloseTo(61 / 101, 12)
+    expect(mix.shares[at(bold, 'Orange-red')]).toBeCloseTo(61 / 101, 12)
   })
 
   it('checks shares from code the same way', () => {

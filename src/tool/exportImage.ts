@@ -16,20 +16,20 @@ export interface ExportOutcome {
  * are fixed per mood, and with a line the mood control follows from the line.
  */
 export type NamedControls = Pick<ControlValues, 'drag'> & {
-  /** The color mix in whole percents, pack order, when it isn't the pack's default. */
-  mix?: readonly number[] | null
+  /** The color mix as the link writes it ("meta-blue:25,cyan:75"), when it isn't the pack's default. */
+  mix?: string | null
 }
 
 /** Line ends are kept to 0.001 of the frame, so tenths of a percent tell any two lines apart. */
 const framePercent = (value: number) => String(Math.round(value * 1000) / 10)
 
 /**
- * File name parts for the controls, at the precision the URL keeps them: `mix20-10-10-60` for a mix that isn't the
- * pack's default, and when the user dragged a line, `from20,80-to75,30` (its ends in percent of the frame's width and
- * height). None for the default mix and no line.
+ * File name parts for the controls, at the precision the URL keeps them: `mix-meta-blue25,cyan75` for a mix that isn't
+ * the pack's default, and when the user dragged a line, `from20,80-to75,30` (its ends in percent of the frame's width
+ * and height). None for the default mix and no line.
  */
 export function controlNameParts(controls: NamedControls): string[] {
-  const parts = controls.mix ? [`mix${controls.mix.join('-')}`] : []
+  const parts = controls.mix ? [`mix-${controls.mix.replaceAll(':', '')}`] : []
   const line = controls.drag ? clampDrag(controls.drag) : undefined
   if (line) parts.push(`from${line.from.map(framePercent).join(',')}`, `to${line.to.map(framePercent).join(',')}`)
   return parts

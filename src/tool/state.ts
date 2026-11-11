@@ -1,5 +1,5 @@
 import { EXPORT_ASPECTS, getPack, isPackId, type ExportAspect, type MoodId, type PackId, type RecipeId } from '@/light'
-import { defaultMix, formatMix, mixPercents, parseMix, type ColorMix } from '@/light/color/mix'
+import { defaultMix, formatMix, parseMix, type ColorMix } from '@/light/color/mix'
 import { clampDrag, clampPoint, type LightDrag, type LightPoint } from './controls'
 import { DEFAULT_FILTER, filterQuery, parseFilterQuery, type FilterChoice } from './filterControl'
 
@@ -12,8 +12,8 @@ export interface ToolState {
   seed: number
   format: ExportAspect
   /**
-   * Each pack color's share of the picture, which the color stage gives the design (`mix=20,10,10,60` in the URL, in
-   * pack order; none for the pack's default mix).
+   * Each pack color's share of the picture, which the color stage gives the design (`mix=meta-blue:25,cyan:75` in the
+   * URL, by color name; none for the pack's default mix).
    */
   mix: ColorMix
   /** The line the user dragged on the image, in frame units (`from=x,y&to=x,y` in the URL). Missing until they drag. */
@@ -96,11 +96,11 @@ export function parseDrag(from: string | undefined, to: string | undefined): Lig
 }
 
 /**
- * The mix's whole percents in pack order when it isn't the pack's default; else null, and the URL and the export's
- * file name leave the mix out.
+ * The link's `mix=` value ("meta-blue:25,cyan:75") when the mix isn't the pack's default; else null, and the URL and
+ * the export's file name leave the mix out.
  */
-export function customMix(state: Pick<ToolState, 'pack' | 'mix'>): number[] | null {
-  return formatMix(getPack(state.pack), state.mix) !== null ? mixPercents(state.mix) : null
+export function customMix(state: Pick<ToolState, 'pack' | 'mix'>): string | null {
+  return formatMix(getPack(state.pack), state.mix)
 }
 
 /** A page's search params as Next.js passes them to the page. */
@@ -162,5 +162,5 @@ export function toQuery(state: ToolState): string {
     ['seed', String(state.seed)],
     ['format', formatToQuery(state.format)],
   ]).toString()
-  return [head, mix ? `mix=${mix.join(',')}` : null, line, tail, filterQuery(state)].filter(Boolean).join('&')
+  return [head, mix ? `mix=${mix}` : null, line, tail, filterQuery(state)].filter(Boolean).join('&')
 }

@@ -28,11 +28,15 @@ describe('export file names', () => {
   })
 
   it('add the color mix, when there is one to name, after the seed and before a line', () => {
-    expect(controlNameParts({ mix: [20, 10, 10, 60] })).toEqual(['mix20-10-10-60'])
+    expect(controlNameParts({ mix: 'meta-blue:25,cyan:75' })).toEqual(['mix-meta-blue25,cyan75'])
     expect(controlNameParts({ mix: null })).toEqual([])
-    expect(controlNameParts({ mix: [0, 34, 33, 33], drag: { from: [0.2, 0.8], to: [0.75, 0.3] } })).toEqual(['mix0-34-33-33', 'from20,80', 'to75,30'])
-    expect(exportFileName({ id: 'tool', pack: 'bold', scene: scene('contour.beam', 7, { pixel: 0.5 }) }, '16x9', controlNameParts({ mix: [20, 10, 10, 60] }))).toBe(
-      'contour.beam-bold-16x9-seed7-mix20-10-10-60-pixel50.jpg',
+    expect(controlNameParts({ mix: 'cyan:34,yellow:33,orange-red:33', drag: { from: [0.2, 0.8], to: [0.75, 0.3] } })).toEqual([
+      'mix-cyan34,yellow33,orange-red33',
+      'from20,80',
+      'to75,30',
+    ])
+    expect(exportFileName({ id: 'tool', pack: 'bold', scene: scene('contour.beam', 7, { pixel: 0.5 }) }, '16x9', controlNameParts({ mix: 'meta-blue:25,cyan:75' }))).toBe(
+      'contour.beam-bold-16x9-seed7-mix-meta-blue25,cyan75-pixel50.jpg',
     )
   })
 
@@ -46,11 +50,11 @@ describe('export file names', () => {
     for (const recipe of ['sunset.ramp', 'sunset.bands', 'contour.rim'] as const) {
       for (const seed of [1, 2, 3]) {
         add(recipe, seed, {})
-        add(recipe, seed, { mix: [20, 10, 10, 60] })
-        add(recipe, seed, { mix: [20, 10, 11, 59] })
+        add(recipe, seed, { mix: 'meta-blue:25,cyan:75' })
+        add(recipe, seed, { mix: 'meta-blue:25,cyan:50,yellow:25' })
         const base = { from: [0.2, 0.8], to: [0.75, 0.3] } as const
         add(recipe, seed, { drag: base })
-        add(recipe, seed, { mix: [20, 10, 10, 60], drag: base })
+        add(recipe, seed, { mix: 'meta-blue:25,cyan:75', drag: base })
         for (let end = 0; end < 4; end++) {
           for (const delta of [-0.002, -0.001, 0.001, 0.002]) {
             const ends: number[] = [...base.from, ...base.to]

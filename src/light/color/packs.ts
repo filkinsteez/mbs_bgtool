@@ -54,6 +54,22 @@ export const PACKS: readonly ColorPack[] = [
   },
 ]
 
+/**
+ * Each pack's colors in hue order, by name, so colors that are neighbours on the color wheel sit next to each other
+ * (owner, 2026-11-11, concept file node 193:160): the order of the color rows in the panel and of a link's mix=. The
+ * pack's own color list keeps its order, which the looks index.
+ */
+export const HUE_ORDER: Readonly<Record<PackId, readonly string[]>> = {
+  bold: ['Meta Blue', 'Cyan', 'Yellow', 'Orange-red'],
+  elemental: ['Tan', 'Lime', 'Forest', 'Meta Blue', 'Plum'],
+  atmospheric: ['Meta Blue', 'Ice', 'Steel', 'Slate', 'Near-black'],
+}
+
+/** The places of the pack's colors in its color list, in hue order (HUE_ORDER). */
+export function hueOrder(pack: ColorPack): number[] {
+  return HUE_ORDER[pack.id].map((name) => pack.colors.findIndex((color) => color.name === name))
+}
+
 export const PACK_IDS: readonly PackId[] = PACKS.map((pack) => pack.id)
 
 export function getPack(id: PackId): ColorPack {
