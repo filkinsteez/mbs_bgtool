@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { linearToOklch } from '../color/oklab'
 import { hexToLinear } from '../color/srgb'
-import { MEET_BRIDGE_TO, MEET_BRIDGE_WIDTH, MEET_DARK_KEEP, MEET_LINE_CHANGE, meetDarkLight, MEET_SHARPNESS, MEET_SHARPNESS_DIM, meetApart, meetBridge, meetBridgeLight, meetColor, meetColors, meetLight, meetSharpness } from './meet'
+import { MEET_BRIDGE_TO, MEET_BRIDGE_WIDTH, MEET_DARK_KEEP, MEET_LINE_CHANGE, meetDarkLight, MEET_SHARPNESS, MEET_SHARPNESS_DIM, meetApart, meetBridge, meetBridgeLight, meetColor, meetColors, meetColorsAt, meetColorsDim, meetLight, meetSharpness } from './meet'
 
 const luminance = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 const unit = (c: readonly number[]) => c.map((v) => v / luminance(c))
@@ -192,5 +192,24 @@ describe('where two lights meet', () => {
       expect(largest / path, `${a} ${b}`).toBeLessThan(0.05)
       meetColor(color(a), 0, color(b), 1).forEach((v, i) => expect(v).toBeCloseTo(unit(color(b))[i], 9))
     }
+  })
+
+  it('in dim light keeps far-apart colors their own, with no white middle and no mixed hue off the meeting', () => {
+    const blue = unit(color('#0064E0'))
+    const plum = unit(color('#4A0A3C'))
+    const [, blueC, blueH] = linearToOklch(blue)
+    // Off the very middle the leading color keeps its own hue and chroma (meetColors pales it toward white there).
+    for (const [qa, qb] of [[0.6, 0.4], [0.55, 0.45]]) {
+      const [, c, h] = linearToOklch(meetColorsDim([blue, plum], [qa, qb]))
+      expect(hueGap(h, blueH)).toBeLessThan(3)
+      expect(c).toBeGreaterThan(0.95 * blueC)
+      expect(linearToOklch(meetColors([blue, plum], [qa, qb]))[1]).toBeLessThan(0.9 * blueC)
+    }
+    // Near hues still mix as plain light.
+    const cyan = unit(color('#1FCDF0'))
+    meetColorsDim([blue, cyan], [0.5, 0.5]).forEach((v, i) => expect(v).toBeCloseTo(meetColors([blue, cyan], [0.5, 0.5])[i], 1))
+    // meetColorsAt is meetColors where lit and meetColorsDim where dim.
+    meetColorsAt([blue, plum], [0.6, 0.4], MEET_SHARPNESS, 1).forEach((v, i) => expect(v).toBeCloseTo(meetColors([blue, plum], [0.6, 0.4])[i], 9))
+    meetColorsAt([blue, plum], [0.6, 0.4], MEET_SHARPNESS, 0).forEach((v, i) => expect(v).toBeCloseTo(meetColorsDim([blue, plum], [0.6, 0.4])[i], 9))
   })
 })

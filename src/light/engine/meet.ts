@@ -238,6 +238,72 @@ export function meetColors(colors: readonly (readonly number[])[], shares: reado
   return plain.map((v, i) => v / total + (far[i] - v / total) * apart) as Rgb
 }
 
+/** Oklab hue difference (degrees) over which two colors with real chroma go from near to far apart in dim light. */
+export const MEET_FAR_HUE = [45, 65] as const
+
+/**
+ * How far apart two colors are by Oklab hue, 0 to 1: far from MEET_FAR_HUE[1] degrees apart, if both have chroma (at
+ * luminance 1, so any light level). Meta Blue and Plum (80 degrees) are far, though meetApart gives them only 0.73;
+ * any mix of them reads indigo or purple.
+ */
+export function meetHueApart(a: readonly number[], b: readonly number[]): number {
+  const la = meetOklab(a)
+  const lb = meetOklab(b)
+  const ca = Math.hypot(la[1], la[2])
+  const cb = Math.hypot(lb[1], lb[2])
+  if (ca < 1e-3 || cb < 1e-3) return 0
+  const gap = (Math.acos(Math.max(-1, Math.min(1, (la[1] * lb[1] + la[2] * lb[2]) / (ca * cb)))) * 180) / Math.PI
+  return meetSmooth(MEET_FAR_HUE[0], MEET_FAR_HUE[1], gap) * meetSmooth(0.01, 0.04, Math.min(ca, cb) / Math.max(la[0], lb[0], 1e-6))
+}
+
+/**
+ * The dim half of meetColors, at luminance 1: far-apart colors keep their own colors up to a short hand-over (each
+ * leads by its share to the power MEET_SHARPNESS_DIM), with no white middle, which reads grey in dim light. Used with
+ * meetDarkLight, which takes the light along the meeting line toward near black, they fade through their own dark
+ * shades and meet in the dark instead of through a mixed hue such as indigo or purple. Far apart here is the larger of
+ * meetApart and meetHueApart; near hues mix as plain light, as in meetColors (CPU twin of the GLSL meetColorsDim5).
+ */
+export function meetColorsDim(colors: readonly (readonly number[])[], shares: readonly number[]): Rgb {
+  const n = colors.length
+  const top = Math.max(0, ...shares)
+  if (!n || top <= 0) return (n ? [colors[0][0], colors[0][1], colors[0][2]] : [1, 1, 1]) as Rgb
+  const lead = shares.map((q) => (Math.max(q, 0) / top) ** MEET_SHARPNESS_DIM)
+  const sum = lead.reduce((a, v) => a + v, 0)
+  const plain = [0, 0, 0]
+  const own = [0, 0, 0]
+  let total = 0
+  for (let k = 0; k < n; k++) {
+    const q = Math.max(shares[k], 0)
+    for (let i = 0; i < 3; i++) {
+      plain[i] += q * colors[k][i]
+      own[i] += (lead[k] / sum) * colors[k][i]
+    }
+    total += q
+  }
+  let pairs = 0
+  let apartSum = 0
+  for (let k = 0; k < n; k++)
+    for (let j = k + 1; j < n; j++) {
+      const w = (lead[k] / sum) * (lead[j] / sum)
+      pairs += w
+      apartSum += w * Math.max(meetApart(colors[k], colors[j]), meetHueApart(colors[k], colors[j]))
+    }
+  const apart = pairs > 1e-12 ? apartSum / pairs : 0
+  return plain.map((v, i) => v / total + (own[i] - v / total) * apart) as Rgb
+}
+
+/**
+ * Where several colors meet in light of any level, at luminance 1: meetColors where the meeting is lit (`lit` 1, as
+ * meetBridgeLit gives it for the light there) and meetColorsDim where it is dim (`lit` 0), in proportion between
+ * (CPU twin of the GLSL meetColorsAt5).
+ */
+export function meetColorsAt(colors: readonly (readonly number[])[], shares: readonly number[], sharp: number, lit: number): Rgb {
+  const t = Math.min(1, Math.max(0, lit))
+  const dim = meetColorsDim(colors, shares)
+  const bright = meetColors(colors, shares, sharp)
+  return dim.map((v, i) => v + (bright[i] - v) * t) as Rgb
+}
+
 /**
  * The light where two lights meet: meetColor at the luminance of the two lights added, ca la + cb lb (CPU twin of the
  * GLSL meetLight).
@@ -250,8 +316,9 @@ export function meetLight(ca: readonly number[], la: number, cb: readonly number
 /**
  * GLSL: `vec3 meetColor(vec3 ca, float la, vec3 cb, float lb, float sharp)`, `meetLight` (same arguments),
  * `float meetSharpness(float y)`, `float meetBridge(float fa, float fb, float slope)`, `float meetBridgeShares(float
- * sa, float sb)`, `float meetBridgeLit(float shown)`, `float meetBridgeLight(float shown, float bridge)` and `float meetDarkLight(float
- * shown, float dark)`. A look and the
+ * sa, float sb)`, `float meetBridgeLit(float shown)`, `float meetBridgeLight(float shown, float bridge)`, `float meetDarkLight(float
+ * shown, float dark)`, `float meetHueApart(vec3 a, vec3 b)`, `vec3 meetColors5(vec3 c[5], float q[5], int n, float sharp)`, `vec3 meetColorsDim5(vec3 c[5],
+ * float q[5], int n)` and `vec3 meetColorsAt5(vec3 c[5], float q[5], int n, float sharp, float lit)`. A look and the
  * color stage may both include it in one shader; the guard keeps one copy.
  */
 export const MEET_GLSL = /* glsl */ `
@@ -376,6 +443,56 @@ vec3 meetColors5(vec3 c[5], float q[5], int n, float sharp) {
     }
   float apart = pairs > 1e-12 ? apartSum / pairs : 0.0;
   return mix(plain / total, far, apart);
+}
+
+float meetHueApart(vec3 a, vec3 b) {
+  vec3 la = meetOklab(a);
+  vec3 lb = meetOklab(b);
+  float ca = length(la.yz);
+  float cb = length(lb.yz);
+  if (ca < 1e-3 || cb < 1e-3) return 0.0;
+  float gap = degrees(acos(clamp(dot(la.yz, lb.yz) / (ca * cb), -1.0, 1.0)));
+  return smoothstep(${MEET_FAR_HUE[0].toFixed(1)}, ${MEET_FAR_HUE[1].toFixed(1)}, gap) * smoothstep(0.01, 0.04, min(ca, cb) / max(max(la.x, lb.x), 1e-6));
+}
+
+// The dim half of meetColors5: far-apart colors keep their own colors up to a short hand-over, with no white middle;
+// with meetDarkLight on the meeting line they fade through their own dark shades (meetColorsDim in meet.ts).
+vec3 meetColorsDim5(vec3 c[5], float q[5], int n) {
+  float top = 0.0;
+  for (int k = 0; k < 5; k++) if (k < n) top = max(top, q[k]);
+  if (n <= 0 || top <= 0.0) return n > 0 ? c[0] : vec3(1.0);
+  float lead[5];
+  float sum = 0.0;
+  for (int k = 0; k < 5; k++) {
+    lead[k] = k < n ? pow(max(q[k], 0.0) / top, ${MEET_SHARPNESS_DIM.toFixed(1)}) : 0.0;
+    sum += lead[k];
+  }
+  vec3 plain = vec3(0.0);
+  vec3 own = vec3(0.0);
+  float total = 0.0;
+  for (int k = 0; k < 5; k++) {
+    if (k >= n) continue;
+    lead[k] /= sum;
+    plain += max(q[k], 0.0) * c[k];
+    own += lead[k] * c[k];
+    total += max(q[k], 0.0);
+  }
+  float pairs = 0.0;
+  float apartSum = 0.0;
+  for (int k = 0; k < 5; k++)
+    for (int j = 0; j < 5; j++) {
+      if (k >= n || j >= n || j <= k) continue;
+      float w = lead[k] * lead[j];
+      pairs += w;
+      apartSum += w * max(meetApart(c[k], c[j]), meetHueApart(c[k], c[j]));
+    }
+  float apart = pairs > 1e-12 ? apartSum / pairs : 0.0;
+  return mix(plain / total, own, apart);
+}
+
+// meetColors5 where lit (lit 1, meetBridgeLit of the light), meetColorsDim5 where dim (lit 0), in proportion between.
+vec3 meetColorsAt5(vec3 c[5], float q[5], int n, float sharp, float lit) {
+  return mix(meetColorsDim5(c, q, n), meetColors5(c, q, n, sharp), clamp(lit, 0.0, 1.0));
 }
 
 vec3 meetLight(vec3 ca, float la, vec3 cb, float lb, float sharp) {
