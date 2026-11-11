@@ -536,9 +536,6 @@ const SECOND_LONGER = 1.35
 /** A warm and a cool second light's peak range, times the main light's level. */
 const WARM_PEAK = [0.65, 0.9]
 const COOL_PEAK = [0.38, 0.5]
-/** The dark colors keep clear of the second light's brighter middle only (this share of its half length), since its
- * ends fade to black. */
-const DARK_SECOND_SHARE = 0.7
 /** Outside a wash its haze and face light against the main light's: its own glow carries its color, and a wide dim
  * halo around it would take the main light's color through the stage. */
 const STRETCH_FAR = 0.2
@@ -1004,7 +1001,9 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     Math.abs(p[0]) <= fw / 2 - DARK_MARGIN &&
     Math.abs(p[1]) <= fh / 2 - DARK_MARGIN &&
     Math.sqrt(dist2(p, seedHome)) >= DARK_FROM_MAIN &&
-    (!secondMiddle || Math.sqrt(dist2(p, secondMiddle)) >= (def.wash ? 1 : DARK_SECOND_SHARE) * halfLength + DARK_CLEAR) &&
+    // A dark stretch's middle keeps clear of all of the second light's stretch: the main light lights the line up to
+    // and across its ends, and a dark color on its warm stretch mixed to a plum haze.
+    (!secondMiddle || Math.sqrt(dist2(p, secondMiddle)) >= halfLength + DARK_CLEAR) &&
     Math.sqrt(dist2(p, coolMiddle)) >= DARK_COOL_CLEAR
   const darkSamples = merged.contours.flatMap((c, ci) => {
     const length = contourLength(c) || 1
