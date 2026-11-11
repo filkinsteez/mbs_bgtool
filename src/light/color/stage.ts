@@ -6,7 +6,6 @@ import { toneCurve } from '../engine/output'
 import { runPostPasses } from '../engine/passes'
 import { NO_PROFILE } from '../engine/profile'
 import { buildRecipeShader } from '../engine/recipeShader'
-import { mergedAlong } from '../recipes/contour/mergedCompose'
 import { lightnessOnlyParams } from '../recipes/sunset/merged'
 import { isRecipeId, type ColorMixSettings, type LensSettings, type RecipeContext, type RecipeId, type RecipeProgram, type Scene, type UniformMap } from '../scene'
 import { defaultMix, META_BLUE_HEX, mixFromShares, type ColorMix } from './mix'
@@ -66,8 +65,6 @@ export interface ColorStageInput {
 interface Design {
   grid: StageGrid
   fields: StageField[]
-  /** Contour: each cell's place along the outline, from the look's own curves. */
-  along?: Float32Array
 }
 
 interface Solved {
@@ -441,8 +438,7 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
     const id = input.program.id
     const recipe = isRecipeId(id) ? id : 'contour.rim'
     const parts = isRecipeId(id) ? lookParts(id, input.ctx.params, input.ctx.aspect) : []
-    const along = id === 'contour.merged' ? mergedAlong(input.ctx.params, input.ctx.aspect, grid.width, grid.height) : undefined
-    design = remember(designs, key, { grid, fields: buildFields(recipe, parts, grid, input.ctx.seed, input.ctx.aspect), along })
+    design = remember(designs, key, { grid, fields: buildFields(recipe, parts, grid, input.ctx.seed, input.ctx.aspect) })
   }
   const pack = getPack(isPackId(input.settings.pack) ? input.settings.pack : COLOR_DESIGN_PACK)
   const mix = mixFromShares(pack, input.settings.shares) ?? defaultMix(pack)
@@ -466,7 +462,7 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
     void wants
     const id = input.program.id
     const sky = isRecipeId(id) ? lookParts(id, input.ctx.params, input.ctx.aspect).find((p) => p.kind === 'horizon') : undefined
-    const way: CarryWay = id === 'contour.merged' ? { kind: 'outline', along: design.along } : { kind: 'grain', axis: sky && sky.kind === 'horizon' ? sky.sky : null }
+    const way: CarryWay = id === 'contour.merged' ? { kind: 'outline' } : { kind: 'grain', axis: sky && sky.kind === 'horizon' ? sky.sky : null }
     const soft = byParts ? carriedShares(grid, colors, values, input.ctx.seed, way) : []
     const drawn = byParts
       ? {

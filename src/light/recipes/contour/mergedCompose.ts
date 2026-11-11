@@ -675,11 +675,6 @@ const SECOND_CORE = 0.35
  * the base width): wider, its own color reached into the main light's face and mixed to indigo or mauve. */
 const MAIN_GLOW = 2.2
 const MAIN_GLOW_WEIGHT = 1.65
-/** Through the color stage the glow along the rim is the bright light the light colors (Yellow, Lime, Ice, Tan) show
- * in, so it is wider and stronger than the main light's own glow above. The second light's glow is set relative to
- * the main light's, so it grows with it. */
-const STAGE_GLOW = 2
-const STAGE_GLOW_WEIGHT = 3
 const SECOND_GLOW_WEIGHT = 1.1
 /** Red over blue in sRGB: above zero for warm colors. */
 const warmthOf = (hex: string) => parseInt(hex.slice(1, 3), 16) - parseInt(hex.slice(5, 7), 16)
@@ -754,11 +749,11 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const blur = def.blur ?? 1
   const soften = geo(controls.softness, 0.3, 1, 1.7) * blur
   // Per seed, how the light falls along its edge, so seeds that share a shape differ in where their light is, not only
-  // in color: its falloff's power, and how many times dimmer it is by the far end of the visible stretch, 1.6 to 4
-  // times, so the far stretch still carries bright light for the colors beside Meta Blue and no dim stretch opens
-  // before the second light (a wash's whole edge is lit).
+  // in color: its falloff's power, and how many times dimmer it is by the far end of the visible stretch, 2.5 to 16
+  // times, so the far stretch still carries a dimmer light and no dim stretch opens before the second light (a wash's
+  // whole edge is lit).
   const power = lerp(1.8, 3.4, design.powerDraw)
-  const factor = def.wash ? 2 : lerp(1.6, 4, design.reachDraw)
+  const factor = def.wash ? 2 : lerp(2.5, 16, design.reachDraw)
   const reach = flatRadius(run, home, factor, power)
   const hazeScale = lerp(0.7, 1.5, design.hazeDraw)
   const dragReach = dragged ? Math.hypot(dragged.lineLength, 0.12) : 0
@@ -1007,10 +1002,9 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
       // light pack color (Ice near white, Lime about 0.9), or the color stage keeps that color out of it.
       secondCore: ringLight ? RING_CORE : edgeLight ? EDGE_CORE : SECOND_CORE,
       // A cool one's glow is a little wider than the main one's, so its color reads in it; a warm one keeps the narrow
-      // glow: wider, its color reached the main light's and mixed to mauve or indigo. A ring keeps the main light's glow
-      // without the stage's extra width and strength: with them its hot core bloomed into a large white spot.
-      secondGlow: round4(ringLight ? 1 / STAGE_GLOW : def.wash || edgeWarm ? 1 / MAIN_GLOW : EDGE_GLOW),
-      secondGlowWeight: round4(ringLight ? 1 / STAGE_GLOW_WEIGHT : (def.wash || edgeWarm ? SECOND_GLOW_WEIGHT : EDGE_GLOW_WEIGHT) / MAIN_GLOW_WEIGHT),
+      // glow: wider, its color reached the main light's and mixed to mauve or indigo.
+      secondGlow: round4(ringLight ? 1 : def.wash || edgeWarm ? 1 / MAIN_GLOW : EDGE_GLOW),
+      secondGlowWeight: round4(ringLight ? 1 : (def.wash || edgeWarm ? SECOND_GLOW_WEIGHT : EDGE_GLOW_WEIGHT) / MAIN_GLOW_WEIGHT),
       // Its glow lies on both sides of its line.
       secondGlowSide: def.wash ? -1 : 0,
       // Along the second light's stretch the main light's line hands over to it: dark round the second light's middle
@@ -1157,8 +1151,8 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   // saturated blue and only a thin core goes to white.
   Object.assign(parts, {
     ...(hotCore ? {} : { n1Weight: 0.8 }),
-    n2Weight: round4(MAIN_GLOW_WEIGHT * STAGE_GLOW_WEIGHT),
-    n2Width: round4(Number(parts.n2Width) * MAIN_GLOW * STAGE_GLOW),
+    n2Weight: MAIN_GLOW_WEIGHT,
+    n2Width: round4(Number(parts.n2Width) * MAIN_GLOW),
     n3Weight: 1.2,
     f1Weight: round4(0.09 * (def.fill ?? 1)),
     f2Width: round4(0.035 * hazeScale),
@@ -1443,114 +1437,4 @@ export function mergedParts(params: Readonly<Record<string, ParamValue>>): Stage
     ...thirds.map((s) => s.own),
     ...thirds.map((s) => s.pale),
   ]
-}
-
-// ---------------------------------------------------------------------------
-// The place along the outline for the shared color stage.
-
-/** Samples along the main light's contour and along each other contour. */
-const ALONG_KEY_SAMPLES = 720
-const ALONG_SAMPLES = 360
-/** How far a contour's place reaches into the cells round it, in short sides, and a faint wide tail for cells far from every edge. */
-const ALONG_NEAR = 0.05
-const ALONG_FAR = 0.3
-const ALONG_FAR_WEIGHT = 0.03
-
-/**
- * Each stage grid cell's place along the outline of the light that reaches it: 0 at one end of the main light's lit
- * stretch, 1 at the other. A point on another contour (an inner rim) takes the place of the nearest point on the main
- * light's contour, so rims side by side share a place and get the same color. Cells as the stage's fields have them:
- * column x and row y from the frame's top left.
- */
-export function mergedAlong(params: Readonly<Record<string, ParamValue>>, aspect: number, w: number, h: number): Float32Array {
-  const num = (key: string, fallback = 0) => {
-    const v = params[key]
-    return typeof v === 'number' ? v : typeof v === 'boolean' ? (v ? 1 : 0) : fallback
-  }
-  const [fw, fh] = frameSize(aspect)
-  const at = vec(params, 'at', [0.5, 0.5])
-  const anchor: Vec2 = [(at[0] - 0.5) * fw, (at[1] - 0.5) * fh]
-  const spec: MergedShapeSpec = {
-    kind: MERGED_SHAPE_KINDS[Math.min(MERGED_SHAPE_KINDS.length - 1, Math.max(0, Math.round(num('shape', 1)) - 1))],
-    size: num('size'),
-    radius: num('radius'),
-    rotate: num('rotate'),
-    flip: num('flip') > 0.5,
-  }
-  const shape = startedShape(mergedShape(spec, anchor, aspect), vec(params, 'starts', []))
-  const out = new Float32Array(w * h).fill(0.5)
-  if (!shape.contours.length) return out
-  const key = Math.min(shape.contours.length - 1, Math.max(0, Math.round(num('stopContour'))))
-  // The main light's lit stretch: the stops of its own units (not the second or third light's) on the main contour.
-  const ownUnits = new Set([Math.round(num('secondUnit')), Math.round(num('thirdUnit'))])
-  const ts: number[] = []
-  for (let i = 1; i <= MERGED_UNITS; i++) {
-    if (num(`e${i}On`) < 0.5 || ownUnits.has(i)) continue
-    const c = Math.round(num(`e${i}StopContour`, -1))
-    if ((c >= 0 ? c : key) !== key) continue
-    const count = Math.round(num(`e${i}Stops`))
-    ts.push(...[...vec(params, `e${i}StopAt`, []), ...vec(params, `e${i}StopAt2`, [])].slice(0, count))
-  }
-  const keyContour = shape.contours[key]
-  let tA = ts.length ? Math.min(...ts) : 0
-  let tB = ts.length ? Math.max(...ts) : 1
-  if (tB - tA < 1e-6) [tA, tB] = [0, 1]
-  const mid = (tA + tB) / 2
-  // A closed contour's stops may run past 1: a point takes the turn of the contour nearest the stretch.
-  const placeOf = (tau: number) => {
-    const t = keyContour.closed ? tau + Math.round(mid - tau) : tau
-    return Math.min(1, Math.max(0, (t - tA) / (tB - tA)))
-  }
-  const keyPoints: Vec2[] = []
-  const keyPlaces: number[] = []
-  for (let k = 0; k < ALONG_KEY_SAMPLES; k++) {
-    const tau = keyContour.closed ? k / ALONG_KEY_SAMPLES : k / (ALONG_KEY_SAMPLES - 1)
-    keyPoints.push(contourPoint(keyContour, tau).point)
-    keyPlaces.push(placeOf(tau))
-  }
-  // Every sample in frame-centred short-side units, its place, and the length of contour it stands for.
-  const xs: number[] = []
-  const ys: number[] = []
-  const places: number[] = []
-  const lengths: number[] = []
-  shape.contours.forEach((c, ci) => {
-    const n = ci === key ? ALONG_KEY_SAMPLES : ALONG_SAMPLES
-    const step = contourLength(c) / n
-    for (let k = 0; k < n; k++) {
-      let p = keyPoints[k]
-      let place = keyPlaces[k]
-      if (ci !== key) {
-        p = contourPoint(c, c.closed ? k / n : k / (n - 1)).point
-        let best = Infinity
-        keyPoints.forEach((q, j) => {
-          const d = (q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2
-          if (d < best) {
-            best = d
-            place = keyPlaces[j]
-          }
-        })
-      }
-      xs.push(p[0] + anchor[0])
-      ys.push(p[1] + anchor[1])
-      places.push(place)
-      lengths.push(step)
-    }
-  })
-  const near = 1 / (2 * ALONG_NEAR ** 2)
-  const far = 1 / (2 * ALONG_FAR ** 2)
-  for (let y = 0; y < h; y++)
-    for (let x = 0; x < w; x++) {
-      const u = ((x + 0.5) / w - 0.5) * fw
-      const v = ((y + 0.5) / h - 0.5) * fh
-      let sum = 0
-      let total = 0
-      for (let k = 0; k < xs.length; k++) {
-        const d2 = (xs[k] - u) ** 2 + (ys[k] - v) ** 2
-        const weight = lengths[k] * (Math.exp(-near * d2) + ALONG_FAR_WEIGHT * Math.exp(-far * d2))
-        sum += weight * places[k]
-        total += weight
-      }
-      if (total > 1e-12) out[y * w + x] = sum / total
-    }
-  return out
 }
