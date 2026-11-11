@@ -17,12 +17,17 @@ Contour's Halo layout of separate circles (a big ring with smaller rings beside 
 - Boundaries between colors are organic. They curve, drift and change
   softness along their length, and neighbouring boundaries are not
   parallel. No straight, ruler-like or evenly spaced boundaries.
-- Use the exact pack hexes from Figma slide 33:200, in pack order. Packs
-  never mix.
+- Use the exact pack hexes from Figma slide 33:200. Packs never mix.
+  Each pack's colors go in hue order, so colors that are neighbours on
+  the color wheel sit next to each other (owner, 2026-11-11, concept
+  file node 193:160: "Order the bands by hue, and every blend stays
+  clean"). The pictures and the color slider use this order, and the
+  pack strips match it. Elemental no longer starts with Meta Blue;
+  Atmospheric steps through lightness.
   - Bold: Meta Blue `#0064E0`, Cyan `#1FCDF0`, Yellow `#FFD61E`,
     Orange-red `#FF4F00`
-  - Elemental: Meta Blue `#0064E0`, Lime `#D6F26C`, Forest `#0F3D33`,
-    Tan `#B8996E`, Plum `#4A0A3C`
+  - Elemental: Tan `#B8996E`, Lime `#D6F26C`, Forest `#0F3D33`,
+    Meta Blue `#0064E0`, Plum `#4A0A3C`
   - Atmospheric: Meta Blue `#0064E0`, Ice `#F2F4F7`, Steel `#6A7788`,
     Slate `#384753`, Near-black `#1C2B33`
 - Changing the color pack keeps the design (owner, 2026-11-09): the same
