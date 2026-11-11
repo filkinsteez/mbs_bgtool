@@ -30,11 +30,17 @@ Contour's Halo layout of separate circles (a big ring with smaller rings beside 
     Meta Blue `#0064E0`, Plum `#4A0A3C`
   - Atmospheric: Meta Blue `#0064E0`, Ice `#F2F4F7`, Steel `#6A7788`,
     Slate `#384753`, Near-black `#1C2B33`
+- Colors that are neighbours in the hue order blend through the color
+  between them, as on the owner's slide (owner, 2026-11-11): Cyan fades
+  through green into Yellow, and Meta Blue through indigo into Plum. The
+  blend keeps its color and never goes grey or brown. For neighbours this
+  replaces the lighter bridge and the lighter meeting line.
 - Changing the color pack keeps the design (owner, 2026-11-09): the same
   mood, seed, drag and format give the same shapes, light positions and
   light and dark layout in every pack, and only the colors change. Shuffle
   gives a new design. One exception (owner, 2026-11-10): where two colors
-  far apart in hue meet, the light along that thin meeting line rises so
+  far apart in hue meet and are not neighbours in the hue order, the
+  light along that thin meeting line rises so
   the meeting reads lighter instead of grey, and how much it rises may
   differ by pack. Shapes, light positions and the light and dark layout
   stay the same. The Meta Blue toggle and the mix control, once
