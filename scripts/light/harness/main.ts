@@ -343,6 +343,14 @@ vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 blurred0) { return light; }
     return scene
   },
 
+  /** Times each scene drawn once, in order, each waiting for the GPU (a drag: every frame a new scene), in ms. */
+  moving(requests: RenderRequest[]): number[] {
+    return requests.map((request) => {
+      const options = { width: request.width, height: request.height, supersample: request.supersample ?? 1 }
+      return renderer.renderProgram(requestProgram(request), request.scene, { ...options, measure: true }).ms
+    })
+  },
+
   /** Times one render without and with measure (GPU finished), in ms. */
   measure(request: RenderRequest): { issued: number; measured: number; measuredFlag: boolean } {
     const options = { width: request.width, height: request.height, supersample: request.supersample ?? 1 }
