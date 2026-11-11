@@ -16,8 +16,8 @@ const num = (params: Params, key: string): number => (typeof params[key] === 'nu
 function wantOf(place: number): { line?: FieldWant; core?: FieldWant } {
   if (place < 0) return { line: 'bright', core: 'bright' }
   if (place < 0.5) return {}
-  if (place < 0.66) return { line: 'cool' }
-  if (place < 0.85) return { line: 'warm', core: 'bright' }
+  if (place < 0.66) return { line: 'bright' }
+  if (place < 0.85) return { line: 'warm' }
   return { line: 'warm' }
 }
 

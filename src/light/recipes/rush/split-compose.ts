@@ -242,7 +242,7 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
     .flatMap((r, i) => (r !== roles[i] && r !== 'white' && roles[i] !== 'white' ? [i] : []))
     .sort((a, b) => Math.abs(pairAt(a) - brightest) - Math.abs(pairAt(b) - brightest))
   const bridgeAt = new Set(candidates.slice(0, hasBridge ? 1 : 0))
-  const gaps = gapDraws.map((d, i) => (bridgeAt.has(i) ? lerp(0.14, 0.26, d[1]) : lerp(0.02, 0.16, d[1])))
+  const gaps = gapDraws.map((d, i) => (bridgeAt.has(i) ? lerp(0.14, 0.26, d[1]) : lerp(0.15, 0.5, d[1])))
   const total = widths.reduce((a, w) => a + w, 0) + gaps.reduce((a, g) => a + g, 0)
   // The bands fill the lit share of the stack; the rest, on the dark side, is room lit only by the outer band's skirt.
   const unit = (cover.share * across) / total
@@ -257,10 +257,10 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
     at += width + (gaps[i] ?? 0) * unit
     const white = role === 'white'
     const falloff = role === 'deep' ? lerp(2, 2.8, random()) : lerp(0.75, 1.1, random())
-    // Each colored band's light is a broad soft swell 2.1 to 2.5 times as wide as its place in the stack, so neighbours
-    // overlap and add up, the way light moving too fast to hold its shape spreads. A white streak is a little narrower
-    // and dimmer than white, so it never reads as a flat white field.
-    const half = ((white ? 0.8 : 1) * lerp(2.1, 2.5, extra()) * 0.5 * width) / reachTo(0.3, falloff)
+    // Each band's light is a soft glow 1.5 to 1.9 times as wide as its place in the stack, falling off through its own
+    // color into the dark gap beside it, where it meets its neighbour's glow and adds up. A white streak is a little
+    // narrower and dimmer than white, so it never reads as a flat white field.
+    const half = ((white ? 0.8 : 1) * lerp(1.5, 1.9, extra()) * 0.5 * width) / reachTo(0.3, falloff)
     // A white band stays near-white across, with its cool and warm colors only at its edges.
     const split1 = white ? half * lerp(0.6, 0.9, random()) : 0
     bands.push({

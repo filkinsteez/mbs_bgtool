@@ -203,13 +203,11 @@ vec3 radiance(vec2 uv, vec2 p) {
       total += lum[i];
       continue;
     }
-    // A streak: a body falling off to its skirt at its edges (softer in a wide band), and a hot core. A side facing
-    // darkness (G.w: 1 the low side, 2 the high side) of every color but the lead (Meta Blue, which dims softly into
-    // navy) keeps a broad bright top and falls steeply, so it never sits at mid lightness over a wide area (Lime would
-    // read olive, Tan grey-brown); a side facing a neighbour falls softly into the neighbour's light.
+    // A streak: a body falling off to its skirt at its edges (softer in a wide band), and a hot core. Every color but
+    // the lead (Meta Blue, which dims softly into navy) keeps a broad bright top and falls faster on both sides, so it
+    // never sits at mid lightness over a wide area (Lime would read olive or teal, Tan grey-brown).
     float x2 = x * x;
-    float steepSide = s < 0.0 ? mod(G.w, 2.0) : floor(G.w / 2.0);
-    float body = exp(-G.y * (F.w > 0.5 && steepSide > 0.5 ? 0.6 * x2 + 0.6 * x2 * x2 : x2));
+    float body = exp(-G.y * (F.w > 0.5 ? 0.4 * x2 + x2 * x2 : x2));
     float cx = (s / max(halfW, 1e-4) - F.z) / A.w;
     float coreShape = exp(-0.5 * cx * cx);
     float profile = body;
@@ -249,10 +247,11 @@ vec3 radiance(vec2 uv, vec2 p) {
       coreLum[i] = C.x * C.z * coreShape * body * env * grad * exp(-along * along);
     }
   }
-  // Where lights overlap, the overlap is their light added up, lighter than each alone. Its hue is the stronger
-  // light's (each counts by its luminance to the sixteenth power, so two hues never mix into a third), and a pack color
-  // is read at the light here: bright where lights overlap, dimming along its own path (Lime into Forest) only where
-  // the light really falls.
+  // Each light adds its own color: a pack color read at that light's own level, its own hue at its core and dimming
+  // along its own path (Lime into Forest, Ice into Slate) toward dark where its light falls. Where lights overlap
+  // they glow into each other and the overlap is lighter than each alone; no pixel picks one color, so no line
+  // divides two colors. Each light keeps its luminance, so the design is the same in every pack.
+  vec3 added = vec3(0.0);
   vec3 leadSum = vec3(0.0);
   float leadW = 0.0;
   float l1 = 0.0;
@@ -262,7 +261,7 @@ vec3 radiance(vec2 uv, vec2 p) {
   for (int i = 0; i < MAX_LIGHTS; i++) {
     if (i >= uLights) break;
     if (lum[i] <= 1e-7) continue;
-    vec3 h = col[i] >= 0 ? dimHue(col[i], clamp(total / max(peak[i], 1e-4), 0.0, 1.0)) : fixedHue[i];
+    vec3 h = col[i] >= 0 ? dimHue(col[i], clamp(lum[i] / max(peak[i], 1e-4), 0.0, 1.0)) : fixedHue[i];
     if (lum[i] > l1) {
       l2 = l1;
       h2 = h1;
@@ -279,20 +278,21 @@ vec3 radiance(vec2 uv, vec2 p) {
       share *= share;
       hot += own / max(luminance(own), 1e-5) * coreLum[i] * share * share;
     }
+    added += h / max(luminance(h), 1e-5) * lum[i];
     float w = lum[i] * 6.0;
-    w *= w;
     w *= w;
     w *= w;
     w *= w;
     leadSum += h / max(luminance(h), 1e-5) * w;
     leadW += w;
   }
-  vec3 leadHue = leadW > 0.0 ? leadSum / leadW : vec3(1.0);
+  vec3 leadHue = total > 1e-6 ? added / total : vec3(1.0);
+  vec3 strongerHue = leadW > 0.0 ? leadSum / leadW : vec3(1.0);
   // Where two different hues meet at nearly the same strength, they would mix into a third (Cyan and Orange-red to
   // pink, Meta Blue and Orange-red to magenta). Where the light is up, each side keeps its own hue and whitens toward
   // the meeting the way hot light does, a warm hue through pale yellow and a cool one through pale cyan (never through
   // salmon). Only the hue changes, so the light and the design are the same in every pack.
-  float meet = smoothstep(0.8, 1.0, l2 / max(l1, 1e-5));
+  float meet = smoothstep(0.3, 1.0, l2 / max(l1, 1e-5));
   float lit = smoothstep(0.15, 0.45, total);
   // Only hues far apart around the color wheel mix into a third; near ones (Yellow and Orange-red) mix to their own
   // in-between.
@@ -303,8 +303,10 @@ vec3 radiance(vec2 uv, vec2 p) {
   float clash = (1.0 - smoothstep(-0.3, 0.2, dot(c1, c2) / max(length(c1) * length(c2), 1e-5))) * smoothstep(0.05, 0.3, min(length(c1), length(c2)));
   float warmth = clamp((n1.r - n1.b) / max(n1.r + n1.b, 1e-5), -1.0, 1.0);
   vec3 hotWhite = mix(vec3(0.85, 0.97, 1.0), vec3(1.0, 0.9, 0.6), 0.5 + 0.5 * warmth);
-  vec3 own = mix(leadHue / max(luminance(leadHue), 1e-5), n1, clash * lit);
-  leadHue = mix(own, hotWhite / luminance(hotWhite), meet * clash * lit);
+  // Far hues are never added: the stronger light's hue leads (each counts by its light to the eighth power), so where
+  // they overlap in dim light they fall through dark instead of mixing into dark magenta or teal.
+  leadHue = mix(leadHue / max(luminance(leadHue), 1e-5), strongerHue / max(luminance(strongerHue), 1e-5), clash);
+  leadHue = mix(leadHue, hotWhite / luminance(hotWhite), meet * clash * lit);
   vec3 sum = leadHue / max(luminance(leadHue), 1e-5) * total;
   // A soft shoulder on the streaks' light, below the level where the tone curve turns a near-white color (Ice) flat
   // white, while saturated colors still whiten at their cores. White streaks' cores come on top and reach white.
