@@ -1,5 +1,6 @@
 import { DialStore, type DialConfig, type SelectConfig } from 'dialkit'
 import { useEffect, useId, useRef, type RefObject } from 'react'
+import { useSliderRelease } from './sliderRelease'
 
 /**
  * Where a control sits in the panel, as DialKit shows it: the folder titles
@@ -349,6 +350,7 @@ function refocusAfterPick(event: MouseEvent, root: HTMLElement): void {
 export function usePanelAccess(rootRef: RefObject<HTMLElement | null>, access: PanelAccess): void {
   const key = useId()
   const latest = useRef(access)
+  useSliderRelease(rootRef)
 
   useEffect(() => {
     latest.current = access
