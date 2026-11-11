@@ -39,6 +39,9 @@ Contour's Halo layout of separate circles (a big ring with smaller rings beside 
   original colors to just meta blue it should retain its original"). The
   pack colors a seed shows at its default view stay in the picture under
   any drag; a drag never turns them into Meta Blue.
+- The color stage is always on, with no user setting (owner, 2026-11-11:
+  "should be on and not a setting surfaced to users"). The preview, the
+  export and the history all render through it.
 - Build systems, not copies. Shapes, light and packs combine with the
   seed into endless backgrounds. The moodboard references test whether
   the system reaches the needed quality; matching them is not the goal,
