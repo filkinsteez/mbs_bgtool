@@ -6,7 +6,7 @@ import { getRecipe, RECIPE_LIST } from '../recipes'
 import { DEFAULT_LENS, RECIPE_IDS, type RecipeContext, type RecipeProgram } from '../scene'
 import { encodeJpeg, exportFileName, exportSize } from './export'
 import { EXPORT_ASPECTS, EXPORT_SIZES, frameAspect, type ExportAspect } from './frame'
-import { grainAmplitude, grainCellPx, grainField, grainParams, grainUniforms } from './grain'
+import { grainAmplitude, grainCellPx, grainDrift, grainField, grainLightDensity, grainParams, grainUniforms } from './grain'
 import {
   bloomLevelFactors,
   halationDriftColor,
@@ -506,7 +506,7 @@ describe('grain', () => {
     const out = new Float64Array(size * size)
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
-        const g = amp > 0 ? grainField(x, y, density, cellPx, 3) : 0
+        const g = amp > 0 ? grainField(x, y, density, cellPx, 3, L) : 0
         const rgb = oklabToLinear([L + amp * g, a, b]).map((v) => Math.min(1, Math.max(0, v)))
         out[y * size + x] = linearToSrgb(rgb[1]) * 255
       }
@@ -547,8 +547,9 @@ describe('grain', () => {
   })
 
   it('keeps a flat grey at its mean within 0.1 code values at Density 1', () => {
+    // Over the same number of cells at every cell size: the soft clumps in the dark span two cells.
     for (const cellPx of [1, 2, 0.83]) {
-      for (const code of [60, 128, 200]) expect(Math.abs(mean(grainedGrey(code, 1, cellPx)) - code)).toBeLessThan(0.1)
+      for (const code of [60, 128, 200]) expect(Math.abs(mean(grainedGrey(code, 1, cellPx, Math.round(192 * Math.max(1, cellPx)))) - code)).toBeLessThan(0.1)
     }
   })
 
@@ -581,6 +582,83 @@ describe('grain', () => {
       return together / alone
     }
     expect(Math.abs(neighbours(0.25) - neighbours(1))).toBeLessThan(0.06)
+  })
+
+  it('has fewer specks in deep shadows and near white than in the midtones', () => {
+    expect(grainLightDensity(0.05)).toBeCloseTo(0.6, 6)
+    expect(grainLightDensity(0.99)).toBeCloseTo(0.6, 6)
+    for (const L of [0.4, 0.55, 0.75]) expect(grainLightDensity(L)).toBe(1)
+    for (let k = 2; k < 8; k++) expect(grainLightDensity((k + 1) / 20)).toBeGreaterThan(grainLightDensity(k / 20))
+    for (let k = 15; k < 19; k++) expect(grainLightDensity((k + 1) / 20)).toBeLessThan(grainLightDensity(k / 20))
+    // No grain is stronger in the shadows than in the midtones: the 99th percentile of its size there is no larger.
+    const strong = (L: number) => {
+      const sizes: number[] = []
+      for (let y = 0; y < 256; y++) for (let x = 0; x < 256; x++) sizes.push(Math.abs(grainField(x, y, 1, 1, 3, L)))
+      return sizes.sort((a, b) => a - b)[Math.floor(0.99 * sizes.length)]
+    }
+    expect(strong(0.12)).toBeLessThanOrEqual(strong(0.6))
+  })
+
+  it('drifts slowly and faintly in how many specks there are across the frame', () => {
+    const correlation = (a: number[], b: number[]) => {
+      const [ma, mb] = [mean(Float64Array.from(a)), mean(Float64Array.from(b))]
+      let [ab, aa, bb] = [0, 0, 0]
+      a.forEach((v, i) => {
+        ab += (v - ma) * (b[i] - mb)
+        aa += (v - ma) ** 2
+        bb += (b[i] - mb) ** 2
+      })
+      return ab / Math.sqrt(aa * bb)
+    }
+    // The drift is smooth: points 60 cells apart agree, and it stays within -1 to 1.
+    const here: number[] = []
+    const there: number[] = []
+    for (let y = 0; y < 1080; y += 30)
+      for (let x = 0; x + 60 < 1920; x += 30) {
+        here.push(grainDrift(x, y, 1, 5))
+        there.push(grainDrift(x + 60, y, 1, 5))
+      }
+    expect(Math.max(...here.map(Math.abs))).toBeLessThanOrEqual(1)
+    expect(correlation(here, there)).toBeGreaterThan(0.8)
+    // The speck counts in blocks of 120 x 120 cells follow it, and differ from block to block by only a little.
+    const block = 120
+    const counts: number[] = []
+    const drifts: number[] = []
+    for (let by = 0; by < 1080 / block; by++)
+      for (let bx = 0; bx < 1920 / block; bx++) {
+        let n = 0
+        let d = 0
+        for (let y = by * block; y < (by + 1) * block; y += 2)
+          for (let x = bx * block; x < (bx + 1) * block; x += 2) {
+            n += grainField(x, y, 1, 1, 5) < -0.1 ? 1 : 0
+            d += grainDrift(x, y, 1, 5)
+          }
+        counts.push(n)
+        drifts.push(d)
+      }
+    expect(correlation(counts, drifts)).toBeGreaterThan(0.7)
+    const m = mean(Float64Array.from(counts))
+    const spread = Math.sqrt(counts.reduce((s, v) => s + (v - m) ** 2, 0) / counts.length) / m
+    expect(spread).toBeGreaterThan(0.03)
+    expect(spread).toBeLessThan(0.2)
+  })
+
+  it('clumps a little larger in the dark', () => {
+    const neighbours = (code: number) => {
+      const size = 192
+      const values = grainedGrey(code, 1, 2, size)
+      const m = mean(values)
+      let together = 0
+      let alone = 0
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x + 1 < size; x++) {
+          together += (values[y * size + x] - m) * (values[y * size + x + 1] - m)
+          alone += (values[y * size + x] - m) ** 2
+        }
+      }
+      return together / alone
+    }
+    expect(neighbours(30)).toBeGreaterThan(neighbours(128) + 0.05)
   })
 
   it('ignores grain settings from before the strength scale', () => {

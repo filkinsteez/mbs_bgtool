@@ -25,6 +25,21 @@ import type { OutputFilter } from './filters/types'
  *
  * Black stays black, and the grain fades out near white, where lighter specks
  * would clip and leave only dark ones.
+ *
+ * The grain varies a little, as film grain does in the moodboard references
+ * (owner, 2026-11-11 2:50 PM: "a little bit more variation ... in sizing or
+ * where on the image it is based on intensity/lumanicane"). Each speck keeps
+ * its strength; what varies is how many cells have one and, in the dark, their
+ * size:
+ *   - fewer specks in deep shadows and near white: LIGHT_DENSITY of the
+ *     midtones' count below L 0.1 and above L 0.97, all of it from L 0.4 to
+ *     0.75 (the references' grain is strongest in the midtones);
+ *   - the count drifts slowly across the frame by up to DRIFT either way, from
+ *     smooth noise on lattices a third and a seventh of the short side;
+ *   - in darker areas up to CLUMP of the grain comes from soft clumps two cells
+ *     wide (the film references' grain is larger in the dark).
+ * The specks' mean is taken off at the local count, so a flat area keeps its
+ * level.
  */
 
 /** Cells across the short side: a speck is one pixel at 1080 px. */
@@ -41,6 +56,19 @@ const SHADOW_END = 0.2
 const HIGHLIGHT_START = 0.94
 /** Cells averaged per axis at most; frames under about 220 px on the short side lose a little grain. */
 const SPAN = 6
+/** The speck count in deep shadows and near white, against the midtones'. */
+const LIGHT_DENSITY = 0.6
+/** How far the speck count drifts across the frame, either way. */
+const DRIFT = 0.3
+/** The share of the grain from soft two-cell clumps in the darkest areas. */
+const CLUMP = 0.4
+/** The std of a clump field (bilinear between clump cells) against a speck field's, at the same count. */
+const CLUMP_STD = 2 / 3
+/**
+ * A speck fades in over this much of a cell's hash past the count's edge, so a count that changes with lightness and
+ * place changes a speck smoothly: a hair's difference in lightness gives a hair's difference, never a whole speck.
+ */
+const SPECK_FADE = 0.01
 
 const glslFloat = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v))
 
@@ -66,6 +94,16 @@ export function grainParams(strength: number): GrainParams {
 /** Oklab L change of a full speck at lightness L. */
 export function grainAmplitude(params: GrainParams, L: number): number {
   return params.speck * smoothstep(0, params.shadowEnd, L) * (1 - smoothstep(params.highlightStart, 1, L))
+}
+
+/** The speck count at lightness L against the midtones': fewer in deep shadows and near white. */
+export function grainLightDensity(L: number): number {
+  return 1 - (1 - LIGHT_DENSITY) * (1 - smoothstep(0.1, 0.4, L) + smoothstep(0.75, 0.97, L))
+}
+
+/** The share of the grain from soft two-cell clumps at lightness L. */
+export function grainClumpShare(L: number): number {
+  return CLUMP * (1 - smoothstep(0.2, 0.55, L))
 }
 
 /** A cell's size in output pixels. */
@@ -110,13 +148,16 @@ const unit = (v: number) => (v >>> 8) / 16777216
  */
 export function grainSpeck(cx: number, cy: number, seed: number, density: number): number {
   const [hx, hy, hz] = pcg3d(cx + 1048576, cy + 1048576, grainSeed(seed) + 1048576)
-  if (unit(hx) >= density * SPECK_SHARE) return 0
-  return (unit(hy) < DARK_SHARE ? -0.5 : 0.5) * (1 + unit(hz))
+  const w = Math.min(1, Math.max(0, (density * SPECK_SHARE - unit(hx)) / SPECK_FADE))
+  if (w <= 0) return 0
+  return w * (unit(hy) < DARK_SHARE ? -0.5 : 0.5) * (1 + unit(hz))
 }
 
 /** The mean speck over all cells at a density, which grainField takes off so a flat area keeps its level. */
 export function grainSpeckMean(density: number): number {
-  return density * SPECK_SHARE * SPECK_MEAN_SIZE * (1 - 2 * DARK_SHARE)
+  const t = density * SPECK_SHARE
+  const present = t >= SPECK_FADE ? t - SPECK_FADE / 2 : (t * t) / (2 * SPECK_FADE)
+  return present * SPECK_MEAN_SIZE * (1 - 2 * DARK_SHARE)
 }
 
 function grainSeed(seed: number): number {
@@ -132,8 +173,8 @@ function axisWeights(a: number, len: number): { first: number; weights: number[]
   return { first, weights }
 }
 
-/** The speck field G at output pixel (x, y) (GLSL grainField). */
-export function grainField(x: number, y: number, density: number, cellPx: number, seed: number): number {
+/** The specks alone at output pixel (x, y), minus their mean (GLSL grainSpecks). */
+function grainSpecks(x: number, y: number, density: number, cellPx: number, seed: number): number {
   const len = 1 / cellPx
   const ax = axisWeights(x * len, len)
   const ay = axisWeights(y * len, len)
@@ -147,6 +188,48 @@ export function grainField(x: number, y: number, density: number, cellPx: number
   return g - grainSpeckMean(density)
 }
 
+/** Soft clumps two cells wide at output pixel (x, y): the clump cells' specks, bilinear between their centers, minus their mean (GLSL grainClumps). */
+function grainClumps(x: number, y: number, density: number, cellPx: number, seed: number): number {
+  const px = (x + 0.5) / (2 * cellPx) - 0.5
+  const py = (y + 0.5) / (2 * cellPx) - 0.5
+  const [ix, iy] = [Math.floor(px), Math.floor(py)]
+  const [fx, fy] = [px - ix, py - iy]
+  const at = (cx: number, cy: number) => grainSpeck(cx, cy, seed + 1, density)
+  const top = at(ix, iy) * (1 - fx) + at(ix + 1, iy) * fx
+  const bottom = at(ix, iy + 1) * (1 - fx) + at(ix + 1, iy + 1) * fx
+  return top * (1 - fy) + bottom * fy - grainSpeckMean(density)
+}
+
+function latticeValue(qx: number, qy: number, seed: number): number {
+  return unit(pcg3d(qx + 1048576, qy + 1048576, seed + 1048576)[0]) * 2 - 1
+}
+
+function smoothNoise(x: number, y: number, seed: number): number {
+  const [ix, iy] = [Math.floor(x), Math.floor(y)]
+  const [fx, fy] = [x - ix, y - iy]
+  const [ux, uy] = [fx * fx * (3 - 2 * fx), fy * fy * (3 - 2 * fy)]
+  const top = latticeValue(ix, iy, seed) * (1 - ux) + latticeValue(ix + 1, iy, seed) * ux
+  const bottom = latticeValue(ix, iy + 1, seed) * (1 - ux) + latticeValue(ix + 1, iy + 1, seed) * ux
+  return top * (1 - uy) + bottom * uy
+}
+
+/** The slow drift of the speck count at output pixel (x, y), -1 to 1 (GLSL grainDrift). */
+export function grainDrift(x: number, y: number, cellPx: number, seed: number): number {
+  const sx = (x + 0.5) / (cellPx * GRAIN_CELLS_PER_SHORT_SIDE)
+  const sy = (y + 0.5) / (cellPx * GRAIN_CELLS_PER_SHORT_SIDE)
+  const s = seed * 131 + 7919
+  return 0.7 * smoothNoise(sx * 3, sy * 3, s) + 0.3 * smoothNoise(sx * 7 + 17, sy * 7 + 17, s + 1)
+}
+
+/** The grain field G at output pixel (x, y) over lightness L (GLSL grainField); L defaults to the midtones. */
+export function grainField(x: number, y: number, density: number, cellPx: number, seed: number, L = 0.6): number {
+  const local = Math.min(1, density * grainLightDensity(L) * (1 + DRIFT * grainDrift(x, y, cellPx, seed)))
+  const g = grainSpecks(x, y, local, cellPx, seed)
+  const c = grainClumpShare(L)
+  if (c <= 0) return g
+  return ((1 - c) * g + (c * grainClumps(x, y, local, cellPx, seed)) / CLUMP_STD) / Math.hypot(1 - c, c)
+}
+
 /** Needs CHUNK_LIBRARY (hashes, Oklab) and uSeed. */
 export const GRAIN_GLSL = /* glsl */ `
 uniform float uGrainAmp;      // Oklab L change of a full speck; 0 is off
@@ -154,16 +237,24 @@ uniform float uGrainDensity;  // the Density: a share uGrainDensity * ${glslFloa
 uniform float uGrainCell;     // cell size in output pixels: short side / ${GRAIN_CELLS_PER_SHORT_SIDE}
 uniform vec2 uGrainCurve;     // lightness where the grain is full above black, where it starts to fade below white
 
-// A cell's speck: 0, or darker (a share ${glslFloat(DARK_SHARE)} of specks) or lighter by 0.5 to 1.
-float grainSpeck(ivec2 cell, int seed) {
+// A cell's speck at the speck count \`density\`: 0, or darker (a share ${glslFloat(DARK_SHARE)} of specks) or lighter by 0.5 to 1.
+float grainSpeck(ivec2 cell, int seed, float density) {
   vec3 u = unitFromUint(hashKey(ivec3(cell, seed)));
-  if (u.x >= uGrainDensity * ${glslFloat(SPECK_SHARE)}) return 0.0;
-  return (u.y < ${glslFloat(DARK_SHARE)} ? -0.5 : 0.5) * (1.0 + u.z);
+  float w = clamp((density * ${glslFloat(SPECK_SHARE)} - u.x) / ${glslFloat(SPECK_FADE)}, 0.0, 1.0);
+  if (w <= 0.0) return 0.0;
+  return w * (u.y < ${glslFloat(DARK_SHARE)} ? -0.5 : 0.5) * (1.0 + u.z);
+}
+
+// The mean speck at the speck count \`density\` (grainSpeckMean), taken off so a flat area keeps its level.
+float grainMean(float density) {
+  float t = density * ${glslFloat(SPECK_SHARE)};
+  float present = t >= ${glslFloat(SPECK_FADE)} ? t - ${glslFloat(SPECK_FADE / 2)} : t * t / ${glslFloat(2 * SPECK_FADE)};
+  return present * ${glslFloat(SPECK_MEAN_SIZE * (1 - 2 * DARK_SHARE))};
 }
 
 // The specks as squares a cell wide, edges on whole multiples of the cell from the frame's corner, averaged over the
 // pixel, so a 2 px cell gives a crisp 2 x 2 speck; minus the specks' mean, so a flat area keeps its level.
-float grainField(ivec2 px) {
+float grainSpecks(ivec2 px, float density) {
   float len = 1.0 / uGrainCell;
   vec2 a = vec2(px) * len;
   ivec2 first = ivec2(floor(a));
@@ -183,11 +274,55 @@ float grainField(ivec2 px) {
     float row = 0.0;
     for (int i = 0; i < ${SPAN}; i++) {
       if (i >= count.x) break;
-      if (wx[i] > 0.0) row += wx[i] * grainSpeck(first + ivec2(i, j), seed);
+      if (wx[i] > 0.0) row += wx[i] * grainSpeck(first + ivec2(i, j), seed, density);
     }
     g += wy[j] * row;
   }
-  return g - uGrainDensity * ${glslFloat(grainSpeckMean(1))};
+  return g - grainMean(density);
+}
+
+// Soft clumps two cells wide: the clump cells' specks, bilinear between their centers, minus their mean.
+float grainClumps(ivec2 px, float density) {
+  vec2 p = (vec2(px) + 0.5) / (2.0 * uGrainCell) - 0.5;
+  vec2 i = floor(p);
+  vec2 f = p - i;
+  ivec2 q = ivec2(i);
+  int seed = (uSeed + 1) * 131 + 1048576;
+  float top = mix(grainSpeck(q, seed, density), grainSpeck(q + ivec2(1, 0), seed, density), f.x);
+  float bottom = mix(grainSpeck(q + ivec2(0, 1), seed, density), grainSpeck(q + ivec2(1, 1), seed, density), f.x);
+  return mix(top, bottom, f.y) - grainMean(density);
+}
+
+float grainLattice(ivec2 q, int seed) {
+  return unitFromUint(hashKey(ivec3(q, seed))).x * 2.0 - 1.0;
+}
+
+float grainNoise(vec2 p, int seed) {
+  vec2 i = floor(p);
+  vec2 f = p - i;
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  ivec2 q = ivec2(i);
+  float top = mix(grainLattice(q, seed), grainLattice(q + ivec2(1, 0), seed), u.x);
+  float bottom = mix(grainLattice(q + ivec2(0, 1), seed), grainLattice(q + ivec2(1, 1), seed), u.x);
+  return mix(top, bottom, u.y);
+}
+
+// The slow drift of the speck count, -1 to 1: smooth noise on lattices a third and a seventh of the short side.
+float grainDrift(ivec2 px) {
+  vec2 s = (vec2(px) + 0.5) / (uGrainCell * ${glslFloat(GRAIN_CELLS_PER_SHORT_SIDE)});
+  int seed = uSeed * 131 + 7919;
+  return 0.7 * grainNoise(s * 3.0, seed) + 0.3 * grainNoise(s * 7.0 + 17.0, seed + 1);
+}
+
+// The grain at lightness L: fewer specks in deep shadows and near white, a slow drift of their count across the frame,
+// and in darker areas part of the grain from soft two-cell clumps; each speck keeps its strength.
+float grainField(ivec2 px, float L) {
+  float light = 1.0 - ${glslFloat(1 - LIGHT_DENSITY)} * (1.0 - smoothstep(0.1, 0.4, L) + smoothstep(0.75, 0.97, L));
+  float density = min(1.0, uGrainDensity * light * (1.0 + ${glslFloat(DRIFT)} * grainDrift(px)));
+  float g = grainSpecks(px, density);
+  float c = ${glslFloat(CLUMP)} * (1.0 - smoothstep(0.2, 0.55, L));
+  if (c <= 0.0) return g;
+  return ((1.0 - c) * g + c * grainClumps(px, density) / ${glslFloat(CLUMP_STD)}) / length(vec2(1.0 - c, c));
 }
 
 float grainAmplitude(float L) {
@@ -199,7 +334,7 @@ vec3 applyGrain(vec3 display, ivec2 px, float weight) {
   vec3 lab = linearToOklab(display);
   float amp = grainAmplitude(lab.x) * weight;
   if (amp <= 0.0) return display;
-  lab.x += amp * grainField(px);
+  lab.x += amp * grainField(px, lab.x);
   return saturate(oklabToLinear(lab));
 }
 `
