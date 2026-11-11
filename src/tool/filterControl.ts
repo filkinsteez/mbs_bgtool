@@ -26,8 +26,8 @@ export const TOOL_FILTERS: readonly FilterKey[] = ['grain', 'pixel']
 export const DEFAULT_FILTER: FilterState = { filter: 'none', strength: 0.5 }
 
 /**
- * The least value Pixel gets in the scene: the filter chain leaves out a filter at 0, but Pixel's Density 0 is the
- * coarsest grid, not off. Grain's Density 0 is no grain.
+ * The least value Pixel gets in the scene: the filter chain leaves out a filter at 0, but Pixel's Density 0 is its
+ * finest grid, not off. Grain's Density 0 is no grain.
  */
 const DENSITY_FLOOR = 0.001
 const FLOORED: readonly FilterKey[] = ['pixel']

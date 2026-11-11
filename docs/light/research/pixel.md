@@ -1,6 +1,6 @@
 # Pixel filter: what the examples show and what the filter does
 
-Started 2026-11-04. On 2026-11-05 the slider became density, and later that day its top went from 72 to 144 cells. On 2026-11-10 the soft LEDs with dark gaps became flat cells with crisp light lines on their borders, as in the deck's picture. Engine stage: `src/light/engine/filters/pixel.ts`. First prototype: `prototypes/pixel/`. Scratch scripts for the density version, downloads, measurements and sheets: `artifacts/pixel/` (local, gitignored). Prototype output: `prototypes/pixel/out/` (gitignored).
+Started 2026-11-04. On 2026-11-05 the slider became density, and later that day its top went from 72 to 144 cells. On 2026-11-10 the soft LEDs with dark gaps became flat cells with crisp light lines on their borders, as in the deck's picture, and that evening the slider was flipped so that 0 gives the smallest cells and 1 the biggest, 144 to 8 cells on the short side. Engine stage: `src/light/engine/filters/pixel.ts`. First prototype: `prototypes/pixel/`. Scratch scripts for the density version, downloads, measurements and sheets: `artifacts/pixel/` (local, gitignored). Prototype output: `prototypes/pixel/out/` (gitignored).
 
 ## Where the examples are
 
@@ -32,15 +32,17 @@ Files: `artifacts/pixel/figma/44-280-pixel-tile.png`, `44-267-filters-slide.png`
 It is a stage of the output filter chain, after the tone curve and before the sRGB encode and the dither. It is fully on at every slider value; the slider sets the density. It reads a small copy of the frame that the chain draws for it (`OutputFilter.source`).
 
 Density
-- The slider sets the cells on the short side: 18 at 0, 30 at 0.25, 51 at 0.5, 86 at 0.75 and 144 at 1, rounded to whole cells (`round(18 × 8^density)`). Each quarter of the slider multiplies the count by about 1.68, the same kind of scale as ASCII's density slider.
-- The top is 144 because the frame copy, at two texels a cell, reaches the chain's limit of 512 texels a side at 144 cells on a 16:9 frame (512 x 288). And 144 cells are 6.25 px in a 1600 x 900 preview, about the smallest cell that still shows its LED (it fades out from 6 px down to 3 px). In a 4K export they are 15 px (16:9) to 27 px (1:1).
-- A cell is 60 px at 1080p at density 0, about the stand-in's 59 px; 21 px at 0.5; 7.5 px at 1.
-- The long side gets a whole number of cells too, so the cells fill the frame and are square to within that rounding (2.2 % at worst, 4:5 at 18 cells).
+- The slider sets the cell size, smallest at 0 and biggest at 1 (owner, 2026-11-10 7:08 PM: "i think bigger squares more towards 1"): 144 cells on the short side at 0, 70 at 0.25, 34 at 0.5, 16 at 0.75 and 8 at 1, rounded to whole cells (`round(144 × (8 / 144)^density)`). Each quarter of the slider doubles the cell size.
+- The finest grid is 144 cells because the frame copy, at two texels a cell, reaches the chain's limit of 512 texels a side at 144 cells on a 16:9 frame (512 x 288). And 144 cells are 6.25 px in a 1600 x 900 preview, about the smallest cell that still shows its lines (they fade out from 6 px down to 3 px). In a 4K export they are 15 px (16:9) to 27 px (1:1).
+- The biggest cells, 8 on the short side, are more than twice the old biggest (18): a 16:9 frame is 14 x 8 cells, 135 px each at 1080p and 270 px in a 4K export, where their lines are 22.5 px wide.
+- A cell is 7.5 px at 1080p at density 0, 32 px at 0.5, 68 px at 0.75 (about the stand-in's 59 px) and 135 px at 1.
+- The long side gets a whole number of cells too, so the cells fill the frame and are square to within that rounding (4 % at worst, 4:5 at 10 cells).
 - The grid depends on the frame's aspect and the density only, so a preview shows the same cells as the export. Between whole cell counts nothing changes.
-- The chain leaves a filter out at exactly 0, so the tool sends density 0 as 0.001 (`withFilter`, `src/tool/filterControl.ts`), which gives 18 cells.
+- The chain leaves a filter out at exactly 0, so the tool sends density 0 as 0.001 (`withFilter`, `src/tool/filterControl.ts`), which gives 144 cells.
+- Links made before the flip keep their `strength=`, so they open with the opposite cell size (0.2 was 27 cells, now 81).
 
 Frame copy
-- The copy follows the density: two texels a cell each way at every density, so a cell's mean is one read of its own 2 x 2 texels. The chain passes the slider's value to the stage's `source.size` and `samples` (`src/light/engine/output.ts`, `filters/types.ts`).
+- The copy follows the density: two texels a cell each way from 18 cells up, so a cell's mean is one read of its own 2 x 2 texels. Below 18 cells a cell gets 4 texels a side (17 to 9 cells) or 6 (8 cells), so the short side keeps at least 36 texels and the frame is still drawn at 288 px or more with the resample pass's 8 samples a side at most; a cell's mean then takes 4 or 9 reads. The chain passes the slider's value to the stage's `source.size` and `samples` (`src/light/engine/output.ts`, `filters/types.ts`).
 - Each texel is the mean of 2 to 8 samples a side, enough that the frame is drawn at least 288 px on the short side (samples 3.75 px apart at 1080p, close enough for a Contour line): 288 up to 72 cells, 576 at 144.
 - Its size depends on the frame's aspect and the density only, so a preview and an export read the same texels.
 
@@ -58,7 +60,7 @@ Seed
 - The filter adds no randomness. The dither after it is keyed to the seed and the output pixel, so the same seed gives the same bytes.
 
 Cost
-- Per output pixel: the means of the four cells around it, one read each, and a few arithmetic operations. The LED version read six cells and the LED at 9 points.
+- Per output pixel: the means of the four cells around it, one read each (4 or 9 below 18 cells), and a few arithmetic operations. The LED version read six cells and the LED at 9 points. Rush Bold s2 as a 4K export (harness, 2x, three runs): 87 ms with no filter, 90 ms at density 0 and 0.5, 94 ms at 1.
 - The LED version at 3840 x 2160 (Halo Elemental seed 2, medians of three runs on a loaded machine): the output step took 6.4 ms without a filter, 9.6 ms at density 0 and 9.3 ms at 1, so Pixel added about 3 ms at every density. The line version has fewer reads and was not timed again. The frame copy (up to a 1024 x 576 draw at 144 cells) adds nothing measurable to the composite step.
 
 ## What was tried and dropped
@@ -131,6 +133,7 @@ The first version's color, GPU and preview checks are in this note at commit 046
 - Pixel is back (SHARED.md). Thin Contour lines become rows of LEDs: accepted.
 - 2026-11-05: the slider sets the density, like ASCII's, and the filter is fully on at every value. Each cell keeps its average color and light areas are not dimmed. Near-black cells beside a hot line may take a little of its light (it reads as the LED's light spilling).
 - 2026-11-05, owner: density can go higher. The top is 144 cells, twice the old 72; the frame copy now follows the density.
+- 2026-11-10, owner (7:08 PM: "make bigger square. it's also inverted i think. i think bigger squares more towards 1"): the slider is flipped and its big end goes further, from 144 cells on the short side at 0 to 8 at 1. Sheets: `artifacts/filters/r1/pixel-flip-preview.jpg`, `pixel-flip-4k.jpg`.
 - 2026-11-10 (coordinator's round 5, filters against the references): crisp light lines on the borders of flat cells instead of soft LEDs with dark gaps. The picture's smooth image under the grid is not copied, since the brief asks for the render quantized to a grid.
 
 ## Commands

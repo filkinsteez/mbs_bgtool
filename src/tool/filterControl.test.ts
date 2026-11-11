@@ -85,7 +85,7 @@ describe('filter control', () => {
     expect(scene.output).toEqual({ grain: 0, exposure: 0.25 })
   })
 
-  it('keeps Pixel on at Density 0, its coarsest grid, while Grain at Density 0 is off', () => {
+  it('keeps Pixel on at Density 0, its finest grid, while Grain at Density 0 is off', () => {
     expect(withFilter(scene, { filter: 'pixel', strength: 0 }).output.pixel).toBeGreaterThan(0)
     expect(withFilter(scene, { filter: 'pixel', strength: 0 }).output.pixel).toBeLessThan(0.005)
     expect(withFilter(scene, { filter: 'pixel', strength: 0.3 }).output.pixel).toBe(0.3)

@@ -6,9 +6,10 @@ import type { FilterFrame, OutputFilter } from './types'
  * The Pixel filter: the frame quantized to a grid of square cells with thin light lines between them, like the deck's
  * Pixel picture (44:280). It is fully on at every slider value.
  *
- * - The slider sets density: cells on the short side, from 18 at 0 to 144 at 1 on a log scale (51 at 0.5, 86 at
- *   0.75). Cells are whole across and down, so the grid depends on the frame's aspect and the density only, and a
- *   preview shows the same cells as the export. Between whole cell counts nothing changes.
+ * - The slider sets the cell size: 144 cells on the short side at 0 (the smallest cells) and 8 at 1 (the biggest),
+ *   the count falling by the same ratio per step (70 at 0.25, 34 at 0.5, 16 at 0.75). Cells are whole across and
+ *   down, so the grid depends on the frame's aspect and the density only, and a preview shows the same cells as the
+ *   export. Between whole cell counts nothing changes.
  * - Each cell shows its mean color, flat; the color changes to the next cell's under the line between them.
  * - The lines are PIXEL_LINE_SHARE of a cell wide, as in the deck's picture (crisp at every size, so a preview shows
  *   the grid an export shows), and lighter than their cell by PIXEL_LINE_CONTRAST of its light; the inside is darker
@@ -18,18 +19,19 @@ import type { FilterFrame, OutputFilter } from './types'
  *   since the brief asks for low contrast ("so it reads as light, not pattern").
  */
 
-/** Cells on the short side at density 0 and 1; between them the count grows by the same ratio per step. */
-export const PIXEL_MIN_CELLS = 18
+/** Cells on the short side at density 1 (the biggest cells) and at 0 (the smallest); between them the count falls by the same ratio per step. */
+export const PIXEL_MIN_CELLS = 8
 export const PIXEL_MAX_CELLS = 144
 /**
- * The frame source follows the density: two texels a cell each way, so a cell's mean is one read of its own 2 x 2
- * texels at every density. At 144 cells a 16:9 source is 512 x 288, the chain's largest. Each texel is the mean of
- * enough samples that the frame is drawn at least 288 px on the short side (3.75 px apart at 1080p, close enough for
+ * The frame source follows the density: an even number of texels a cell each way, so a cell's mean is one read of
+ * each 2 x 2 of its texels. That is two texels from 18 cells up, and more below, so the short side keeps at least 36
+ * texels. At 144 cells a 16:9 source is 512 x 288, the chain's largest. Each texel is the mean of enough samples (at
+ * most 8 a side) that the frame is drawn at least 288 px on the short side (3.75 px apart at 1080p, close enough for
  * a Contour line), and at least 2 x 2.
  */
-export const PIXEL_SOURCE_TEXELS_PER_CELL = 2
+const SOURCE_TEXELS_ON_SHORT_SIDE = 36
 const SOURCE_SAMPLES_ON_SHORT_SIDE = 288
-/** Line width as a share of a cell, as in the deck's picture (2 px every 24 px): 3.5 px at 51 cells in 4K, 10 at 18. */
+/** Line width as a share of a cell, as in the deck's picture (2 px every 24 px): 5.3 px at 34 cells in 4K, 22.5 at 8. */
 export const PIXEL_LINE_SHARE = 2 / 24
 /** How much lighter a line is than its cell, as a share of the cell's light. */
 export const PIXEL_LINE_CONTRAST = 0.7
@@ -58,10 +60,10 @@ export function pixelLineArea(width: number): number {
   return 1 - (1 - w) * (1 - w)
 }
 
-/** Cells on the short side for a density 0..1 (a missing value gives the count at 0.5). */
+/** Cells on the short side for a density 0..1, fewer and so bigger as it rises (a missing value gives the count at 0.5). */
 export function pixelCells(density: number): number {
   const d = Number.isFinite(density) ? Math.min(1, Math.max(0, density)) : 0.5
-  return Math.round(PIXEL_MIN_CELLS * (PIXEL_MAX_CELLS / PIXEL_MIN_CELLS) ** d)
+  return Math.round(PIXEL_MAX_CELLS * (PIXEL_MIN_CELLS / PIXEL_MAX_CELLS) ** d)
 }
 
 function gridOf(frame: Pick<FilterFrame, 'width' | 'height'>, cellsOnShort: number): { across: number; down: number } {
@@ -75,15 +77,21 @@ export function pixelGrid(frame: Pick<FilterFrame, 'width' | 'height'>, density 
   return gridOf(frame, pixelCells(density))
 }
 
-/** The frame source's texels at a density: two a cell each way. */
+/** Source texels a cell along each axis at a density: 2, or the even number that gives the short side 36 or more. */
+export function pixelSourceTexelsPerCell(density = 0.5): number {
+  return 2 * Math.ceil(SOURCE_TEXELS_ON_SHORT_SIDE / (2 * pixelCells(density)))
+}
+
+/** The frame source's texels at a density: pixelSourceTexelsPerCell a cell each way. */
 export function pixelSourceSize(frame: Pick<FilterFrame, 'width' | 'height'>, density = 0.5): { width: number; height: number } {
   const { across, down } = pixelGrid(frame, density)
-  return { width: across * PIXEL_SOURCE_TEXELS_PER_CELL, height: down * PIXEL_SOURCE_TEXELS_PER_CELL }
+  const texels = pixelSourceTexelsPerCell(density)
+  return { width: across * texels, height: down * texels }
 }
 
 /** Samples per source texel along each axis at a density, 2 to 8. */
 export function pixelSourceSamples(frame: Pick<FilterFrame, 'width' | 'height'>, density = 0.5): number {
-  const texelsOnShort = pixelCells(density) * PIXEL_SOURCE_TEXELS_PER_CELL
+  const texelsOnShort = pixelCells(density) * pixelSourceTexelsPerCell(density)
   return Math.min(8, Math.max(2, Math.ceil(SOURCE_SAMPLES_ON_SHORT_SIDE / texelsOnShort)))
 }
 
@@ -101,8 +109,8 @@ uniform vec2 uPixelCells;
 uniform vec2 uPixelFrame;
 
 // Bilinear reads along one axis that weigh each texel of [lo, hi) (texel units) by how much of it the cell covers;
-// each read takes two neighbouring texels in that proportion. With two texels a cell that is one read; 5 reads cover
-// up to 10 texels, should the chain ever cap the source below two texels a cell.
+// each read takes two neighbouring texels in that proportion. Two texels a cell take one read and six (at 8 cells)
+// three; 5 reads cover up to 10 texels.
 int pixelAxisReads(float lo, float hi, out float pos[5], out float wt[5]) {
   int first = int(floor(lo));
   int last = int(ceil(hi)) - 1;

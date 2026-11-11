@@ -29,35 +29,44 @@ describe('pixel filter', () => {
     expect(buildOutputShader([PIXEL_FILTER])).toContain('display = filterPixel(display, px, weight);')
   })
 
-  it('sets the density: 18 cells on the short side at 0, 144 at 1, by the same ratio per step', () => {
-    expect(pixelCells(0)).toBe(PIXEL_MIN_CELLS)
-    expect(pixelCells(1)).toBe(PIXEL_MAX_CELLS)
+  it('sets the cell size: 144 cells on the short side at 0, 8 at 1, by the same ratio per step', () => {
+    expect(pixelCells(0)).toBe(PIXEL_MAX_CELLS)
+    expect(pixelCells(1)).toBe(PIXEL_MIN_CELLS)
     expect(PIXEL_MAX_CELLS).toBeGreaterThanOrEqual(144)
-    expect([0.5, 0.75].map(pixelCells)).toEqual([51, 86])
+    // The biggest cells are more than twice the old biggest (18 cells on the short side).
+    expect(PIXEL_MIN_CELLS).toBeLessThanOrEqual(9)
+    expect([0.25, 0.5, 0.75].map(pixelCells)).toEqual([70, 34, 16])
     expect(pixelCells(Number.NaN)).toBe(pixelCells(0.5))
     for (let k = 0; k < STEPS.length; k++) {
-      expect(Math.abs(pixelCells(STEPS[k]) - PIXEL_MIN_CELLS * (PIXEL_MAX_CELLS / PIXEL_MIN_CELLS) ** STEPS[k])).toBeLessThanOrEqual(0.5)
-      if (k > 0) expect(pixelCells(STEPS[k])).toBeGreaterThanOrEqual(pixelCells(STEPS[k - 1]))
+      expect(Math.abs(pixelCells(STEPS[k]) - PIXEL_MAX_CELLS * (PIXEL_MIN_CELLS / PIXEL_MAX_CELLS) ** STEPS[k])).toBeLessThanOrEqual(0.5)
+      if (k > 0) expect(pixelCells(STEPS[k])).toBeLessThanOrEqual(pixelCells(STEPS[k - 1]))
     }
   })
 
   it('fills every export size with whole cells at every density, square within the long side rounding to whole cells', () => {
     for (const { width, height } of Object.values(EXPORT_SIZES)) {
+      const aspect = Math.max(width, height) / Math.min(width, height)
       for (const d of STEPS) {
         const { across, down } = pixelGrid({ width, height }, d)
         expect(Math.min(across, down)).toBe(pixelCells(d))
-        expect(Math.abs(width / across / (height / down) - 1)).toBeLessThan(0.025)
+        expect(Math.abs(Math.max(across, down) - pixelCells(d) * aspect)).toBeLessThanOrEqual(0.5)
+        // Half a cell of rounding on a long side of 12.5 cells (4:5 at 10 cells) is the worst: 4 %.
+        expect(Math.abs(width / across / (height / down) - 1)).toBeLessThan(0.045)
       }
     }
   })
 
-  it('reads two source texels a cell at every density, drawn finely enough, the same for a preview and the export', () => {
+  it('reads an even number of source texels a cell, at least 36 on the short side, drawn finely enough, the same for a preview and the export', () => {
     for (const { width, height } of Object.values(EXPORT_SIZES)) {
       const frame = { width, height, seed: 1 }
       for (const d of STEPS) {
         const size = source.size(frame, d)
         const { across, down } = pixelGrid(frame, d)
-        expect(size).toEqual({ width: 2 * across, height: 2 * down })
+        const texels = Math.max(2, 2 * Math.ceil(18 / pixelCells(d)))
+        expect(size).toEqual({ width: texels * across, height: texels * down })
+        expect(Math.min(size.width, size.height)).toBeGreaterThanOrEqual(36)
+        // The shader reads a cell with at most 5 reads a side, two texels each.
+        expect(texels).toBeLessThanOrEqual(10)
         expect(Math.max(size.width, size.height)).toBeLessThanOrEqual(512)
         const samples = samplesAt(frame, d)!
         expect(samples).toBeGreaterThanOrEqual(2)
@@ -79,8 +88,8 @@ describe('pixel filter', () => {
 
   it('draws crisp lines a fixed share of a cell wide, so a preview shows the grid an export shows', () => {
     expect(PIXEL_LINE_SHARE).toBeCloseTo(2 / 24, 6)
-    expect((PIXEL_LINE_SHARE * 2160) / pixelCells(0.5)).toBeGreaterThan(3)
-    expect((PIXEL_LINE_SHARE * 2160) / pixelCells(0.5)).toBeLessThan(4)
+    expect((PIXEL_LINE_SHARE * 2160) / pixelCells(0.5)).toBeGreaterThan(5)
+    expect((PIXEL_LINE_SHARE * 2160) / pixelCells(0.5)).toBeLessThan(5.5)
     // A pixel on the border is covered, one well inside its cell isn't, and the crossings count once.
     expect(pixelLineCoverage(0, 0.4, 0.06, 0.02)).toBe(1)
     expect(pixelLineCoverage(0.4, 0.4, 0.06, 0.02)).toBe(0)
@@ -114,8 +123,8 @@ describe('pixel filter', () => {
   })
 
   it('passes the cell grid at the density and the output size as uniforms', () => {
-    expect(pixelUniforms(0.5, { width: 3840, height: 2160, seed: 3 })).toEqual({ uPixelCells: [91, 51], uPixelFrame: [3840, 2160] })
-    expect(pixelUniforms(0, { width: 1080, height: 1920, seed: 3 })).toEqual({ uPixelCells: [18, 32], uPixelFrame: [1080, 1920] })
-    expect(pixelUniforms(1, { width: 1080, height: 1350, seed: 3 })).toEqual({ uPixelCells: [144, 180], uPixelFrame: [1080, 1350] })
+    expect(pixelUniforms(0.5, { width: 3840, height: 2160, seed: 3 })).toEqual({ uPixelCells: [60, 34], uPixelFrame: [3840, 2160] })
+    expect(pixelUniforms(1, { width: 1080, height: 1920, seed: 3 })).toEqual({ uPixelCells: [8, 14], uPixelFrame: [1080, 1920] })
+    expect(pixelUniforms(0, { width: 1080, height: 1350, seed: 3 })).toEqual({ uPixelCells: [144, 180], uPixelFrame: [1080, 1350] })
   })
 })
