@@ -202,10 +202,7 @@ export function seedDesign(seed: number) {
   // The second light: which side it takes (the other edge when one shows, else the far stretch), where along it, how
   // strong and how long.
   const second = { secondSide: rand(), secondAt: rand(), secondGain: rand(), secondWidth: rand() }
-  // Whether the second light asks for a warm color (Yellow, Tan) or a cool one (Cyan, Ice, Steel), where its glow stays
-  // off the main light's face.
-  const edge = { edgeWarm: rand() < 0.5 }
-  return { layout: (((s - 1) % LAYOUTS.length) + LAYOUTS.length) % LAYOUTS.length, jitter, ...draws, ...face, ...second, ...edge }
+  return { layout: (((s - 1) % LAYOUTS.length) + LAYOUTS.length) % LAYOUTS.length, jitter, ...draws, ...face, ...second }
 }
 
 /** Index into MERGED_SHAPES of the seed's shape. */
@@ -820,9 +817,10 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const host = plan.second >= 0 ? plan.second : plan.units.length < MERGED_UNITS ? plan.units.length : -1
   const secondParams: Record<string, ParamValue> = { secondUnit: 0, secondAt: [-40, -40] }
   let secondOn: { contour: number; t: number; tSpan: number; near: number } | null = null
-  // A warm second light only where its glow stays off the main light's face (over it the two blend into violet): in
+  // The second light is warm wherever its glow stays off the main light's face (over it the two blend into violet): in
   // focus, on the main edge, where the main light hands over to it, or on another edge that keeps clear of the main
-  // edge.
+  // edge; so the frame shows the pack's warm color beside the main light's and its accents' (the owner, 2026-11-10
+  // 7:08 PM: the frames showed one color). Elsewhere it is cool.
   let edgeWarm = false
   if (secondPoint && host >= 0) {
     const on2 = nearestOnContours(drawn, anchorR, secondPoint)
@@ -836,7 +834,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
       return [q[0] + anchorR[0], q[1] + anchorR[1]] as Vec2
     })
     const clearOfMain = stretchPoints.every((p) => homeRun.every((q) => dist2(p, q) >= WARM_CLEAR * WARM_CLEAR))
-    edgeWarm = !def.wash && blur <= WARM_BLUR && design.edgeWarm && (!edgeLight || clearOfMain)
+    edgeWarm = !def.wash && blur <= WARM_BLUR && (!edgeLight || clearOfMain)
     // A cool light stays dimmer than the main light's glow: through the stage only its hottest part takes its color
     // and the rest of it is Meta Blue, which would then be Meta Blue's brightest light, lit only beside another color.
     const peak = (def.wash ? lerp(0.5, 0.75, design.secondGain) : edgeWarm ? lerp(WARM_PEAK[0], WARM_PEAK[1], design.secondGain) : lerp(COOL_PEAK[0], COOL_PEAK[1], design.secondGain)) * near
