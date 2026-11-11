@@ -3,13 +3,17 @@
 // once more without the stage: that render's lightness is the light the colors should follow. Four faults fail a
 // frame: a firm color edge where the light is soft, a flat fill, a small dot of one color inside another, and a thin
 // seam of one color between two others. With `--stage off` each frame is drawn as the tool draws it without
-// colormix (the look in the picked pack), and the frame's own lightness is the light. Usage and how the thresholds
+// colormix (the look in the picked pack), and the frame's own lightness is the light. A frame whose verdict flips when
+// its picture moves by one 8-bit level is at the limit (lib/edge-limit.mjs): it is listed apart, left out of the fail
+// counts, and with `--against <edges.json>` a change in it is not counted as a change. Usage and how the thresholds
 // were set: scripts/light/README.md, "Color edges".
+import { readFileSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
 import { list, parseArgs } from './lib/args.mjs'
 import { LIN, mixByName, oklab, rulesFor, sharesOf } from './lib/color-read.mjs'
+import { atLimit, verdictChanges } from './lib/edge-limit.mjs'
 import { startHarness } from './lib/harness.mjs'
 
 const LOOKS = ['sunset.ramp', 'sunset.bands', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
@@ -407,7 +411,7 @@ async function panels(rgb, result, w, h) {
 async function frameMap(f, rgb, result, w, h, file) {
   const [pic, light, map] = await panels(rgb, result, w, h)
   const W = 3 * w + 16
-  const lines = [`${f.look} ${f.pack} s${f.seed} ${f.format.replace('x', ':')} ${f.view}: ${result.reasons.length ? 'fails' : 'passes'}`, ...result.reasons, 'panels: the picture; the light (the frame without the color stage); ' + LEGEND]
+  const lines = [`${f.look} ${f.pack} s${f.seed} ${f.format.replace('x', ':')} ${f.view}: ${result.reasons.length ? 'fails' : 'passes'}${f.atLimit ? ', at the limit' : ''}`, ...result.reasons, 'panels: the picture; the light (the frame without the color stage); ' + LEGEND]
   const comp = lines.map((s, i) => ({ input: text(s, W, 12, i === 0 && result.reasons.length ? '#ffb070' : '#ddd'), left: 6, top: 4 + 17 * i }))
   const top = 8 + 17 * lines.length
   comp.push({ input: pic, left: 4, top }, { input: light, left: w + 8, top }, { input: map, left: 2 * w + 12, top })
@@ -444,7 +448,8 @@ async function drawSheet(items, file, title) {
 // --- main ---
 
 const lookArg = list(args.look)
-if (!lookArg.length) throw new Error('usage: color-edges.mjs --look <sunset.merged|contour.merged|rush.split|merged|all|...> [--pack bold,...] [--seeds 1-8] [--format 16x9,9x16] [--drag default,owner] [--mix default | --stage off] [--maps] [--out dir]')
+if (!lookArg.length) throw new Error('usage: color-edges.mjs --look <sunset.merged|contour.merged|rush.split|merged|all|...> [--pack bold,...] [--seeds 1-8] [--format 16x9,9x16] [--drag default,owner] [--mix default | --stage off] [--maps] [--against edges.json] [--out dir]')
+const against = typeof args.against === 'string' ? { file: args.against, frames: JSON.parse(readFileSync(args.against, 'utf8')).frames } : null
 const looks = [...new Set(lookArg.flatMap((l) => (l === 'all' ? LOOKS : l === 'merged' ? MERGED : [l.includes('.') ? l : LOOKS.find((id) => id.endsWith(`.${l}`)) ?? l])))]
 for (const look of looks) if (!LOOKS.includes(look) && !MERGED.includes(look)) throw new Error(`Unknown look ${look}`)
 const packIds = list(args.pack).length ? list(args.pack) : PACK_IDS
@@ -493,39 +498,60 @@ try {
             const { colorMix: _, ...lightScene } = scene
             const rgbOf = async (s) => sharp((await harness.render({ scene: s, width: w, height: h, supersample: 2 })).data, { raw: { width: w, height: h, channels: 4 } }).removeAlpha().raw().toBuffer()
             const rgb = await rgbOf(scene)
-            const result = analyse(rules, packId, rgb, stageOff ? rgb : await rgbOf(lightScene), w, h)
-            const f = { look, pack: packId, seed, format, view, reasons: result.reasons, ...result.measures }
+            const lightRgb = stageOff ? rgb : await rgbOf(lightScene)
+            const result = analyse(rules, packId, rgb, lightRgb, w, h)
+            const limit = atLimit(rgb, w, result.reasons.length > 0, (pic) => analyse(rules, packId, pic, stageOff ? pic : lightRgb, w, h).reasons.length > 0)
+            const f = { look, pack: packId, seed, format, view, reasons: result.reasons, atLimit: limit, ...result.measures }
             frames.push(f)
             const name = `${look.replace('.', '-')}-${packId}-s${seed}-${format}-${view}`
             if (args.maps) await frameMap(f, rgb, result, w, h, path.join(outDir, 'maps', `${name}.jpg`))
-            items.push({ title: `${packId} s${seed} ${format.replace('x', ':')} ${view}`, panels: await panels(rgb, result, w, h), reasons: result.reasons, w, h })
+            items.push({ title: `${packId} s${seed} ${format.replace('x', ':')} ${view}${limit ? ', at the limit' : ''}`, panels: await panels(rgb, result, w, h), reasons: result.reasons, w, h })
           }
         }
       }
     }
     for (let i = 0; i < items.length; i += 24) await drawSheet(items.slice(i, i + 24), path.join(outDir, `${look.replace('.', '-')}-${String(i / 24 + 1).padStart(2, '0')}.jpg`), `${look}, ${source}: picture, light, map; orange title: fails`)
     const set = frames.filter((f) => f.look === look)
-    console.log(`${look}: ${set.filter((f) => f.reasons.length).length} of ${set.length} fail`)
+    console.log(`${look}: ${set.filter(failsClear).length} of ${set.length} fail, ${set.filter((f) => f.atLimit).length} more at the limit`)
   }
 } finally {
   await harness.close()
 }
 const seconds = Math.round((Date.now() - started) / 1000)
-await fs.writeFile(path.join(outDir, 'edges.json'), JSON.stringify({ thresholds: E, mix: mixName, seeds, formats, views, frames }, null, 1))
+const changes = against ? verdictChanges(frames, against.frames) : null
+await fs.writeFile(path.join(outDir, 'edges.json'), JSON.stringify({ thresholds: E, mix: mixName, seeds, formats, views, frames, ...(changes ? { against: against.file, changes } : {}) }, null, 1))
 await fs.writeFile(path.join(outDir, 'summary.md'), summaryOf(seconds))
-console.log(`${frames.length} frames in ${seconds} s; ${frames.filter((f) => f.reasons.length).length} fail; summary: ${path.relative(process.cwd(), path.join(outDir, 'summary.md'))}`)
-if (frames.some((f) => f.reasons.length)) process.exitCode = 1
+console.log(`${frames.length} frames in ${seconds} s; ${frames.filter(failsClear).length} fail; ${frames.filter((f) => f.atLimit).length} at the limit, listed apart${changes ? `; against ${against.file}: ${changes.changed.length} changed, ${changes.atLimit.length} more at the limit` : ''}; summary: ${path.relative(process.cwd(), path.join(outDir, 'summary.md'))}`)
+if (frames.some(failsClear)) process.exitCode = 1
 
-// Per look and pack: frames failing, by reason, and the failing frames with their reasons.
+// A frame that fails and is not at the limit: the frames the fail counts count.
+function failsClear(f) {
+  return f.reasons.length > 0 && !f.atLimit
+}
+
+function frameName(f) {
+  return `${f.look} ${f.pack} s${f.seed} ${f.format.replace('x', ':')} ${f.view}`
+}
+
+// Per look and pack: frames failing, by reason, and the failing frames with their reasons; the frames at the limit
+// apart; with --against, the frames whose verdict changed.
 function summaryOf(seconds) {
   const KINDS = ['firm color edge', 'flat fill', 'dot', 'seam']
-  const lines = ['# Color edges', '', `${source[0].toUpperCase()}${source.slice(1)}; seeds ${seeds[0]}-${seeds.at(-1)}; ${formats.map((f) => f.replace('x', ':')).join(' and ')}; ${views.join(' and ')}; ${frames.length} frames in ${seconds} s.`, '', '| Look | Pack | Fail | Firm color edge | Flat fill | Dot | Seam |', '| --- | --- | --- | --- | --- | --- | --- |']
+  const lines = [
+    '# Color edges',
+    '',
+    `${source[0].toUpperCase()}${source.slice(1)}; seeds ${seeds[0]}-${seeds.at(-1)}; ${formats.map((f) => f.replace('x', ':')).join(' and ')}; ${views.join(' and ')}; ${frames.length} frames in ${seconds} s. At the limit: the frame's verdict flips when its picture moves by one 8-bit level; such frames are listed apart and left out of the fail counts.`,
+    '',
+    '| Look | Pack | Fail | At the limit | Firm color edge | Flat fill | Dot | Seam |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- |',
+  ]
   for (const look of looks)
     for (const packId of packIds) {
       const set = frames.filter((f) => f.look === look && f.pack === packId)
       if (!set.length) continue
-      const by = (kind) => set.filter((f) => f.reasons.some((r) => r.startsWith(kind))).length
-      lines.push(`| ${look} | ${packId} | ${set.filter((f) => f.reasons.length).length} of ${set.length} | ${KINDS.map(by).join(' | ')} |`)
+      const clear = set.filter(failsClear)
+      const by = (kind) => clear.filter((f) => f.reasons.some((r) => r.startsWith(kind))).length
+      lines.push(`| ${look} | ${packId} | ${clear.length} of ${set.length} | ${set.filter((f) => f.atLimit).length} | ${KINDS.map(by).join(' | ')} |`)
     }
   if (views.length > 1) {
     lines.push('', `| Look | Pack | ${views.map((v) => `Fail, ${v}`).join(' | ')} |`, `| --- | --- | ${views.map(() => '---').join(' | ')} |`)
@@ -533,12 +559,19 @@ function summaryOf(seconds) {
       for (const packId of packIds) {
         const cells = views.map((v) => {
           const set = frames.filter((f) => f.look === look && f.pack === packId && f.view === v)
-          return `${set.filter((f) => f.reasons.length).length} of ${set.length}`
+          return `${set.filter(failsClear).length} of ${set.length}`
         })
         if (frames.some((f) => f.look === look && f.pack === packId)) lines.push(`| ${look} | ${packId} | ${cells.join(' | ')} |`)
       }
   }
   lines.push('', '## Failing frames', '')
-  for (const f of frames.filter((x) => x.reasons.length)) lines.push(`- ${f.look} ${f.pack} s${f.seed} ${f.format.replace('x', ':')} ${f.view}: ${f.reasons.join('; ')}`)
+  for (const f of frames.filter(failsClear)) lines.push(`- ${frameName(f)}: ${f.reasons.join('; ')}`)
+  lines.push('', '## At the limit', '')
+  for (const f of frames.filter((x) => x.atLimit)) lines.push(`- ${frameName(f)}: ${f.reasons.length ? `fails as drawn: ${f.reasons.join('; ')}` : 'passes as drawn'}`)
+  if (changes) {
+    lines.push('', `## Against ${against.file}`, '', `${changes.changed.length} frames changed; ${changes.atLimit.length} more changed at the limit in one run or both, not counted.`, '')
+    for (const c of changes.changed) lines.push(`- ${c.frame}: ${c.before} before, ${c.now} now`)
+    if (changes.atLimit.length) lines.push('', 'At the limit, not counted:', '', ...changes.atLimit.map((c) => `- ${c.frame}: ${c.before} before, ${c.now} now`))
+  }
   return `${lines.join('\n')}\n`
 }
