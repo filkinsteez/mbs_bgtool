@@ -16,7 +16,10 @@ import { AREA_RESAMPLE_SHADER } from './passes'
  * Cyans, blues and violets (TONE_HOLD_HUES) then take back their own OKLab
  * hue at the curve's lightness and chroma, with the chroma lowered where the
  * color would leave sRGB, and go back to the curve's luminance: Meta Blue
- * stays a saturated blue until it whitens and Cyan never turns green.
+ * stays a saturated blue until it whitens and Cyan never turns green. Reds,
+ * oranges and yellows (TONE_WARM_HUES) whiten through yellow the same way but
+ * stop just past Yellow's hue (TONE_WARM_LIMIT): bright Yellow turns a paler
+ * golden yellow, not lemon.
  *
  * For r = c / m and x = m - 1: out_i = 1 - (1 - r_i) exp(-k x w_i - late x^2)
  * with w_i = f_i / (1 - r_i + 0.05) and f_i = r_i + sum_j X_ij r_j. One
@@ -57,6 +60,17 @@ const TOE_HALF_STOPS = 2
  * curve's path.
  */
 export const TONE_HOLD_HUES = [160, 190, 300, 330] as const
+/**
+ * Own OKLCh hues (degrees, -180 to 180) of warm light whose whitening stops at TONE_WARM_LIMIT: from red (fading in
+ * over -40 to -25) through Yellow (fading out over 100 to 112). Past Yellow's hue the curve heads for sRGB's yellow
+ * corner (about 110 degrees), so bright Yellow read as lemon, a hue no pack has (2026-11-10).
+ */
+export const TONE_WARM_HUES = [-40, -25, 100, 112] as const
+/**
+ * The hue (degrees) warm light whitens at most to, or the light's own hue if that is farther: 6 degrees past Yellow's
+ * 94, where sRGB still leaves bright Yellow some chroma (0.10 at 1.5x, against 0.08 held at 96 and 0.17 as lemon).
+ */
+export const TONE_WARM_LIMIT = 100
 /** Halvings of the chroma search, and how far past 0 or 1 a channel may be and still count as inside sRGB. */
 const TONE_GAMUT_STEPS = 12
 const TONE_GAMUT_SLACK = 1e-4
@@ -89,21 +103,32 @@ bool toneInside(vec3 c) {
   return all(greaterThanEqual(c, vec3(-${glslFloat(TONE_GAMUT_SLACK)}))) && all(lessThanEqual(c, vec3(1.0 + ${glslFloat(TONE_GAMUT_SLACK)})));
 }
 
-// Bright light in the TONE_HOLD_HUES band keeps its own OKLab hue (r's) at the curve's lightness and chroma (o's),
-// with the chroma lowered where that color would leave sRGB, then goes back to the curve's luminance: scaled, which
-// keeps the hue, and mixed toward the grey of that luminance where a channel would pass 1 (toneHoldHue in output.ts).
+// Bright light in the TONE_HOLD_HUES band keeps its own OKLab hue (r's) at the curve's lightness and chroma (o's);
+// warm light in the TONE_WARM_HUES band turns no farther than TONE_WARM_LIMIT. The chroma is lowered where that color
+// would leave sRGB, then it goes back to the curve's luminance: scaled, which keeps the hue, and mixed toward the grey
+// of that luminance where a channel would pass 1 (toneHoldHue in output.ts).
 vec3 toneHoldHue(vec3 r, vec3 o) {
   vec3 own = toneOklab(r);
   if (length(own.yz) < 1e-6) return o;
   float hue = atan(own.z, own.y);
   float deg = mod(degrees(hue), 360.0);
   float hold = smoothstep(${glslFloat(TONE_HOLD_HUES[0])}, ${glslFloat(TONE_HOLD_HUES[1])}, deg) * (1.0 - smoothstep(${glslFloat(TONE_HOLD_HUES[2])}, ${glslFloat(TONE_HOLD_HUES[3])}, deg));
-  if (hold <= 0.0) return o;
+  float signedDeg = deg > 180.0 ? deg - 360.0 : deg;
+  float warm = smoothstep(${glslFloat(TONE_WARM_HUES[0])}, ${glslFloat(TONE_WARM_HUES[1])}, signedDeg) * (1.0 - smoothstep(${glslFloat(TONE_WARM_HUES[2])}, ${glslFloat(TONE_WARM_HUES[3])}, signedDeg));
+  if (hold <= 0.0 && warm <= 0.0) return o;
   vec3 lab = toneOklab(o);
   float chroma = length(lab.yz);
   if (chroma < 1e-6) return o;
-  float d = mod(atan(lab.z, lab.y) - hue + ${glslFloat(3 * Math.PI)}, ${glslFloat(2 * Math.PI)}) - ${glslFloat(Math.PI)};
-  float h = hue + (1.0 - hold) * d;
+  float curveHue = atan(lab.z, lab.y);
+  float h;
+  if (hold > 0.0) {
+    float d = mod(curveHue - hue + ${glslFloat(3 * Math.PI)}, ${glslFloat(2 * Math.PI)}) - ${glslFloat(Math.PI)};
+    h = hue + (1.0 - hold) * d;
+  } else {
+    float past = degrees(curveHue) - max(${glslFloat(TONE_WARM_LIMIT)}, signedDeg);
+    if (past <= 0.0) return o;
+    h = curveHue - warm * radians(past);
+  }
   vec2 dir = vec2(cos(h), sin(h));
   vec3 held = toneFromOklab(vec3(lab.x, chroma * dir));
   if (!toneInside(held)) {
@@ -217,8 +242,9 @@ const smoothBetween = (a: number, b: number, x: number) => {
 
 /**
  * CPU twin of the GLSL toneHoldHue: the curve's result `o` for the light's own color `r` (largest channel 1). In the
- * TONE_HOLD_HUES band it takes r's OKLab hue at o's lightness and chroma, lowers the chroma where that would leave
- * sRGB, and goes back to o's luminance; elsewhere it returns o.
+ * TONE_HOLD_HUES band it takes r's OKLab hue at o's lightness and chroma; in the TONE_WARM_HUES band it turns o's hue
+ * back to TONE_WARM_LIMIT (or r's own hue, if farther) where o has gone past it. Then it lowers the chroma where that
+ * would leave sRGB and goes back to o's luminance; elsewhere it returns o.
  */
 export function toneHoldHue(r: readonly number[], o: readonly number[]): [number, number, number] {
   const own = toneOklab(r)
@@ -227,13 +253,23 @@ export function toneHoldHue(r: readonly number[], o: readonly number[]): [number
   const degrees = (hue * 180) / Math.PI
   const deg = degrees - 360 * Math.floor(degrees / 360)
   const hold = smoothBetween(TONE_HOLD_HUES[0], TONE_HOLD_HUES[1], deg) * (1 - smoothBetween(TONE_HOLD_HUES[2], TONE_HOLD_HUES[3], deg))
-  if (hold <= 0) return [o[0], o[1], o[2]]
+  const signedDeg = deg > 180 ? deg - 360 : deg
+  const warm = smoothBetween(TONE_WARM_HUES[0], TONE_WARM_HUES[1], signedDeg) * (1 - smoothBetween(TONE_WARM_HUES[2], TONE_WARM_HUES[3], signedDeg))
+  if (hold <= 0 && warm <= 0) return [o[0], o[1], o[2]]
   const lab = toneOklab(o)
   const chroma = Math.hypot(lab[1], lab[2])
   if (chroma < 1e-6) return [o[0], o[1], o[2]]
-  const turn = Math.atan2(lab[2], lab[1]) - hue + 3 * Math.PI
-  const d = turn - 2 * Math.PI * Math.floor(turn / (2 * Math.PI)) - Math.PI
-  const h = hue + (1 - hold) * d
+  const curveHue = Math.atan2(lab[2], lab[1])
+  let h: number
+  if (hold > 0) {
+    const turn = curveHue - hue + 3 * Math.PI
+    const d = turn - 2 * Math.PI * Math.floor(turn / (2 * Math.PI)) - Math.PI
+    h = hue + (1 - hold) * d
+  } else {
+    const past = (curveHue * 180) / Math.PI - Math.max(TONE_WARM_LIMIT, signedDeg)
+    if (past <= 0) return [o[0], o[1], o[2]]
+    h = curveHue - (warm * past * Math.PI) / 180
+  }
   const at = (C: number) => toneFromOklab(lab[0], C * Math.cos(h), C * Math.sin(h))
   let held = at(chroma)
   if (!toneInside(held)) {

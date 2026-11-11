@@ -332,6 +332,7 @@ try {
     let worstHueStep = 0
     let warmBackward = 0
     let warmEnd = Infinity
+    let warmTop = 0
     let coolDrift = 0
     let worstSlopeRatio = 0
     const nearTies = []
@@ -360,6 +361,7 @@ try {
           if (warm.has(hex)) {
             if (lastWarmHue !== null) warmBackward = Math.max(warmBackward, hueDiff(lastWarmHue, lch[2]))
             lastWarmHue = lch[2]
+            if (lch[2] < 180) warmTop = Math.max(warmTop, lch[2])
           }
           if (cool.has(hex)) coolDrift = Math.max(coolDrift, Math.abs(hueDiff(lch[2], nominal[2])))
         }
@@ -386,9 +388,9 @@ try {
       `worst slope mismatch ${(worstSlopeRatio * 100).toFixed(2)} %; not held within ${TONE_TIE_BAND * 100} % of a tie for the largest channel: ${nearTies.join(', ')}`,
     )
     record(
-      'tone curve: warm light whitens through yellow, blue and cyan light keep their hue, hue moves smoothly',
-      worstHueStep < 1 && warmBackward < 0.5 && warmEnd > 85 && coolDrift < 2,
-      `largest hue step between neighboring columns ${worstHueStep.toFixed(2)} deg; warm hues never step back toward pink by more than ${warmBackward.toFixed(2)} deg and reach ${warmEnd.toFixed(0)} deg or more; ` +
+      'tone curve: warm light whitens through yellow and stops short of lemon, blue and cyan light keep their hue, hue moves smoothly',
+      worstHueStep < 1 && warmBackward < 0.5 && warmEnd > 85 && warmTop < 101 && coolDrift < 2,
+      `largest hue step between neighboring columns ${worstHueStep.toFixed(2)} deg; warm hues never step back toward pink by more than ${warmBackward.toFixed(2)} deg, reach ${warmEnd.toFixed(0)} deg or more and go no farther than ${warmTop.toFixed(1)} deg; ` +
         `blues and cyans move by at most ${coolDrift.toFixed(2)} deg`,
     )
     const crop = await cropRgba(image, 300, 0, 400, Math.round(rampsEnd * size.height))

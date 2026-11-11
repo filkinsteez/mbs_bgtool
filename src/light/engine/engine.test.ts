@@ -28,7 +28,7 @@ import {
   veilFill,
   veilLevelWeights,
 } from './lens'
-import { paperToeInverse, TONE_CROSSTALK, TONE_TIE_BAND, toneCurve, toneHoldHue } from './output'
+import { paperToeInverse, TONE_CROSSTALK, TONE_TIE_BAND, TONE_WARM_LIMIT, toneCurve, toneHoldHue } from './output'
 import { buildFlowShader, FLOW_BLUR_SHADER, FLOW_TAPS, flowFieldSize } from './passes'
 import { designFrame, lensBaseFromFrame, radianceScaleFor } from './programRenderer'
 import { coerceParam, recipeContext, resolveScene } from './resolve'
@@ -156,7 +156,28 @@ describe('tone curve', () => {
     expect(chroma).toBeGreaterThan(0.06)
   })
 
-  it('holds the hue only for cool light, and keeps the luminance of the curve', () => {
+  it('stops warm light just past Yellow as it whitens: a paler golden yellow, never lemon', () => {
+    for (const hex of ['#FFD61E', '#FF4F00', '#B8996E', '#FF0000', '#FFB300']) {
+      for (let scale = 1.05; scale < 32; scale *= 1.05) {
+        const [, chroma, hue] = hueAt(hex, scale)
+        if (chroma < 0.03) break
+        expect(hue, `${hex} at ${scale.toFixed(2)}x`).toBeLessThan(TONE_WARM_LIMIT + 0.5)
+      }
+    }
+    // Lime, past the limit already, keeps the curve's own path.
+    const lime = hexToLinear('#D6F26C')
+    const r = lime.map((v) => v / Math.max(...lime))
+    const curve = toneCurve(r.map((v) => v * 1.5))
+    expect(toneHoldHue(r, curve)).toEqual(curve)
+    // A lemon curve result for Yellow light turns back to the limit at the same luminance.
+    const yellow = hexToLinear('#FFD61E').map((v, _, c) => v / Math.max(...c))
+    const lemon: [number, number, number] = [1, 0.99, 0.35]
+    const held = toneHoldHue(yellow, lemon)
+    expect(luminance(held)).toBeCloseTo(luminance(lemon), 9)
+    expect(linearToOklch(held)[2]).toBeCloseTo(TONE_WARM_LIMIT, 0)
+  })
+
+  it('holds the hue for cool light, turns warm light back only past the limit, and keeps the luminance of the curve', () => {
     for (const hex of ['#FF4F00', '#FFD61E', '#D6F26C', '#B8996E', '#4A0A3C', '#FF0000', '#00FF00']) {
       const c = hexToLinear(hex)
       const m = Math.max(...c)
