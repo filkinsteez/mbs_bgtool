@@ -78,6 +78,10 @@ Contour's Halo layout of separate circles (a big ring with smaller rings beside 
   Speed; its moodboard is node 4:439 of the concept file; the owner
   started it on 2026-11-09). Filters: Grain and Pixel. The owner removed
   ASCII on 2026-11-09.
+- Rush is soft, with its light smeared along each band like a long
+  exposure (owner, 2026-11-11, approving the round 27 candidate: "Yes,
+  this is it"). A few seeds may look alike in Rush ("OK, a few
+  near-repeats are fine"), so its alike check is reported, not a gate.
 - Owner feedback of 2026-11-09 (concept file node 86:380) changes the
   panel:
   - Three moods, each one option with no Look picker: Sunrise, Contour
