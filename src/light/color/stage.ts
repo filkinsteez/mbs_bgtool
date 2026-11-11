@@ -1,5 +1,5 @@
 import type { Gpu, Target } from '../engine/gl'
-import { lensSpread, levelSigma } from '../engine/lens'
+import { glowDimUniforms, lensSpread, levelSigma } from '../engine/lens'
 import { meetBridge } from '../engine/meet'
 import { toneCurve } from '../engine/output'
 import { runPostPasses } from '../engine/passes'
@@ -11,7 +11,7 @@ import { defaultMix, mixFromShares, type ColorMix } from './mix'
 import { getPack, isPackId, type ColorPack, type PackId } from './packs'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
 import { blurGrid, buildFields, COVERAGE_SPLIT, GRID_SHORT, gridSize, lightSlope, lookParts, VISIBLE, type StageField, type StageGrid } from './stageFields'
-import { assignFields, colorFields, coloredByParts, farPairs, KIND_DARK, KIND_TO_NEIGHBOR, softFields, solveWeights, stageColors, STAGE_SHARPNESS, type StageColor } from './stageSolve'
+import { assignFields, colorFields, coloredByParts, farPairs, KIND_DARK, KIND_TO_NEIGHBOR, softFields, solveWeights, stageColors, stageDimPaths, STAGE_SHARPNESS, type StageColor } from './stageSolve'
 
 /**
  * The pack every design is drawn in while the color stage is on, so one mood, seed, drag and format give one
@@ -320,7 +320,8 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
   const textures = { ...fieldTextures(input.gpu, grid, solved.values), uMixRamps: rampTexture(input.gpu, solved.colors, grid, solved.bridge) }
   return {
     chunk: COLOR_STAGE_GLSL,
-    uniforms: { ...stageUniforms(solved), uMixBridgeSize: [grid.width, grid.height] },
+    // The engine's glow reads the colors' dim paths with these, so a glow fades through the same colors as its light.
+    uniforms: { ...stageUniforms(solved), uMixBridgeSize: [grid.width, grid.height], ...glowDimUniforms(stageDimPaths(solved.colors)) },
     textures,
     release() {
       for (const target of Object.values(textures)) input.gpu.release(target)
