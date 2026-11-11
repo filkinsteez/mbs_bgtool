@@ -45,6 +45,14 @@ Contour's Halo layout of separate circles (a big ring with smaller rings beside 
   differ by pack. Shapes, light positions and the light and dark layout
   stay the same. The Meta Blue toggle and the mix control, once
   built, also change only the colors.
+- The color sliders set the picture's color makeup: each color covers its
+  set share of the picture's colored area (owner, 2026-11-11: "as long
+  as the sliders represent the color makeup and they're as close as
+  possible to the actual color swatches thats fine"). A color takes the
+  light nearest its own swatch first and reaches into brighter or dimmer
+  light only as far as its share needs, in paler or deeper shades of
+  itself that stay as close to the swatch as that light allows. Black
+  backgrounds don't count toward any color.
 - Dragging moves the light and keeps the picture's colors (owner,
   2026-11-11: "dragging control to change color often overrides all
   original colors to just meta blue it should retain its original"). The
