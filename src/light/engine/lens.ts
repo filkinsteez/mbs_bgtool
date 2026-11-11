@@ -183,32 +183,18 @@ export function glowDimUniforms(paths: readonly GlowDimPath[]): UniformMap {
   return { uGlowDimBase: base, uGlowDimStep: steps, uGlowDimColors: count }
 }
 
-/** Glows whose color is within this cosine (round white) of a path's color take that path. */
-export const GLOW_DIM_MATCH = 0.85
-
 /**
- * CPU twin of the composite's glowDimmed: the glow's color (`hue`, any brightness) at a level of its light, dimmed
- * along the path of the pack color nearest it, or unchanged where no path's color is near. Returns luminance 1.
+ * How much a glow takes a path, by the cosine between the glow's color and the path's color (round white): none at
+ * the first value, all at the second, smoothly between, so a glow whose color moves from one pack color toward
+ * another passes from one path to the next without an edge.
  */
-export function glowDimmed(hue: readonly number[], level: number, paths: readonly GlowDimPath[]): Rgb {
-  const h = atLuminance1(hue)
-  const ch = h.map((v) => v - 1)
-  const nh = Math.hypot(ch[0], ch[1], ch[2])
-  if (nh < 1e-3) return h
-  let best = -1
-  let bestCos = GLOW_DIM_MATCH
-  paths.slice(0, GLOW_DIM_COLORS).forEach((path, k) => {
-    const ck = atLuminance1(path.color).map((v) => v - 1)
-    const cos = (ch[0] * ck[0] + ch[1] * ck[1] + ch[2] * ck[2]) / Math.max(nh * Math.hypot(ck[0], ck[1], ck[2]), 1e-6)
-    if (cos > bestCos) {
-      bestCos = cos
-      best = k
-    }
-  })
-  if (best < 0) return h
+export const GLOW_DIM_MATCH = [0.7, 0.95] as const
+
+/** The glow's color (luminance 1) at a level of its light along one path. */
+function glowDimAlong(h: Rgb, level: number, path: GlowDimPath): Rgb {
   let above: Rgb = h
   let aboveAt = 1
-  for (const step of paths[best].steps.slice(0, GLOW_DIM_STEPS)) {
+  for (const step of path.steps.slice(0, GLOW_DIM_STEPS)) {
     if (!(step.below > 0)) break
     const color = atLuminance1(step.color)
     if (level >= step.below) {
@@ -220,6 +206,34 @@ export function glowDimmed(hue: readonly number[], level: number, paths: readonl
     aboveAt = step.below
   }
   return above
+}
+
+/**
+ * CPU twin of the composite's glowDimmed: the glow's color (`hue`, any brightness) at a level of its light. Each path
+ * weighs by how near its color is (GLOW_DIM_MATCH) times the glow's chroma against the path color's, up to 1, so a
+ * paler glow takes a path only partly. The paths' colors mix by weight; where the weights add to less than 1 the rest
+ * keeps the glow's own color. Returns luminance 1.
+ */
+export function glowDimmed(hue: readonly number[], level: number, paths: readonly GlowDimPath[]): Rgb {
+  const h = atLuminance1(hue)
+  const ch = h.map((v) => v - 1)
+  const nh = Math.hypot(ch[0], ch[1], ch[2])
+  if (nh < 1e-3) return h
+  const sum = [0, 0, 0]
+  let total = 0
+  for (const path of paths.slice(0, GLOW_DIM_COLORS)) {
+    const ck = atLuminance1(path.color).map((v) => v - 1)
+    const nk = Math.hypot(ck[0], ck[1], ck[2])
+    const cos = (ch[0] * ck[0] + ch[1] * ck[1] + ch[2] * ck[2]) / Math.max(nh * nk, 1e-6)
+    const t = Math.min(1, Math.max(0, (cos - GLOW_DIM_MATCH[0]) / (GLOW_DIM_MATCH[1] - GLOW_DIM_MATCH[0])))
+    const w = t * t * (3 - 2 * t) * Math.min(1, nh / Math.max(nk, 1e-6))
+    if (w <= 0) continue
+    const along = glowDimAlong(h, level, path)
+    for (let i = 0; i < 3; i++) sum[i] += w * along[i]
+    total += w
+  }
+  if (total <= 0) return h
+  return (total > 1 ? sum.map((v) => v / total) : sum.map((v, i) => v + (1 - total) * h[i])) as Rgb
 }
 
 /**
@@ -484,34 +498,40 @@ uniform vec4 uGlowDimBase[${GLOW_DIM_COLORS}]; // each path's pack color at lumi
 uniform vec4 uGlowDimStep[${GLOW_DIM_COLORS * GLOW_DIM_STEPS}]; // its darker colors at luminance 1, w the level below which each takes over
 uniform int uGlowDimColors;
 out vec4 fragColor;
-// The glow's color (at luminance 1) at a level of its light, dimmed along the path of the pack color nearest it
-// (glowDimmed in lens.ts), or unchanged where no path's color is near.
-vec3 glowDimmed(vec3 hue, float level) {
-  vec3 ch = hue - 1.0;
-  float nh = length(ch);
-  if (nh < 1e-3) return hue;
-  int best = -1;
-  float bestCos = ${GLOW_DIM_MATCH};
-  for (int k = 0; k < ${GLOW_DIM_COLORS}; k++) {
-    if (k >= uGlowDimColors) break;
-    vec3 ck = uGlowDimBase[k].xyz - 1.0;
-    float cosine = dot(ch, ck) / max(nh * length(ck), 1e-6);
-    if (cosine > bestCos) {
-      bestCos = cosine;
-      best = k;
-    }
-  }
-  if (best < 0) return hue;
+// The glow's color (at luminance 1) at a level of its light along path k (glowDimAlong in lens.ts).
+vec3 glowDimAlong(int k, vec3 hue, float level) {
   vec3 above = hue;
   float aboveAt = 1.0;
   for (int j = 0; j < ${GLOW_DIM_STEPS}; j++) {
-    vec4 st = uGlowDimStep[best * ${GLOW_DIM_STEPS} + j];
+    vec4 st = uGlowDimStep[k * ${GLOW_DIM_STEPS} + j];
     if (st.w <= 0.0) break;
     if (level >= st.w) return mix(st.xyz, above, smoothstep(st.w, min(aboveAt, 2.0 * st.w), level));
     above = st.xyz;
     aboveAt = st.w;
   }
   return above;
+}
+
+// The glow's color (at luminance 1) at a level of its light: every path weighed by how near its color is, times the
+// glow's chroma against the path color's, and the rest of the weight left to the glow's own color (glowDimmed in
+// lens.ts).
+vec3 glowDimmed(vec3 hue, float level) {
+  vec3 ch = hue - 1.0;
+  float nh = length(ch);
+  if (nh < 1e-3) return hue;
+  vec3 sum = vec3(0.0);
+  float total = 0.0;
+  for (int k = 0; k < ${GLOW_DIM_COLORS}; k++) {
+    if (k >= uGlowDimColors) break;
+    vec3 ck = uGlowDimBase[k].xyz - 1.0;
+    float nk = length(ck);
+    float w = smoothstep(${GLOW_DIM_MATCH[0]}, ${GLOW_DIM_MATCH[1]}, dot(ch, ck) / max(nh * nk, 1e-6)) * min(1.0, nh / max(nk, 1e-6));
+    if (w <= 0.0) continue;
+    sum += w * glowDimAlong(k, hue, level);
+    total += w;
+  }
+  if (total <= 0.0) return hue;
+  return total > 1.0 ? sum / total : sum + (1.0 - total) * hue;
 }
 
 // The veil's lead color at each base pixel, dimmed along its pack color's path by the level of the light there

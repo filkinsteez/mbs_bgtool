@@ -415,6 +415,27 @@ describe('veil dim paths', () => {
     near(glowDimmed(blue, 0.1, [fire]), at1(blue))
     near(glowDimmed(yellow, 0.1, []), at1(yellow))
   })
+
+  it('passes softly from one path to the next as the glow moves from one pack color toward another', () => {
+    const paths: GlowDimPath[] = [fire, { color: blue, steps: [] }]
+    const y = at1(yellow)
+    const b = at1(blue)
+    let last = glowDimmed(y, 0.1, paths)
+    near(last, at1(deepRed))
+    let largest = 0
+    for (let k = 1; k <= 100; k++) {
+      const now = glowDimmed(
+        y.map((v, i) => v + ((b[i] - v) * k) / 100),
+        0.1,
+        paths,
+      )
+      largest = Math.max(largest, Math.hypot(now[0] - last[0], now[1] - last[1], now[2] - last[2]))
+      last = now
+    }
+    near(last, b)
+    // An all-or-nothing switch jumps by about 2.7 in one 1 % step here.
+    expect(largest).toBeLessThan(0.5)
+  })
 })
 
 describe('flow blur', () => {
