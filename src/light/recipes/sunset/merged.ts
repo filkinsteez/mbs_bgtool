@@ -747,7 +747,10 @@ float paleAt(float a, float h) {
     softBy = mix(softBy, gPaleSoft, gPaleAway);
   }
   float soft = top * (0.2 + 0.5 * uPale.w * softBy);
-  return 1.0 - smoothstep(top - soft, top + soft, h);
+  // In a plain sky the mound's light fades out farther above its top than below it, so where its edge meets the
+  // darker sky above, the two bend into each other instead of crossing in a V.
+  float above = uKind == 3 ? 2.0 * soft : soft;
+  return 1.0 - smoothstep(top - soft, top + above, h);
 }
 
 // The warm band on the horizon: thickest near the light and thinning away from it, its thickness wavering; round a
