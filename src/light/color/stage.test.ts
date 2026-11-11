@@ -133,6 +133,19 @@ describe('color stage', () => {
     const warmOf = (cs: ReturnType<typeof stageColors>, hex: string) => twoWarm[assignFields(cs, twoWarm, 2)[cs.findIndex((c) => c.hex === hex)]]?.name
     expect([warmOf(boldColors, '#FFD61E'), warmOf(boldColors, '#FF4F00')]).toEqual(['warm', 'warm2'])
     expect([warmOf(colors, '#B8996E'), warmOf(colors, '#D6F26C')]).toEqual(['warm', 'warm2'])
+    // In a pack with no warm color, warm streaks leave Ice to the bright streaks that ask for it and take Steel.
+    const lit = buildFields('rush.split', [
+      { kind: 'line', from: [0.1, 0.3], to: [0.9, 0.3], width: 0.05, want: 'warm' },
+      { kind: 'line', from: [0.1, 0.7], to: [0.9, 0.7], width: 0.05, want: 'bright' },
+    ], grid, 2, 16 / 9)
+    expect(lit.map((f) => f.name)).toEqual(['lead', 'warm', 'bright', 'dark1', 'dark2'])
+    const atmospheric = getPack('atmospheric')
+    const cool = stageColors(atmospheric, defaultMix(atmospheric), true)
+    for (let seed = 1; seed <= 4; seed++) {
+      const at = assignFields(cool, lit, seed)
+      const nameOf = (hex: string) => lit[at[cool.findIndex((c) => c.hex === hex)]]?.name
+      expect([nameOf('#F2F4F7'), nameOf('#6A7788')]).toEqual(['bright', 'warm'])
+    }
   })
 
   it('counts a part by its strength and gives the dark spots to the dark fields in their order', () => {

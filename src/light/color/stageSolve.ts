@@ -2,7 +2,7 @@ import { defaultMix, META_BLUE_HEX, mixColors, type ColorMix } from './mix'
 import { linearToOklab } from './oklab'
 import type { ColorPack } from './packs'
 import { hexToLinear } from './srgb'
-import { blurGrid, mulberry32, VISIBLE, type StageField, type StageGrid } from './stageFields'
+import { blurGrid, mulberry32, VISIBLE, type FieldWant, type StageField, type StageGrid } from './stageFields'
 
 /** How a color behaves as its light dims (the GLSL chunk reads the same numbers). */
 export const KIND_PLAIN = 0
@@ -240,30 +240,31 @@ export function assignFields(colors: readonly StageColor[], fields: readonly Sta
   const used = new Set<number>()
   // In a look colored by its parts a color only goes to a place of its group.
   const byParts = coloredByParts(fields)
-  fields.forEach((field, f) => {
-    if (field.want === 'any') return
-    const wanted = (c: StageColor) => {
-      switch (field.want) {
-        case 'lead':
-          return c === colors[ranked[0]]
-        case 'bright':
-          return c.kind === KIND_TO_NEIGHBOR || c.kind === KIND_BRIGHT || c.clean === true
-        case 'pale':
-          return (c.kind === KIND_BRIGHT || c.clean === true) && !(c.group === 'warm' && c.hue < 100)
-        case 'warm':
-        case 'cool':
-        case 'dark':
-          return c.group === field.want
-        case 'warm2':
-          return c.group === 'warm'
-        case 'any':
-          return true
-        default: {
-          const unknown: never = field.want
-          throw new Error(`No color for ${String(unknown)}`)
-        }
+  const fits = (want: FieldWant, c: StageColor) => {
+    switch (want) {
+      case 'lead':
+        return c === colors[ranked[0]]
+      case 'bright':
+        return c.kind === KIND_TO_NEIGHBOR || c.kind === KIND_BRIGHT || c.clean === true
+      case 'pale':
+        return (c.kind === KIND_BRIGHT || c.clean === true) && !(c.group === 'warm' && c.hue < 100)
+      case 'warm':
+      case 'cool':
+      case 'dark':
+        return c.group === want
+      case 'warm2':
+        return c.group === 'warm'
+      case 'any':
+        return true
+      default: {
+        const unknown: never = want
+        throw new Error(`No color for ${String(unknown)}`)
       }
     }
+  }
+  fields.forEach((field, f) => {
+    if (field.want === 'any') return
+    const wanted = (c: StageColor) => fits(field.want, c)
     const free = ranked.filter((c) => out[c] < 0 && wanted(colors[c]))
     // In a look colored by its parts a warm light takes the color that dims like fire, which turns into the color it
     // dims into where the light is lower (Yellow at the core, Orange-red at the edges); with none, the deepest warm
@@ -272,8 +273,15 @@ export function assignFields(colors: readonly StageColor[], fields: readonly Sta
     if (byParts && field.want === 'warm') k = free.find((c) => colors[c].kind === KIND_TO_NEIGHBOR) ?? [...free].sort((a, b) => colors[a].lightness - colors[b].lightness)[0]
     // A look's dark spots come in the pack's order of its dark colors.
     if (byParts && field.want === 'dark') k = [...free].sort((a, b) => a - b)[0]
-    // A pack without a warm color lights its warm places with its brightest color left (Atmospheric's Ice).
-    if (k === undefined && field.want === 'warm') k = ranked.filter((c) => out[c] < 0 && colors[c].group !== 'dark').sort((a, b) => colors[b].lightness - colors[a].lightness)[0]
+    // A pack without a warm color lights its warm places with its brightest color left (Atmospheric's Ice). If a later
+    // field of the look asks for that color as its bright or pale color and another light color is left, the warm
+    // places take that one instead, so each part keeps the color the design draws it in (Rush in Atmospheric: Ice on
+    // its second light color's streaks, Steel on its third's).
+    if (k === undefined && field.want === 'warm') {
+      const left = ranked.filter((c) => out[c] < 0 && colors[c].group !== 'dark').sort((a, b) => colors[b].lightness - colors[a].lightness)
+      const askedLater = (c: number) => fields.some((g, i) => i > f && (g.want === 'bright' || g.want === 'pale') && fits(g.want, colors[c]))
+      k = left.find((c) => !askedLater(c)) ?? left[0]
+    }
     if (k === undefined) return
     out[k] = f
     used.add(f)
