@@ -766,34 +766,49 @@ float paleAt(float a, float h) {
   return 1.0 - smoothstep(top - soft, top + above, h);
 }
 
-// The warm band on the horizon: thickest near the light and thinning away from it, its thickness wavering; round a
-// high light, its warm glow to one side.
+// The warm band's two boundaries over a horizon, as heights above the horizon line: x the inner one, where the band's
+// upper layer deepens into its core (Yellow to Orange-red in Bold), z the outer one, where the sky's light gives way
+// to the band's (white to Yellow); y and w are their soft half-widths.
+vec4 warmEdges(float a) {
+  float along = sideLight(a, uWarm.x);
+  float base = uWarm.y * (0.4 + 0.6 * along) * (1.0 + 0.6 * gradientNoise(vec2(a * 1.1 + 5.1, 3.3), uHorizonSeed + 31));
+  // Each boundary has its own shape across the width, by an amount and a side the seed picks (at least 0.6 of the
+  // full amount): the core's top leans across the light, the upper layer bows (thicker or thinner in the middle than
+  // at the sides), and each also dips and rises on a drift of its own, so no two neighbouring boundaries run parallel.
+  // Each shape moves a thickness between three quarters and twice its usual size, so the band never pinches and the
+  // boundaries move by about the band's own thickness across a frame.
+  float tiltBy = gradientNoise(vec2(1.7, 4.4), uHorizonSeed + 113);
+  float bowBy = gradientNoise(vec2(6.3, 2.2), uHorizonSeed + 115);
+  tiltBy = sign(tiltBy) * (0.6 + 0.4 * abs(tiltBy));
+  bowBy = sign(bowBy) * (0.6 + 0.4 * abs(bowBy));
+  float tilt = tanh(a / 0.5);
+  float bow = 1.0 - 2.0 * smoothstep(0.0, 0.8, abs(a));
+  float coreBy = 0.5 + 0.5 * tanh(1.4 * tiltBy * tilt + 0.5 * gradientNoise(vec2(a * 1.3 + 2.3, 6.1), uHorizonSeed + 107));
+  float upperBy = 0.5 + 0.5 * tanh(1.4 * bowBy * bow + 0.5 * gradientNoise(vec2(a * 1.6 + 7.7, 0.4), uHorizonSeed + 117));
+  float core = 0.5 * base * (0.75 + 1.25 * coreBy);
+  float upper = 0.6 * base * (0.75 + 1.25 * upperBy);
+  // Each boundary's softness changes along its length on a drift of its own, never firmer than a tenth of the band.
+  float coreSoft = base * (0.1 + 0.12 * (0.5 + 0.5 * gradientNoise(vec2(a * 1.8 + 0.9, 4.7), uHorizonSeed + 109)));
+  float outerSoft = base * (0.12 + 0.14 * (0.5 + 0.5 * gradientNoise(vec2(a * 1.4 + 3.2, 8.6), uHorizonSeed + 119)));
+  return vec4(core, coreSoft, core + upper, outerSoft);
+}
+
+// The warm band on the horizon: thickest near the light and thinning away from it, in two steps of light (the sky's
+// light gives way to the band's upper layer across the outer boundary, which deepens into the core across the inner
+// one); round a high light, its warm glow to one side.
 float warmAt(float a, float h) {
   if (uKind == 1) return gHalo;
+  vec4 e = warmEdges(a);
   float along = sideLight(a, uWarm.x);
-  // The band's top drifts and its softness changes along its length, so it never runs parallel to the horizon or to
-  // the ground's edge. Each also has a second, quicker drift of its own and leans its own way across the light (the
-  // seed picks the side and how far), so within a narrow frame too the boundaries between the band's levels part and
-  // close along their length instead of stacking in parallel. The band thickens freely but thins to no less than about
-  // three quarters, so it never pinches and never leaves the sky's light right against the dark ground.
-  float lean = tanh(a / 0.5);
-  float leanTh = gradientNoise(vec2(1.7, 4.4), uHorizonSeed + 113);
-  float leanSoft = gradientNoise(vec2(6.3, 2.2), uHorizonSeed + 115);
-  leanTh = sign(leanTh) * (0.6 + 0.4 * abs(leanTh));
-  leanSoft = sign(leanSoft) * (0.6 + 0.4 * abs(leanSoft));
-  // Only in a plain sky: beside a side light and under a low sun the quicker drifts drew firm edges where the band
-  // meets the bright sky or the dark ground.
-  float vary = uKind == 3 ? 1.0 : 0.0;
-  float th = uWarm.y * (0.4 + 0.6 * along) * (1.0 + 0.6 * gradientNoise(vec2(a * 1.1 + 5.1, 3.3), uHorizonSeed + 31))
-    * (0.75 + 0.25 * exp(vary * (0.6 * gradientNoise(vec2(a * 1.5 + 2.3, 6.1), uHorizonSeed + 107) + 1.1 * leanTh * lean)));
-  float soft = 0.5 + mix(0.35, 0.1, vary) * gradientNoise(vec2(a * 1.2 + 8.3, 1.2), uHorizonSeed + 33)
-    + vary * (0.15 * gradientNoise(vec2(a * 1.8 + 0.9, 4.7), uHorizonSeed + 109) + 0.22 * leanSoft * lean);
-  // Where the band thins its top keeps a soft width of its own (at least about a sixth of the band's usual
-  // thickness), so a thin stretch never draws a firm edge.
-  float halfWidth = sqrt(soft * soft * th * th + vary * 0.03 * uWarm.y * uWarm.y);
-  // Its light keeps more of its strength along the horizon past the hot middle, where it has fallen near Orange-red's
-  // own lightness, so Orange-red has a broad stretch there.
-  return sqrt(along) * (1.0 - smoothstep(0.8 * th - halfWidth, 0.8 * th + halfWidth, h));
+  return sqrt(along) * (1.0 - 0.5 * smoothstep(e.z - e.w, e.z + e.w, h) - 0.5 * smoothstep(e.x - e.y, e.x + e.y, h));
+}
+
+// Over a horizon, where the warm band's color reaches (x, up to the outer boundary) and how far a place is into the
+// band's upper layer (y, above the inner boundary).
+vec2 warmHueAt(float a, float h) {
+  vec4 e = warmEdges(a);
+  float along = sideLight(a, uWarm.x);
+  return vec2(sqrt(along) * (1.0 - smoothstep(e.z - e.w, e.z + e.w, h)), smoothstep(e.x - e.y, e.x + e.y, h));
 }
 
 // The warm light's outer glow: wider and dimmer than the warm band (round a high light, than its warm glow).
@@ -907,8 +922,11 @@ vec4 skyHue(float a, float h, float L) {
   // glow's color. A horizon's warm band keeps its width: widened the same way, it made a low sun's light and dark
   // layout differ between packs.
   float wide = uKind == 1 ? 1.0 : 0.0;
-  float warmPart = clamp(max(smoothstep(mix(0.3, 0.12, wide), mix(0.8, 0.5, wide), warmAt(a, h)), smoothstep(0.1, 0.45, dome)), 0.0, 1.0);
-  vec3 warmColor = mix(uWarmColor, uGlowColor, max(inner, wide * smoothstep(0.86, 0.94, L)));
+  // Over a horizon the warm color covers the band up to its outer boundary: the glow's color in the band's upper
+  // layer and the warm color in its core, as the band's two steps of light are.
+  vec2 band = uKind == 1 ? vec2(warmAt(a, h), 0.0) : warmHueAt(a, h);
+  float warmPart = clamp(max(smoothstep(mix(0.3, 0.12, wide), mix(0.8, 0.5, wide), band.x), smoothstep(0.1, 0.45, dome)), 0.0, 1.0);
+  vec3 warmColor = mix(uWarmColor, uGlowColor, max(max(inner, wide * smoothstep(0.86, 0.94, L)), band.y));
   float pale = paleAt(a, h);
   float palePart = smoothstep(0.4, 0.8, pale) * (1.0 - warmPart);
   float skyPart = (1.0 - smoothstep(0.05, 0.4, pale)) * (1.0 - warmPart);
