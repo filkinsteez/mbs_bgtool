@@ -448,6 +448,89 @@ export function partWeightsAt(weights: readonly number[], asked: readonly boolea
   return out
 }
 
+/** partWeightsAt's terms that don't depend on the weights, for every visible cell of a solve (see partHolds). */
+interface PartHolds {
+  count: number
+  K: number
+  /** Per cell: the largest hold of an asked part, and the holds' sum. */
+  held: Float64Array
+  sum: Float64Array
+  /** Per cell and color (cell * K + k): an asked color's hold, and the exponent that brings a color down to the limit. */
+  hold: Float64Array
+  expo: Float64Array
+  /** Per cell and color: how strongly color k's part holds against the far colors (lightPartHolds); 0 for none. */
+  farHold: Float64Array
+  /** Per cell and color pair ((cell * K + k) * K + m): the exponent by which color k's part brings color m down. */
+  far: Float64Array
+  /** Per color: whether its part holds against any color. */
+  rows: boolean[]
+}
+
+/**
+ * partWeightsAt's weight-free terms for each cell `j` of `count`, from `at(k, j)` (color k's field there with its
+ * lightness mask) and the cell's lightness, worked out with the same operations in the same order, so
+ * applyPartHolds gives the same numbers as partWeightsAt.
+ */
+function partHolds(K: number, count: number, at: (k: number, j: number) => number, asked: readonly boolean[], farHolds: readonly (readonly boolean[])[], lightnessAt: (j: number) => number): PartHolds {
+  const held = new Float64Array(count)
+  const sum = new Float64Array(count)
+  const hold = new Float64Array(count * K)
+  const expo = new Float64Array(count * K)
+  const farHold = new Float64Array(count * K)
+  const far = new Float64Array(count * K * K)
+  const rows = farHolds.map((row) => row.some(Boolean))
+  const a = new Float64Array(K)
+  for (let j = 0; j < count; j++) {
+    let top = 0
+    for (let k = 0; k < K; k++) {
+      a[k] = at(k, j)
+      top = Math.max(top, a[k])
+    }
+    let h = 0
+    let s = 0
+    for (let k = 0; k < K; k++) {
+      if (!asked[k]) continue
+      const v = 1 - smooth(PART_OWNS[0], PART_OWNS[1], top - a[k])
+      hold[j * K + k] = v
+      h = Math.max(h, v)
+      s += v
+    }
+    held[j] = h
+    sum[j] = s
+    for (let k = 0; k < K; k++) expo[j * K + k] = h * smooth(PART_OWNS[0], PART_OWNS[1], top - a[k])
+    const lightness = lightnessAt(j)
+    farHolds.forEach((row, k) => {
+      if (!rows[k]) return
+      const v = (1 - smooth(PART_OWNS[0], PART_OWNS[1], top - a[k])) * smooth(FAR_HOLD_LIGHT[0], FAR_HOLD_LIGHT[1], lightness) * (1 - smooth(FAR_HOLD_LIGHT[2], FAR_HOLD_LIGHT[3], lightness))
+      farHold[j * K + k] = v
+      if (v <= 0) return
+      row.forEach((isFar, m) => {
+        if (isFar) far[(j * K + k) * K + m] = v * smooth(PART_OWNS[0], PART_OWNS[1], top - a[m])
+      })
+    })
+  }
+  return { count, K, held, sum, hold, expo, farHold, far, rows }
+}
+
+/** partWeightsAt for cell `j` of `ph`, written into `out`: the same numbers, without working out the holds again. */
+function applyPartHolds(weights: readonly number[], asked: readonly boolean[], farHolds: readonly (readonly boolean[])[], ph: PartHolds, j: number, out: Float64Array): Float64Array {
+  const K = ph.K
+  const held = ph.held[j]
+  let limit = 0
+  for (let k = 0; k < K; k++) if (asked[k]) limit += ph.hold[j * K + k] * weights[k]
+  if (held > 0) limit /= ph.sum[j]
+  for (let k = 0; k < K; k++) {
+    const w = weights[k]
+    out[k] = held <= 0 || asked[k] || w <= limit ? w : w * (limit / w) ** ph.expo[j * K + k]
+  }
+  for (let k = 0; k < K; k++) {
+    if (!ph.rows[k]) continue
+    if (ph.farHold[j * K + k] <= 0) continue
+    for (let m = 0; m < K; m++) if (farHolds[k][m] && out[m] > weights[k]) out[m] *= (weights[k] / out[m]) ** ph.far[(j * K + k) * K + m]
+  }
+  return out
+}
+
 /**
  * The light (cube root) where far hues mix to grey or mauve rather than to white or near black, over which a part
  * asking for Cyan holds its cells against them (lightPartHolds): in from the first value to the second, out from the
@@ -547,6 +630,9 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
     return { own, down }
   })
   const p = new Float64Array(K)
+  // The parts' holds don't change with the weights, so they are worked out once, not in each of the solve's steps.
+  const holds = byParts ? partHolds(K, visible.length, (k, j) => F[k][visible[j]] * masks[k][j], askedPart, farHolds, (j) => S[visible[j]]) : null
+  const heldWeights = new Float64Array(K)
   /** Per color: the share of the light it leads, what of that reads as itself, and what reads as it from others' turns. */
   const measure = (ws: readonly number[]) => {
     const area = new Array<number>(K).fill(0)
@@ -559,9 +645,12 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
     }
     visible.forEach((i, j) => {
       let s = 0
-      const wsAt = byParts ? partWeightsAt(ws, askedPart, (k) => F[k][i] * masks[k][j], farHolds, S[i]) : ws
+      const wsAt = holds ? applyPartHolds(ws, askedPart, farHolds, holds, j, heldWeights) : ws
       for (let k = 0; k < K; k++) {
-        p[k] = Math.max(0, wsAt[k] * F[k][i] * masks[k][j]) ** sharpness
+        const v = wsAt[k] * F[k][i] * masks[k][j]
+        // Products for the usual sharpness: about seven times faster than a power, and equal to it within the last
+        // bit or two of a double.
+        p[k] = v > 0 ? (sharpness === 6 ? v * v * (v * v) * (v * v) : v ** sharpness) : 0
         s += p[k]
       }
       if (s <= 1e-30) {

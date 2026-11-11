@@ -228,10 +228,9 @@ export function blurGrid(src: Float32Array, w: number, h: number, sigma: number)
     for (let x = 0; x < w; x++) {
       let s = 0
       let ks = 0
-      for (let i = -r; i <= r; i++) {
-        const xx = x + i
-        if (xx < 0 || xx >= w) continue
-        s += k[i + r] * src[y * w + xx]
+      // Only the taps inside the grid, in the same order, so the sums are the same.
+      for (let i = Math.max(-r, -x), end = Math.min(r, w - 1 - x); i <= end; i++) {
+        s += k[i + r] * src[y * w + x + i]
         ks += k[i + r]
       }
       tmp[y * w + x] = s / ks
@@ -240,10 +239,8 @@ export function blurGrid(src: Float32Array, w: number, h: number, sigma: number)
     for (let x = 0; x < w; x++) {
       let s = 0
       let ks = 0
-      for (let i = -r; i <= r; i++) {
-        const yy = y + i
-        if (yy < 0 || yy >= h) continue
-        s += k[i + r] * tmp[yy * w + x]
+      for (let i = Math.max(-r, -y), end = Math.min(r, h - 1 - y); i <= end; i++) {
+        s += k[i + r] * tmp[(y + i) * w + x]
         ks += k[i + r]
       }
       out[y * w + x] = s / ks
