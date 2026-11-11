@@ -46,8 +46,10 @@ export const COVERAGE_SPLIT = 4
  * What a field asks for: a warm light, a cool one, a dark color, a color that only reads as itself when bright (Yellow,
  * Cyan, Lime, Tan, Ice: for the brightest part of a light), a light color that isn't warm (`pale`: Cyan, Lime, Ice, for
  * a pale sky), the lead color (`lead`: the largest share, Meta Blue at the default), or whichever the shares give it.
+ * `warm2` asks for the pack's other warm color, the one `warm` didn't take (Orange-red in Bold, Lime in Elemental), so a
+ * line can carry both warm colors as stretches of their own.
  */
-export type FieldWant = 'any' | 'warm' | 'cool' | 'dark' | 'bright' | 'pale' | 'lead'
+export type FieldWant = 'any' | 'warm' | 'warm2' | 'cool' | 'dark' | 'bright' | 'pale' | 'lead'
 
 /**
  * A look's part, in frame units: x from the left edge and y from the top edge (0..1 inside the frame), sizes in
@@ -347,7 +349,7 @@ const LEAD_FLOOR = 0.25
  * The wants a part field can have besides the lead's and dark, in the order colors are given to them: the groups'
  * first, then bright, so it takes a light color no group asked for, then pale.
  */
-const PART_WANTS: readonly FieldWant[] = ['cool', 'warm', 'bright', 'pale']
+const PART_WANTS: readonly FieldWant[] = ['cool', 'warm', 'warm2', 'bright', 'pale']
 
 const maxInto = (into: Float32Array, values: Float32Array) => {
   for (let i = 0; i < into.length; i++) into[i] = Math.max(into[i], values[i])
@@ -355,8 +357,8 @@ const maxInto = (into: Float32Array, values: Float32Array) => {
 
 type Noise = (u: number, v: number) => number
 
-/** The wants that get their own warp in a look colored by its parts, in the order their noise is drawn. */
-const WARPED: readonly FieldWant[] = ['lead', ...PART_WANTS, 'dark']
+/** The wants that get their own warp in a look colored by its parts, in the order their noise is drawn (`warm2` last, so the others keep theirs). */
+const WARPED: readonly FieldWant[] = ['lead', 'cool', 'warm', 'bright', 'pale', 'dark', 'warm2']
 
 /**
  * The fields of a look whose parts say where colors go (the merged looks): the lead's light (parts with no want or

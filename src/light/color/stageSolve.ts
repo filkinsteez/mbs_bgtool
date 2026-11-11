@@ -254,6 +254,8 @@ export function assignFields(colors: readonly StageColor[], fields: readonly Sta
         case 'cool':
         case 'dark':
           return c.group === field.want
+        case 'warm2':
+          return c.group === 'warm'
         case 'any':
           return true
         default: {

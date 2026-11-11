@@ -126,6 +126,12 @@ describe('color stage', () => {
       // Orange-red shows where Yellow dims, not on a field of its own.
       expect([nameOf('#FFD61E'), nameOf('#FF4F00'), nameOf('#1FCDF0')]).toEqual(['warm', undefined, 'cool'])
     }
+    // A line can ask for the pack's other warm color as a stretch of its own.
+    const twoWarm = buildFields('rush.split', [...streaks, { kind: 'line', from: [0.1, 0.5], to: [0.9, 0.5], width: 0.05, want: 'warm2' }], grid, 2, 16 / 9)
+    expect(twoWarm.map((f) => f.name)).toEqual(['lead', 'cool', 'warm', 'warm2', 'dark1', 'dark2'])
+    const warmOf = (cs: ReturnType<typeof stageColors>, hex: string) => twoWarm[assignFields(cs, twoWarm, 2)[cs.findIndex((c) => c.hex === hex)]]?.name
+    expect([warmOf(boldColors, '#FFD61E'), warmOf(boldColors, '#FF4F00')]).toEqual(['warm', 'warm2'])
+    expect([warmOf(colors, '#B8996E'), warmOf(colors, '#D6F26C')]).toEqual(['warm', 'warm2'])
   })
 
   it('counts a part by its strength and gives the dark spots to the dark fields in their order', () => {
