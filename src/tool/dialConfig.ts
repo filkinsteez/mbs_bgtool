@@ -61,10 +61,10 @@ export function buildDialConfig(initial: ToolState, exportLabel: string, filter:
 
 /**
  * Tool state from the panel's live values; anything missing or out of place falls back to a valid value. The look is
- * the mood's one look (`MOOD_LOOKS`). The mix is the panel's while the page has the color mix control on (`colormix`,
- * from its link), else the pack's default.
+ * the mood's one look (`MOOD_LOOKS`). The mix is the panel's hidden value, which is the pack's default until the Mix
+ * control comes.
  */
-export function readToolState(values: Readonly<Record<string, unknown>>, mood: MoodId, colormix = false): ToolState {
+export function readToolState(values: Readonly<Record<string, unknown>>, mood: MoodId): ToolState {
   const packValue = values[PACK_DIAL_KEY]
   const pack = typeof packValue === 'string' && isPackId(packValue) ? packValue : DEFAULT_STATE.pack
   const format = values.format
@@ -75,8 +75,7 @@ export function readToolState(values: Readonly<Record<string, unknown>>, mood: M
     pack,
     seed,
     format: isExportAspect(format) ? format : DEFAULT_STATE.format,
-    colormix,
-    mix: colormix ? readMix(getPack(pack), values[MIX_DIAL_KEY]) : defaultMix(getPack(pack)),
+    mix: readMix(getPack(pack), values[MIX_DIAL_KEY]),
     ...readFilter(values),
   }
 }

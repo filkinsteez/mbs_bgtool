@@ -15,18 +15,17 @@ import { panelAccessFor, usePanelAccess } from './panelAccess'
 import { HistoryStrip } from './history/HistoryStrip'
 import { applyPanelValues, panelValues } from './history/panelValues'
 import { useHistory } from './history/useHistory'
-import { MixControl } from './MixControl'
 import { FilterPicker, FormatPicker, MoodPicker, PackPicker } from './panelPickers'
 import { Preview } from './Preview'
-import { customMix, isMoodId, mixForPack, parseQuery, randomSeed, sceneLook, toQuery, type SearchParams } from './state'
+import { isMoodId, mixForPack, parseQuery, randomSeed, sceneLook, toQuery, type SearchParams } from './state'
 import { ToolPanel } from './ToolPanel'
 
 const EXPORT_LABEL = 'Export'
 const EXPORTING_LABEL = 'Exporting…'
 const EXPORT_FAILED_LABEL = 'Export failed'
 /**
- * The tiles take the place of DialKit's selects, Shuffle the place of the Seed slider, and the Mix control the place of
- * the mix's text field, which shows nothing while the page has the color mix control off.
+ * The tiles take the place of DialKit's selects and Shuffle the place of the Seed slider. The mix's text field shows
+ * nothing until the Mix control comes.
  */
 const MOOD_PATHS = ['mood']
 const PACK_PATHS = [PACK_DIAL_KEY]
@@ -80,18 +79,18 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const config = useMemo(() => buildDialConfig(start, exportLabel, chosenFilter), [start, exportLabel, chosenFilter])
   const dial = useDialKitController(PANEL_NAME, config, { id: PANEL_ID, onAction: (action) => handleAction(action) })
   const { setValue } = dial
-  const state = { ...readToolState(dial.values, mood, start.colormix), drag }
+  const state = { ...readToolState(dial.values, mood), drag }
   const query = toQuery(state)
-  const { look, pack, seed, format, filter, strength, colormix, mix } = state
+  const { look, pack, seed, format, filter, strength, mix } = state
   const drawn = sceneLook(state)
-  // With the color mix on, every pack draws one design and the color stage gives it the pack's colors and the mix.
-  const shares = colormix ? mixPanelValue(mix) : null
+  // Every pack draws one design, and the color stage gives it the pack's colors and the mix (always on, owner 2026-11-11).
+  const shares = mixPanelValue(mix)
   const scene = useMemo(() => {
     const aspect = frameAspect(format)
-    const design = getPack(shares ? COLOR_DESIGN_PACK : pack)
+    const design = getPack(COLOR_DESIGN_PACK)
     const controls = toolControls(drawn, design, seed, aspect, drag)
     const built = buildScene(drawn, design, seed, controls, aspect)
-    return withFilter(shares ? withColorMix(built, getPack(pack), { shares: shares.split(',').map(Number) }) : built, { filter, strength })
+    return withFilter(withColorMix(built, getPack(pack), { shares: shares.split(',').map(Number) }), { filter, strength })
   }, [drawn, pack, seed, drag, format, filter, strength, shares])
 
   const access = useMemo(
@@ -153,7 +152,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const sceneKeyRef = useRef(sceneKey)
   const followScene = useEffectEvent(() => {
     const current = dragRef.current
-    if (current && !keepsLine(drawn, getPack(pack), seed, frameAspect(format), current.from)) placeDrag(undefined)
+    if (current && !keepsLine(drawn, getPack(COLOR_DESIGN_PACK), seed, frameAspect(format), current.from)) placeDrag(undefined)
   })
 
   useEffect(() => {
@@ -209,7 +208,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     setExportStatus('busy')
     try {
       await nextPaint()
-      const outcome = await exportImage(scene, pack, format, { drag, mix: customMix(state) })
+      const outcome = await exportImage(scene, pack, format, { drag })
       console.info('Exported', outcome)
       setExportStatus('idle')
     } catch (error) {
@@ -269,7 +268,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
             },
             {
               paths: MIX_PATHS,
-              node: colormix ? <MixControl pack={getPack(pack)} mix={mix} onChange={(next) => setValue(MIX_DIAL_KEY, mixPanelValue(next))} /> : null,
+              node: null,
               replace: true,
               card: 'colors',
             },

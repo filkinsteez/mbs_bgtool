@@ -1,5 +1,5 @@
 import { EXPORT_ASPECTS, getPack, isPackId, type ColorPack, type ExportAspect, type MoodId, type PackId, type RecipeId } from '@/light'
-import { defaultMix, formatMix, isMetaBlueOn, metaBlueIndex, mixPercents, parseMix, setMetaBlue, type ColorMix } from '@/light/color/mix'
+import { defaultMix, isMetaBlueOn, metaBlueIndex, setMetaBlue, type ColorMix } from '@/light/color/mix'
 import { clampDrag, clampPoint, type LightDrag, type LightPoint } from './controls'
 import { DEFAULT_FILTER, filterQuery, parseFilterQuery, type FilterChoice } from './filterControl'
 
@@ -11,9 +11,10 @@ export interface ToolState {
   pack: PackId
   seed: number
   format: ExportAspect
-  /** The color mix control is on (`colormix=1` in the URL); while it is off the picture's colors stay as they were. */
-  colormix: boolean
-  /** Each pack color's share of the picture (`mix=20,10,10,60`); the pack's default mix while `colormix` is off. */
+  /**
+   * Each pack color's share of the picture, which the color stage gives the design: the pack's default mix, not in the
+   * URL (the Mix control comes later).
+   */
   mix: ColorMix
   /** The line the user dragged on the image, in frame units (`from=x,y&to=x,y` in the URL). Missing until they drag. */
   drag?: LightDrag
@@ -43,7 +44,6 @@ export const DEFAULT_STATE: ToolState = {
   pack: 'bold',
   seed: 1,
   format: '16:9',
-  colormix: false,
   mix: defaultMix(getPack('bold')),
   ...DEFAULT_FILTER,
 }
@@ -101,14 +101,6 @@ export function mixForPack(from: ColorPack, mix: ColorMix, to: ColorPack): Color
   return switchedOff ? setMetaBlue(to, defaultMix(to), false) : defaultMix(to)
 }
 
-/**
- * The mix's whole percents in pack order while the color mix control is on and the mix isn't the pack's default; else
- * null, and the URL and the export's file name leave the mix out.
- */
-export function customMix(state: Pick<ToolState, 'colormix' | 'pack' | 'mix'>): number[] | null {
-  return state.colormix && formatMix(getPack(state.pack), state.mix) !== null ? mixPercents(state.mix) : null
-}
-
 /** A page's search params as Next.js passes them to the page. */
 export type SearchParams = Readonly<Record<string, string | string[] | undefined>>
 
@@ -127,15 +119,14 @@ const formatToQuery = (format: ExportAspect) => format.replace(':', 'x')
  * Reads the tool state from a URL query; missing or invalid values take the defaults. The look is always the mood's
  * own (`MOOD_LOOKS`): an old link's look (`look=bands`, `look=rim` and the others) and its `sunrise=merged` or
  * `contour=merged` open on the mood's merged look, and an old link with `rush=split` opens in Rush, whatever its mood.
- * Old links' `intensity`, `softness`, `horizon` and `light` are ignored, as the panel no longer sets them. `mix` counts
- * only with `colormix=1`.
+ * Old links' `intensity`, `softness`, `horizon` and `light` are ignored, as the panel no longer sets them, and so are
+ * their `colormix=` and `mix=`: the color stage is always on, at the pack's default mix (owner, 2026-11-11).
  */
 export function parseQuery(query: QueryInput): ToolState {
   const moodParam = readParam(query, 'mood')
   const mood = readParam(query, 'rush') === 'split' ? 'rush' : isMoodId(moodParam) ? moodParam : DEFAULT_STATE.mood
   const packParam = readParam(query, 'pack')
   const pack = packParam && isPackId(packParam) ? packParam : DEFAULT_STATE.pack
-  const colormix = readParam(query, 'colormix') === '1'
   const seed = readSeed(readParam(query, 'seed'), DEFAULT_STATE.seed)
   const format = readParam(query, 'format')?.replace('x', ':')
   const drag = parseDrag(readParam(query, 'from'), readParam(query, 'to'))
@@ -145,16 +136,15 @@ export function parseQuery(query: QueryInput): ToolState {
     pack,
     seed,
     format: isExportAspect(format) ? format : DEFAULT_STATE.format,
-    colormix,
-    mix: colormix ? parseMix(getPack(pack), readParam(query, 'mix')) : defaultMix(getPack(pack)),
+    mix: defaultMix(getPack(pack)),
     ...(drag ? { drag } : {}),
     ...parseFilterQuery(query),
   }
 }
 
 /**
- * The URL query (without "?") that reproduces the state. The mix's and the line's commas are left as they are, so the
- * link stays readable. The filter goes last, and only when one is on.
+ * The URL query (without "?") that reproduces the state. The line's commas are left as they are, so the link stays
+ * readable. The filter goes last, and only when one is on.
  */
 export function toQuery(state: ToolState): string {
   const head = new URLSearchParams([
@@ -162,13 +152,11 @@ export function toQuery(state: ToolState): string {
     ['look', shortLook(state.look)],
     ['pack', state.pack],
   ]).toString()
-  const mix = customMix(state)
-  const color = state.colormix ? `colormix=1${mix ? `&mix=${mix.join(',')}` : ''}` : null
   const drag = state.drag ? clampDrag(state.drag) : undefined
   const line = drag ? `from=${drag.from.join(',')}&to=${drag.to.join(',')}` : null
   const tail = new URLSearchParams([
     ['seed', String(state.seed)],
     ['format', formatToQuery(state.format)],
   ]).toString()
-  return [head, color, line, tail, filterQuery(state)].filter(Boolean).join('&')
+  return [head, line, tail, filterQuery(state)].filter(Boolean).join('&')
 }

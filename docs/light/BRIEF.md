@@ -195,6 +195,8 @@ Hexes are the swatch fills read from Figma. The current deck's pack slide (`44:2
 
 Rules: Meta Blue leads every pack, packs never mix, and pack order is the order of bands (Sunset bands, Warp Speed). A pack color at nominal intensity must come out of the renderer as exactly its hex.
 
+The color stage (`src/light/color/`) gives every picture its pack's colors, at the pack's default mix: it is always on, with no user setting (owner, 2026-11-11).
+
 The owner chose these slide hexes on 2026-11-02 over the older brand-card values, even though the slide itself says "Non-blue hex values were eyeballed from the brand slide. Replace them with the real ones before anything ships." (`33:233`). Do not bring back these older values:
 
 | Older value | Source | Slide value now |
