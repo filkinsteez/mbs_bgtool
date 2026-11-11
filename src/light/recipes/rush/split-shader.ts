@@ -1,3 +1,5 @@
+import { MEET_GLSL } from '../../engine/meet'
+
 export const MAX_LIGHTS = 11
 export const MAX_TONGUES = 4
 /** How far (in run lengths) the ends of a bend, fan or taper round off, so a band turns in a wide arc, never a corner. */
@@ -62,6 +64,7 @@ uniform vec4 uTongueLook;           // edge softness, depth, wander, unused
 uniform int uTongues;
 
 vec3 compColor(int k) { return k == 0 ? uC0 : k == 1 ? uC1 : k == 2 ? uC2 : uC3; }
+${MEET_GLSL}
 #define SOFT_TURN ${SOFT_TURN.toFixed(2)}
 #define BEND_SLOPE ${BEND_SLOPE.toFixed(2)}
 // The flow's bend: one wide arc that grows like t squared near the start and straightens to a slope of at most
@@ -136,6 +139,7 @@ vec3 radiance(vec2 uv, vec2 p) {
   vec3 fixedHue[MAX_LIGHTS];
   float coreLum[MAX_LIGHTS];
   float coreBurn[MAX_LIGHTS];
+  float thinOf[MAX_LIGHTS];
   float total = 0.0;
   // Light added after the shoulder: white streaks' cores, which reach white at their peak, and lead streaks' cores in
   // their own color (Meta Blue toward a lighter blue, white only at the hottest point).
@@ -151,6 +155,7 @@ vec3 radiance(vec2 uv, vec2 p) {
     vec4 A = uLA[i];
     vec4 B = uLB[i];
     vec4 C = uLC[i];
+    thinOf[i] = C.w < 0.5 ? 1.0 - smoothstep(0.02, 0.035, A.y) : 0.0;
     vec4 Dl = uLD[i];
     vec4 E = uLE[i];
     vec4 F = uLF[i];
@@ -219,7 +224,7 @@ vec3 radiance(vec2 uv, vec2 p) {
     // the lead (Meta Blue, which dims softly into navy) keeps a broad bright top and falls faster on both sides, so it
     // never sits at mid lightness over a wide area (Lime would read olive or teal, Tan grey-brown).
     float x2 = x * x;
-    float body = exp(-G.y * (F.w > 0.5 ? 0.4 * x2 + x2 * x2 : x2));
+    float body = exp(-G.y * (F.w > 0.5 ? 0.5 * x2 + 0.6 * x2 * x2 : x2));
     float cx = (s / max(halfW, 1e-4) - F.z) / A.w;
     float coreShape = exp(-0.5 * cx * cx);
     float profile = body;
@@ -241,13 +246,17 @@ vec3 radiance(vec2 uv, vec2 p) {
       // Bold), so the two edge colors never overlap into mint or aqua. Each edge color dims along its own path.
       float D = mix(B.z, B.w, smoothstep(0.0, 1.0, t));
       float o = G.z < 0.0 ? -s : s;
-      float oc = o / max(0.5 * D, 1e-4);
+      float oc = o / max(0.8 * D, 1e-4);
       float coreW = exp(-0.5 * oc * oc);
-      vec3 edge = vec3(1.0);
+      // The two edge colors blend into each other across the white middle, so no line runs down the streak.
+      vec3 lowEdge = vec3(1.0);
+      vec3 highEdge = vec3(1.0);
       for (int j = 0; j < 4; j++) {
         if (j >= uComps) break;
-        if ((o < 0.0 && uSpectrum[j] < 0.25) || (o >= 0.0 && uSpectrum[j] > 0.75)) edge = dimHue(j, clamp(body, 0.0, 1.0));
+        if (uSpectrum[j] < 0.25) lowEdge = dimHue(j, clamp(body, 0.0, 1.0));
+        if (uSpectrum[j] > 0.75) highEdge = dimHue(j, clamp(body, 0.0, 1.0));
       }
+      vec3 edge = mix(lowEdge, highEdge, smoothstep(-0.8 * D, 0.8 * D, o));
       col[i] = -1;
       fixedHue[i] = mix(edge, vec3(1.0), 0.85 * coreW);
       // Its hot core: white light that reaches white at the peak.
@@ -259,101 +268,98 @@ vec3 radiance(vec2 uv, vec2 p) {
       // light, not grey.
       float along = (u - H.w) / (1.8 * reach);
       float level = coreShape * body * env * grad * exp(-along * along);
-      float mid = (s / max(halfW, 1e-4) - F.z) / 0.1;
+      float mid = (s / max(halfW, 1e-4) - F.z) / 0.3;
       float burn = exp(-0.5 * mid * mid) * smoothstep(0.5, 0.95, level);
-      coreBurn[i] = burn;
+      // A thin streak's core is white all across, so beside it no ring of its own blue darker than the light around
+      // it shows; its glow fades from white into the colors around it.
+      coreBurn[i] = max(burn, thinOf[i]);
       coreLum[i] = 1.6 * C.x * C.z * level * (1.0 + 1.5 * burn);
     }
   }
-  // Each light adds its own color: a pack color read at that light's own level, its own hue at its core and dimming
-  // along its own path (Lime into Forest, Ice into Slate) toward dark where its light falls. Where lights overlap
-  // they glow into each other and the overlap is lighter than each alone; no pixel picks one color, so no line
-  // divides two colors. Each light keeps its luminance, so the design is the same in every pack.
-  vec3 added = vec3(0.0);
-  float whiteLum = 0.0;
-  vec3 hueOf[MAX_LIGHTS];
-  float l1 = 0.0;
-  float l2 = 0.0;
-  vec3 h1 = vec3(1.0);
-  vec3 h2 = vec3(1.0);
+  // Each light's color, read at the level of all the light here against that light's peak (its own hue where it is
+  // bright, dimming along its own path, Lime into Forest and Ice into Slate, only where the picture gets dark, never
+  // in a thin rim where it fades under a brighter neighbour), gathered per pack color, with white light (white
+  // streaks, bridges) as a fifth. Each color leads by its lights' light over the square root of their peaks, so where
+  // a light color (Lime, Yellow) meets a dark one (Meta Blue) the hand-over sits near the middle between them, and the
+  // lead goes by the layout's light, so a hand-over sits in the same place in every pack. A thin streak adds light but
+  // doesn't lead, so beside its white core the color around it carries on, with no darker line along it.
+  float thinTotal = 0.0;
   for (int i = 0; i < MAX_LIGHTS; i++) {
-    hueOf[i] = vec3(1.0);
+    if (i >= uLights) break;
+    thinTotal += thinOf[i] * lum[i];
+  }
+  vec3 gathered[5];
+  float gatheredLum[5];
+  float gatheredLevel[5];
+  float peakHere = 0.0;
+  for (int k = 0; k < 5; k++) {
+    gathered[k] = vec3(0.0);
+    gatheredLum[k] = 0.0;
+    gatheredLevel[k] = 0.0;
+  }
+  for (int i = 0; i < MAX_LIGHTS; i++) {
     if (i >= uLights) break;
     if (lum[i] <= 1e-7) continue;
-    vec3 h = col[i] >= 0 ? dimHue(col[i], clamp(lum[i] / max(peak[i], 1e-4), 0.0, 1.0)) : fixedHue[i];
-    hueOf[i] = h / max(luminance(h), 1e-5);
-    if (lum[i] > l1) {
-      l2 = l1;
-      h2 = h1;
-      l1 = lum[i];
-      h1 = h;
-    } else if (lum[i] > l2) {
-      l2 = lum[i];
-      h2 = h;
-    }
-    // A lead streak's core shines where its light leads, so it never lays blue over Orange-red (pink).
+    vec3 h = col[i] >= 0 ? dimHue(col[i], clamp(total / max(peak[i], 1e-4), 0.0, 1.0)) : fixedHue[i];
+    int k = col[i] >= 0 ? min(col[i], 3) : 4;
+    gathered[k] += h / max(luminance(h), 1e-5) * lum[i];
+    gatheredLum[k] += lum[i];
+    gatheredLevel[k] += (1.0 - thinOf[i]) * lum[i] / sqrt(max(peak[i], 1e-4));
+    peakHere += lum[i] * peak[i];
+    // A lead streak's core shines where its light leads, so it never lays blue over Orange-red (pink). A thin streak's
+    // light doesn't count against it, so a wide band's core doesn't dip along both sides of a thin streak.
     if (coreLum[i] > 0.0) {
       vec3 own = compColor(col[i]);
-      float share = lum[i] / max(total, 1e-5);
+      float share = min(lum[i] / max(total - thinTotal + thinOf[i] * lum[i], 1e-5), 1.0);
       share *= share;
       share *= share;
       hot += hotWhiten(own / max(luminance(own), 1e-5), 0.95 * coreBurn[i]) * coreLum[i] * share * share;
     }
   }
-  // Each light adds in its own hue, except that a hue far around the color wheel from the leading light's (Meta Blue's
-  // glow under Yellow and Orange-red) adds in the leading hue, so a third light never tints an overlap pink or teal.
-  // White light (a white streak's middle) is kept apart and takes the temperature of the colored light it meets below,
-  // so Orange-red meeting it goes pale orange, not salmon.
-  vec3 leading = h1 / max(luminance(h1), 1e-5);
-  vec2 leadChroma = vec2(leading.r - leading.g, 0.5 * (leading.r + leading.g) - leading.b);
-  for (int i = 0; i < MAX_LIGHTS; i++) {
-    if (i >= uLights) break;
-    if (lum[i] <= 1e-7) continue;
-    vec3 n = hueOf[i];
-    vec2 c = vec2(n.r - n.g, 0.5 * (n.r + n.g) - n.b);
-    float whiteness = 1.0 - smoothstep(0.05, 0.3, length(c));
-    float far = (1.0 - smoothstep(-0.3, 0.2, dot(c, leadChroma) / max(length(c) * length(leadChroma), 1e-5))) * smoothstep(0.05, 0.3, min(length(c), length(leadChroma)));
-    whiteLum += whiteness * lum[i];
-    added += (1.0 - whiteness) * mix(n, leading, far) * lum[i];
+  vec3 colorsHere[5];
+  for (int k = 0; k < 5; k++) colorsHere[k] = gatheredLum[k] > 1e-7 ? gathered[k] / max(luminance(gathered[k]), 1e-6) : vec3(1.0);
+  // White light takes the temperature of the colored light it meets, so Orange-red meeting it goes pale orange, not
+  // salmon pink.
+  vec3 coloredHere = gathered[0] + gathered[1] + gathered[2] + gathered[3];
+  float warmthHere = clamp((coloredHere.r - coloredHere.b) / max(coloredHere.r + coloredHere.b, 1e-5), -1.0, 1.0);
+  vec3 temperedWhite = mix(vec3(0.9, 0.98, 1.0), vec3(1.0, 0.92, 0.6), 0.5 + 0.5 * warmthHere);
+  colorsHere[4] = mix(colorsHere[4], temperedWhite / luminance(temperedWhite), smoothstep(0.0, 0.3 * total, total - gatheredLum[4]));
+  // The colors near the leading one in hue add as plain light, and so do the rest; the two groups then meet by the
+  // shared meeting rule (engine/meet.ts), so far hues meet through the leading color's pale tint and white and never
+  // mix into violet or olive, even where three colors meet.
+  int top = 0;
+  for (int k = 1; k < 5; k++) {
+    if (gatheredLevel[k] > gatheredLevel[top]) top = k;
   }
-  float colored = max(total - whiteLum, 1e-6);
-  float addedWarmth = clamp((added.r - added.b) / max(added.r + added.b, 1e-5), -1.0, 1.0);
-  vec3 tempered = mix(vec3(0.9, 0.98, 1.0), vec3(1.0, 0.92, 0.6), 0.5 + 0.5 * addedWarmth);
-  vec3 whiteHue = mix(vec3(1.0), tempered, smoothstep(0.0, 0.3 * total, colored));
-  added += whiteHue / luminance(whiteHue) * whiteLum;
-  vec3 leadHue = total > 1e-6 ? added / total : vec3(1.0);
-  // The stronger light's hue, each light counted by its light against the strongest to the eighth power.
-  vec3 strongerHue = vec3(0.0);
-  float strongerW = 0.0;
-  for (int i = 0; i < MAX_LIGHTS; i++) {
-    if (i >= uLights) break;
-    if (lum[i] <= 1e-7) continue;
-    float r = lum[i] / max(l1, 1e-6);
-    r *= r;
-    r *= r;
-    r *= r;
-    strongerHue += hueOf[i] * r;
-    strongerW += r;
+  vec3 groups[5];
+  float groupLevel[5];
+  for (int k = 0; k < 5; k++) {
+    groups[k] = vec3(0.0);
+    groupLevel[k] = 0.0;
   }
-  strongerHue = strongerW > 0.0 ? strongerHue / strongerW : vec3(1.0);
-  // Where two different hues meet at nearly the same strength, they would mix into a third (Cyan and Orange-red to
-  // pink, Meta Blue and Orange-red to magenta). Where the light is up, each side keeps its own hue and whitens toward
-  // the meeting the way hot light does, a warm hue through pale yellow and a cool one through pale cyan (never through
-  // salmon). Only the hue changes, so the light and the design are the same in every pack.
-  float meet = smoothstep(0.3, 1.0, l2 / max(l1, 1e-5));
-  float lit = smoothstep(0.15, 0.45, total);
-  // Only hues far apart around the color wheel mix into a third; near ones (Yellow and Orange-red) mix to their own
-  // in-between.
-  vec3 n1 = h1 / max(luminance(h1), 1e-5);
-  vec3 n2 = h2 / max(luminance(h2), 1e-5);
-  vec2 c1 = vec2(n1.r - n1.g, 0.5 * (n1.r + n1.g) - n1.b);
-  vec2 c2 = vec2(n2.r - n2.g, 0.5 * (n2.r + n2.g) - n2.b);
-  float clash = (1.0 - smoothstep(-0.3, 0.2, dot(c1, c2) / max(length(c1) * length(c2), 1e-5))) * smoothstep(0.05, 0.3, min(length(c1), length(c2)));
-  // Far hues are never added: the stronger light's hue leads, so where they overlap in dim light they fall through
-  // dark instead of mixing into dark magenta or teal.
-  leadHue = mix(leadHue / max(luminance(leadHue), 1e-5), strongerHue / max(luminance(strongerHue), 1e-5), clash);
-  leadHue = hotWhiten(leadHue, meet * clash * lit);
-  vec3 sum = leadHue / max(luminance(leadHue), 1e-5) * total;
+  for (int k = 0; k < 5; k++) {
+    float q = gatheredLevel[k];
+    if (q <= 0.0) continue;
+    float apart = meetApart(colorsHere[k], colorsHere[top]);
+    groups[0] += (1.0 - apart) * q * colorsHere[k];
+    groupLevel[0] += (1.0 - apart) * q;
+    groups[1] += apart * q * colorsHere[k];
+    groupLevel[1] += apart * q;
+  }
+  for (int k = 0; k < 2; k++) groups[k] = groupLevel[k] > 1e-7 ? groups[k] / max(luminance(groups[k]), 1e-6) : vec3(1.0);
+  float shownHere = total < 0.5 ? total : 0.5 + 0.4 * (1.0 - exp(-(total - 0.5) / 0.4));
+  // Where the two groups meet in light that is up, light rises along the meeting (the shared rule's bridge), so its
+  // white middle reads light, never grey; where they meet in dim light they fade toward their own dark shades and meet
+  // near black (the rule's dark half), so a dim meeting never reads grey or olive either.
+  float levels = max(groupLevel[0] + groupLevel[1], 1e-6);
+  float meetHere = meetBridgeShares(groupLevel[0] / levels, groupLevel[1] / levels) * meetApart(groups[0], groups[1]);
+  // A meeting counts as lit by the light here against the peaks of the lights that make it, not by its light alone,
+  // since Meta Blue is dark even at its peak: two bands meeting on their bright sides hand over softly and lift,
+  // and only a meeting far down their dim sides (a dark band, the dark room) fades through their dark shades.
+  float litHere = smoothstep(0.05, 0.25, total * total / max(peakHere, 1e-6));
+  float metShown = meetDarkLight(meetBridgeLight(shownHere, meetHere * litHere), meetHere * (1.0 - litHere));
+  vec3 leadHue = meetColors5(groups, groupLevel, 2, mix(meetSharpness(metShown), 3.0, litHere));
+  vec3 sum = leadHue / max(luminance(leadHue), 1e-5) * total * metShown / max(shownHere, 1e-5);
   // A soft shoulder on the streaks' light, below the level where the tone curve turns a near-white color (Ice) flat
   // white, while saturated colors still whiten at their cores. White streaks' cores come on top and reach white.
   // Its ceiling drops a little away from the stack's bright place, so a wide area of strong light still slopes gently

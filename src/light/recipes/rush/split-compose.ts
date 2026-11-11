@@ -224,22 +224,26 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
   // hue outside the pack in some pack (Meta Blue and Orange-red to mauve, Meta Blue and Lime to teal, Lime and Tan to
   // khaki), so different neighbours meet through a white seam rather than by overlapping.
   const clashes = (a: Role, b: Role) => a !== b
-  // Widths by the seed's kind. A deep band (Tan in Elemental, which reads brown at half its light) is narrower and
-  // firmer than the others.
+  // Widths by the seed's kind. A deep band (Orange-red in Bold, Tan in Elemental) is about as wide as the cool and
+  // warm bands and falls off a little faster than them.
   const scale = kind === 'broad' ? 1.25 : kind === 'narrow' ? 0.7 : 0.85
   const dominantAt = kind === 'dominant' ? roles.indexOf('lead') : -1
   const baseWidths = roles.map((r, i) =>
     i === dominantAt
       ? lerp(0.45, 0.6, random())
-      : scale * (r === 'lead' ? lerp(0.22, 0.32, random()) : r === 'white' ? lerp(0.16, 0.24, random()) : r === 'deep' ? lerp(0.12, 0.18, random()) : lerp(0.16, 0.26, random())),
+      : scale * (r === 'lead' ? lerp(0.22, 0.32, random()) : r === 'white' ? lerp(0.16, 0.24, random()) : r === 'deep' ? lerp(0.16, 0.24, random()) : lerp(0.16, 0.26, random())),
   )
   // Widths vary a lot within a frame: in a broad seed one band is much wider than the rest (not where the stack runs
-  // down a tall frame, whose four streaks share it), and every other band is narrower by its own amount. These draws
+  // down a tall frame, whose four streaks share it), and every other band is narrower by its own amount, a light
+  // color's band (Cyan, Yellow, Orange-red, Lime, Tan) less so, so it keeps a wide stretch of its own hue. These draws
   // come from a separate random stream, so the draws above and below stay as they were.
   const extra = seededRandom(seed, 0x3c7d)
-  const wideDraw = kind === 'broad' ? Math.floor(extra() * roles.length) : -1
+  // The wide band is a lead band, so Meta Blue leads the frame and a light color (Lime, Tan) never spreads its mid
+  // light over a wide area, where it reads olive or grey-brown.
+  const leadAt = roles.flatMap((r, i) => (r === 'lead' ? [i] : []))
+  const wideDraw = kind === 'broad' ? (leadAt[Math.floor(extra() * leadAt.length)] ?? -1) : -1
   const wideAt = dominantAt >= 0 ? dominantAt : tallStack ? -1 : wideDraw
-  const widths = baseWidths.map((w, i) => w * (i === wideAt ? (dominantAt >= 0 ? 1 : lerp(1.5, 2.1, extra())) : lerp(0.45, 1, extra())))
+  const widths = baseWidths.map((w, i) => w * (i === wideAt ? (dominantAt >= 0 ? 1 : lerp(1.5, 2.1, extra())) : roles[i] === 'lead' || roles[i] === 'white' ? lerp(0.45, 1, extra()) : lerp(0.6, 1.05, extra())))
   // Neighbours are spaced at uneven distances, and their swells overlap across the gaps, dipping between them to a
   // dim light where colors hand over, never to black. Two draws per gap as before.
   const gapDraws = roles.slice(1).map(() => [random(), random()])
@@ -254,7 +258,25 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
     .flatMap((r, i) => (r !== roles[i] && r !== 'white' && roles[i] !== 'white' ? [i] : []))
     .sort((a, b) => Math.abs(pairAt(a) - brightest) - Math.abs(pairAt(b) - brightest))
   const bridgeAt = new Set(candidates.slice(0, hasBridge ? 1 : 0))
-  const gaps = gapDraws.map((d, i) => (bridgeAt.has(i) ? lerp(0.14, 0.26, d[1]) : lerp(0.15, 0.5, d[1])))
+  // One wide dark band per frame between two colors, where the dark colors live (Near-black, Forest, Plum and Slate,
+  // and Meta Blue's navy), with edges that fade over a long distance. A second one only in a frame with no dark room
+  // at its side and five bands or more, so the dark colors still have room there. Every other pair of neighbours
+  // overlaps, so their light adds and the meeting is lighter than either side.
+  // The dark band sits beside a lead band, where Meta Blue dims into navy, best with another lead or a white band on
+  // its other side, and beside a warm or deep band (Orange-red, Tan) only when nothing else is open, since their
+  // dim ends read as a red or brown rim against the dark. The second one keeps away from the cool band (Cyan, Lime,
+  // Ice), which reads grey or olive as soon as it dims.
+  const beside = (i: number, role: Role) => roles[i] === role || roles[i + 1] === role
+  const open = gapDraws.map((_, i) => i).filter((i) => !bridgeAt.has(i))
+  const besideLead = (i: number) => (roles[i] === 'lead' ? roles[i + 1] : roles[i])
+  const leadRank = (i: number) => ['lead', 'white', 'cool', 'warm', 'deep'].indexOf(besideLead(i)) + gapDraws[i][0]
+  const byLead = open.filter((i) => beside(i, 'lead')).sort((a, b) => leadRank(a) - leadRank(b))
+  const dimRank = (i: number) => (beside(i, 'cool') ? 2 : 0) + (beside(i, 'deep') ? 0 : 1) + gapDraws[i][0]
+  const byDim = open.filter((i) => i !== byLead[0]).sort((a, b) => dimRank(a) - dimRank(b))
+  const firstDark = byLead[0] ?? byDim[0]
+  const secondDark = cover.share >= 1 && roles.length >= 5 ? byDim.find((i) => firstDark !== undefined && Math.abs(i - firstDark) > 1) : undefined
+  const darkAt = new Set([firstDark, secondDark].filter((i): i is number => i !== undefined))
+  const gaps = gapDraws.map((d, i) => (bridgeAt.has(i) ? lerp(0.14, 0.26, d[1]) : darkAt.has(i) ? lerp(0.6, 0.9, d[1]) : lerp(-0.05, 0.15, d[1])))
   const total = widths.reduce((a, w) => a + w, 0) + gaps.reduce((a, g) => a + g, 0)
   // The bands fill the lit share of the stack; the rest, on the dark side, is room lit only by the outer band's skirt.
   const unit = (cover.share * across) / total
@@ -268,11 +290,11 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
     const center = at + 0.5 * width
     at += width + (gaps[i] ?? 0) * unit
     const white = role === 'white'
-    const falloff = role === 'deep' ? lerp(2, 2.8, random()) : lerp(0.75, 1.1, random())
+    const falloff = role === 'deep' ? lerp(1.1, 1.5, random()) : lerp(0.75, 1.1, random())
     // Each band's light is a soft glow 1.5 to 1.9 times as wide as its place in the stack, falling off through its own
     // color into the dark gap beside it, where it meets its neighbour's glow and adds up. A white streak is a little
     // narrower and dimmer than white, so it never reads as a flat white field.
-    const half = ((white ? 0.8 : 1) * lerp(1.5, 1.9, extra()) * 0.5 * width) / reachTo(0.3, falloff)
+    const half = ((white ? 0.8 : 1) * lerp(1.7, 2.1, extra()) * 0.5 * width) / reachTo(0.3, falloff)
     // A white band stays near-white across, with its cool and warm colors only at its edges.
     const split1 = white ? half * lerp(0.6, 0.9, random()) : 0
     bands.push({
@@ -283,7 +305,7 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
       widthVary: lerp(0.12, 0.22, random()),
       // A lead band (Meta Blue) carries its own light: a bright core on one side of its swell, hottest at one place
       // along it, going toward a lighter blue and white only at the hottest point, with a dim navy side.
-      coreWidth: role === 'lead' ? lerp(0.6, 0.8, random()) : 0.5,
+      coreWidth: role === 'lead' ? lerp(0.85, 1.05, random()) : 0.5,
       asym: either(random) * lerp(0, 0.25, random()),
       rag: lerp(0.02, 0.06, random()),
       split0: split1 * lerp(0.4, 0.7, random()),
@@ -299,7 +321,7 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
       // Every swell is brighter on one side than the other, so no area of a color is flat: Meta Blue's strongly (its
       // navy side), the others gently and light colors least, since a light color's dim side would read olive (Lime)
       // or grey-brown (Tan).
-      gradient: either(random) * (role === 'lead' ? lerp(0.25, 0.45, random()) : role === 'cool' || role === 'warm' ? lerp(0.05, 0.15, random()) : lerp(0.15, 0.35, random())),
+      gradient: either(random) * (role === 'lead' ? lerp(0.1, 0.25, random()) : role === 'cool' || role === 'warm' ? lerp(0.05, 0.15, random()) : lerp(0.15, 0.35, random())),
       wander: lerp(0.004, 0.012, random()),
       // Fine streaks along the motion, visible but soft.
       texture: lerp(0.03, 0.06, random()),
@@ -310,17 +332,23 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
       fadeOut: Math.max(lerp(1, 1.6, random()) * reach, drag ? uFar + 0.15 : 0),
       drift: either(random) * lerp(0.02, 0.09, random()),
       bow: (either(random) * lerp(0.02, 0.1, random())) / Math.max(reach, 1),
-      corePlace: role === 'lead' ? (random() * 2 - 1) * 0.35 : 0,
+      corePlace: role === 'lead' ? (random() * 2 - 1) * 0.12 : 0,
       hotAt: role === 'lead' ? lerp(uNear, uFar, lerp(0.25, 0.75, extra())) : 0,
       taper: (i % 2 === 0 ? taperSign : -taperSign) * lerp(0.3, 0.8, random()),
       falloff,
     })
   }
-  // Only a side that faces darkness (the outermost bands' outer sides: the frame's edge or the dark room) falls steeply,
-  // so a light color there doesn't sit at mid lightness. Between neighbours the sides fall softly, since their light
-  // adds up and stays bright where one color hands over to the next.
+  // A side that faces darkness (the outermost bands' outer sides: the frame's edge or the dark room) falls steeply, so
+  // a light color there doesn't sit at mid lightness. Between neighbours the sides fall softly, since their light adds
+  // up and stays bright where one color hands over to the next.
   bands.forEach((b, i) => {
-    b.steep = (i === 0 ? 1 : 0) + (i === bands.length - 1 ? 2 : 0)
+    // A warm band's side facing the dark band also asks the color stage for a dark color there (Forest, Plum, Slate,
+    // Near-black; Meta Blue's navy in Bold), so the dark colors have their room in every frame that has a warm band
+    // beside the dark band.
+    const asksDark = b.role === 'warm'
+    const darkLow = darkAt.has(i - 1) && asksDark
+    const darkHigh = darkAt.has(i) && asksDark
+    b.steep = (i === 0 || darkLow ? 1 : 0) + (i === bands.length - 1 || darkHigh ? 2 : 0)
   })
   // Where two colors would mix outside the pack, one band's light fills the trough (a lead band's, else the one before)
   // and the other falls off steeply on that side, so the trough reads as one color dimming (navy, deep red), not a mix.
@@ -340,8 +368,11 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
   })
   bands.forEach((b, i) => {
     if (steepLeft[i] && steepRight[i]) b.asym = 0
-    else if (steepLeft[i]) b.asym = -0.25
-    else if (steepRight[i]) b.asym = 0.25
+    else if (steepLeft[i]) b.asym = -0.1
+    else if (steepRight[i]) b.asym = 0.1
+    // A band beside a dark band reaches further into it, so the dark band's edges fade over a long distance.
+    if (darkAt.has(i - 1)) b.asym += 0.25
+    if (darkAt.has(i)) b.asym -= 0.25
   })
   // Each band drifts and bows its own way, so no two run as one family of parallel curves. A band never closes in on
   // its neighbour to less than 75% of their distance and no two cross, so bands never squeeze into a wedge or a pinch.
@@ -365,11 +396,11 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
   bands.forEach((b, i) => {
     const roomBelow = i === 0 && cover.from > 0
     const roomAbove = i === bands.length - 1 && cover.from === 0 && cover.share < 1
-    // The band beside the dark room falls off steeply on that side, softly in some seeds and crisply in others, so the
-    // room is one dark region where the light falls off, not lit by a wide swell.
-    const roomEdge = lerp(0.6, 1.3, extra())
-    if (roomBelow) b.asym = -roomEdge
-    if (roomAbove) b.asym = roomEdge
+    // The band beside the dark room fades into it over a long distance, longer in some seeds than in others, so the
+    // room's edge is soft and the room stays dark further out.
+    const roomEdge = lerp(0.3, 0.7, extra())
+    if (roomBelow) b.asym = 0.5 * roomEdge - 0.05
+    if (roomAbove) b.asym = 0.05 - 0.5 * roomEdge
     const drawnLevel = lerp(0.005, 0.04, extra())
     const drawnLength = lerp(1, 2.5, extra())
     const level = roomBelow || roomAbove ? 0.5 * drawnLevel : drawnLevel
@@ -427,6 +458,9 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
       falloff: lerp(0.9, 1.3, extra()),
     })
   }
+  // Neighbours overlap and their light adds, so each band carries three quarters of its light, and the overlaps stay
+  // below flat white.
+  for (const b of bands) b.luminance *= 0.75
   // A dominant band carries one or two thin hot streaks of its own lead color as accents, over it near its edges,
   // drifting with it, whitening at their peak (a white streak's colored fringes read pink over Meta Blue in Bold).
   if (dominantAt >= 0) {
