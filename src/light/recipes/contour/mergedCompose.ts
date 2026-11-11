@@ -565,11 +565,13 @@ const PART_OFF = [-9, -9, -9, -9]
 /** The second light's stretch of edge as the color stage's parts: this many equal pieces along it. */
 const SECOND_PIECES = 16
 const SECOND_OFF = new Array<number>(2 * (SECOND_PIECES + 1)).fill(-9)
-/** Along the second light (u from -1 at its cool end to 1 at its warm end) its warm part is exp(CROSS_SLOPE u) times as
- * strong as its cool part: the same slow change all along, so wherever the stage's weights put the turn, the colors
- * turn over the same stretch, and the turn stays on the light while one color's weight is up to e^CROSS_SLOPE times
- * the other's. */
+/** Along the second light (u from -1 at its end nearer the main light to 1 at its far end) its parts walk through three
+ * of the pack's colors, each strongest at its place here: the cool one (Cyan), the warm one round its middle (Yellow,
+ * Tan) and the pack's other warm color (`warm2`: Orange-red, Lime). Two neighbours' ratio changes by e^CROSS_SLOPE per
+ * half length, the same slow change all along, so wherever the stage's weights put a turn, the colors turn over the
+ * same stretch. */
 const CROSS_SLOPE = 1.2
+const WALK = [-1, 0, 1.5]
 /** From this share of its half length out, the second light's parts weaken, by this much at its ends: past half its
  * half length the main light takes the line back (HANDOVER_DARK), so its color is Meta Blue's there. */
 const SECOND_END_TAPER = [0.35, 0.9]
@@ -1113,15 +1115,15 @@ const vec = (params: Readonly<Record<string, ParamValue>>, key: string, fallback
 }
 
 /**
- * Where the merged look's light is, from its params, always thirty-seven parts in this order: the main light with the
- * face near it (the lead color); the second light's stretch of edge in sixteen pieces asking for a warm color (Yellow
- * over Orange-red, Tan, or in a pack with no warm color its brightest left, Atmospheric's Steel or Ice), then the same
- * sixteen asking for a cool one (Cyan, Ice or Steel), the warm ones strongest at the end farther from the main light
- * and the cool ones at the other, so its color turns along its length over a stretch, never at a point, weaker toward
- * its ends and near the main light's part, and all cool where the second light may not be warm (no pale part: Lime
- * beside Tan on one light mixed to grey-brown); the main light's far stretch of edge, dimmer than its brightest
- * (cool) in two pieces; two dim stretches of the outline (dark: Forest and Plum, Slate and Near-black). A part not in
- * the frame sits off it. Nothing here reads the colors.
+ * Where the merged look's light is, from its params, always fifty-three parts in this order: the main light with the
+ * face near it (the lead color); the second light's stretch of edge in sixteen pieces asking for the warm color
+ * (Yellow, Tan, or in a pack with no warm color its brightest left, Atmospheric's Steel or Ice), the same sixteen asking
+ * for the pack's other warm color (`warm2`: Orange-red, Lime), and the same sixteen asking for a cool one (Cyan, Ice or
+ * Steel): cool at the end nearer the main light, warm round its middle, the other warm at its far end, so its color
+ * walks along its length over stretches, never at a point, weaker toward its ends and near the main light's part, and
+ * all cool where the second light may not be warm (no pale part); the main light's far stretch of edge, dimmer than
+ * its brightest (cool) in two pieces; two dim stretches of the outline (dark: Forest and Plum, Slate and Near-black). A
+ * part not in the frame sits off it. Nothing here reads the colors.
  */
 export function mergedParts(params: Readonly<Record<string, ParamValue>>): StagePart[] {
   // The second light's parts fade with it as a dragged main light comes near, the warm ones faster: a warm light
@@ -1139,13 +1141,21 @@ export function mergedParts(params: Readonly<Record<string, ParamValue>>): Stage
   }
   const seconds = Array.from({ length: SECOND_PIECES }, (_, i) => {
     const u = warmSign * (-1 + (2 * i + 1) / SECOND_PIECES)
-    const warmOverCool = warmOk ? Math.exp(CROSS_SLOPE * u) : 0
+    // Each color strongest at its own place along the light, its neighbours' ratio changing by e^CROSS_SLOPE per half
+    // length (Gaussian weights 1/CROSS_SLOPE wide in variance), the strongest at full strength.
+    const weights = WALK.map((at) => Math.exp((-0.5 * CROSS_SLOPE) * (u - at) ** 2))
+    const top = Math.max(...weights)
+    const [coolShare, warmShare, warm2Share] = warmOk ? weights.map((w) => w / top) : [1, 0, 0]
     // Weaker toward its ends, where its own light fades and the main light comes back, and near the main light's own
     // part, so its colors don't take the main light's brightest light.
     const fromLead = Math.hypot((path[2 * i] + path[2 * i + 2]) / 2 - lead[0], (path[2 * i + 1] + path[2 * i + 3]) / 2 - lead[1])
     const end = (1 - SECOND_END_TAPER[1] * smoothstep(SECOND_END_TAPER[0], 1, Math.abs(u))) * smoothstep(LEAD_CLEAR[0], LEAD_CLEAR[1], fromLead)
     const piece = (want: FieldWant, strength: number): StagePart => ({ kind: 'line', from: [path[2 * i], path[2 * i + 1]], to: [path[2 * i + 2], path[2 * i + 3]], width: WARM_PART_WIDTH, want, strength })
-    return { warm: piece('warm', end * fading * fading * Math.min(1, warmOverCool)), cool: piece('cool', end * fading * Math.min(1, 1 / warmOverCool)) }
+    return {
+      warm: piece('warm', end * fading * fading * warmShare),
+      warm2: piece('warm2', end * fading * fading * warm2Share),
+      cool: piece('cool', end * fading * coolShare),
+    }
   })
   const line = (key: string, want: FieldWant, strength = 1, width = EDGE_PART_WIDTH): StagePart => {
     const v = vec(params, key, PART_OFF)
@@ -1158,6 +1168,7 @@ export function mergedParts(params: Readonly<Record<string, ParamValue>>): Stage
   return [
     spot('partLead', 'any'),
     ...seconds.map((s) => s.warm),
+    ...seconds.map((s) => s.warm2),
     ...seconds.map((s) => s.cool),
     line('partCool', 'cool'),
     line('partCool2', 'cool'),

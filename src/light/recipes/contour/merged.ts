@@ -207,8 +207,9 @@ export function mergedEmitters(ctx: RecipeContext): EmitterSettings[] {
     const accent = !second && Math.round(ctx.num(`e${i}Own`)) !== Math.round(keySlot) && Math.round(ctx.num(`e${i}Rest`)) === 1
     const farPale = [0.5, 0.8, 1]
     // Its wide glow mostly too, so an accent shows as a colored core on the edge, and its dim tail over the key's
-    // face never mixes to a third hue.
-    const nearPale = [0, 0.75, 0]
+    // face never mixes to a third hue; an accent near the key's hue (Cyan beside Meta Blue) keeps more of its own
+    // color in its glow, so the line reads as walking from one color to the next.
+    const nearPale = accent && !mixesToThird(litSlot(ctx, ctx.num(`e${i}Own`)), litSlot(ctx, keySlot)) ? [0, 0.3, 0] : [0, 0.75, 0]
     const ownContour = Math.round(ctx.num(`e${i}StopContour`))
     return {
       shape,
