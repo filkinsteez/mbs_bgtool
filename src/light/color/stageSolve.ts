@@ -2,7 +2,7 @@ import { dimPaths, type DimPoint } from '../engine/dimPath'
 import { meetApart } from '../engine/meet'
 import { defaultMix, META_BLUE_HEX, mixColors, type ColorMix } from './mix'
 import { linearToOklab, oklchToLinear } from './oklab'
-import type { ColorPack } from './packs'
+import { hueOrder, type ColorPack } from './packs'
 import { hexToLinear } from './srgb'
 import { blurGrid, mulberry32, VISIBLE, type FieldWant, type StageField, type StageGrid } from './stageFields'
 
@@ -70,6 +70,8 @@ export interface StageColor {
   defaultShare: number
   /** The asked share, of the colors that are on. */
   share: number
+  /** Its place in the pack's hue order (HUE_ORDER in packs.ts); colors one place apart are neighbours (neighbourPairs). */
+  packIndex: number
 }
 
 const toUnit = (c: readonly number[]): [number, number, number] => {
@@ -99,6 +101,7 @@ function heldUntilTurn(path: DimPoint[], from: number | undefined): DimPoint[] {
 export function stageColors(pack: ColorPack, mix: ColorMix, byParts = false): StageColor[] {
   const defaults = defaultMix(pack).shares
   const on = mixColors(pack, mix)
+  const hues = hueOrder(pack)
   const paths = dimPaths(on.map(({ color }) => color.hex))
   const base = on.map(({ color, share }) => {
     const linear = hexToLinear(color.hex)
@@ -119,6 +122,7 @@ export function stageColors(pack: ColorPack, mix: ColorMix, byParts = false): St
       brightOnly,
       defaultShare: defaults[pack.colors.indexOf(color)],
       share,
+      packIndex: hues.indexOf(pack.colors.indexOf(color)),
     }
   })
   return base.map((c, index) => {
@@ -156,6 +160,7 @@ export function stageColors(pack: ColorPack, mix: ColorMix, byParts = false): St
       path: byParts && c.group === 'warm' && c.hue < 100 && c.chroma > DIM_PATH_FIRE ? heldUntilTurn(paths[index], kind === KIND_TO_NEIGHBOR ? edge + turn[0] / 2 : undefined) : paths[index].slice(0, 1),
       defaultShare: c.defaultShare,
       share: c.share,
+      packIndex: c.packIndex,
     }
   })
 }
@@ -540,14 +545,14 @@ const FAR_HOLD_LIGHT = [0.25, 0.4, 0.65, 0.9] as const
 
 /**
  * For each color whose part asks for a light color near Meta Blue's hue (Cyan, which guardedParts leaves to the plain
- * weighting), the colors far from it in hue (farPairs: Yellow, Orange-red): in the cells that part holds at mid light
+ * weighting), the colors far from it in hue (farHuePairs: Yellow, Orange-red, neighbours too): in the cells that part holds at mid light
  * (FAR_HOLD_LIGHT) they weigh no more than its color (partWeightsAt). So a lower weight for Cyan hands its streak to
  * Meta Blue, not to Yellow, where the two would meet in a grey line (Rush Bold s2). `farHolds[k][j]`: color k's part
  * holds against j.
  */
 export function lightPartHolds(colors: readonly StageColor[], wants: readonly (FieldWant | undefined)[]): boolean[][] {
   const guarded = guardedParts(colors, wants)
-  const far = farPairs(colors.slice(0, 5))
+  const far = farHuePairs(colors.slice(0, 5))
   const isFar = (a: number, b: number) => a < 5 && b < 5 && ((far >> (Math.min(a, b) * 5 + Math.max(a, b))) & 1) === 1
   return colors.map((_, k) => colors.map((__, j) => j !== k && asksLight(wants[k]) && !guarded[k] && isFar(k, j)))
 }
@@ -747,6 +752,7 @@ export function softFields(grid: StageGrid, values: readonly Float32Array[], col
   const L = grid.seen ?? grid.lightness
   const n = w * h
   const shares = colors.map(() => new Float32Array(n))
+  const lead = Math.max(0, colors.findIndex((c) => c.hex === META_BLUE_HEX))
   for (let i = 0; i < n; i++) {
     const l = Math.max(L[i], VISIBLE)
     const masks = pairedMasks(colors, values.map((v) => v[i]), l, grid.slope?.[i] ?? 0)
@@ -755,7 +761,7 @@ export function softFields(grid: StageGrid, values: readonly Float32Array[], col
     // Taken relative to the strongest, so a cell where every field is faint still blends smoothly.
     const top = Math.max(...x)
     if (top <= 1e-12) {
-      shares[0][i] = 1
+      shares[lead][i] = 1
       continue
     }
     const q = x.map((v) => (v / top) ** (2 * sharpness))
@@ -895,11 +901,37 @@ export function stageDimPaths(colors: readonly StageColor[]): StageDimPath[] {
 /** Chroma under which a darker pack color counts as near-neutral, for a near-neutral light color's dim path (Steel). */
 const DIM_NEUTRAL = 0.06
 
-/** Pairs of colors far apart in hue (60 degrees or more, both with real chroma): their meeting line is a pale bridge. */
+/**
+ * Pairs of colors far apart in hue (60 degrees or more, both with real chroma) that are not neighbours in the pack's
+ * hue order: their meeting line is a pale bridge. Neighbours blend through the hue between them instead (owner,
+ * 2026-11-11: Cyan through green into Yellow, Meta Blue through indigo into Plum).
+ */
 export function farPairs(colors: readonly StageColor[]): number {
+  const far = farHuePairs(colors)
+  let bits = 0
+  for (let i = 0; i < colors.length; i++) for (let j = i + 1; j < colors.length; j++) if (!areNeighbours(colors[i], colors[j])) bits |= far & (1 << (i * 5 + j))
+  return bits
+}
+
+/**
+ * Pairs of colors 60 degrees or more apart in hue, both with real chroma, neighbours or not: where each color leads
+ * (lightPartHolds) still keeps them apart, so a Cyan part keeps its cells from Yellow at mid light; only how they hand
+ * over changes for neighbours.
+ */
+export function farHuePairs(colors: readonly StageColor[]): number {
   let bits = 0
   for (let i = 0; i < colors.length; i++)
     for (let j = i + 1; j < colors.length; j++)
       if (colors[i].chroma >= 0.04 && colors[j].chroma >= 0.04 && hueGap(colors[i].hue, colors[j].hue) >= 60) bits |= 1 << (i * 5 + j)
+  return bits
+}
+
+/** Whether two colors sit next to each other in the pack's hue order (a color switched off doesn't join its two sides). */
+export const areNeighbours = (a: StageColor, b: StageColor): boolean => Math.abs(a.packIndex - b.packIndex) === 1
+
+/** Pairs of colors that are neighbours in the pack's hue order, as bits like farPairs: they hand over through the hue between them. */
+export function neighbourPairs(colors: readonly StageColor[]): number {
+  let bits = 0
+  for (let i = 0; i < colors.length; i++) for (let j = i + 1; j < colors.length; j++) if (areNeighbours(colors[i], colors[j])) bits |= 1 << (i * 5 + j)
   return bits
 }

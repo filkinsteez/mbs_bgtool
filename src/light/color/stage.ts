@@ -13,7 +13,7 @@ import { oklchToLinear } from './oklab'
 import { getPack, isPackId, type ColorPack, type PackId } from './packs'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
 import { blurGrid, buildFields, COVERAGE_SPLIT, GRID_SHORT, gridSize, lightSlope, lookParts, makeNoise, mulberry32, VISIBLE, type StageField, type StageGrid } from './stageFields'
-import { assignFields, colorFields, coloredByParts, farPairs, guardedParts, KIND_DARK, KIND_TO_NEIGHBOR, lightPartHolds, softFields, solveWeights, stageColors, stageDimPaths, STAGE_SHARPNESS, type StageColor } from './stageSolve'
+import { assignFields, colorFields, coloredByParts, farPairs, guardedParts, KIND_DARK, KIND_TO_NEIGHBOR, lightPartHolds, neighbourPairs, softFields, solveWeights, stageColors, stageDimPaths, STAGE_SHARPNESS, type StageColor } from './stageSolve'
 
 /**
  * The pack every design is drawn in while the color stage is on, so one mood, seed, drag and format give one
@@ -498,6 +498,7 @@ function stageUniforms({ colors, weights, byParts }: Solved): UniformMap {
     uMixTurn: turn,
     uMixField: field,
     uMixFar: farPairs(colors.slice(0, 5)),
+    uMixNbr: neighbourPairs(colors.slice(0, 5)),
     uMixSharp: byParts ? 1 : STAGE_SHARPNESS,
     uMixBridge: 1,
     uMixNarrow: byParts ? 1 : 0,

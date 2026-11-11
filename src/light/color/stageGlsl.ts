@@ -11,6 +11,15 @@ const LINE_LIGHTER = [0.04, 0.12] as const
 const NEAR_BLACK = [0.045, 0.085] as const
 
 /**
+ * Oklab hue gap (degrees) over which two neighbours' colors at a pixel's light count as turned far apart, from none to
+ * all: Yellow dimmed into Orange-red beside Cyan is 160 degrees or more from it, and the short way round is no longer
+ * the way through green, so there the pair meets as far hues do.
+ */
+const NEIGHBOUR_TURNED = [135, 160] as const
+/** Oklab chroma over lightness under which a color is too near grey to steer the hue of a neighbours' hand-over (Ice). */
+const NEIGHBOUR_HUEFUL = [0.01, 0.04] as const
+
+/**
  * The color stage in GLSL: `vec3 colorStage(vec2 uv, vec3 radiance)` keeps each pixel's luminance and gives it
  * the colors of the color fields (two textures of four fields on the stage grid, one per color), weighted and added like
  * overlapping light. Each color is shown the way the engine draws a light of it at that lightness (its ramp, measured
@@ -31,6 +40,7 @@ uniform vec4 uMixColor[5];
 uniform vec4 uMixTurn[5];
 uniform vec4 uMixField[5];
 uniform int uMixFar;
+uniform int uMixNbr;
 uniform float uMixSharp;
 uniform float uMixBridge;
 uniform float uMixNarrow;
@@ -94,6 +104,71 @@ vec3 mixColorAt(int k, float L, float y, float near) {
   if (uMixColor[k].a > 0.5 && uMixColor[k].a < 1.5) t = 1.0 - smoothstep(edge - uMixTurn[k].w, edge + uMixTurn[k].z, L);
   else if (uMixColor[k].a > 1.5 && uMixColor[k].a < 2.5) t = near * (1.0 - smoothstep(edge - ${DIM_TURN[1].toFixed(4)}, edge + ${DIM_TURN[0].toFixed(4)}, L));
   return mix(c, mixRamp(int(uMixTurn[k].x + 0.5), y), t);
+}
+
+// A color's Oklab hue (radians) and its chroma over its lightness (how far from grey it is at any light).
+vec2 mixHueSat(vec3 c) {
+  vec3 lab = meetOklab(c);
+  return vec2(atan(lab.z, lab.y), length(lab.yz) / max(lab.x, 1e-4));
+}
+
+// The signed hue turn (radians) from hue a to hue b, the short way round.
+float mixTurn(float a, float b) {
+  return mod(b - a + ${(3 * Math.PI).toFixed(8)}, ${(2 * Math.PI).toFixed(8)}) - ${Math.PI.toFixed(8)};
+}
+
+// How much colors i and j count as far apart at this pixel: a far pair (uMixFar) all; a pair of neighbours in the hue
+// order only where their colors at this light have turned far apart (NEIGHBOUR_TURNED).
+float mixPairFar(int i, int j, vec2 hs[5]) {
+  if (((uMixFar >> (i * 5 + j)) & 1) == 1) return 1.0;
+  if (((uMixNbr >> (i * 5 + j)) & 1) == 0) return 0.0;
+  float hueful = smoothstep(${NEIGHBOUR_HUEFUL[0].toFixed(4)}, ${NEIGHBOUR_HUEFUL[1].toFixed(4)}, min(hs[i].y, hs[j].y));
+  return hueful * smoothstep(radians(${NEIGHBOUR_TURNED[0].toFixed(1)}), radians(${NEIGHBOUR_TURNED[1].toFixed(1)}), abs(mixTurn(hs[i].x, hs[j].x)));
+}
+
+// Neighbours in the pack's hue order hand over through the hue between them (owner, 2026-11-11: Cyan through green
+// into Yellow, Meta Blue through indigo into Plum). Each pair of neighbours sharing the pixel gives its own middle: the
+// two colors' Oklab lightness and chroma averaged by their shares, and the hue turned the short way from one to the
+// other by the same shares, so the middle keeps its color at the picture's own lightness instead of going grey-green
+// or brown as a mix in linear light does. A near-grey color (Ice) barely steers the hue, so Meta Blue fades into Ice in
+// its own hue. Colors that are not neighbours never steer a middle. The middles are averaged by how much each pair
+// shares the pixel and take as much of the pixel as the neighbours' share of all the pair weights; the rest keeps the
+// plain mix. Every weight changes smoothly with the shares, so no line forms where one color overtakes another.
+// Returns a color at luminance 1.
+vec3 mixNeighbours(vec3 plain, vec3 c[5], vec2 hs[5], float q[5]) {
+  vec3 plainUnit = plain / max(dot(plain, LUMA), 1e-6);
+  if (uMixNbr == 0) return plainUnit;
+  float close = 0.0;
+  float pairs = 0.0;
+  vec3 lab = vec3(0.0);
+  float chroma = 0.0;
+  for (int i = 0; i < 5; i++) {
+    if (i >= uMixCount) continue;
+    for (int j = 0; j < 5; j++) {
+      if (j <= i || j >= uMixCount) continue;
+      float w = q[i] * q[j];
+      pairs += w;
+      if (((uMixNbr >> (i * 5 + j)) & 1) == 0) continue;
+      w *= 1.0 - mixPairFar(i, j, hs);
+      if (w <= 1e-12) continue;
+      close += w;
+      float a = q[j] / max(q[i] + q[j], 1e-12);
+      vec3 li = meetOklab(c[i]);
+      vec3 lj = meetOklab(c[j]);
+      float si = (1.0 - a) * smoothstep(0.0, ${NEIGHBOUR_HUEFUL[1].toFixed(4)}, hs[i].y);
+      float sj = a * smoothstep(0.0, ${NEIGHBOUR_HUEFUL[1].toFixed(4)}, hs[j].y);
+      float hue = hs[i].x + (si + sj > 1e-9 ? sj / (si + sj) : a) * mixTurn(hs[i].x, hs[j].x);
+      float cm = mix(length(li.yz), length(lj.yz), a);
+      lab += w * vec3(mix(li.x, lj.x, a), cm * cos(hue), cm * sin(hue));
+      chroma += w * cm;
+    }
+  }
+  if (close <= 1e-12) return plainUnit;
+  lab /= close;
+  float len = length(lab.yz);
+  if (len > 1e-6) lab.yz *= (chroma / close) / len;
+  vec3 polar = max(meetFromOklab(lab), vec3(0.0));
+  return mix(plainUnit, polar / max(dot(polar, LUMA), 1e-6), clamp(close / max(pairs, 1e-12), 0.0, 1.0));
 }
 
 vec3 colorStage(vec2 uv, vec3 radiance) {
@@ -160,6 +235,16 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
       }
     }
   }
+  // Each color as it shows at this light, and its hue, for neighbours' hand-over (mixNeighbours, mixPairFar).
+  vec3 own[5];
+  vec2 hs[5];
+  for (int k = 0; k < 5; k++) {
+    own[k] = vec3(1.0);
+    hs[k] = vec2(0.0);
+    if (k >= uMixCount) continue;
+    own[k] = mixColorAt(k, L, yE, near[k]);
+    hs[k] = mixHueSat(own[k]);
+  }
   for (int k = 0; k < 5; k++) {
     p[k] = 0.0;
     if (k >= uMixCount) continue;
@@ -190,8 +275,7 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
     for (int i = 0; i < 5; i++) {
       for (int j = 0; j < 5; j++) {
         if (j <= i || j >= uMixCount) continue;
-        if (((uMixFar >> (i * 5 + j)) & 1) == 0) continue;
-        far += 4.0 * p[i] * p[j] / (s * s);
+        far += 4.0 * p[i] * p[j] / (s * s) * mixPairFar(i, j, hs);
       }
     }
     float mid = smoothstep(0.25, 0.4, L) * (1.0 - smoothstep(0.65, 0.9, L));
@@ -210,8 +294,8 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
     for (int i = 0; i < 5; i++) {
       for (int j = 0; j < 5; j++) {
         if (j <= i || j >= uMixCount) continue;
-        if (((uMixFar >> (i * 5 + j)) & 1) == 0 || uMixColor[i].a > 2.5 || uMixColor[j].a > 2.5) continue;
-        split += 4.0 * p[i] * p[j] / (s * s);
+        if (uMixColor[i].a > 2.5 || uMixColor[j].a > 2.5) continue;
+        split += 4.0 * p[i] * p[j] / (s * s) * mixPairFar(i, j, hs);
       }
     }
     float spill = min(split, 1.0);
@@ -231,15 +315,19 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
   vec3 m = vec3(0.0);
   float s2 = 0.0;
   float pp = 0.0;
+  float qk[5];
   for (int k = 0; k < 5; k++) {
+    qk[k] = 0.0;
     if (k >= uMixCount) continue;
     p[k] /= s;
     float q = uMixSoft > 0.5 ? p[k] : p[k] * p[k];
     s2 += q;
     pp += p[k] * p[k];
-    m += q * mixColorAt(k, L, yE, near[k]);
+    qk[k] = q;
+    m += q * own[k];
   }
   m /= max(s2, 1e-6);
+  m = mixNeighbours(m, own, hs, qk);
   // In a look colored by its parts (uMixNarrow) the neutral line where far hues meet is narrower (shares squared).
   float b = 0.0;
   for (int i = 0; i < 5; i++) {

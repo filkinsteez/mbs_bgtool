@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { EXPORT_SIZES, getPack, type ExportAspect, type MoodId, type PackId } from '@/light'
+import { hueOrder } from '@/light/color/packs'
 import { FORMAT_OPTIONS, MOOD_OPTIONS, PACK_DIAL_KEY, PACK_OPTIONS } from './dialConfig'
 import { FILTER_DIAL_KEY, FILTER_OPTIONS, type FilterChoice } from './filterControl'
 import { moodPicture } from './panelPictures'
@@ -34,7 +35,7 @@ export function MoodPicker({ value, onChange }: { value: MoodId; onChange: (mood
   )
 }
 
-/** Each pack as a strip of its own colors in pack order. */
+/** Each pack as a strip of its own colors in hue order, as the color rows and the pictures have them. */
 export function PackPicker({ value, onChange }: { value: PackId; onChange: (pack: PackId) => void }) {
   return (
     <TilePicker
@@ -44,7 +45,10 @@ export function PackPicker({ value, onChange }: { value: PackId; onChange: (pack
       options={PACK_OPTIONS}
       value={value}
       onChange={onChange}
-      tile={(option) => getPack(option.value).colors.map((color) => <span key={color.hex} style={{ background: color.hex }} />)}
+      tile={(option) => {
+        const pack = getPack(option.value)
+        return hueOrder(pack).map((index) => <span key={pack.colors[index].hex} style={{ background: pack.colors[index].hex }} />)
+      }}
     />
   )
 }

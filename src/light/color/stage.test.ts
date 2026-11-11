@@ -10,7 +10,7 @@ import { COLOR_DESIGN_PACK, colorRamp, darkMeetingLines, meetingLift, meetingLin
 import { buildFields, gridSize, lookParts, type StageField, type StageGrid, type StagePart } from './stageFields'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
 import { hexToLinear } from './srgb'
-import { assignFields, colorFields, colorMask, guardedParts, KIND_BRIGHT, KIND_DARK, KIND_PLAIN, KIND_TO_NEIGHBOR, pairedMasks, partWeightsAt, solveWeights, stageColors, stageDimPaths } from './stageSolve'
+import { assignFields, colorFields, colorMask, farPairs, guardedParts, KIND_BRIGHT, KIND_DARK, KIND_PLAIN, KIND_TO_NEIGHBOR, neighbourPairs, pairedMasks, partWeightsAt, solveWeights, stageColors, stageDimPaths } from './stageSolve'
 
 const CONTROLS = { intensity: 0.5, softness: 0.5, mood: 0.5 }
 
@@ -146,6 +146,26 @@ describe('color stage', () => {
       const nameOf = (hex: string) => lit[at[cool.findIndex((c) => c.hex === hex)]]?.name
       expect([nameOf('#F2F4F7'), nameOf('#6A7788')]).toEqual(['bright', 'warm'])
     }
+  })
+
+  it('treats colors next to each other in the hue order as neighbours, not as far hues, even with a color off between', () => {
+    const pair = (a: string, b: string) => [a, b].sort().join('-')
+    const pairs = (packId: 'bold' | 'elemental' | 'atmospheric', mix = defaultMix(getPack(packId))) => {
+      const colors = stageColors(getPack(packId), mix, true)
+      const named = (bits: number) => colors.flatMap((a, i) => colors.flatMap((b, j) => (j > i && (bits >> (i * 5 + j)) & 1 ? [pair(a.hex, b.hex)] : []))).sort()
+      return { near: named(neighbourPairs(colors)), far: named(farPairs(colors)) }
+    }
+    expect(pairs('bold').near).toEqual([pair('#0064E0', '#1FCDF0'), pair('#1FCDF0', '#FFD61E'), pair('#FFD61E', '#FF4F00')].sort())
+    expect(pairs('bold').far).toEqual([pair('#0064E0', '#FFD61E'), pair('#0064E0', '#FF4F00'), pair('#1FCDF0', '#FF4F00')].sort())
+    expect(pairs('elemental').near).toEqual([pair('#B8996E', '#D6F26C'), pair('#D6F26C', '#0F3D33'), pair('#0F3D33', '#0064E0'), pair('#0064E0', '#4A0A3C')].sort())
+    expect(pairs('elemental').far).toContain(pair('#B8996E', '#4A0A3C'))
+    expect(pairs('elemental').far).toContain(pair('#0064E0', '#D6F26C'))
+    // Forest off: Lime and Meta Blue are not neighbours, so they still meet as far hues.
+    const elemental = getPack('elemental')
+    const noForest = setShare(elemental, defaultMix(elemental), elemental.colors.findIndex((c) => c.name === 'Forest'), 0)
+    expect(pairs('elemental', noForest).near).toEqual([pair('#B8996E', '#D6F26C'), pair('#0064E0', '#4A0A3C')].sort())
+    expect(pairs('elemental', noForest).far).toContain(pair('#D6F26C', '#0064E0'))
+    expect(pairs('atmospheric').near).toEqual([pair('#0064E0', '#F2F4F7'), pair('#F2F4F7', '#6A7788'), pair('#6A7788', '#384753'), pair('#384753', '#1C2B33')].sort())
   })
 
   it('guards the parts that ask for a light color far in hue from Meta Blue, and only those', () => {
