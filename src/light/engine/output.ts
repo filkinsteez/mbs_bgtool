@@ -12,9 +12,11 @@ import { AREA_RESAMPLE_SHADER } from './passes'
  * way a camera's channels fill up: at a rate set by its own light plus some
  * crosstalk from the other channels (TONE_CROSSTALK[i][j]: how much of
  * channel j's light channel i sees). So the brighter of the two lower
- * channels fills first: orange-red goes orange, yellow, pale yellow, white;
- * Meta Blue holds its hue, then turns pale cyan-white; pure blue drifts
- * toward cyan, not violet.
+ * channels fills first: orange-red goes orange, yellow, pale yellow, white.
+ * Cyans, blues and violets (TONE_HOLD_HUES) then take back their own OKLab
+ * hue at the curve's lightness and chroma, with the chroma lowered where the
+ * color would leave sRGB, and go back to the curve's luminance: Meta Blue
+ * stays a saturated blue until it whitens and Cyan never turns green.
  *
  * For r = c / m and x = m - 1: out_i = 1 - (1 - r_i) exp(-k x w_i - late x^2)
  * with w_i = f_i / (1 - r_i + 0.05) and f_i = r_i + sum_j X_ij r_j. One
@@ -48,6 +50,16 @@ export const TONE_TIE_BAND = 0.05
 const TONE_TIE_SHARE = TONE_TIE_BAND / (TONE_TIE_BAND + TONE_GAP_SOFTNESS)
 /** Stops below nominal where the paper toe reaches half its strength. */
 const TOE_HALF_STOPS = 2
+/**
+ * OKLCh hues (degrees) where bright light keeps its own hue as it whitens: none below 160, all from 190 (cyan)
+ * through Meta Blue to 300 (violet), none again from 330. Where Meta Blue brightens it stays a saturated blue, not a
+ * pale blue that passes for Cyan (owner, 2026-11-09), and Cyan never turns green; yellows, reds and pinks keep the
+ * curve's path.
+ */
+export const TONE_HOLD_HUES = [160, 190, 300, 330] as const
+/** Halvings of the chroma search, and how far past 0 or 1 a channel may be and still count as inside sRGB. */
+const TONE_GAMUT_STEPS = 12
+const TONE_GAMUT_SLACK = 1e-4
 
 const glslFloat = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v))
 const crosstalkColumns = [0, 1, 2].map((j) => `vec3(${[0, 1, 2].map((i) => glslFloat(TONE_CROSSTALK[i][j])).join(', ')})`).join(', ')
@@ -60,6 +72,56 @@ vec3 paperToe(vec3 c, float m) {
   if (uToe <= 0.0 || m <= 0.0) return c;
   float n = -log2(m);
   return m * pow(c / m, vec3(1.0 + uToe * n * n / (n * n + ${glslFloat(TOE_HALF_STOPS * TOE_HALF_STOPS)})));
+}
+
+vec3 toneOklab(vec3 c) {
+  vec3 lms = pow(max(vec3(dot(c, vec3(0.4122214708, 0.5363325363, 0.0514459929)), dot(c, vec3(0.2119034982, 0.6806995451, 0.1073969566)), dot(c, vec3(0.0883024619, 0.2817188376, 0.6299787005))), 0.0), vec3(1.0 / 3.0));
+  return vec3(dot(lms, vec3(0.2104542553, 0.793617785, -0.0040720468)), dot(lms, vec3(1.9779984951, -2.428592205, 0.4505937099)), dot(lms, vec3(0.0259040371, 0.7827717662, -0.808675766)));
+}
+
+vec3 toneFromOklab(vec3 lab) {
+  vec3 lms = vec3(dot(lab, vec3(1.0, 0.3963377774, 0.2158037573)), dot(lab, vec3(1.0, -0.1055613458, -0.0638541728)), dot(lab, vec3(1.0, -0.0894841775, -1.291485548)));
+  lms = lms * lms * lms;
+  return vec3(dot(lms, vec3(4.0767416621, -3.3077115913, 0.2309699292)), dot(lms, vec3(-1.2684380046, 2.6097574011, -0.3413193965)), dot(lms, vec3(-0.0041960863, -0.7034186147, 1.707614701)));
+}
+
+bool toneInside(vec3 c) {
+  return all(greaterThanEqual(c, vec3(-${glslFloat(TONE_GAMUT_SLACK)}))) && all(lessThanEqual(c, vec3(1.0 + ${glslFloat(TONE_GAMUT_SLACK)})));
+}
+
+// Bright light in the TONE_HOLD_HUES band keeps its own OKLab hue (r's) at the curve's lightness and chroma (o's),
+// with the chroma lowered where that color would leave sRGB, then goes back to the curve's luminance: scaled, which
+// keeps the hue, and mixed toward the grey of that luminance where a channel would pass 1 (toneHoldHue in output.ts).
+vec3 toneHoldHue(vec3 r, vec3 o) {
+  vec3 own = toneOklab(r);
+  if (length(own.yz) < 1e-6) return o;
+  float hue = atan(own.z, own.y);
+  float deg = mod(degrees(hue), 360.0);
+  float hold = smoothstep(${glslFloat(TONE_HOLD_HUES[0])}, ${glslFloat(TONE_HOLD_HUES[1])}, deg) * (1.0 - smoothstep(${glslFloat(TONE_HOLD_HUES[2])}, ${glslFloat(TONE_HOLD_HUES[3])}, deg));
+  if (hold <= 0.0) return o;
+  vec3 lab = toneOklab(o);
+  float chroma = length(lab.yz);
+  if (chroma < 1e-6) return o;
+  float d = mod(atan(lab.z, lab.y) - hue + ${glslFloat(3 * Math.PI)}, ${glslFloat(2 * Math.PI)}) - ${glslFloat(Math.PI)};
+  float h = hue + (1.0 - hold) * d;
+  vec2 dir = vec2(cos(h), sin(h));
+  vec3 held = toneFromOklab(vec3(lab.x, chroma * dir));
+  if (!toneInside(held)) {
+    float lo = 0.0;
+    float hi = chroma;
+    for (int i = 0; i < ${TONE_GAMUT_STEPS}; i++) {
+      float mid = 0.5 * (lo + hi);
+      if (toneInside(toneFromOklab(vec3(lab.x, mid * dir)))) lo = mid;
+      else hi = mid;
+    }
+    held = toneFromOklab(vec3(lab.x, lo * dir));
+  }
+  held = max(held, vec3(0.0));
+  float target = luminance(o);
+  held *= target / max(luminance(held), 1e-9);
+  float top = maxComponent(held);
+  if (top > 1.0) held = target + (held - target) * (1.0 - target) / (top - target);
+  return saturate(held);
 }
 
 vec3 toneCurve(vec3 c) {
@@ -77,7 +139,7 @@ vec3 toneCurve(vec3 c) {
   float slope = dot((1.0 - near) * LUMA * gap * w + near * pair, vec3(1.0)) - topFill * ${glslFloat(TONE_TIE_SHARE)};
   float k = luminance(r) / max(slope, 1e-6);
   float x = m - 1.0;
-  return saturate(1.0 - gap * exp(-k * x * w - ${glslFloat(TONE_LATE_WHITENING)} * x * x));
+  return toneHoldHue(r, saturate(1.0 - gap * exp(-k * x * w - ${glslFloat(TONE_LATE_WHITENING)} * x * x)));
 }
 `
 
@@ -126,7 +188,71 @@ export function toneCurve(rgb: readonly number[], toe = 0): [number, number, num
   const k = (LUMA[0] * r[0] + LUMA[1] * r[1] + LUMA[2] * r[2]) / Math.max(slope, 1e-6)
   const x = m - 1
   const out = gap.map((g, i) => Math.min(1, Math.max(0, 1 - g * Math.exp(-k * x * w[i] - TONE_LATE_WHITENING * x * x))))
-  return [out[0], out[1], out[2]]
+  return toneHoldHue(r, out)
+}
+
+const toneLuminance = (c: readonly number[]) => LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2]
+
+function toneOklab(c: readonly number[]): [number, number, number] {
+  const cbrt = (v: number) => Math.max(v, 0) ** (1 / 3)
+  const l = cbrt(0.4122214708 * c[0] + 0.5363325363 * c[1] + 0.0514459929 * c[2])
+  const m = cbrt(0.2119034982 * c[0] + 0.6806995451 * c[1] + 0.1073969566 * c[2])
+  const s = cbrt(0.0883024619 * c[0] + 0.2817188376 * c[1] + 0.6299787005 * c[2])
+  return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s]
+}
+
+function toneFromOklab(L: number, a: number, b: number): [number, number, number] {
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3
+  const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3
+  const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3
+  return [4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s, -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s, -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s]
+}
+
+const toneInside = (c: readonly number[]) => c.every((v) => v >= -TONE_GAMUT_SLACK && v <= 1 + TONE_GAMUT_SLACK)
+
+const smoothBetween = (a: number, b: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
+  return t * t * (3 - 2 * t)
+}
+
+/**
+ * CPU twin of the GLSL toneHoldHue: the curve's result `o` for the light's own color `r` (largest channel 1). In the
+ * TONE_HOLD_HUES band it takes r's OKLab hue at o's lightness and chroma, lowers the chroma where that would leave
+ * sRGB, and goes back to o's luminance; elsewhere it returns o.
+ */
+export function toneHoldHue(r: readonly number[], o: readonly number[]): [number, number, number] {
+  const own = toneOklab(r)
+  if (Math.hypot(own[1], own[2]) < 1e-6) return [o[0], o[1], o[2]]
+  const hue = Math.atan2(own[2], own[1])
+  const degrees = (hue * 180) / Math.PI
+  const deg = degrees - 360 * Math.floor(degrees / 360)
+  const hold = smoothBetween(TONE_HOLD_HUES[0], TONE_HOLD_HUES[1], deg) * (1 - smoothBetween(TONE_HOLD_HUES[2], TONE_HOLD_HUES[3], deg))
+  if (hold <= 0) return [o[0], o[1], o[2]]
+  const lab = toneOklab(o)
+  const chroma = Math.hypot(lab[1], lab[2])
+  if (chroma < 1e-6) return [o[0], o[1], o[2]]
+  const turn = Math.atan2(lab[2], lab[1]) - hue + 3 * Math.PI
+  const d = turn - 2 * Math.PI * Math.floor(turn / (2 * Math.PI)) - Math.PI
+  const h = hue + (1 - hold) * d
+  const at = (C: number) => toneFromOklab(lab[0], C * Math.cos(h), C * Math.sin(h))
+  let held = at(chroma)
+  if (!toneInside(held)) {
+    let lo = 0
+    let hi = chroma
+    for (let i = 0; i < TONE_GAMUT_STEPS; i++) {
+      const mid = 0.5 * (lo + hi)
+      if (toneInside(at(mid))) lo = mid
+      else hi = mid
+    }
+    held = at(lo)
+  }
+  held = held.map((v) => Math.max(v, 0)) as [number, number, number]
+  const target = toneLuminance(o)
+  const scale = target / Math.max(toneLuminance(held), 1e-9)
+  held = held.map((v) => v * scale) as [number, number, number]
+  const top = Math.max(held[0], held[1], held[2])
+  if (top > 1) held = held.map((v) => target + ((v - target) * (1 - target)) / (top - target)) as [number, number, number]
+  return [0, 1, 2].map((i) => Math.min(1, Math.max(0, held[i]))) as [number, number, number]
 }
 
 /** Mitchell-Netravali (B = C = 1/3) weights, support |x| < 2. */

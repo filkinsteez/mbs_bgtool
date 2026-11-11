@@ -28,7 +28,7 @@ import {
   veilFill,
   veilLevelWeights,
 } from './lens'
-import { paperToeInverse, TONE_CROSSTALK, TONE_TIE_BAND, toneCurve } from './output'
+import { paperToeInverse, TONE_CROSSTALK, TONE_TIE_BAND, toneCurve, toneHoldHue } from './output'
 import { buildFlowShader, FLOW_BLUR_SHADER, FLOW_TAPS, flowFieldSize } from './passes'
 import { designFrame, lensBaseFromFrame, radianceScaleFor } from './programRenderer'
 import { coerceParam, recipeContext, resolveScene } from './resolve'
@@ -72,7 +72,7 @@ describe('tone curve', () => {
             c[order[1]] = m * second
             c[order[2]] = m * third
             if (nearestTie(c) < TONE_TIE_BAND) continue
-            expect(toneCurve(c), c.join(', ')).toEqual(untiedCurve(c))
+            expect(toneCurve(c), c.join(', ')).toEqual(toneHoldHue(c.map((v) => v / m), untiedCurve(c)))
             compared++
           }
         }
@@ -141,17 +141,36 @@ describe('tone curve', () => {
     expect(hueAt('#FF4F00', 4)[2]).toBeGreaterThan(85)
   })
 
-  it('keeps blue light blue: toward cyan-white, not violet', () => {
-    for (const hex of ['#0064E0', '#0000FF', '#6A7788', '#384753', '#1C2B33']) {
+  it('keeps blue and cyan light at their own hue as they whiten: no pale cyan from Meta Blue, no green from Cyan', () => {
+    for (const hex of ['#0064E0', '#0000FF', '#6A7788', '#384753', '#1C2B33', '#1FCDF0', '#00FFFF']) {
       const nominal = hueAt(hex, 1)[2]
       for (let scale = 1.1; scale < 64; scale *= 1.1) {
         const [, chroma, hue] = hueAt(hex, scale)
         if (chroma < 0.03) break
-        expect(hueDiff(hue, nominal), `${hex} at ${scale.toFixed(2)}x`).toBeLessThan(8)
-        expect(hue, `${hex} at ${scale.toFixed(2)}x`).toBeGreaterThan(190)
+        expect(Math.abs(hueDiff(hue, nominal)), `${hex} at ${scale.toFixed(2)}x`).toBeLessThan(1)
       }
     }
-    expect(Math.abs(hueDiff(hueAt('#0064E0', 2)[2], 259))).toBeLessThan(3)
+    // Meta Blue at 4x is still a blue with real chroma (0.077 with the drift toward cyan, 0.072 held).
+    const [, chroma, hue] = hueAt('#0064E0', 4)
+    expect(Math.abs(hueDiff(hue, 259))).toBeLessThan(1)
+    expect(chroma).toBeGreaterThan(0.06)
+  })
+
+  it('holds the hue only for cool light, and keeps the luminance of the curve', () => {
+    for (const hex of ['#FF4F00', '#FFD61E', '#D6F26C', '#B8996E', '#4A0A3C', '#FF0000', '#00FF00']) {
+      const c = hexToLinear(hex)
+      const m = Math.max(...c)
+      for (const scale of [1.5, 3, 8]) {
+        const hot = c.map((v) => (v / m) * scale)
+        const o = toneCurve(hot)
+        expect(toneHoldHue(hot.map((v) => v / scale), o), `${hex} at ${scale}x`).toEqual(o)
+      }
+    }
+    for (const hex of ['#0064E0', '#1FCDF0', '#6A7788']) {
+      const r = hexToLinear(hex).map((v, _, c) => v / Math.max(...c))
+      const o: [number, number, number] = [r[0] + (1 - r[0]) * 0.4, r[1] + (1 - r[1]) * 0.7, 1]
+      expect(luminance(toneHoldHue(r, o)), hex).toBeCloseTo(luminance(o), 9)
+    }
   })
 
   it('paper toe: flat pack colors print their hex from pre-inverted light, nothing at or above nominal changes', () => {

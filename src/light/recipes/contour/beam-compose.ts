@@ -433,8 +433,8 @@ export function fallParam(light: ContourLight, from: number, factor: number): nu
 
 /**
  * The color a light (linear RGB) turns as it overexposes, at unit luminance: the camera
- * tone curve's own path to white three times past clipping, so Meta Blue goes toward a
- * pale cyan-white and never toward lavender.
+ * tone curve's own path to white three times past clipping, so Meta Blue pales at its own
+ * hue (the curve holds the hue of cool light) and warm lights go through yellow.
  */
 export function paleTarget(light: readonly number[]): [number, number, number] {
   const peak = Math.max(light[0], light[1], light[2], 1e-6)

@@ -997,7 +997,7 @@ try {
     }
     // Contour: the dark base and the lit area.
     // The frame's light color: the pack color covering the most lit area at or below its own nominal brightness.
-    // An overexposed core is left out (Meta Blue's turns cyan-white). Atmospheric's greys are one hue, so a grey
+    // An overexposed core is left out (Meta Blue's pales to white at its own hue). Atmospheric's greys are one hue, so a grey
     // light is named by the lightest grey it reaches on at least 1% of the frame (an Ice light's falloff passes
     // through Steel's and Slate's lightness). The greys count at every lightness, white core included (white is
     // Ice there), so they win only over more than all of the colored light's lit area, its pale part too.

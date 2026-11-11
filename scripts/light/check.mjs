@@ -326,13 +326,13 @@ try {
     const { TONE_COLOR_LIST, TONE_RAMP_MAX, GLOW_GRID, TIE_GLOW_GRID } = await harness.ssr('/scripts/light/harness/testPrograms.ts')
     const hueDiff = (a, b) => ((a - b + 540) % 360) - 180
     const warm = new Set(['#FF4F00', '#FFD61E', '#B8996E', '#FF0000'])
-    const blue = new Set(['#0064E0', '#6A7788', '#384753', '#1C2B33', '#0000FF'])
+    const cool = new Set(['#0064E0', '#6A7788', '#384753', '#1C2B33', '#0000FF', '#1FCDF0', '#00FFFF'])
     let monotonic = true
     let worstGpu = 0
     let worstHueStep = 0
     let warmBackward = 0
     let warmEnd = Infinity
-    let blueTowardViolet = -Infinity
+    let coolDrift = 0
     let worstSlopeRatio = 0
     const nearTies = []
     const rampsEnd = 0.72
@@ -361,7 +361,7 @@ try {
             if (lastWarmHue !== null) warmBackward = Math.max(warmBackward, hueDiff(lastWarmHue, lch[2]))
             lastWarmHue = lch[2]
           }
-          if (blue.has(hex)) blueTowardViolet = Math.max(blueTowardViolet, hueDiff(lch[2], nominal[2]))
+          if (cool.has(hex)) coolDrift = Math.max(coolDrift, Math.abs(hueDiff(lch[2], nominal[2])))
         }
       }
       if (warm.has(hex) && lastWarmHue !== null) warmEnd = Math.min(warmEnd, lastWarmHue)
@@ -386,10 +386,10 @@ try {
       `worst slope mismatch ${(worstSlopeRatio * 100).toFixed(2)} %; not held within ${TONE_TIE_BAND * 100} % of a tie for the largest channel: ${nearTies.join(', ')}`,
     )
     record(
-      'tone curve: warm light whitens through yellow, blue through cyan-white, hue moves smoothly',
-      worstHueStep < 1 && warmBackward < 0.5 && warmEnd > 85 && blueTowardViolet < 8,
+      'tone curve: warm light whitens through yellow, blue and cyan light keep their hue, hue moves smoothly',
+      worstHueStep < 1 && warmBackward < 0.5 && warmEnd > 85 && coolDrift < 2,
       `largest hue step between neighboring columns ${worstHueStep.toFixed(2)} deg; warm hues never step back toward pink by more than ${warmBackward.toFixed(2)} deg and reach ${warmEnd.toFixed(0)} deg or more; ` +
-        `blues move toward violet by at most ${blueTowardViolet.toFixed(2)} deg`,
+        `blues and cyans move by at most ${coolDrift.toFixed(2)} deg`,
     )
     const crop = await cropRgba(image, 300, 0, 400, Math.round(rampsEnd * size.height))
     await savePng(path.join(outDir, 'tone-curve-onset-zoom.png'), await zoom(crop, 2))
