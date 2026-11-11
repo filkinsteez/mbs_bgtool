@@ -11,8 +11,9 @@ import type { FilterFrame, OutputFilter } from './types'
  *   down, so the grid depends on the frame's aspect and the density only, and a preview shows the same cells as the
  *   export. Between whole cell counts nothing changes.
  * - Each cell shows its mean color, flat; the color changes to the next cell's under the line between them.
- * - The lines are PIXEL_LINE_SHARE of a cell wide, as in the deck's picture (crisp at every size, so a preview shows
- *   the grid an export shows), and lighter than their cell by PIXEL_LINE_CONTRAST of its light; the inside is darker
+ * - The lines are PIXEL_LINE_SHARE of a cell wide, as in the deck's picture, up to PIXEL_LINE_MAX of the frame's short
+ *   side, so big cells keep thin lines (crisp at every size, so a preview shows the grid an export shows). They are
+ *   lighter than their cell by PIXEL_LINE_CONTRAST of its light; the inside is darker
  *   by the same amount of light, so every cell keeps its mean color. A channel near 1 has little room to brighten,
  *   so its share of the pattern shrinks with its room, and white has no lines. Dark cells get faint lines, so a dark
  *   room keeps its dark. The deck's lines are about white at 60 % opacity; these are lighter than the cell by less,
@@ -31,8 +32,13 @@ export const PIXEL_MAX_CELLS = 144
  */
 const SOURCE_TEXELS_ON_SHORT_SIDE = 36
 const SOURCE_SAMPLES_ON_SHORT_SIDE = 288
-/** Line width as a share of a cell, as in the deck's picture (2 px every 24 px): 5.3 px at 34 cells in 4K, 22.5 at 8. */
+/** Line width as a share of a cell, as in the deck's picture (2 px every 24 px), up to PIXEL_LINE_MAX. */
 export const PIXEL_LINE_SHARE = 2 / 24
+/**
+ * The widest a line gets, as a share of the frame's short side: 2 px at 1080 px, as in the deck's picture at 1x. It
+ * takes over from 45 cells down (density 0.4 and up): 4 px in a 4K export, about 1 px in a 606 px tall preview.
+ */
+export const PIXEL_LINE_MAX = 2 / 1080
 /** How much lighter a line is than its cell, as a share of the cell's light. */
 export const PIXEL_LINE_CONTRAST = 0.7
 /** Cell size in output pixels over which the lines fade in, so small previews show cells without moiré. */
@@ -95,10 +101,15 @@ export function pixelSourceSamples(frame: Pick<FilterFrame, 'width' | 'height'>,
   return Math.min(8, Math.max(2, Math.ceil(SOURCE_SAMPLES_ON_SHORT_SIDE / texelsOnShort)))
 }
 
+/** Line width in cells at a density: PIXEL_LINE_SHARE of a cell, or less where that would pass PIXEL_LINE_MAX. */
+export function pixelLineWidth(density: number): number {
+  return Math.min(PIXEL_LINE_SHARE, PIXEL_LINE_MAX * pixelCells(density))
+}
+
 /** The slider's value is the density. */
 export function pixelUniforms(density: number, frame: FilterFrame): UniformMap {
   const { across, down } = pixelGrid(frame, density)
-  return { uPixelCells: [across, down], uPixelFrame: [frame.width, frame.height] }
+  return { uPixelCells: [across, down], uPixelFrame: [frame.width, frame.height], uPixelLine: pixelLineWidth(density) }
 }
 
 const glslFloat = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v))
@@ -107,6 +118,7 @@ export const PIXEL_GLSL = /* glsl */ `
 uniform sampler2D uPixelSource;
 uniform vec2 uPixelCells;
 uniform vec2 uPixelFrame;
+uniform float uPixelLine; // line width in cells (pixelLineWidth)
 
 // Bilinear reads along one axis that weigh each texel of [lo, hi) (texel units) by how much of it the cell covers;
 // each read takes two neighbouring texels in that proportion. Two texels a cell take one read and six (at 8 cells)
@@ -172,7 +184,7 @@ vec3 filterPixel(vec3 display, ivec2 px, float weight) {
   vec3 m11 = pixelCellMean(c0 + ivec2(1, 1));
   float cellPx = min(uPixelFrame.x / uPixelCells.x, uPixelFrame.y / uPixelCells.y);
   float p = 1.0 / cellPx;
-  float w = ${glslFloat(PIXEL_LINE_SHARE)};
+  float w = uPixelLine;
   // Flat cells: the color changes to the next cell's over the line's width (a pixel at least), under the line.
   vec2 b = clamp((u - 0.5) / max(w, p) + 0.5, 0.0, 1.0);
   vec3 cells = mix(mix(m00, m10, b.x), mix(m01, m11, b.x), b.y);

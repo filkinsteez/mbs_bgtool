@@ -5,6 +5,7 @@ import { OUTPUT_FILTERS } from '.'
 import {
   PIXEL_FILTER,
   PIXEL_LINE_CONTRAST,
+  PIXEL_LINE_MAX,
   PIXEL_LINE_SHARE,
   PIXEL_MAX_CELLS,
   PIXEL_MIN_CELLS,
@@ -12,6 +13,7 @@ import {
   pixelGrid,
   pixelLineArea,
   pixelLineCoverage,
+  pixelLineWidth,
   pixelUniforms,
 } from './pixel'
 
@@ -86,10 +88,18 @@ describe('pixel filter', () => {
     }
   })
 
-  it('draws crisp lines a fixed share of a cell wide, so a preview shows the grid an export shows', () => {
+  it('draws crisp lines 2/24 of a cell wide, at most 2 px at 1080 px on the short side, so a preview shows the grid an export shows', () => {
     expect(PIXEL_LINE_SHARE).toBeCloseTo(2 / 24, 6)
-    expect((PIXEL_LINE_SHARE * 2160) / pixelCells(0.5)).toBeGreaterThan(5)
-    expect((PIXEL_LINE_SHARE * 2160) / pixelCells(0.5)).toBeLessThan(5.5)
+    expect(PIXEL_LINE_MAX).toBeCloseTo(2 / 1080, 9)
+    // Line width in a 4K export (2160 px on the short side) at a density.
+    const px4k = (d: number) => (pixelLineWidth(d) * 2160) / pixelCells(d)
+    expect(pixelLineWidth(0)).toBe(PIXEL_LINE_SHARE)
+    expect(px4k(0)).toBeCloseTo(1.25, 6)
+    for (const d of [0.5, 0.75, 1]) expect(px4k(d)).toBeCloseTo(4, 6)
+    for (let k = 1; k < STEPS.length; k++) {
+      expect(px4k(STEPS[k])).toBeLessThanOrEqual(4 + 1e-9)
+      expect(px4k(STEPS[k])).toBeGreaterThanOrEqual(px4k(STEPS[k - 1]) - 1e-9)
+    }
     // A pixel on the border is covered, one well inside its cell isn't, and the crossings count once.
     expect(pixelLineCoverage(0, 0.4, 0.06, 0.02)).toBe(1)
     expect(pixelLineCoverage(0.4, 0.4, 0.06, 0.02)).toBe(0)
@@ -99,9 +109,11 @@ describe('pixel filter', () => {
   })
 
   it('keeps every cell its mean: the lines get lighter and the inside darker by the same light', () => {
-    for (const cellPx of [6, 12, 42, 120]) {
+    // Cells of a few sizes with lines 2/24 of a cell, and the biggest cells with the capped lines: 4 px in a 4K
+    // export, 1.12 px in a 606 px tall preview.
+    const cases: [number, number][] = [...[6, 12, 42, 120].map((cellPx): [number, number] => [cellPx, PIXEL_LINE_SHARE]), [270, 4 / 270], [76, 1.12 / 76]]
+    for (const [cellPx, width] of cases) {
       const pixel = 1 / cellPx
-      const width = PIXEL_LINE_SHARE
       const area = pixelLineArea(width)
       // The brightness factor at each pixel of a cell, as the shader draws it, averaged over the cell.
       let sum = 0
@@ -123,8 +135,16 @@ describe('pixel filter', () => {
   })
 
   it('passes the cell grid at the density and the output size as uniforms', () => {
-    expect(pixelUniforms(0.5, { width: 3840, height: 2160, seed: 3 })).toEqual({ uPixelCells: [60, 34], uPixelFrame: [3840, 2160] })
-    expect(pixelUniforms(1, { width: 1080, height: 1920, seed: 3 })).toEqual({ uPixelCells: [8, 14], uPixelFrame: [1080, 1920] })
-    expect(pixelUniforms(0, { width: 1080, height: 1350, seed: 3 })).toEqual({ uPixelCells: [144, 180], uPixelFrame: [1080, 1350] })
+    expect(pixelUniforms(0.5, { width: 3840, height: 2160, seed: 3 })).toEqual({
+      uPixelCells: [60, 34],
+      uPixelFrame: [3840, 2160],
+      uPixelLine: PIXEL_LINE_MAX * 34,
+    })
+    expect(pixelUniforms(1, { width: 1080, height: 1920, seed: 3 })).toEqual({ uPixelCells: [8, 14], uPixelFrame: [1080, 1920], uPixelLine: PIXEL_LINE_MAX * 8 })
+    expect(pixelUniforms(0, { width: 1080, height: 1350, seed: 3 })).toEqual({
+      uPixelCells: [144, 180],
+      uPixelFrame: [1080, 1350],
+      uPixelLine: PIXEL_LINE_SHARE,
+    })
   })
 })

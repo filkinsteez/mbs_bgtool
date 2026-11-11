@@ -34,7 +34,7 @@ It is a stage of the output filter chain, after the tone curve and before the sR
 Density
 - The slider sets the cell size, smallest at 0 and biggest at 1 (owner, 2026-11-10 7:08 PM: "i think bigger squares more towards 1"): 144 cells on the short side at 0, 70 at 0.25, 34 at 0.5, 16 at 0.75 and 8 at 1, rounded to whole cells (`round(144 × (8 / 144)^density)`). Each quarter of the slider doubles the cell size.
 - The finest grid is 144 cells because the frame copy, at two texels a cell, reaches the chain's limit of 512 texels a side at 144 cells on a 16:9 frame (512 x 288). And 144 cells are 6.25 px in a 1600 x 900 preview, about the smallest cell that still shows its lines (they fade out from 6 px down to 3 px). In a 4K export they are 15 px (16:9) to 27 px (1:1).
-- The biggest cells, 8 on the short side, are more than twice the old biggest (18): a 16:9 frame is 14 x 8 cells, 135 px each at 1080p and 270 px in a 4K export, where their lines are 22.5 px wide.
+- The biggest cells, 8 on the short side, are more than twice the old biggest (18): a 16:9 frame is 14 x 8 cells, 135 px each at 1080p and 270 px in a 4K export, where their lines are 4 px wide (see Lines).
 - A cell is 7.5 px at 1080p at density 0, 32 px at 0.5, 68 px at 0.75 (about the stand-in's 59 px) and 135 px at 1.
 - The long side gets a whole number of cells too, so the cells fill the frame and are square to within that rounding (4 % at worst, 4:5 at 10 cells).
 - The grid depends on the frame's aspect and the density only, so a preview shows the same cells as the export. Between whole cell counts nothing changes.
@@ -50,7 +50,7 @@ Cell color
 - Each cell shows the mean of the frame over the cell, in linear light, flat. The color changes to the next cell's under the line between them, over the line's width (at least one pixel).
 
 Lines
-- Light lines on the cell borders, 2/24 of a cell wide as in the deck's picture (2 px every 24 px): 10 px at 18 cells in a 4K export, 3.5 px at 51, and 2.8 px at 18 cells in a 1076 x 606 preview.
+- Light lines on the cell borders, 2/24 of a cell wide as in the deck's picture (2 px every 24 px), and at most 2 px at 1080 px on the short side, as the picture's lines are at 1x (`PIXEL_LINE_MAX`). The cap takes over from 45 cells down (density 0.4 and up), so big cells keep thin, crisp lines: in a 4K export 1.25 px at 144 cells, 2.6 px at 70 and 4 px from 45 cells to 8; in a 1077 x 606 preview about 1 px from 45 cells to 8. Before the cap (7e89820) a line at 8 cells was 22.5 px wide in a 4K export, with the color change spread across it, and read as a soft band (`artifacts/filters/r1/pixel-lines-before-after.jpg`).
 - A line is lighter than its cell by 0.7 of the cell's light, and the inside is darker by the same amount of light: gain = 1 + 0.7 × (cover − area) / (1 − area), where cover is how much of the pixel the lines cover and area the share of the cell they cover. A flat area keeps its color, so a pack hex keeps its hex. The deck's lines are about white at 60 % opacity, which is stronger; 0.7 follows the brief's "keep the contrast low".
 - Each channel's contrast is lowered where a line would push that channel past 1, so white has no lines. Dark cells get faint lines, so a dark room stays dark.
 - The cover is the line's overlap with the pixel's own width, so lines are crisp at every size and a line thinner than a pixel covers it by its share. Below 3 to 6 output pixels a cell the lines fade out, so the smallest previews show plain cells without moiré.
@@ -134,6 +134,7 @@ The first version's color, GPU and preview checks are in this note at commit 046
 - 2026-11-05: the slider sets the density, like ASCII's, and the filter is fully on at every value. Each cell keeps its average color and light areas are not dimmed. Near-black cells beside a hot line may take a little of its light (it reads as the LED's light spilling).
 - 2026-11-05, owner: density can go higher. The top is 144 cells, twice the old 72; the frame copy now follows the density.
 - 2026-11-10, owner (7:08 PM: "make bigger square. it's also inverted i think. i think bigger squares more towards 1"): the slider is flipped and its big end goes further, from 144 cells on the short side at 0 to 8 at 1. Sheets: `artifacts/filters/r1/pixel-flip-preview.jpg`, `pixel-flip-4k.jpg`.
+- 2026-11-10 (coordinator, 7:22 PM): lines stay thin and crisp at the big cells, at most 2 px at 1080 px on the short side, like the deck's picture. Caps of 3 and 4 px were also tried (`artifacts/filters/r1/lines-variants.jpg`); 2 px is the picture's own width.
 - 2026-11-10 (coordinator's round 5, filters against the references): crisp light lines on the borders of flat cells instead of soft LEDs with dark gaps. The picture's smooth image under the grid is not copied, since the brief asks for the render quantized to a grid.
 
 ## Commands
