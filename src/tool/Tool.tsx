@@ -6,6 +6,7 @@ import '@/styles/tool.css'
 import { DialStore, useDialKitController } from 'dialkit'
 import { useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { EXPORT_SIZES, getPack, type ExportAspect, type PackId } from '@/light'
+import { mixForPack } from '@/light/color/mix'
 import { COLOR_DESIGN_PACK, withColorMix } from '@/light/color/stage'
 import { buildScene, clampDrag, keepsLine, toolControls, type LightDrag } from './controls'
 import { buildDialConfig, MIX_DIAL_KEY, mixPanelValue, PACK_DIAL_KEY, PANEL_ID, PANEL_LABELS, PANEL_NAME, readToolState, SEED_DIAL_KEY } from './dialConfig'
@@ -15,17 +16,19 @@ import { panelAccessFor, usePanelAccess } from './panelAccess'
 import { HistoryStrip } from './history/HistoryStrip'
 import { applyPanelValues, panelValues } from './history/panelValues'
 import { useHistory } from './history/useHistory'
+import { MixControl } from './MixControl'
 import { FilterPicker, FormatPicker, MoodPicker, PackPicker } from './panelPickers'
 import { Preview } from './Preview'
-import { isMoodId, mixForPack, parseQuery, randomSeed, sceneLook, toQuery, type SearchParams } from './state'
+import { customMix, isMoodId, parseQuery, randomSeed, sceneLook, toQuery, type SearchParams } from './state'
 import { ToolPanel } from './ToolPanel'
+import { usePictureMix } from './usePictureMix'
 
 const EXPORT_LABEL = 'Export'
 const EXPORTING_LABEL = 'Exporting…'
 const EXPORT_FAILED_LABEL = 'Export failed'
 /**
- * The tiles take the place of DialKit's selects and Shuffle the place of the Seed slider. The mix's text field shows
- * nothing until the Mix control comes.
+ * The tiles take the place of DialKit's selects, Shuffle the place of the Seed slider, and the color percentages the
+ * place of the mix's text field.
  */
 const MOOD_PATHS = ['mood']
 const PACK_PATHS = [PACK_DIAL_KEY]
@@ -84,7 +87,8 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const { look, pack, seed, format, filter, strength, mix } = state
   const drawn = sceneLook(state)
   // Every pack draws one design, and the color stage gives it the pack's colors and the mix (always on, owner 2026-11-11).
-  const shares = mixPanelValue(mix)
+  const pictureMix = usePictureMix(mixPanelValue(mix))
+  const shares = pictureMix.shares
   const scene = useMemo(() => {
     const aspect = frameAspect(format)
     const design = getPack(COLOR_DESIGN_PACK)
@@ -181,7 +185,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     setValue(SEED_DIAL_KEY, randomSeed(seed))
   }
 
-  /** A new pack starts at its default mix, with the Meta Blue switch as it was. */
+  /** A new pack keeps Meta Blue's share, and its other colors share the rest evenly. */
   function choosePack(next: PackId) {
     if (next === pack) return
     DialStore.updateValues(PANEL_ID, { [PACK_DIAL_KEY]: next, [MIX_DIAL_KEY]: mixPanelValue(mixForPack(getPack(pack), mix, getPack(next))) })
@@ -208,7 +212,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     setExportStatus('busy')
     try {
       await nextPaint()
-      const outcome = await exportImage(scene, pack, format, { drag })
+      const outcome = await exportImage(scene, pack, format, { drag, mix: customMix(state) })
       console.info('Exported', outcome)
       setExportStatus('idle')
     } catch (error) {
@@ -268,7 +272,9 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
             },
             {
               paths: MIX_PATHS,
-              node: null,
+              node: (
+                <MixControl pack={getPack(pack)} mix={mix} onChange={(next) => setValue(MIX_DIAL_KEY, mixPanelValue(next))} onDragging={pictureMix.setDragging} />
+              ),
               replace: true,
               card: 'colors',
             },

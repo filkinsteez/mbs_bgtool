@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { getPack } from '@/light'
-import { defaultMix, mixFromShares, mixPercents, setMetaBlue, setShare } from '@/light/color/mix'
+import { defaultMix, mixFromShares, setShare } from '@/light/color/mix'
 import {
+  customMix,
   DEFAULT_STATE,
-  mixForPack,
   MOOD_IDS,
   MOOD_LOOKS,
   parseDrag,
@@ -83,40 +83,48 @@ describe('tool state in the URL', () => {
   })
 })
 
-describe('the color stage in the URL', () => {
-  it("ignores an old link's colormix= and mix=: the stage is always on at the pack's default mix, and links never name it", () => {
+describe('the color mix in the URL', () => {
+  const custom = mixFromShares(bold, [20, 10, 10, 60])!
+
+  it("gives a link without mix= the pack's default mix, and the default mix writes no mix=", () => {
     const plain = parseQuery(new URLSearchParams('mood=sunset&look=merged&pack=bold&seed=1&format=16x9'))
     expect(plain).toEqual(DEFAULT_STATE)
     expect(plain.mix).toEqual(defaultMix(bold))
-    for (const old of ['colormix=1', 'colormix=1&mix=20,10,10,60', 'colormix=0', 'mix=20,10,10,60', 'colormix=yes&mix=abc']) {
-      const state = parseQuery(new URLSearchParams(`mood=sunset&look=bands&pack=bold&${old}&seed=1&format=16x9`))
-      expect(state, old).toEqual(plain)
+    expect(parseQuery({ pack: 'elemental' }).mix).toEqual(defaultMix(elemental))
+    expect(toQuery(plain)).toBe('mood=sunset&look=merged&pack=bold&seed=1&format=16x9')
+    expect(new URLSearchParams(toQuery({ ...plain, mix: setShare(bold, defaultMix(bold), 1, 0.2) })).get('mix')).toBe('48,20,16,16')
+  })
+
+  it('round-trips a mix in whole percents after the pack, with its commas as they are', () => {
+    const query = 'mood=contour&look=merged&pack=bold&mix=20,10,10,60&from=0.3,0.7&to=0.7,0.3&seed=4&format=9x16&filter=grain&strength=0.4'
+    const state = parseQuery(new URLSearchParams(query))
+    expect(state.mix).toEqual(custom)
+    expect(toQuery(state)).toBe(query)
+    expect(parseQuery({ ...Object.fromEntries(new URLSearchParams(query)) })).toEqual(state)
+    expect(customMix(state)).toEqual([20, 10, 10, 60])
+    expect(customMix({ ...state, mix: defaultMix(bold) })).toBeNull()
+  })
+
+  it("ignores an old link's colormix=, keeping its mix=", () => {
+    for (const old of ['colormix=1', 'colormix=0', 'colormix=yes']) {
+      const state = parseQuery(new URLSearchParams(`mood=sunset&look=bands&pack=bold&${old}&mix=20,10,10,60&seed=1&format=16x9`))
       expect(state, old).not.toHaveProperty('colormix')
-      expect(toQuery(state), old).toBe('mood=sunset&look=merged&pack=bold&seed=1&format=16x9')
+      expect(state.mix, old).toEqual(custom)
+      expect(toQuery(state), old).toBe('mood=sunset&look=merged&pack=bold&mix=20,10,10,60&seed=1&format=16x9')
     }
-    expect(parseQuery({ pack: 'elemental', colormix: '1', mix: '20,10,10,60,0' }).mix).toEqual(defaultMix(elemental))
   })
 
-  it('reads an old history entry with colormix=1, a mix, a line and a filter in the form the tool writes now', () => {
-    const row = 'mood=contour&look=merged&pack=bold&colormix=1&mix=20,10,10,60&from=0.3,0.7&to=0.7,0.3&seed=4&format=9x16&filter=grain&strength=0.4'
-    const state = parseQuery(new URLSearchParams(row))
-    expect(state.mix).toEqual(defaultMix(bold))
-    expect(toQuery(state)).toBe('mood=contour&look=merged&pack=bold&from=0.3,0.7&to=0.7,0.3&seed=4&format=9x16&filter=grain&strength=0.4')
-  })
-})
-
-describe('a new pack', () => {
-  it('starts at its default mix', () => {
-    expect(mixForPack(bold, mixFromShares(bold, [20, 10, 10, 60])!, elemental)).toEqual(defaultMix(elemental))
-    expect(mixForPack(elemental, defaultMix(elemental), atmospheric)).toEqual(defaultMix(atmospheric))
+  it("takes the pack's default mix for a mix= it cannot read or that doesn't fit the pack", () => {
+    for (const value of ['', 'abc', '50,50', '20,10,10,60,0', '95,5,0,0', '100,0,0,0', '0,0,0,0', '20,10,10,-60', '20.5,10,10,59.5']) {
+      expect(parseQuery({ pack: 'bold', mix: value }).mix, value).toEqual(defaultMix(bold))
+    }
+    expect(parseQuery({ pack: 'elemental', mix: '20,10,10,60' }).mix).toEqual(defaultMix(elemental))
   })
 
-  it('keeps the Meta Blue switch off, with the other colors even', () => {
-    const next = mixForPack(bold, setMetaBlue(bold, defaultMix(bold), false), elemental)
-    expect(next.shares[0]).toBe(0)
-    expect(mixPercents(next)).toEqual([0, 25, 25, 25, 25])
-    expect(mixPercents(mixForPack(elemental, next, bold))).toEqual([0, 34, 33, 33])
-    expect(mixForPack(elemental, setShare(elemental, next, 1, 0.6), atmospheric).shares[0]).toBe(0)
+  it('reads a history entry with a mix with the mix it had', () => {
+    const row = 'mood=rush&look=split&pack=bold&mix=0,34,33,33&seed=9&format=1x1'
+    expect(parseQuery(new URLSearchParams(row)).mix.shares[0]).toBe(0)
+    expect(toQuery(parseQuery(new URLSearchParams(row)))).toBe(row)
   })
 })
 

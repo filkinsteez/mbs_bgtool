@@ -51,15 +51,15 @@ describe('the color mix in the panel', () => {
   const elemental = getPack('elemental')
   const near = (mix: ColorMix) => ({ shares: mix.shares.map((share) => expect.closeTo(share, 12)) })
 
-  it("starts at the pack's default mix, ignoring an old link's mix=, and keeps the panel's mix with every share in full", () => {
+  it("starts at the link's mix, and keeps the panel's mix with every share in full", () => {
     const id = 'mix-check'
-    const linked = parseQuery({ pack: 'bold', colormix: '1', mix: '20,10,10,60' })
+    const linked = parseQuery({ pack: 'bold', mix: '20,10,10,60' })
     DialStore.registerPanel(id, 'Check', buildDialConfig(linked, 'Export', 'none'))
-    expect(DialStore.getValue(id, MIX_DIAL_KEY)).toBe(mixPanelValue(defaultMix(bold)))
-    expect(readToolState(DialStore.getValues(id), 'sunset').mix).toEqual(near(defaultMix(bold)))
+    expect(DialStore.getValue(id, MIX_DIAL_KEY)).toBe(mixPanelValue(linked.mix))
+    expect(readToolState(DialStore.getValues(id), 'sunset').mix).toEqual(near(linked.mix))
     expect(readToolState(DialStore.getValues(id), 'sunset')).not.toHaveProperty('colormix')
 
-    const moved = setShare(bold, defaultMix(bold), 1, 0.35)
+    const moved = setShare(bold, linked.mix, 1, 0.35)
     DialStore.updateValue(id, MIX_DIAL_KEY, mixPanelValue(moved))
     expect(readToolState(DialStore.getValues(id), 'sunset').mix).toEqual(near(moved))
     expect(moved.shares.map((share) => share * 100)).not.toEqual(mixPercents(moved))

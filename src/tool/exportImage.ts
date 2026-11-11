@@ -16,7 +16,7 @@ export interface ExportOutcome {
  * are fixed per mood, and with a line the mood control follows from the line.
  */
 export type NamedControls = Pick<ControlValues, 'drag'> & {
-  /** The color mix in whole percents, pack order, when its control is on and the mix isn't the pack's default. */
+  /** The color mix in whole percents, pack order, when it isn't the pack's default. */
   mix?: readonly number[] | null
 }
 

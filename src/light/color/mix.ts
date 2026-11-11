@@ -18,6 +18,8 @@ export const MAX_SHARE = 0.9
 export const SHARE_STEP = 0.05
 /** Meta Blue's share in a pack's default mix; the pack's other colors share the rest evenly. */
 export const DEFAULT_META_BLUE_SHARE = 0.5
+/** The fewest colors a mix has on. */
+export const MIN_COLORS_ON = 2
 
 const EPSILON = 1e-9
 
@@ -59,16 +61,50 @@ export function setShare(pack: ColorPack, mix: ColorMix, index: number, value: n
   return { shares: normalized(shares) }
 }
 
+export function isColorOn(mix: ColorMix, index: number): boolean {
+  return mix.shares[index] > EPSILON
+}
+
+export function colorsOn(mix: ColorMix): number {
+  return mix.shares.filter((share) => share > EPSILON).length
+}
+
+/** A color's switch can turn it off while more than MIN_COLORS_ON colors are on. */
+export function canTurnOff(mix: ColorMix, index: number): boolean {
+  return isColorOn(mix, index) && colorsOn(mix) > MIN_COLORS_ON
+}
+
+/**
+ * A color's switch: off is the color at 0%, the others keeping their ratios; on brings it back at `restore` (the share
+ * it had, or the default mix's). The mix stays as it is when the switch already matches, or when turning the color off
+ * would leave fewer than MIN_COLORS_ON on.
+ */
+export function setColorOn(pack: ColorPack, mix: ColorMix, index: number, on: boolean, restore = defaultMix(pack).shares[index]): ColorMix {
+  if (on === isColorOn(mix, index) || (!on && !canTurnOff(mix, index))) return mix
+  return setShare(pack, mix, index, on ? restore : 0)
+}
+
 export function isMetaBlueOn(pack: ColorPack, mix: ColorMix): boolean {
   const blue = metaBlueIndex(pack)
-  return blue >= 0 && mix.shares[blue] > EPSILON
+  return blue >= 0 && isColorOn(mix, blue)
 }
 
 /** The Meta Blue switch: off is Meta Blue at 0%; on brings it back at `restore` (the share it had, or the default's). */
 export function setMetaBlue(pack: ColorPack, mix: ColorMix, on: boolean, restore = DEFAULT_META_BLUE_SHARE): ColorMix {
   const blue = metaBlueIndex(pack)
-  if (blue < 0 || on === isMetaBlueOn(pack, mix)) return mix
-  return setShare(pack, mix, blue, on ? restore : 0)
+  return blue < 0 ? mix : setColorOn(pack, mix, blue, on, restore)
+}
+
+/**
+ * The mix a newly picked pack starts with: Meta Blue keeps its share (0% if it was off) and the new pack's other
+ * colors share the rest evenly. Packs never mix, so no other color's share carries over.
+ */
+export function mixForPack(from: ColorPack, mix: ColorMix, to: ColorPack): ColorMix {
+  const fromBlue = metaBlueIndex(from)
+  const toBlue = metaBlueIndex(to)
+  if (fromBlue < 0 || toBlue < 0) return defaultMix(to)
+  const share = mix.shares[fromBlue]
+  return Math.abs(share - DEFAULT_META_BLUE_SHARE) < EPSILON ? defaultMix(to) : setShare(to, defaultMix(to), toBlue, share)
 }
 
 /** The colors that are on, in pack order, with their shares (summing to 1). */
@@ -93,7 +129,7 @@ export function mixFromShares(pack: ColorPack, shares: readonly number[]): Color
   const total = sum(shares)
   if (total <= 0) return null
   const result = normalized(shares)
-  if (result.filter((share) => share > EPSILON).length < 2) return null
+  if (result.filter((share) => share > EPSILON).length < MIN_COLORS_ON) return null
   if (result.some((share) => share > MAX_SHARE + 0.005)) return null
   return { shares: result }
 }

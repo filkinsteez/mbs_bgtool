@@ -2,21 +2,28 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_META_BLUE_SHARE,
   MAX_SHARE,
+  MIN_COLORS_ON,
+  canTurnOff,
+  colorsOn,
   defaultMix,
   formatMix,
+  isColorOn,
   isMetaBlueOn,
   metaBlueIndex,
   mixColors,
+  mixForPack,
   mixFromShares,
   mixPercents,
   parseMix,
+  setColorOn,
   setMetaBlue,
   setShare,
 } from './mix'
-import { PACKS, getPack } from './packs'
+import { PACKS, getPack, type ColorPack } from './packs'
 
 const bold = getPack('bold')
 const elemental = getPack('elemental')
+const atmospheric = getPack('atmospheric')
 const total = (shares: readonly number[]) => shares.reduce((a, b) => a + b, 0)
 
 describe('default mix', () => {
@@ -127,6 +134,84 @@ describe('Meta Blue switch', () => {
   it('leaves the mix as it is when the switch already matches', () => {
     const mix = defaultMix(bold)
     expect(setMetaBlue(bold, mix, true)).toBe(mix)
+  })
+})
+
+/** A color's place in its pack, by name, so the tests hold in any pack order. */
+const at = (pack: ColorPack, name: string) => pack.colors.findIndex((color) => color.name === name)
+
+describe("each color's switch", () => {
+  it('turns a color off at 0% with the others keeping their ratios, and on again at the share it had', () => {
+    const tan = at(elemental, 'Tan')
+    const blue = metaBlueIndex(elemental)
+    const off = setColorOn(elemental, defaultMix(elemental), tan, false)
+    expect(isColorOn(off, tan)).toBe(false)
+    expect(off.shares[tan]).toBe(0)
+    expect(colorsOn(off)).toBe(4)
+    expect(off.shares[blue] / off.shares[at(elemental, 'Lime')]).toBeCloseTo(4, 12)
+    expect(off.shares[at(elemental, 'Lime')] / off.shares[at(elemental, 'Plum')]).toBeCloseTo(1, 12)
+    const on = setColorOn(elemental, off, tan, true, 0.125)
+    for (let i = 0; i < 5; i++) expect(on.shares[i]).toBeCloseTo(defaultMix(elemental).shares[i], 12)
+  })
+
+  it('turned on with no remembered share gives the color its default mix share', () => {
+    const yellow = at(bold, 'Yellow')
+    const off = setColorOn(bold, defaultMix(bold), yellow, false)
+    expect(setColorOn(bold, off, yellow, true).shares[yellow]).toBeCloseTo(0.5 / 3, 12)
+  })
+
+  it("keeps the last two colors on: their switches don't turn them off", () => {
+    const [blue, cyan, yellow, red] = ['Meta Blue', 'Cyan', 'Yellow', 'Orange-red'].map((name) => at(bold, name))
+    let mix = setColorOn(bold, defaultMix(bold), yellow, false)
+    expect(canTurnOff(mix, red)).toBe(true)
+    mix = setColorOn(bold, mix, red, false)
+    expect(colorsOn(mix)).toBe(MIN_COLORS_ON)
+    expect(canTurnOff(mix, blue)).toBe(false)
+    expect(canTurnOff(mix, cyan)).toBe(false)
+    expect(canTurnOff(mix, yellow)).toBe(false)
+    expect(setColorOn(bold, mix, blue, false)).toBe(mix)
+    expect(setColorOn(bold, mix, cyan, false)).toBe(mix)
+    expect(MIN_COLORS_ON).toBe(2)
+  })
+
+  it("gives the owner's sketch: Meta Blue 25% and Cyan 75%, with Yellow and Orange-red off", () => {
+    const [blue, cyan, yellow, red] = ['Meta Blue', 'Cyan', 'Yellow', 'Orange-red'].map((name) => at(bold, name))
+    let mix = setColorOn(bold, defaultMix(bold), yellow, false)
+    mix = setColorOn(bold, mix, red, false)
+    mix = setShare(bold, mix, cyan, 0.75)
+    const percents = mixPercents(mix)
+    expect([blue, cyan, yellow, red].map((i) => percents[i])).toEqual([25, 75, 0, 0])
+  })
+
+  it('leaves the mix as it is when the switch already matches', () => {
+    const mix = defaultMix(elemental)
+    expect(setColorOn(elemental, mix, at(elemental, 'Plum'), true)).toBe(mix)
+  })
+})
+
+describe('a new pack', () => {
+  it('starts at its default mix when Meta Blue is at its default share', () => {
+    const shares = bold.colors.map((color) => (color.name === 'Meta Blue' ? 50 : color.name === 'Cyan' ? 30 : 10))
+    expect(mixForPack(bold, mixFromShares(bold, shares)!, elemental)).toEqual(defaultMix(elemental))
+    expect(mixForPack(elemental, defaultMix(elemental), atmospheric)).toEqual(defaultMix(atmospheric))
+  })
+
+  it("keeps Meta Blue's share, and the new pack's other colors share the rest evenly", () => {
+    const next = mixForPack(bold, setShare(bold, defaultMix(bold), metaBlueIndex(bold), 0.3), elemental)
+    const blue = metaBlueIndex(elemental)
+    expect(next.shares[blue]).toBeCloseTo(0.3, 12)
+    next.shares.forEach((share, i) => i !== blue && expect(share).toBeCloseTo(0.7 / 4, 12))
+    const back = mixForPack(elemental, next, bold)
+    expect(mixPercents(back)[metaBlueIndex(bold)]).toBe(30)
+    expect([...mixPercents(back)].sort((a, b) => a - b)).toEqual([23, 23, 24, 30])
+  })
+
+  it('keeps Meta Blue off, with the other colors even', () => {
+    const next = mixForPack(bold, setMetaBlue(bold, defaultMix(bold), false), elemental)
+    expect(next.shares[metaBlueIndex(elemental)]).toBe(0)
+    expect(mixPercents(next).filter((percent) => percent !== 0)).toEqual([25, 25, 25, 25])
+    expect([...mixPercents(mixForPack(elemental, next, bold))].sort((a, b) => a - b)).toEqual([0, 33, 33, 34])
+    expect(mixForPack(elemental, setShare(elemental, next, at(elemental, 'Lime'), 0.6), atmospheric).shares[metaBlueIndex(atmospheric)]).toBe(0)
   })
 })
 

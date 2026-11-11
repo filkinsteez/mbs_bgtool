@@ -1,5 +1,5 @@
-import { EXPORT_ASPECTS, getPack, isPackId, type ColorPack, type ExportAspect, type MoodId, type PackId, type RecipeId } from '@/light'
-import { defaultMix, isMetaBlueOn, metaBlueIndex, setMetaBlue, type ColorMix } from '@/light/color/mix'
+import { EXPORT_ASPECTS, getPack, isPackId, type ExportAspect, type MoodId, type PackId, type RecipeId } from '@/light'
+import { defaultMix, formatMix, mixPercents, parseMix, type ColorMix } from '@/light/color/mix'
 import { clampDrag, clampPoint, type LightDrag, type LightPoint } from './controls'
 import { DEFAULT_FILTER, filterQuery, parseFilterQuery, type FilterChoice } from './filterControl'
 
@@ -12,8 +12,8 @@ export interface ToolState {
   seed: number
   format: ExportAspect
   /**
-   * Each pack color's share of the picture, which the color stage gives the design: the pack's default mix, not in the
-   * URL (the Mix control comes later).
+   * Each pack color's share of the picture, which the color stage gives the design (`mix=20,10,10,60` in the URL, in
+   * pack order; none for the pack's default mix).
    */
   mix: ColorMix
   /** The line the user dragged on the image, in frame units (`from=x,y&to=x,y` in the URL). Missing until they drag. */
@@ -95,10 +95,12 @@ export function parseDrag(from: string | undefined, to: string | undefined): Lig
   return start && end ? clampDrag({ from: start, to: end }) : undefined
 }
 
-/** The mix a newly picked pack starts with: its default mix, with Meta Blue off if the switch was off. */
-export function mixForPack(from: ColorPack, mix: ColorMix, to: ColorPack): ColorMix {
-  const switchedOff = metaBlueIndex(from) >= 0 && !isMetaBlueOn(from, mix)
-  return switchedOff ? setMetaBlue(to, defaultMix(to), false) : defaultMix(to)
+/**
+ * The mix's whole percents in pack order when it isn't the pack's default; else null, and the URL and the export's
+ * file name leave the mix out.
+ */
+export function customMix(state: Pick<ToolState, 'pack' | 'mix'>): number[] | null {
+  return formatMix(getPack(state.pack), state.mix) !== null ? mixPercents(state.mix) : null
 }
 
 /** A page's search params as Next.js passes them to the page. */
@@ -119,8 +121,9 @@ const formatToQuery = (format: ExportAspect) => format.replace(':', 'x')
  * Reads the tool state from a URL query; missing or invalid values take the defaults. The look is always the mood's
  * own (`MOOD_LOOKS`): an old link's look (`look=bands`, `look=rim` and the others) and its `sunrise=merged` or
  * `contour=merged` open on the mood's merged look, and an old link with `rush=split` opens in Rush, whatever its mood.
- * Old links' `intensity`, `softness`, `horizon` and `light` are ignored, as the panel no longer sets them, and so are
- * their `colormix=` and `mix=`: the color stage is always on, at the pack's default mix (owner, 2026-11-11).
+ * Old links' `intensity`, `softness`, `horizon` and `light` are ignored, as the panel no longer sets them, and so is
+ * their `colormix=`: the color stage is always on (owner, 2026-11-11). A link without `mix=`, or with one that doesn't
+ * fit the pack, has the pack's default mix.
  */
 export function parseQuery(query: QueryInput): ToolState {
   const moodParam = readParam(query, 'mood')
@@ -136,15 +139,15 @@ export function parseQuery(query: QueryInput): ToolState {
     pack,
     seed,
     format: isExportAspect(format) ? format : DEFAULT_STATE.format,
-    mix: defaultMix(getPack(pack)),
+    mix: parseMix(getPack(pack), readParam(query, 'mix')),
     ...(drag ? { drag } : {}),
     ...parseFilterQuery(query),
   }
 }
 
 /**
- * The URL query (without "?") that reproduces the state. The line's commas are left as they are, so the link stays
- * readable. The filter goes last, and only when one is on.
+ * The URL query (without "?") that reproduces the state. The mix's and the line's commas are left as they are, so the
+ * link stays readable. The filter goes last, and only when one is on.
  */
 export function toQuery(state: ToolState): string {
   const head = new URLSearchParams([
@@ -152,11 +155,12 @@ export function toQuery(state: ToolState): string {
     ['look', shortLook(state.look)],
     ['pack', state.pack],
   ]).toString()
+  const mix = customMix(state)
   const drag = state.drag ? clampDrag(state.drag) : undefined
   const line = drag ? `from=${drag.from.join(',')}&to=${drag.to.join(',')}` : null
   const tail = new URLSearchParams([
     ['seed', String(state.seed)],
     ['format', formatToQuery(state.format)],
   ]).toString()
-  return [head, line, tail, filterQuery(state)].filter(Boolean).join('&')
+  return [head, mix ? `mix=${mix.join(',')}` : null, line, tail, filterQuery(state)].filter(Boolean).join('&')
 }
