@@ -60,6 +60,12 @@ Contour's Halo layout of separate circles (a big ring with smaller rings beside 
   - Cranking a slider must make the picture mostly that color, near its
     swatch, in every mood.
   - Black backgrounds don't count toward any color.
+- Small changes give small changes (owner, 2026-11-11: "colors pop in and
+  out from really small adjustments"). A slider step or a drag of a few
+  pixels changes the picture in proportion. No color appears or
+  disappears, and nothing swaps sides. Every choice the stage or a look
+  makes blends over a range instead of switching. The line sweep and a
+  slider-step sweep show no color jumps.
 - Dragging moves the light and keeps the picture's colors (owner,
   2026-11-11: "dragging control to change color often overrides all
   original colors to just meta blue it should retain its original"). The
