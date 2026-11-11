@@ -17,6 +17,7 @@ import {
   mixKey,
   mixPercents,
   mixStep,
+  neighbourMixes,
   parseMix,
   setColorOn,
   setMetaBlue,
@@ -276,6 +277,38 @@ describe('steps', () => {
     expect(stepForKey(bold, defaultMix(bold), boldBlue, 'End')).toBeCloseTo(0.75, 12)
     expect(stepForKey(bold, defaultMix(bold), boldBlue, 'Home')).toBe(0)
     expect(stepForKey(bold, defaultMix(bold), boldBlue, 'Enter')).toBeNull()
+  })
+})
+
+describe('the mixes one slider move away', () => {
+  const key = (mix: { shares: readonly number[] }) => mix.shares.map((share) => share.toFixed(9)).join(',')
+
+  it('hold every other step of every color, the others keeping their ratios, nearest first', () => {
+    const near = neighbourMixes(bold, defaultMix(bold))
+    expect(near).toHaveLength(15)
+    expect(new Set(near.map(key)).size).toBe(15)
+    for (const mix of near) {
+      const moved = mix.shares.map((share, i) => Math.abs(share - defaultMix(bold).shares[i]) > 1e-9)
+      expect(mix.shares.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 12)
+      expect(moved.filter(Boolean).length).toBeGreaterThanOrEqual(1)
+    }
+    expect(mixPercents(bold, near[0])[at(bold, 'Cyan')]).toBe(25)
+    const distances = near.map((mix) => Math.max(...mix.shares.map((share, i) => Math.abs(share - defaultMix(bold).shares[i]))))
+    expect(distances[0]).toBeLessThan(distances.at(-1)!)
+  })
+
+  it('hold every mix a drag or the keys on one color reach, whatever steps came before', () => {
+    for (const pack of PACKS) {
+      const start = defaultMix(pack)
+      const near = new Set(neighbourMixes(pack, start).map(key))
+      for (const index of hueOrder(pack)) {
+        let mix = start
+        for (const value of [0.2, 0.4, 0.6, 0.8, 0.25, 0.5, 0.75, 0, 0.4]) {
+          mix = setStep(pack, mix, index, value)
+          if (key(mix) !== key(start)) expect(near.has(key(mix)), `${pack.id} ${pack.colors[index].name} ${value}`).toBe(true)
+        }
+      }
+    }
   })
 })
 

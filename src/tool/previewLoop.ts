@@ -1,4 +1,6 @@
 import { LightRenderer, RECIPE_IDS, type OutputSettings, type RecipeId, type Scene } from '@/light'
+import { defaultMix, mixFromShares, neighbourMixes } from '@/light/color/mix'
+import { getPack, isPackId } from '@/light/color/packs'
 import { TOOL_FILTERS } from './filterControl'
 
 const SETTLE_MS = 250
@@ -12,10 +14,32 @@ const MOVING_GPU_MS = 12
 const MOVING_TARGET_MS = 8
 /** Sizes a moving frame may be drawn at, against the canvas; the browser scales it up. */
 const MOVING_SCALES = [1, 0.75, 0.5]
-/** Without a GPU timer: a moving frame that takes longer than this to reach the canvas counts as too slow. */
+/**
+ * Without a GPU timer: a 1x frame that takes longer than this to reach the canvas counts as too slow at its size, so
+ * moving frames get smaller, from the first full-size frame on, not only once a drag has started.
+ */
 const LATE_FRAME_MS = 25
 /** Updates closer together than this are a drag or a slider moving; this long after the last, frames are full size again. */
 const MOVING_QUIET_MS = 100
+/** Long side, in pixels, of the frames drawn only to solve the color stage for a mix ahead of time. */
+const PRESOLVE_LONG_SIDE = 64
+/** Idle time left that a solve ahead of time needs to start in: one takes about 15 to 40 ms on the CPU. */
+const PRESOLVE_IDLE_MS = 30
+/** How long a solve ahead of time waits for that much idle time before it runs anyway, as an animation keeps idle short. */
+const PRESOLVE_WAIT_MS = 400
+
+/** The scene with each mix one color slider move away from its own (`neighbourMixes`), or none without the color stage. */
+function neighbourScenes(scene: Scene): Scene[] {
+  const colorMix = scene.colorMix
+  if (!colorMix || !isPackId(colorMix.pack)) return []
+  const pack = getPack(colorMix.pack)
+  return neighbourMixes(pack, mixFromShares(pack, colorMix.shares) ?? defaultMix(pack)).map((mix) => ({ ...scene, colorMix: { pack: pack.id, shares: [...mix.shares] } }))
+}
+
+/** Whether two scenes differ only in their color mix. */
+function onlyMixDiffers(a: Scene, b: Scene): boolean {
+  return a.colorMix !== undefined && b.colorMix !== undefined && JSON.stringify({ ...a, colorMix: null }) === JSON.stringify({ ...b, colorMix: null })
+}
 
 type Step = 'done' | 'waiting' | 'failed'
 
@@ -59,8 +83,9 @@ interface Warming extends WarmItem {
   drawn: boolean
 }
 
-const whenIdle = (callback: () => void): number =>
-  typeof requestIdleCallback === 'function' ? requestIdleCallback(callback) : window.setTimeout(callback, 100)
+/** Calls back in idle time, with the time left in it where the browser tells it, or after `timeout` ms at the latest. */
+const whenIdle = (callback: (deadline?: IdleDeadline) => void, timeout?: number): number =>
+  typeof requestIdleCallback === 'function' ? requestIdleCallback(callback, timeout ? { timeout } : undefined) : window.setTimeout(callback, 100)
 
 const cancelIdle = (handle: number): void => {
   if (typeof cancelIdleCallback === 'function') cancelIdleCallback(handle)
@@ -117,8 +142,13 @@ export class PreviewLoop {
   private moving = false
   private lastUpdate = -Infinity
   private quietTimer: ReturnType<typeof setTimeout> | undefined
-  /** The size moving frames are drawn at, from the GPU time of recent 1x frames. */
+  /** The size moving frames are drawn at, from the GPU time of recent frames. */
   private movingScale = 1
+  /** A frame that built no programs has been timed, so movingScale no longer comes from frames that did. */
+  private movingTimed = false
+  /** The shown scene at the mixes one slider move away, still to solve ahead of time, nearest first. */
+  private presolveQueue: Scene[] = []
+  private presolveIdle = 0
   private paused = false
   private lost = false
   private readonly handleLost = () => {
@@ -136,12 +166,15 @@ export class PreviewLoop {
   }
 
   update(scene: Scene, width: number, height: number): void {
+    // A new mix alone is drawn like a moving slider's frame first, so a slow look shows it at once and sharp after.
+    const mixStep = this.scene !== null && width === this.width && height === this.height && onlyMixDiffers(this.scene, scene)
     this.scene = scene
     this.width = width
     this.height = height
     this.version++
+    this.presolveQueue = []
     const now = performance.now()
-    this.moving = now - this.lastUpdate < MOVING_QUIET_MS
+    this.moving = now - this.lastUpdate < MOVING_QUIET_MS || mixStep
     this.lastUpdate = now
     clearTimeout(this.quietTimer)
     // Right after the last change the frame is drawn again at full size, before the settled 2x frame.
@@ -166,6 +199,9 @@ export class PreviewLoop {
     clearTimeout(this.quietTimer)
     if (this.idle) cancelIdle(this.idle)
     this.idle = 0
+    if (this.presolveIdle) cancelIdle(this.presolveIdle)
+    this.presolveIdle = 0
+    this.presolveQueue = []
     if (this.timingFrame) cancelAnimationFrame(this.timingFrame)
     this.timingFrame = 0
     this.warmQueue = null
@@ -200,7 +236,37 @@ export class PreviewLoop {
       if (step === 'failed') return
     }
     this.canvas.dataset.settled = 'true'
+    this.startPresolving()
     this.startWarming()
+  }
+
+  /**
+   * Solves the color stage ahead of time for each mix one slider move away from the shown one, one per idle period
+   * with time for it, so a slider step finds its solve kept and its frame needs none. Each is a frame of the shown
+   * scene at that mix drawn at PRESOLVE_LONG_SIDE, which the stage solves for the format's design as at any size.
+   */
+  private startPresolving(): void {
+    if (!this.scene) return
+    this.presolveQueue = neighbourScenes(this.scene)
+    if (this.presolveQueue.length && !this.presolveIdle) this.presolveIdle = whenIdle((deadline) => this.presolveNext(deadline), PRESOLVE_WAIT_MS)
+  }
+
+  private presolveNext(deadline?: IdleDeadline): void {
+    this.presolveIdle = 0
+    if (this.lost || this.paused) return
+    const previewIdle = this.canvas.dataset.settled === 'true' && !this.inFlight && !this.fastFrame && !this.settleFrame && this.settleTimer === undefined
+    const roomy = !deadline || deadline.didTimeout || deadline.timeRemaining() >= PRESOLVE_IDLE_MS
+    const scene = previewIdle && roomy ? this.presolveQueue.shift() : undefined
+    if (scene) {
+      const scale = PRESOLVE_LONG_SIDE / Math.max(this.width, this.height, 1)
+      try {
+        this.renderer.render(scene, { width: Math.max(1, Math.round(this.width * scale)), height: Math.max(1, Math.round(this.height * scale)), supersample: 1, background: true })
+      } catch (error) {
+        console.error('Solving a mix ahead of time failed', error)
+        this.presolveQueue = []
+      }
+    }
+    if (this.presolveQueue.length) this.presolveIdle = whenIdle((next) => this.presolveNext(next), PRESOLVE_WAIT_MS)
   }
 
   /**
@@ -269,7 +335,7 @@ export class PreviewLoop {
   private record(frame: InFlight): void {
     const ms = performance.now() - frame.start
     if (frame.supersample === 2 && ms > SLOW_SETTLE_MS && !frame.fresh) this.slowSizes.add(frame.size)
-    if (frame.supersample === 1 && !frame.timer && !frame.fresh && this.moving) this.movingScale = ms > LATE_FRAME_MS ? smallerScale(frame.scale) : frame.scale
+    if (frame.supersample === 1 && !frame.timer && !frame.fresh) this.movingScale = ms > LATE_FRAME_MS ? smallerScale(frame.scale) : frame.scale
     this.frames++
     this.canvas.dataset.frame = String(this.frames)
     this.canvas.dataset.supersample = String(frame.supersample)
@@ -295,7 +361,10 @@ export class PreviewLoop {
     this.timing = null
     if (ms === null) return
     this.canvas.dataset[timing.supersample === 2 ? 'settledGpuMs' : 'fastGpuMs'] = ms.toFixed(1)
-    if (timing.supersample === 1 && !timing.fresh) this.movingScale = movingScaleFor(ms / (timing.scale * timing.scale))
+    // A settled frame has four times the pixels of a full-size 1x frame. After load every frame so far built programs,
+    // so until a frame that didn't is timed, those set the size for moving frames, and a slider's first step is small.
+    if (!timing.fresh || !this.movingTimed) this.movingScale = movingScaleFor(ms / (timing.scale * timing.scale) / (timing.supersample === 2 ? 4 : 1))
+    if (!timing.fresh) this.movingTimed = true
   }
 
   /** The shown look, then the shown look with each filter (a filter's output pass is the same in every look), then the other looks. */

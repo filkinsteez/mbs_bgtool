@@ -128,6 +128,24 @@ export function stepForKey(pack: ColorPack, mix: ColorMix, index: number, key: s
   return Math.min(highest, Math.max(lowest, next))
 }
 
+/**
+ * The mixes one slider move away from `mix`: each color at each other step of its range, the others keeping their
+ * ratios, nearest steps first. A drag or keys on one color only reach these, since moving a color keeps the others'
+ * ratios, so the preview can solve them ahead of time.
+ */
+export function neighbourMixes(pack: ColorPack, mix: ColorMix): ColorMix[] {
+  const step = mixStep(pack)
+  const found: { distance: number; mix: ColorMix }[] = []
+  for (const index of hueOrder(pack)) {
+    const [lowest, highest] = stepRange(pack, mix, index)
+    for (let k = Math.round(lowest / step); k <= Math.round(highest / step); k++) {
+      const distance = Math.abs(k * step - mix.shares[index])
+      if (distance > ON_STEP) found.push({ distance, mix: setShare(pack, mix, index, k * step) })
+    }
+  }
+  return found.sort((a, b) => a.distance - b.distance).map((entry) => entry.mix)
+}
+
 export function isColorOn(mix: ColorMix, index: number): boolean {
   return mix.shares[index] > EPSILON
 }

@@ -313,7 +313,8 @@ export interface ColorStageReport {
   fields: string[]
 }
 
-const KEEP = 8
+/** Designs and solves kept: room for the preview's solves made ahead of time for every mix one slider move away. */
+const KEEP = 40
 const designs = new Map<string, Design>()
 const solves = new Map<string, Solved>()
 let lastReport: ColorStageReport | null = null
@@ -439,7 +440,8 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
   }
   const pack = getPack(isPackId(input.settings.pack) ? input.settings.pack : COLOR_DESIGN_PACK)
   const mix = mixFromShares(pack, input.settings.shares) ?? defaultMix(pack)
-  const solveKey = `${key}|${pack.id}|${mix.shares.join(',')}`
+  // Shares to nine places, so a mix that differs from one solved ahead of time only in rounding finds that solve.
+  const solveKey = `${key}|${pack.id}|${mix.shares.map((share) => share.toFixed(9)).join(',')}`
   const { fields, grid } = design
   let solved = solves.get(solveKey)
   if (!solved) {
