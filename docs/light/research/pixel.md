@@ -1,6 +1,6 @@
 # Pixel filter: what the examples show and what the filter does
 
-Started 2026-11-04. On 2026-11-05 the slider became density, and later that day its top went from 72 to 144 cells. Engine stage: `src/light/engine/filters/pixel.ts`. First prototype: `prototypes/pixel/`. Scratch scripts for the density version, downloads, measurements and sheets: `artifacts/pixel/` (local, gitignored). Prototype output: `prototypes/pixel/out/` (gitignored).
+Started 2026-11-04. On 2026-11-05 the slider became density, and later that day its top went from 72 to 144 cells. On 2026-11-10 the soft LEDs with dark gaps became flat cells with crisp light lines on their borders, as in the deck's picture. Engine stage: `src/light/engine/filters/pixel.ts`. First prototype: `prototypes/pixel/`. Scratch scripts for the density version, downloads, measurements and sheets: `artifacts/pixel/` (local, gitignored). Prototype output: `prototypes/pixel/out/` (gitignored).
 
 ## Where the examples are
 
@@ -45,28 +45,25 @@ Frame copy
 - Its size depends on the frame's aspect and the density only, so a preview and an export read the same texels.
 
 Cell color
-- Each cell shows the mean of the frame over the cell, in linear light, flat. It blends into the next cell over about a quarter of a cell (weight t⁴ / (t⁴ + (1 − t)⁴)), so cell edges are soft.
+- Each cell shows the mean of the frame over the cell, in linear light, flat. The color changes to the next cell's under the line between them, over the line's width (at least one pixel).
 
-LED
-- A rounded-square LED (half-size 0.42 cell, edge 0.16 cell wide, superellipse corners of exponent 4) brightens the middle of each cell and darkens the gaps by the same amount of light: gain = 1 + contrast × (LED / mean LED − 1). A flat area keeps its color exactly, so a pack hex keeps its hex.
-- The contrast is 0.15 at every density. Above about 0.2 the gaps read as a mesh when the whole frame is seen at preview size.
-- Each channel's contrast is lowered where the LED's middle would push that channel past 1. A bright LED keeps its pattern in the channels with room: its middle turns paler and its color sits in the gaps, and every channel keeps its mean. White has no pattern.
-- The LED is averaged over a box around each pixel (3 x 3 points): the pixel's own area for cells of 16 px and more, widening to 2 px for cells under 10 px. Sampled at the pixel's center alone, a 6 px cell's gap lands on one pixel or two, and the grid beats every four cells. Averaging a repeating pattern keeps its mean, so each cell keeps its color.
-- Below 3 to 6 output pixels a cell, the LED fades out, so the smallest previews show plain cells without moiré. During a drag the preview may draw at half size, where cells at the top are about 3 px; the settled frame shows the LEDs.
-
-Light kept
-- A soft edge hands light from the brighter of two cells to the darker. Per axis, a cell's own color covers 1 − 2H of its area and each neighbour's H, where H = 0.042 for this blend (`blendShare`). The light a cell loses this way goes back into its own LED, so a light cell is never dimmed and a thin bright line keeps its brightness as a row of LEDs.
-- A darker cell keeps the little light it gets: taking it back would leave a dark spot in its middle. Beside a hot line on black this reads as the LED's light spilling into the next cell. Accepted on 2026-11-05.
-- There is no glow. In the first density version a glow through the cell means (0.35 of the light) moved up to a fifth of a thin line cell's light into its neighbours (line cells 0.02 to 0.03 darker in Oklab L), and the plain light it laid over the pattern lowered the LED contrast by a third.
+Lines
+- Light lines on the cell borders, 2/24 of a cell wide as in the deck's picture (2 px every 24 px): 10 px at 18 cells in a 4K export, 3.5 px at 51, and 2.8 px at 18 cells in a 1076 x 606 preview.
+- A line is lighter than its cell by 0.7 of the cell's light, and the inside is darker by the same amount of light: gain = 1 + 0.7 × (cover − area) / (1 − area), where cover is how much of the pixel the lines cover and area the share of the cell they cover. A flat area keeps its color, so a pack hex keeps its hex. The deck's lines are about white at 60 % opacity, which is stronger; 0.7 follows the brief's "keep the contrast low".
+- Each channel's contrast is lowered where a line would push that channel past 1, so white has no lines. Dark cells get faint lines, so a dark room stays dark.
+- The cover is the line's overlap with the pixel's own width, so lines are crisp at every size and a line thinner than a pixel covers it by its share. Below 3 to 6 output pixels a cell the lines fade out, so the smallest previews show plain cells without moiré.
+- There is no glow and no light handed between cells. Measured on Sunrise Bold s1, Sunrise Atmospheric s4, Rush Bold s2 and Contour Bold s3 at 1076 x 606 (`artifacts/engine/tools/cell-means.mjs`): each frame's mean color moves by 0.0004 Oklab or less; over blocks of 3 x 3 cells at 51 cells the 95th percentile is 0.005 or less, and the worst block is 0.031, beside Contour's hot line, as with the LEDs.
 
 Seed
 - The filter adds no randomness. The dither after it is keyed to the seed and the output pixel, so the same seed gives the same bytes.
 
 Cost
-- Per output pixel: the means of six cells (the nearest, the four beside it and the diagonal one in the pixel's 2 x 2 block), one read each, the LED at 9 points, and a few dozen arithmetic operations.
-- At 3840 x 2160 (Halo Elemental seed 2, medians of three runs on a loaded machine), the output step takes 6.4 ms without a filter, 9.6 ms at density 0 and 9.3 ms at 1: Pixel adds about 3 ms at every density. The frame copy (up to a 1024 x 576 draw at 144 cells) adds nothing measurable to the composite step.
+- Per output pixel: the means of the four cells around it, one read each, and a few arithmetic operations. The LED version read six cells and the LED at 9 points.
+- The LED version at 3840 x 2160 (Halo Elemental seed 2, medians of three runs on a loaded machine): the output step took 6.4 ms without a filter, 9.6 ms at density 0 and 9.3 ms at 1, so Pixel added about 3 ms at every density. The line version has fewer reads and was not timed again. The frame copy (up to a 1024 x 576 draw at 144 cells) adds nothing measurable to the composite step.
 
 ## What was tried and dropped
+
+The LED version (2026-11-05 to 2026-11-10, this note at commit 3d1aa45): a rounded-square LED in each cell (half-size 0.42 cell, edge 0.16 cell) at contrast 0.15, with dark gaps, cells blending into each other over a quarter of a cell, and the light a cell handed its neighbours put back into its own LED. Next to the deck's picture it read as soft, blurry tiles with dark gaps, where the picture has crisp light lines (`artifacts/engine/r5/pixel-before-after.jpg`). Lines 6 % of a cell wide at contrast 0.4 were also tried on 2026-11-10; they were too faint beside the picture (`artifacts/engine/r5/pixel-lines-zoom.jpg`).
 
 The first version (2026-11-04, this note at commit 0462813): 36 cells at every strength. Strength 0 to 0.5 faded the cells in over the image, which looked like a double exposure on thin lines; 0.5 to 1 raised the LED contrast from 0.10 to 0.20. LED half-size 0.4 and edge 0.12, blend t⁸, 30 % glow through a cubic B-spline, light past 1 added as white, and the LED faded out from luminance 0.7 to 1. Its sheets are in `artifacts/pixel/sheets/`.
 
@@ -134,6 +131,7 @@ The first version's color, GPU and preview checks are in this note at commit 046
 - Pixel is back (SHARED.md). Thin Contour lines become rows of LEDs: accepted.
 - 2026-11-05: the slider sets the density, like ASCII's, and the filter is fully on at every value. Each cell keeps its average color and light areas are not dimmed. Near-black cells beside a hot line may take a little of its light (it reads as the LED's light spilling).
 - 2026-11-05, owner: density can go higher. The top is 144 cells, twice the old 72; the frame copy now follows the density.
+- 2026-11-10 (coordinator's round 5, filters against the references): crisp light lines on the borders of flat cells instead of soft LEDs with dark gaps. The picture's smooth image under the grid is not copied, since the brief asks for the render quantized to a grid.
 
 ## Commands
 

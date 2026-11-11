@@ -3,19 +3,19 @@ import { frameAspect } from '../frame'
 import type { FilterFrame, OutputFilter } from './types'
 
 /**
- * The Pixel filter (prototypes/pixel, docs/light/research/pixel.md): the frame quantized to a grid of square cells,
- * seen as an LED wall up close. It is fully on at every slider value.
+ * The Pixel filter: the frame quantized to a grid of square cells with thin light lines between them, like the deck's
+ * Pixel picture (44:280). It is fully on at every slider value.
  *
  * - The slider sets density: cells on the short side, from 18 at 0 to 144 at 1 on a log scale (51 at 0.5, 86 at
  *   0.75). Cells are whole across and down, so the grid depends on the frame's aspect and the density only, and a
  *   preview shows the same cells as the export. Between whole cell counts nothing changes.
- * - Each cell shows its mean color, flat, and blends into its neighbours over about a quarter of a cell.
- * - A rounded-square LED brightens the middle of each cell and darkens the gaps by the same amount of light, so every
- *   cell keeps its mean color. A channel near 1 has little room to brighten, so its share of the pattern shrinks with
- *   its room: bright LEDs turn paler in the middle with their color in the gaps, and white has no pattern.
- * - The soft edges hand a brighter cell's light to its darker neighbours; that light goes back into the brighter
- *   cell's LED, so a light cell is never dimmed (a thin bright line keeps its brightness). A darker cell keeps the
- *   little it gets, as there is no light in it to take back.
+ * - Each cell shows its mean color, flat; the color changes to the next cell's under the line between them.
+ * - The lines are PIXEL_LINE_SHARE of a cell wide, as in the deck's picture (crisp at every size, so a preview shows
+ *   the grid an export shows), and lighter than their cell by PIXEL_LINE_CONTRAST of its light; the inside is darker
+ *   by the same amount of light, so every cell keeps its mean color. A channel near 1 has little room to brighten,
+ *   so its share of the pattern shrinks with its room, and white has no lines. Dark cells get faint lines, so a dark
+ *   room keeps its dark. The deck's lines are about white at 60 % opacity; these are lighter than the cell by less,
+ *   since the brief asks for low contrast ("so it reads as light, not pattern").
  */
 
 /** Cells on the short side at density 0 and 1; between them the count grows by the same ratio per step. */
@@ -29,51 +29,34 @@ export const PIXEL_MAX_CELLS = 144
  */
 export const PIXEL_SOURCE_TEXELS_PER_CELL = 2
 const SOURCE_SAMPLES_ON_SHORT_SIDE = 288
-/** How sharply a cell blends into the next: weight t^4 / (t^4 + (1 - t)^4), over about a quarter of a cell. */
-const BLEND_POWER = 4
-/** The LED: a rounded square of half-size 0.42 cell, its edge 0.16 cell wide, superellipse corners of exponent 4. */
-const LED_HALF = 0.42
-const LED_EDGE = 0.16
-const LED_CORNER = 4
-/** The gaps are this much darker than the cell; the middle is brighter by the same amount of light. */
-export const PIXEL_CONTRAST = 0.15
-/** Cell size in output pixels over which the LED fades in, so small previews show cells without moiré. */
-const LED_FADE_PX = [3, 6] as const
-
-const smoothstep = (edge0: number, edge1: number, x: number) => {
-  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)))
-  return t * t * (3 - 2 * t)
-}
-
-/** The LED's brightness at offset (x, y) from its cell's center, in cells. */
-export function ledShape(x: number, y: number): number {
-  const d = (Math.abs(x) ** LED_CORNER + Math.abs(y) ** LED_CORNER) ** (1 / LED_CORNER)
-  return 1 - smoothstep(LED_HALF - LED_EDGE / 2, LED_HALF + LED_EDGE / 2, d)
-}
-
-/** The LED's mean over its cell, so that ledShape / PIXEL_LED_AREA averages 1 over a cell. */
-export const PIXEL_LED_AREA = (() => {
-  const n = 256
-  let sum = 0
-  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) sum += ledShape((i + 0.5) / n - 0.5, (j + 0.5) / n - 0.5)
-  return sum / (n * n)
-})()
+/** Line width as a share of a cell, as in the deck's picture (2 px every 24 px): 3.5 px at 51 cells in 4K, 10 at 18. */
+export const PIXEL_LINE_SHARE = 2 / 24
+/** How much lighter a line is than its cell, as a share of the cell's light. */
+export const PIXEL_LINE_CONTRAST = 0.7
+/** Cell size in output pixels over which the lines fade in, so small previews show cells without moiré. */
+const LINE_FADE_PX = [3, 6] as const
 
 /**
- * How much of a cell's width its soft edge hands to one neighbour, per unit of color difference: the blend weight
- * t^p / (t^p + (1 - t)^p) integrated over the cell's half, t from 0 to 0.5.
+ * How much of one output pixel the grid's lines cover (CPU twin of the shader's): the pixel `dx`, `dy` cells from the
+ * nearest borders across and down, a pixel `pixel` cells wide, lines `width` cells wide. Horizontal and vertical lines
+ * overlap at the crossings.
  */
-export function blendShare(power: number): number {
-  const n = 4096
-  let sum = 0
-  for (let i = 0; i < n; i++) {
-    const t = ((i + 0.5) / n) * 0.5
-    sum += t ** power / (t ** power + (1 - t) ** power)
+export function pixelLineCoverage(dx: number, dy: number, width: number, pixel: number): number {
+  const axis = (d: number) => {
+    const lo = Math.max(Math.abs(d) - pixel / 2, -width / 2)
+    const hi = Math.min(Math.abs(d) + pixel / 2, width / 2)
+    return Math.min(1, Math.max(0, (hi - lo) / pixel))
   }
-  return (sum / n) * 0.5
+  const x = axis(dx)
+  const y = axis(dy)
+  return x + y - x * y
 }
 
-const BLEND_SHARE = blendShare(BLEND_POWER)
+/** The share of a cell the lines cover, for lines `width` cells wide. */
+export function pixelLineArea(width: number): number {
+  const w = Math.min(1, Math.max(0, width))
+  return 1 - (1 - w) * (1 - w)
+}
 
 /** Cells on the short side for a density 0..1 (a missing value gives the count at 0.5). */
 export function pixelCells(density: number): number {
@@ -156,71 +139,42 @@ vec3 pixelCellMean(ivec2 cell) {
   return sum / (perCell.x * perCell.y);
 }
 
-// Weight of the next cell at t (0..1) between two cell centers.
-float pixelBlend(float t) {
-  float a = pow(t, ${glslFloat(BLEND_POWER)});
-  float b = pow(1.0 - t, ${glslFloat(BLEND_POWER)});
-  return a / (a + b);
-}
-
-float pixelLed(vec2 offset) {
-  vec2 a = abs(offset);
-  float d = pow(pow(a.x, ${glslFloat(LED_CORNER)}) + pow(a.y, ${glslFloat(LED_CORNER)}), ${glslFloat(1 / LED_CORNER)});
-  return 1.0 - smoothstep(${glslFloat(LED_HALF - LED_EDGE / 2)}, ${glslFloat(LED_HALF + LED_EDGE / 2)}, d);
-}
-
-// LED contrast per channel: the full contrast, or less where the LED's middle would push the channel past 1.
+// Line contrast per channel: the full contrast, or less where a line would push the channel past 1.
 vec3 pixelContrast(vec3 c) {
-  vec3 room = (1.0 / max(c, vec3(1e-6)) - 1.0) * ${glslFloat(PIXEL_LED_AREA / (1 - PIXEL_LED_AREA))};
-  return min(vec3(${glslFloat(PIXEL_CONTRAST)}), room);
+  return min(vec3(${glslFloat(PIXEL_LINE_CONTRAST)}), 1.0 / max(c, vec3(1e-6)) - 1.0);
+}
+
+// How much of a pixel the lines cover along one axis: the pixel d cells from the nearest border, p cells wide, the
+// line w cells wide (pixelLineCoverage in pixel.ts).
+float pixelLineAxis(float d, float w, float p) {
+  float lo = max(abs(d) - 0.5 * p, -0.5 * w);
+  float hi = min(abs(d) + 0.5 * p, 0.5 * w);
+  return clamp((hi - lo) / p, 0.0, 1.0);
 }
 
 vec3 filterPixel(vec3 display, ivec2 px, float weight) {
+  // Cell centers at whole numbers; u runs from the lower-left cell's center (0) to the next (1), the border at 0.5.
   vec2 f = (vec2(px) + 0.5) * uPixelCells / uPixelFrame - 0.5;
-  vec2 nearest = floor(f + 0.5);
-  ivec2 n = ivec2(nearest);
-  vec2 t = f - nearest;
   vec2 corner = floor(f);
-  ivec2 lo = ivec2(corner) - n + 1;
-
-  // Means of the 3 x 3 cells around the nearest one (index j * 3 + i), all but the diagonal cells outside the pixel's
-  // 2 x 2 block: nothing below reads those.
-  vec3 m[9];
-  for (int j = 0; j < 3; j++) {
-    for (int i = 0; i < 3; i++) {
-      if (i == 1 || j == 1 || (i == 2 * lo.x && j == 2 * lo.y)) m[j * 3 + i] = pixelCellMean(n + ivec2(i - 1, j - 1));
-    }
-  }
-
-  // Flat cells: the 2 x 2 cells around the pixel, blended near their shared edges, and their contrasts with them.
-  int k = lo.y * 3 + lo.x;
   vec2 u = f - corner;
-  float bx = pixelBlend(u.x);
-  float by = pixelBlend(u.y);
-  vec3 cells = mix(mix(m[k], m[k + 1], bx), mix(m[k + 3], m[k + 4], bx), by);
-  vec3 contrast = mix(mix(pixelContrast(m[k]), pixelContrast(m[k + 1]), bx), mix(pixelContrast(m[k + 3]), pixelContrast(m[k + 4]), bx), by);
+  ivec2 c0 = ivec2(corner);
+  vec3 m00 = pixelCellMean(c0);
+  vec3 m10 = pixelCellMean(c0 + ivec2(1, 0));
+  vec3 m01 = pixelCellMean(c0 + ivec2(0, 1));
+  vec3 m11 = pixelCellMean(c0 + ivec2(1, 1));
   float cellPx = min(uPixelFrame.x / uPixelCells.x, uPixelFrame.y / uPixelCells.y);
-  contrast *= smoothstep(${glslFloat(LED_FADE_PX[0])}, ${glslFloat(LED_FADE_PX[1])}, cellPx);
-  // The LED averaged over a box around the pixel (3 x 3 points): the pixel's own area for cells of 16 px and more,
-  // widening to 2 px for cells under 10 px. Sampled at the pixel's center alone, a 6 px cell's gap lands on one pixel
-  // or two and the grid beats every few cells. Averaging a repeating pattern keeps its mean, so cells keep theirs.
-  float boxPx = mix(2.0, 1.0, smoothstep(10.0, 16.0, cellPx));
-  vec2 stride = boxPx / 3.0 * uPixelCells / uPixelFrame;
-  float s = 0.0;
-  for (int j = -1; j <= 1; j++) {
-    for (int i = -1; i <= 1; i++) {
-      vec2 g = f + vec2(float(i), float(j)) * stride;
-      s += pixelLed(g - floor(g + 0.5));
-    }
-  }
-  s *= ${glslFloat(1 / (9 * PIXEL_LED_AREA))};
-  vec3 led = cells * (1.0 + contrast * (s - 1.0));
-
-  // The light the nearest cell holds over its area: per axis its own color weighs 1 - 2H and each neighbour H, the
-  // share a soft edge hands over (diagonal cells, at H^2, are left out and the rest scaled to sum to 1). What it lost
-  // to darker neighbours goes back into its LED.
-  vec3 held = (${glslFloat(1 - 2 * BLEND_SHARE)} * m[4] + ${glslFloat(BLEND_SHARE)} * (m[1] + m[3] + m[5] + m[7])) / ${glslFloat(1 + 2 * BLEND_SHARE)};
-  return led + max(m[4] - held, 0.0) * s;
+  float p = 1.0 / cellPx;
+  float w = ${glslFloat(PIXEL_LINE_SHARE)};
+  // Flat cells: the color changes to the next cell's over the line's width (a pixel at least), under the line.
+  vec2 b = clamp((u - 0.5) / max(w, p) + 0.5, 0.0, 1.0);
+  vec3 cells = mix(mix(m00, m10, b.x), mix(m01, m11, b.x), b.y);
+  vec3 contrast = pixelContrast(cells) * smoothstep(${glslFloat(LINE_FADE_PX[0])}, ${glslFloat(LINE_FADE_PX[1])}, cellPx);
+  float cx = pixelLineAxis(u.x - 0.5, w, p);
+  float cy = pixelLineAxis(u.y - 0.5, w, p);
+  float cover = cx + cy - cx * cy;
+  float area = 1.0 - (1.0 - w) * (1.0 - w);
+  // Lines lighter by the contrast, the inside darker by the same light, so the cell's mean stays.
+  return cells * (1.0 + contrast * (cover - area) / (1.0 - area));
 }
 `
 

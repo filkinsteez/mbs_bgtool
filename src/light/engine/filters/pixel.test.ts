@@ -3,14 +3,15 @@ import { EXPORT_SIZES } from '../frame'
 import { buildOutputShader } from '../output'
 import { OUTPUT_FILTERS } from '.'
 import {
-  blendShare,
-  ledShape,
   PIXEL_FILTER,
-  PIXEL_LED_AREA,
+  PIXEL_LINE_CONTRAST,
+  PIXEL_LINE_SHARE,
   PIXEL_MAX_CELLS,
   PIXEL_MIN_CELLS,
   pixelCells,
   pixelGrid,
+  pixelLineArea,
+  pixelLineCoverage,
   pixelUniforms,
 } from './pixel'
 
@@ -76,20 +77,40 @@ describe('pixel filter', () => {
     }
   })
 
-  it('normalizes the LED so it averages 1 over a cell and stays inside its cell', () => {
-    expect(PIXEL_LED_AREA).toBeGreaterThan(0.55)
-    expect(PIXEL_LED_AREA).toBeLessThan(0.75)
-    expect(ledShape(0, 0)).toBe(1)
-    expect(ledShape(0.5, 0)).toBe(0)
-    expect(ledShape(0.5, 0.5)).toBe(0)
+  it('draws crisp lines a fixed share of a cell wide, so a preview shows the grid an export shows', () => {
+    expect(PIXEL_LINE_SHARE).toBeCloseTo(2 / 24, 6)
+    expect((PIXEL_LINE_SHARE * 2160) / pixelCells(0.5)).toBeGreaterThan(3)
+    expect((PIXEL_LINE_SHARE * 2160) / pixelCells(0.5)).toBeLessThan(4)
+    // A pixel on the border is covered, one well inside its cell isn't, and the crossings count once.
+    expect(pixelLineCoverage(0, 0.4, 0.06, 0.02)).toBe(1)
+    expect(pixelLineCoverage(0.4, 0.4, 0.06, 0.02)).toBe(0)
+    expect(pixelLineCoverage(0, 0, 0.06, 0.02)).toBe(1)
+    // A line thinner than a pixel covers that pixel by its share.
+    expect(pixelLineCoverage(0, 0.4, 0.01, 0.02)).toBeCloseTo(0.5, 6)
   })
 
-  it('knows how much light a soft edge hands to a neighbour, to give it back', () => {
-    // A linear blend hands over the area of a triangle, 1/8 of the cell; sharper blends hand over less.
-    expect(blendShare(1)).toBeCloseTo(0.125, 6)
-    expect(blendShare(4)).toBeGreaterThan(0.03)
-    expect(blendShare(4)).toBeLessThan(0.05)
-    expect(blendShare(8)).toBeLessThan(blendShare(4))
+  it('keeps every cell its mean: the lines get lighter and the inside darker by the same light', () => {
+    for (const cellPx of [6, 12, 42, 120]) {
+      const pixel = 1 / cellPx
+      const width = PIXEL_LINE_SHARE
+      const area = pixelLineArea(width)
+      // The brightness factor at each pixel of a cell, as the shader draws it, averaged over the cell.
+      let sum = 0
+      let lines = 0
+      let n = 0
+      for (let j = 0; j < cellPx; j++) {
+        for (let i = 0; i < cellPx; i++) {
+          const dx = (i + 0.5) / cellPx - 0.5
+          const dy = (j + 0.5) / cellPx - 0.5
+          const cover = pixelLineCoverage(0.5 - Math.abs(dx), 0.5 - Math.abs(dy), width, pixel)
+          sum += 1 + (PIXEL_LINE_CONTRAST * (cover - area)) / (1 - area)
+          lines = Math.max(lines, cover)
+          n++
+        }
+      }
+      expect(sum / n, `${cellPx} px cells`).toBeCloseTo(1, 2)
+      expect(lines).toBeGreaterThan(0.3)
+    }
   })
 
   it('passes the cell grid at the density and the output size as uniforms', () => {
