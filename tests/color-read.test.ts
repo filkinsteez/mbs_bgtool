@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { BLUE_LIGHT, blueLight, rulesFor, sharesOf } from '../scripts/light/lib/color-read.mjs'
+import { getPack } from '@/light/color/packs'
+import { BLUE_LIGHT, blendSharesOf, blueLight, LIN, oklab, rulesFor, sharesOf } from '../scripts/light/lib/color-read.mjs'
 
 const bold = rulesFor({
   colors: [
@@ -47,5 +48,67 @@ describe('blueLight', () => {
 
   it('still counts a lighter pale violet or another pack color beside the brightest Meta Blue as borrowed', () => {
     for (const core of [PALE_VIOLET, YELLOW]) expect(read(core).borrowed).toBeGreaterThanOrEqual(BLUE_LIGHT.borrowed)
+  })
+})
+
+describe('near-black in the shares (compare round 41)', () => {
+  const linearOf = (hex: string) => [1, 3, 5].map((i) => LIN[parseInt(hex.slice(i, i + 2), 16)])
+  const hexOf = (packId: 'bold' | 'elemental' | 'atmospheric', name: string) => getPack(packId).colors.find((c) => c.name === name)!.hex
+  // The hex's own color dimmed in linear light to Oklab lightness L.
+  const dim = (hex: string, L: number) => {
+    const [r, g, b] = linearOf(hex)
+    const k = (L / oklab([r, g, b])[0]) ** 3
+    return [r, g, b].map((v) => encode(v * k))
+  }
+  const bytes = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))
+  // A frame of two halves, left and right.
+  const halves = (left: number[], right: number[]) => {
+    const rgb = new Uint8Array(W * H * 3)
+    for (let p = 0; p < W * H; p++) rgb.set(p % W < W / 2 ? left : right, 3 * p)
+    return rgb
+  }
+  const boldRules = rulesFor(getPack('bold'))
+
+  it('counts a color dimmed toward black for less, down to nothing at L 0.15', () => {
+    const cyan = bytes(hexOf('bold', 'Cyan'))
+    const at = (L: number) => {
+      const rgb = halves(cyan, dim(hexOf('bold', 'Meta Blue'), L))
+      const r = sharesOf(boldRules, rgb, W * H, true)
+      expect(r.labels?.[W - 1]).toBe('Meta Blue')
+      return r
+    }
+    expect(at(0.45).shares['Meta Blue']).toBeCloseTo(0.5, 2)
+    const navy = at(0.25)
+    expect(navy.shares['Meta Blue']).toBeCloseTo(1 / 3, 1)
+    expect(navy.shares.Cyan).toBeCloseTo(2 / 3, 1)
+    expect(navy.lit).toBe(1)
+    expect(at(0.16).shares['Meta Blue']).toBeLessThan(0.03)
+  })
+
+  it('counts each hex fully, the dark ones (Forest, Plum) too', () => {
+    const rules = rulesFor(getPack('elemental'))
+    for (const dark of ['Forest', 'Plum']) {
+      const s = sharesOf(rules, halves(bytes(hexOf('elemental', 'Lime')), bytes(hexOf('elemental', dark))), W * H).shares
+      expect(s[dark]).toBeCloseTo(0.5, 2)
+    }
+  })
+
+  it("counts Atmospheric's greys fully, Near-black darker than its hex too", () => {
+    const rules = rulesFor(getPack('atmospheric'))
+    const r = sharesOf(rules, halves(bytes(hexOf('atmospheric', 'Ice')), dim(hexOf('atmospheric', 'Near-black'), 0.2)), W * H, true)
+    expect(r.labels?.[W - 1]).toBe('Near-black')
+    expect(r.shares['Near-black']).toBeCloseTo(0.5, 2)
+  })
+
+  it('leaves black under L 0.15 out of the shares, in every pack', () => {
+    const r = sharesOf(boldRules, halves([0, 0, 0], bytes(hexOf('bold', 'Cyan'))), W * H)
+    expect(r.lit).toBeCloseTo(0.5, 2)
+    expect(r.shares.Cyan).toBeCloseTo(1, 2)
+  })
+
+  it('weighs the blend-aware reading the same way', () => {
+    const rgb = halves(bytes(hexOf('bold', 'Cyan')), dim(hexOf('bold', 'Meta Blue'), 0.25))
+    const labels = sharesOf(boldRules, rgb, W * H, true).labels ?? []
+    expect(blendSharesOf(boldRules, rgb, W, H, labels).shares['Meta Blue']).toBeCloseTo(1 / 3, 1)
   })
 })

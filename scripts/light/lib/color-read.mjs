@@ -38,6 +38,11 @@ export const READ = {
   // times their hex's light (1 stop over); brighter, Forest reads aquamarine and Plum magenta.
   brightDown: 0.5,
   darkUp: 2,
+  // In the shares, near-black counts less (coordinator, 2026-11-11 9:57 AM, compare round 41): a pixel counts by a
+  // smooth step on Oklab L over this range, divided by the same at its color's own hex so each hex counts fully.
+  // Atmospheric's greys count fully; grey and other take the plain step. What a pixel doesn't count for is left out,
+  // like the black under `visible`: the shares are of the lit, colored part of the picture.
+  nearBlack: [0.15, 0.35],
 }
 
 export const LIN = Float32Array.from({ length: 256 }, (_, i) => {
@@ -155,29 +160,47 @@ export function readAs(rules, L, a, b) {
 
 export const LABELS = (rules) => [...rules.colors.map((c) => c.name), 'grey', 'other']
 
-// Shares of one frame (RGB bytes, 3 per pixel) over its visibly lit pixels, and its label map when asked.
+const nearBlackStep = (L) => {
+  const [from, to] = READ.nearBlack
+  const t = Math.min(1, Math.max(0, (L - from) / (to - from)))
+  return t * t * (3 - 2 * t)
+}
+// How much a lit pixel at Oklab lightness L counts for `label` in the shares (READ.nearBlack).
+export function countWeight(rules, label, L) {
+  if (label === 'none') return 0
+  const c = rules.colors.find((color) => color.name === label)
+  if (c?.neutral) return 1
+  return c ? Math.min(1, nearBlackStep(L) / Math.max(1e-6, nearBlackStep(c.L0))) : nearBlackStep(L)
+}
+
+// Shares of one frame (RGB bytes, 3 per pixel) over its visibly lit pixels, each counted by countWeight, and its
+// label map when asked. `lit` is the share of the frame that is visibly lit, uncounted.
 export function sharesOf(rules, rgb, n, wantMap = false) {
-  const counts = Object.fromEntries([...LABELS(rules), 'none'].map((k) => [k, 0]))
+  const counts = Object.fromEntries(LABELS(rules).map((k) => [k, 0]))
   const labels = wantMap ? new Array(n) : null
   const cache = new Map()
+  let lit = 0
+  let total = 0
   for (let p = 0; p < n; p++) {
     const key = (rgb[3 * p] << 16) | (rgb[3 * p + 1] << 8) | rgb[3 * p + 2]
     let read = cache.get(key)
     if (read === undefined) {
       const [L, a, b] = oklab([LIN[rgb[3 * p]], LIN[rgb[3 * p + 1]], LIN[rgb[3 * p + 2]]])
       const label = readAs(rules, L, a, b)
-      read = { label, split: label === 'other' ? neighbourSplit(rules, L, a, b) : null }
+      const split = label === 'other' ? neighbourSplit(rules, L, a, b) : null
+      // A blend of hue neighbours counts for both; its label stays `other`.
+      const parts = split ? [[split.a, 1 - split.t], [split.b, split.t]] : label === 'none' ? [] : [[label, 1]]
+      read = { label, parts: parts.map(([k, share]) => [k, share * countWeight(rules, k, L)]) }
       cache.set(key, read)
     }
-    // A blend of hue neighbours counts for both; its label stays `other`.
-    if (read.split) {
-      counts[read.split.a] += 1 - read.split.t
-      counts[read.split.b] += read.split.t
-    } else counts[read.label]++
+    if (read.label !== 'none') lit++
+    for (const [k, w] of read.parts) {
+      counts[k] += w
+      total += w
+    }
     if (labels) labels[p] = read.label
   }
-  const lit = n - counts.none
-  const shares = Object.fromEntries(LABELS(rules).map((k) => [k, lit ? counts[k] / lit : 0]))
+  const shares = Object.fromEntries(LABELS(rules).map((k) => [k, total > 0 ? counts[k] / total : 0]))
   return { shares, lit: lit / n, labels }
 }
 
@@ -521,6 +544,7 @@ export function blendSharesOf(rules, rgb, width, height, labels, wantMap = false
   const shown = names.map((_, k) => lit > 0 && area[k] >= o.own * lit)
   const near = names.map((name, k) => (shown[k] ? squaredDistance((p) => labels[p] === name && !core[p], width, height) : null))
   const counts = Object.fromEntries(keys.map((k) => [k, 0]))
+  let total = 0
   const split = wantMap ? { a: new Int8Array(n).fill(-1), b: new Int8Array(n).fill(-1), t: new Float32Array(n), window: new Float32Array(n), core } : null
   for (let p = 0; p < n; p++) {
     const label = labels[p]
@@ -550,22 +574,22 @@ export function blendSharesOf(rules, rgb, width, height, labels, wantMap = false
           if (!best || d < best.d) best = { i: ks[i], j: ks[j], t, d, window }
         }
     }
-    const between = !best && label === 'other' ? neighbourSplit(rules, lab[3 * p], lab[3 * p + 1], lab[3 * p + 2]) : null
-    if (best) {
-      counts[names[best.i]] += 1 - best.t
-      counts[names[best.j]] += best.t
-      if (split) {
-        split.a[p] = best.i
-        split.b[p] = best.j
-        split.t[p] = best.t
-        split.window[p] = best.window
-      }
-    } else if (between) {
-      counts[between.a] += 1 - between.t
-      counts[between.b] += between.t
-    } else counts[label]++
+    const L = lab[3 * p]
+    const between = !best && label === 'other' ? neighbourSplit(rules, L, lab[3 * p + 1], lab[3 * p + 2]) : null
+    const parts = best ? [[names[best.i], 1 - best.t], [names[best.j], best.t]] : between ? [[between.a, 1 - between.t], [between.b, between.t]] : [[label, 1]]
+    for (const [k, share] of parts) {
+      const w = share * countWeight(rules, k, L)
+      counts[k] += w
+      total += w
+    }
+    if (best && split) {
+      split.a[p] = best.i
+      split.b[p] = best.j
+      split.t[p] = best.t
+      split.window[p] = best.window
+    }
   }
-  return { shares: Object.fromEntries(keys.map((k) => [k, lit ? counts[k] / lit : 0])), own: Object.fromEntries(names.map((name, k) => [name, lit ? area[k] / lit : 0])), split }
+  return { shares: Object.fromEntries(keys.map((k) => [k, total > 0 ? counts[k] / total : 0])), own: Object.fromEntries(names.map((name, k) => [name, lit ? area[k] / lit : 0])), split }
 }
 
 // The color the mix set holds at half (SHARED, Wed 8:31 AM).
