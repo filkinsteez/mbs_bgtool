@@ -6,6 +6,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 3D mode and the Meta symbol were removed on 2026-11-02 by owner decision. Do not bring them back unless the owner asks.
 Later on 2026-11-02 the owner asked for crops of the Meta logo outline as Contour light shapes. Use the official path from git history (`git show 5efa956^:public/icon-fill.svg`). Never show the whole logo, and no 3D.
+Contour's Halo layout of separate circles (a big ring with smaller rings beside it) was removed on 2026-11-11 by owner decision ("dont think we need this one"). Do not bring it back unless the owner asks.
 
 ## Backgrounds are light (owner directive, 2026-11-02)
 
@@ -33,6 +34,11 @@ Later on 2026-11-02 the owner asked for crops of the Meta logo outline as Contou
   differ by pack. Shapes, light positions and the light and dark layout
   stay the same. The Meta Blue toggle and the mix control, once
   built, also change only the colors.
+- Dragging moves the light and keeps the picture's colors (owner,
+  2026-11-11: "dragging control to change color often overrides all
+  original colors to just meta blue it should retain its original"). The
+  pack colors a seed shows at its default view stay in the picture under
+  any drag; a drag never turns them into Meta Blue.
 - Build systems, not copies. Shapes, light and packs combine with the
   seed into endless backgrounds. The moodboard references test whether
   the system reaches the needed quality; matching them is not the goal,
