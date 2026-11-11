@@ -300,6 +300,26 @@ node scripts/light/drag-colors.mjs [--look sunset.merged,contour.merged,rush.spl
 
 Whether a drag keeps the pack colors a frame shows (coordinator, 2026-11-11 7:29 AM; owner, 7:26 AM: "dragging control to change color often overrides all original colors to just meta blue it should retain its original"). A drag moves the light and keeps the picture's colors. Each frame is drawn as the tool draws it, with the stage on and then off unless `--stage` picks one, at the default view and under 13 drags: the palette check's four test drags (owner, mirror, above, side) and a 3 by 3 grid of light positions (`--grid`), each line starting in the middle of a cell and pointing 0.4 of the frame toward the frame's middle (the middle cell's points down). Each render is read with the exact-color reading (`lib/exact-read.mjs`, as `exact-colors.mjs` reads), 480 pixels on the long side. A pack color is shown at 1% of the frame or more (its exact share). A drag loses a color when the default view shows it and the drag doesn't, and makes the frame one color when the default view shows two colors or more and the drag one or none (`lib/drag-colors.mjs`). `summary.md` gives per look, pack and stage the drags that lose a color, those that make the frame one color and which colors go; then the losing drags per drag and look; the worst seeds; and each frame's losing drags. `drag.json` has every frame's and drag's shares. `worst-off.jpg` and `worst-on.jpg` show the worst drags (`--sheet`, one per frame), the default view beside the drag with the drag's line drawn from a dot. It exits 1 when any drag loses a color.
 
+### Landing sheet
+
+```sh
+node scripts/light/landing-sheet.mjs [--candidate <patch file | copy folder | commit>] [--base <commit>] [--out dir] [--keep-frames]
+```
+
+The sheet the coordinator looks at before a change to the color stage or a look lands (coordinator, 2026-11-11 5:23 PM, after the owner asked at 5:18 PM "why do we keep going back adn forth fixing these issues?"). It draws the base (HEAD unless `--base`) and the candidate as the tool draws them, with the color stage on and no filter (`toolControls`, `buildScene`, `withColorMix`, `withFilter`), 480 px on the long side, 52 frames:
+
+- every mood in every pack at the default mix and default view, seeds 1, 2 and 4, at 16:9 (27 frames);
+- one 9:16 frame per mood (Sunrise Bold, Contour Elemental and Rush Atmospheric, seed 1);
+- one color at 75% per pack in each mood (Cyan in Bold, Lime in Elemental, Ice in Atmospheric; seed 1);
+- Sunrise Bold seed 1 under the four test drags (owner, mirror, above, side) and a vertical drag from (0.5, 0.85) to (0.5, 0.15);
+- the owner's frames of 2026-11-11: Contour seeds 17 and 35 in the three packs, Rush Elemental seed 2 with his drag from (0.85, 0.5) to (0.85, 0.9) and Sunrise Bold seed 2 with his drag from (0.5, 0.1) to (0.5, 0.7).
+
+The base is drawn from a frozen copy made with `git archive` in `/tmp`. A patch is applied to a second frozen copy of the base (`git apply --check` first), a commit gets its own copy, and a folder (a work copy with its own `node_modules` link) is drawn as it is and left alone. Each side loads the harness from its own copy, so each side draws its own `src`. The copies the tool makes are deleted when it ends, also after an error. Without `--candidate` the sheet shows the base alone, three frames to a row.
+
+Output (default `artifacts/landing-sheet/<time>/`): `sheet.jpg` with every frame, then `sunrise.jpg`, `contour.jpg` and `rush.jpg`, all 960 px wide, plus `summary.md` (a table of the frames) and `frames.json`. In a paired sheet each row has the frame's label and scores, the base, the candidate and a difference map: the Oklab difference per pixel, black where equal and white at 0.1 and over, with the share of pixels over 0.02 and the mean difference under it. Renders repeat exactly: HEAD drawn against itself has no changed pixel in any of the 52 frames. `--keep-frames` also keeps each render as a PNG in `base/` and `candidate/`. A run takes about 10 s for the base alone and 17 s for a pair on this Mac.
+
+The banding score (`lib/banding.mjs`) is a hint for the eye, not a gate. Lines run through the frame's brightest place at 12 angles. Along each line, a band is a stretch whose hue stays within 35 degrees of where it started for 10 px or more; samples greyer than chroma 0.03 or darker than L 0.25 are skipped. `bands` is the most bands on one line. `sharp` is the most sharp steps on one line, where the hue turns 12 degrees or more within 24 px and turns fast for that line. The settings were set against counts by eye on eight frames at 1430505a: Sunrise Bold seed 4's six stripes read 7 bands, and Contour Atmospheric seed 1 reads 1. In a paired sheet the candidate's scores are orange when either number rose and green when one fell.
+
 ## Metrics (`metrics.json`)
 
 All ΔE values are plain Euclidean Oklab distances (L on 0..1; about 0.02 is one just-noticeable difference). The roadmap's starting targets are mean under 0.03 and p95 under 0.06. Ignore rects and rounded corners are masked everywhere.
