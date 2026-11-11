@@ -39,7 +39,8 @@ const SHARE_BLUR = 1.5
 /** Passes that set each color's pull until it covers its share. */
 const PASSES = 24
 
-export type CarryWay = { kind: 'outline' } | { kind: 'grain'; axis: readonly [number, number] | null }
+/** `along`: the look's own place along its outline per cell (0 to 1), used instead of the estimate from the light. */
+export type CarryWay = { kind: 'outline'; along?: Float32Array } | { kind: 'grain'; axis: readonly [number, number] | null }
 
 function carry(src: Float32Array, w: number, h: number): Float32Array {
   const out = new Float32Array(src.length)
@@ -251,7 +252,7 @@ export function carriedShares(grid: StageGrid, colors: readonly StageColor[], fi
   const total = area.reduce((a, b) => a + b, 0) || 1
   let place: Float32Array
   if (way.kind === 'outline') {
-    const along = outlinePlace(emit, w, h)
+    const along = way.along ?? outlinePlace(emit, w, h)
     const num = carry(Float32Array.from(emit, (e, i) => e * along[i]), w, h)
     const den = carry(emit, w, h)
     place = num.map((v, i) => (den[i] > 1e-12 ? v / den[i] : along[i]))
