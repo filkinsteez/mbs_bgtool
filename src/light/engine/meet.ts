@@ -36,6 +36,65 @@ export function meetSharpness(y: number): number {
   return MEET_SHARPNESS_DIM + (MEET_SHARPNESS - MEET_SHARPNESS_DIM) * t * t * (3 - 2 * t)
 }
 
+/**
+ * Bridge light (coordinator, 2026-11-10 9:04 PM): where two parts that take different colors meet, light is added
+ * along the meeting, as where two lights overlap, so meetColor or meetColors can hand over softly through a light
+ * middle that never reads as grey. The caller works it out from the design alone (the parts' fields, or the shares the
+ * color stage solves for every pack at the default mix), never from the picked pack, so the light and dark layout is
+ * the same in every pack.
+ *
+ * meetBridge follows the line where two fields are equal, MEET_BRIDGE_WIDTH to either side (a Gaussian's sigma, in
+ * short sides): the distance to that line is the fields' difference over how fast it changes, so where two parts
+ * overlap broadly the bridge is still a narrow seam along their crossing.
+ */
+export const MEET_BRIDGE_WIDTH = 0.03
+/**
+ * A bridge lifts its middle to MEET_BRIDGE_TO (displayed luminance, OKLab L 0.93), where a white middle reads as white
+ * and not grey, by at most MEET_BRIDGE_MOST more light (1: twice, as two equal lights overlapping). Light already
+ * that bright gets none, so a bridge never clips to flat white.
+ */
+export const MEET_BRIDGE_TO = 0.8
+export const MEET_BRIDGE_MOST = 1
+/** A crossing counts only where both fields are present: the weaker one from the first value (none) to the second. */
+export const MEET_BRIDGE_PRESENT = [0.1, 0.3] as const
+
+/**
+ * How much of a bridge a point gets, 0 to 1, from the two fields there and `slope`, how fast their difference changes
+ * (per short side): 1 on the line where they are equal, falling over MEET_BRIDGE_WIDTH away from it.
+ */
+export function meetBridge(fa: number, fb: number, slope: number): number {
+  if (!(fa > 0) || !(fb > 0)) return 0
+  const away = Math.abs(fa - fb) / Math.max(slope, 1e-6) / MEET_BRIDGE_WIDTH
+  const t = Math.min(1, Math.max(0, (Math.min(fa, fb) - MEET_BRIDGE_PRESENT[0]) / (MEET_BRIDGE_PRESENT[1] - MEET_BRIDGE_PRESENT[0])))
+  return Math.exp(-0.5 * away * away) * t * t * (3 - 2 * t)
+}
+
+/**
+ * A bridge between two colors' shares that add up to at most 1 (the color stage's soft shares): 1 where both are a
+ * half, (4 sa sb) to the power 1.5, so it follows the shares' own hand-over and is a little narrower than it.
+ */
+export function meetBridgeShares(sa: number, sb: number): number {
+  return Math.min(1, Math.max(0, 4 * sa * sb)) ** 1.5
+}
+
+/**
+ * The displayed luminance over which a bridge comes in (smoothly from the first to the second): a dim meeting can't be
+ * lifted enough for its middle to read as white, so it gets none and keeps its own blend.
+ */
+export const MEET_BRIDGE_LIT = [0.05, 0.4] as const
+
+/** How much of a bridge applies where the picture shows luminance `shown` (0 to 1). */
+export function meetBridgeLit(shown: number): number {
+  const t = Math.min(1, Math.max(0, (shown - MEET_BRIDGE_LIT[0]) / (MEET_BRIDGE_LIT[1] - MEET_BRIDGE_LIT[0])))
+  return t * t * (3 - 2 * t)
+}
+
+/** A displayed luminance with a bridge's light added (bridge 0 to 1, from meetBridge or meetBridgeShares). */
+export function meetBridgeLight(shown: number, bridge: number): number {
+  const b = Math.min(1, Math.max(0, bridge))
+  return shown + b * Math.min(Math.max(MEET_BRIDGE_TO - shown, 0), MEET_BRIDGE_MOST * Math.max(shown, 0))
+}
+
 const LUMA = [0.2126, 0.7152, 0.0722] as const
 const luminanceOf = (c: readonly number[]) => LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2]
 
@@ -124,6 +183,46 @@ function meetTint(u: readonly number[], d: number): number[] {
 }
 
 /**
+ * Where several colors meet (the color stage's up to five shares), at luminance 1: colors at luminance 1 and their
+ * shares. Each color leads by its share to the power `sharp`; a color keeps its own color only while it holds more
+ * than half the lead (as much as (2 lead - 1) squared, by meetTint) and the rest of its part goes to white, so far hues
+ * meet through white and three that meet evenly make white. Near hues mix as plain light, weighed by how far apart
+ * the meeting pairs are. Every term changes smoothly with every share, so no line appears where two lesser shares
+ * cross, as it would if only the two largest met (CPU twin of the GLSL meetColors5).
+ */
+export function meetColors(colors: readonly (readonly number[])[], shares: readonly number[], sharp = MEET_SHARPNESS): Rgb {
+  const n = colors.length
+  const top = Math.max(0, ...shares)
+  if (!n || top <= 0) return (n ? [colors[0][0], colors[0][1], colors[0][2]] : [1, 1, 1]) as Rgb
+  const lead = shares.map((q) => (Math.max(q, 0) / top) ** sharp)
+  const sum = lead.reduce((a, v) => a + v, 0)
+  const plain = [0, 0, 0]
+  const far = [0, 0, 0]
+  let total = 0
+  for (let k = 0; k < n; k++) {
+    const l = lead[k] / sum
+    const q = Math.max(shares[k], 0)
+    const d = Math.max(0, 2 * l - 1)
+    const tint = meetTint(colors[k], d * d)
+    for (let i = 0; i < 3; i++) {
+      plain[i] += q * colors[k][i]
+      far[i] += l * tint[i]
+    }
+    total += q
+  }
+  let pairs = 0
+  let apartSum = 0
+  for (let k = 0; k < n; k++)
+    for (let j = k + 1; j < n; j++) {
+      const w = (lead[k] / sum) * (lead[j] / sum)
+      pairs += w
+      apartSum += w * meetApart(colors[k], colors[j])
+    }
+  const apart = pairs > 1e-12 ? apartSum / pairs : 0
+  return plain.map((v, i) => v / total + (far[i] - v / total) * apart) as Rgb
+}
+
+/**
  * The light where two lights meet: meetColor at the luminance of the two lights added, ca la + cb lb (CPU twin of the
  * GLSL meetLight).
  */
@@ -133,15 +232,34 @@ export function meetLight(ca: readonly number[], la: number, cb: readonly number
 }
 
 /**
- * GLSL: `vec3 meetColor(vec3 ca, float la, vec3 cb, float lb, float sharp)`, `meetLight` (same arguments) and
- * `float meetSharpness(float y)`. A look and the color stage may both include it in one shader; the guard keeps one
- * copy.
+ * GLSL: `vec3 meetColor(vec3 ca, float la, vec3 cb, float lb, float sharp)`, `meetLight` (same arguments),
+ * `float meetSharpness(float y)`, `float meetBridge(float fa, float fb, float slope)`, `float meetBridgeShares(float
+ * sa, float sb)`, `float meetBridgeLit(float shown)` and `float meetBridgeLight(float shown, float bridge)`. A look and the
+ * color stage may both include it in one shader; the guard keeps one copy.
  */
 export const MEET_GLSL = /* glsl */ `
 #ifndef MEET_RULE
 #define MEET_RULE 1
 float meetSharpness(float y) {
   return mix(${MEET_SHARPNESS_DIM.toFixed(1)}, ${MEET_SHARPNESS.toFixed(1)}, smoothstep(${MEET_DIM[0]}, ${MEET_DIM[1]}, y));
+}
+
+float meetBridge(float fa, float fb, float slope) {
+  if (fa <= 0.0 || fb <= 0.0) return 0.0;
+  float away = abs(fa - fb) / max(slope, 1e-6) / ${MEET_BRIDGE_WIDTH.toFixed(4)};
+  return exp(-0.5 * away * away) * smoothstep(${MEET_BRIDGE_PRESENT[0].toFixed(4)}, ${MEET_BRIDGE_PRESENT[1].toFixed(4)}, min(fa, fb));
+}
+
+float meetBridgeShares(float sa, float sb) {
+  return pow(clamp(4.0 * sa * sb, 0.0, 1.0), 1.5);
+}
+
+float meetBridgeLit(float shown) {
+  return smoothstep(${MEET_BRIDGE_LIT[0].toFixed(4)}, ${MEET_BRIDGE_LIT[1].toFixed(4)}, shown);
+}
+
+float meetBridgeLight(float shown, float bridge) {
+  return shown + clamp(bridge, 0.0, 1.0) * min(max(${MEET_BRIDGE_TO.toFixed(4)} - shown, 0.0), ${MEET_BRIDGE_MOST.toFixed(4)} * max(shown, 0.0));
 }
 
 float meetApart(vec3 a, vec3 b) {
@@ -200,6 +318,40 @@ vec3 meetColor(vec3 ca, float la, vec3 cb, float lb, float sharp) {
   float lead = qa / (qa + qb);
   float d = (2.0 * lead - 1.0) * (2.0 * lead - 1.0);
   return mix(plain, meetTint(lead >= 0.5 ? ua : ub, d), apart);
+}
+
+vec3 meetColors5(vec3 c[5], float q[5], int n, float sharp) {
+  float top = 0.0;
+  for (int k = 0; k < 5; k++) if (k < n) top = max(top, q[k]);
+  if (n <= 0 || top <= 0.0) return n > 0 ? c[0] : vec3(1.0);
+  float lead[5];
+  float sum = 0.0;
+  for (int k = 0; k < 5; k++) {
+    lead[k] = k < n ? pow(max(q[k], 0.0) / top, sharp) : 0.0;
+    sum += lead[k];
+  }
+  vec3 plain = vec3(0.0);
+  vec3 far = vec3(0.0);
+  float total = 0.0;
+  for (int k = 0; k < 5; k++) {
+    if (k >= n) continue;
+    lead[k] /= sum;
+    float d = max(0.0, 2.0 * lead[k] - 1.0);
+    plain += max(q[k], 0.0) * c[k];
+    far += lead[k] * meetTint(c[k], d * d);
+    total += max(q[k], 0.0);
+  }
+  float pairs = 0.0;
+  float apartSum = 0.0;
+  for (int k = 0; k < 5; k++)
+    for (int j = 0; j < 5; j++) {
+      if (k >= n || j >= n || j <= k) continue;
+      float w = lead[k] * lead[j];
+      pairs += w;
+      apartSum += w * meetApart(c[k], c[j]);
+    }
+  float apart = pairs > 1e-12 ? apartSum / pairs : 0.0;
+  return mix(plain / total, far, apart);
 }
 
 vec3 meetLight(vec3 ca, float la, vec3 cb, float lb, float sharp) {

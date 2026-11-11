@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { linearToOklch } from '../color/oklab'
 import { hexToLinear } from '../color/srgb'
-import { MEET_SHARPNESS, MEET_SHARPNESS_DIM, meetApart, meetColor, meetLight, meetSharpness } from './meet'
+import { MEET_BRIDGE_TO, MEET_BRIDGE_WIDTH, MEET_SHARPNESS, MEET_SHARPNESS_DIM, meetApart, meetBridge, meetBridgeLight, meetColor, meetColors, meetLight, meetSharpness } from './meet'
 
 const luminance = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 const unit = (c: readonly number[]) => c.map((v) => v / luminance(c))
@@ -88,6 +88,74 @@ describe('where two lights meet', () => {
       return n / 1000
     }
     expect(whiteWidth(MEET_SHARPNESS_DIM)).toBeLessThan(0.6 * whiteWidth(MEET_SHARPNESS))
+  })
+
+  it('bridges along the line where two fields are equal, over the set width, and only where both are present', () => {
+    expect(meetBridge(0.6, 0.6, 2)).toBeCloseTo(1, 9)
+    // One width from the line (the difference over its slope), a Gaussian's value at one sigma.
+    expect(meetBridge(0.6 + 2 * MEET_BRIDGE_WIDTH, 0.6, 2)).toBeCloseTo(Math.exp(-0.5), 9)
+    expect(meetBridge(0.5, 0.6, 2)).toBeCloseTo(meetBridge(0.6, 0.5, 2), 12)
+    expect(meetBridge(0.8, 0, 2)).toBe(0)
+    expect(meetBridge(0.05, 0.05, 2)).toBe(0)
+    // Two parts overlapping broadly (their difference small but changing slowly) get no wide bridge off the line.
+    expect(meetBridge(0.62, 0.58, 0.2)).toBeLessThan(0.01)
+    // The middle goes up to MEET_BRIDGE_TO, by at most twice the light, and light already that bright gets none.
+    expect(meetBridgeLight(0.3, 0)).toBe(0.3)
+    expect(meetBridgeLight(0.6, 1)).toBeCloseTo(MEET_BRIDGE_TO, 12)
+    expect(meetBridgeLight(0.2, 1)).toBeCloseTo(0.4, 12)
+    expect(meetBridgeLight(0.85, 1)).toBe(0.85)
+  })
+
+  it('lifts a crossfade between far hues softly, so its middle is lighter than both sides and near white', () => {
+    const blue = color('#0064E0')
+    const yellow = color('#FFD61E')
+    const y = 0.25
+    // Two fields crossfading over half a short side (slope of their difference: 4 per short side).
+    let last = 0
+    let largest = 0
+    let middle = { lift: 0, x: 0 }
+    for (let k = 0; k <= 1000; k++) {
+      const x = k / 1000
+      const fa = Math.min(1, Math.max(0, 1.5 - 2 * x))
+      const lift = meetBridge(fa, 1 - fa, 4)
+      largest = Math.max(largest, Math.abs(lift - last))
+      last = lift
+      if (lift > middle.lift) middle = { lift, x }
+    }
+    expect(largest).toBeLessThan(0.03)
+    expect(middle.x).toBeCloseTo(0.5, 2)
+    // As the color stage uses it: colors at luminance 1 weighed by their fields, so the white middle of the hand-over
+    // is where the fields are equal, which is where the bridge's light is.
+    const shown = meetColor(unit(blue), 0.5, unit(yellow), 0.5).map((v) => v * meetBridgeLight(y, meetBridge(0.5, 0.5, 4)))
+    expect(luminance(shown)).toBeCloseTo(2 * y, 9)
+    expect(linearToOklch(shown)[1]).toBeLessThan(0.02)
+  })
+
+  it('meets several colors smoothly: whole where one holds every share, white where far hues share evenly', () => {
+    const blue = unit(color('#0064E0'))
+    const yellow = unit(color('#FFD61E'))
+    const orange = unit(color('#FF4F00'))
+    const cyan = unit(color('#1FCDF0'))
+    meetColors([blue, yellow, orange], [1, 0, 0]).forEach((v, i) => expect(v).toBeCloseTo(blue[i], 9))
+    expect(linearToOklch(meetColors([blue, yellow], [0.5, 0.5]))[1]).toBeLessThan(0.01)
+    const lime = unit(color('#D6F26C'))
+    expect(linearToOklch(meetColors([cyan, orange, lime], [1 / 3, 1 / 3, 1 / 3]))[1]).toBeLessThan(0.03)
+    // Near hues mix as plain light.
+    const cool = cyan.map((v, i) => 0.6 * v + 0.4 * blue[i])
+    meetColors([cyan, blue], [0.6, 0.4]).forEach((v, i) => expect(v).toBeCloseTo(cool[i], 9))
+    // Where two lesser shares cross (Yellow and Orange-red under Meta Blue), nothing jumps.
+    let last = meetColors([blue, yellow, orange], [0.55, 0.3, 0.15])
+    let path = 0
+    let largest = 0
+    for (let k = 1; k <= 1000; k++) {
+      const t = k / 1000
+      const now = meetColors([blue, yellow, orange], [0.55, 0.3 - 0.15 * t, 0.15 + 0.15 * t])
+      const step = Math.hypot(now[0] - last[0], now[1] - last[1], now[2] - last[2])
+      path += step
+      largest = Math.max(largest, step)
+      last = now
+    }
+    expect(largest).toBeLessThan(Math.max(0.05 * path, 1e-3))
   })
 
   it('changes smoothly along a crossfade, with no jump where the lead passes', () => {
