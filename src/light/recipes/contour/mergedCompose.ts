@@ -1093,8 +1093,9 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   return {
     colors: slots,
     params,
-    // A little bloom on the finest levels spreads each light in its own color around its core.
-    lens: { bloom: 0.05, bloomRadius: 0.12, bloomWidth: 1, halation: 0 },
+    // A little bloom on the finest levels spreads each light in its own color around its core, and a faint veil lets
+    // each light's glow reach the dim places around it.
+    lens: { bloom: 0.05, bloomRadius: 0.12, bloomWidth: 1, halation: 0, veil: 0.1 },
     output: { grain: 0, toe: 0 },
     layoutName: def.name,
   }
