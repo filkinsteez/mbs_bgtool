@@ -326,6 +326,22 @@ uniform float uRayUnit;
 uniform float uRayReach;
 uniform float uMeetUnit;
 float cmLum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+// meetColors5 for two colors, the same result with one meetTint instead of two: the trailing color's tint (nothing of
+// it kept) is white at luminance 1.
+vec3 cmMeet2(vec3 c0, float q0, vec3 c1, float q1, float sharp) {
+  float top = max(q0, q1);
+  float l0 = pow(max(q0, 0.0) / top, sharp);
+  float l1 = pow(max(q1, 0.0) / top, sharp);
+  float sum = l0 + l1;
+  l0 /= sum;
+  l1 /= sum;
+  vec3 plain = (max(q0, 0.0) * c0 + max(q1, 0.0) * c1) / (max(q0, 0.0) + max(q1, 0.0));
+  if (l0 * l1 <= 1e-12) return plain;
+  float d0 = max(0.0, 2.0 * l0 - 1.0);
+  float d1 = max(0.0, 2.0 * l1 - 1.0);
+  vec3 far = l0 * (d0 > 0.0 ? meetTint(c0, d0 * d0) : vec3(1.0)) + l1 * (d1 > 0.0 ? meetTint(c1, d1 * d1) : vec3(1.0));
+  return mix(plain, far, meetApart(c0, c1));
+}
 // Where a warm unit's light meets the others' (Meta Blue's), by the engine's meeting rule as Rush uses it: along the
 // line where the two are equal the light rises where it is lit, and where it is dim the two keep their own colors and
 // dim through their own dark shades toward black, instead of adding up to a mixed hue (maroon, purple, mauve).
@@ -336,27 +352,26 @@ vec3 contourMeet(vec3 e0, vec3 e1, vec3 e2) {
   vec3 other = e0 + e1 + e2 - warm;
   float lw = cmLum(warm);
   float lo = cmLum(other);
-  if (lw <= 1e-7 || lo <= 1e-7) return warm + other;
   float total = lw + lo;
+  // Where one light is a negligible share of the other, or their hues are not far apart, the meeting changes nothing:
+  // the light is their sum (most of a frame, so it skips the rule's cost there).
+  if (min(lw, lo) <= 1e-4 * total) return warm + other;
+  vec3 hOther = other / lo;
+  vec3 hWarm = warm / lw;
+  float apart = meetApart(hOther, hWarm);
+  if (apart <= 0.0) return warm + other;
   float shown = total < 0.5 ? total : 0.5 + 0.4 * (1.0 - exp(-(total - 0.5) / 0.4));
-  vec3 groups[5];
-  float levels[5];
-  for (int k = 0; k < 5; k++) {
-    groups[k] = vec3(1.0);
-    levels[k] = 0.0;
-  }
-  groups[0] = other / lo;
-  groups[1] = warm / lw;
-  levels[0] = lo;
-  levels[1] = lw;
-  float meetHere = meetBridgeShares(lo / total, lw / total) * meetApart(groups[0], groups[1]);
+  float meetHere = meetBridgeShares(lo / total, lw / total) * apart;
   float litHere = meetBridgeLit(shown);
   float metShown = meetDarkLight(meetBridgeLight(shown, meetHere * litHere), 0.6 * meetHere * (1.0 - litHere));
   // Lit, the soft hand-over through a light middle; dim, the two lights' own sum, darkened along the meeting line by
   // the dip above (the dim half's sharp hand-over drew a hard rim round the warm light's glow).
-  vec3 litHue = meetColors5(groups, levels, 2, 3.0);
   vec3 dimHue = (warm + other) / total;
-  vec3 hue = mix(dimHue / max(cmLum(dimHue), 1e-5), litHue / max(cmLum(litHue), 1e-5), litHere);
+  vec3 hue = dimHue / max(cmLum(dimHue), 1e-5);
+  if (litHere > 0.0) {
+    vec3 litHue = cmMeet2(hOther, lo, hWarm, lw, 3.0);
+    hue = mix(hue, litHue / max(cmLum(litHue), 1e-5), litHere);
+  }
   return hue / max(cmLum(hue), 1e-5) * total * metShown / max(shown, 1e-5);
 }
 float rayHash(float i) { return fract(sin(i * 127.1 + 311.7) * 43758.5453); }
