@@ -30,9 +30,9 @@ import type { Vec2 } from './shapes'
 const COLORS = 8
 const UNITS = 3
 const STOPS = 8
-// Three emitters (one per group of colors that dim together, and the lights of their own) of up to 64 pieces each, as
-// Halo's rings: far pieces of a large shape are merged into chords, and only the contour the light is on is cut at the
-// color stops. A fourth emitter of 64 pieces passes WebGL's 1024 uniform vectors (each piece takes four).
+// Three emitters (one per group of colors that dim together, and the lights of their own) of up to 64 pieces each: far
+// pieces of a large shape are merged into chords, and only the contour the light is on is cut at the color stops. A
+// fourth emitter of 64 pieces passes WebGL's 1024 uniform vectors (each piece takes four).
 export const MERGED_LAYOUT: CurveLightLayout = { emitters: UNITS, primitives: 64, near: 3, far: 3 }
 
 /**
@@ -81,8 +81,7 @@ const unitParams = (i: number): ParamSpec[] => [
 ]
 
 const params: ParamSpec[] = [
-  { kind: 'number', key: 'shape', label: 'Shape (1 logo, 2 rounded square, 3 ring, 4 rings)', min: 1, max: 4, step: 1, default: 2 },
-  { kind: 'vector', key: 'rings', label: 'Rings beside the main one (shape 4): x, y, radius each, from the origin (short sides)', min: -40, max: 40, step: 0.0001, default: [0, 0, 0, 0, 0, 0] },
+  { kind: 'number', key: 'shape', label: 'Shape (1 logo, 2 rounded square, 3 ring)', min: 1, max: 3, step: 1, default: 2 },
   { kind: 'vector', key: 'at', label: 'Shape origin', min: -8, max: 9, step: 0.0001, default: [0.5, 0.5] },
   { kind: 'number', key: 'size', label: 'Size', min: 0, max: 40, step: 0.0001, default: 1 },
   { kind: 'number', key: 'radius', label: 'Corner radius', min: 0, max: 6, step: 0.0001, default: 0.3 },
@@ -219,7 +218,6 @@ export function mergedEmitters(ctx: RecipeContext): EmitterSettings[] {
     radius: ctx.num('radius'),
     rotate: ctx.num('rotate'),
     flip: ctx.bool('flip'),
-    rings: ctx.vec('rings'),
   }
   const shape = startedShape(mergedShape(spec, anchor, ctx.aspect), ctx.vec('starts'))
   const stopContour = Math.round(ctx.num('stopContour'))

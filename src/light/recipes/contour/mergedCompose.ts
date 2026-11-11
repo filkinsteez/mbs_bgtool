@@ -89,7 +89,6 @@ const LAYOUTS: readonly LayoutDef[] = [
   { name: 'Bend', kind: 'logo', feature: 'rightBottom', size: 4.4, rotate: -25, target: [-0.15, 0.2], hotAt: 0.5, slide: [0.1, -0.01] },
   { name: 'Corner', kind: 'roundedSquare', size: 2.4, radius: 0.6, rotate: -12, target: [0.3, -0.2], hotAt: 0.5 },
   { name: 'Ribbon', kind: 'logo', feature: 'ribbon', size: 4.6, rotate: -30, target: [0, 0.05], hotAt: 0.5, slide: [0.08, 0.04] },
-  { name: 'Halo', kind: 'rings', size: 2.2, rotate: 0, target: [0.3, 0.05], hotAt: 0.5 },
   { name: 'Close', kind: 'roundedSquare', size: 1.6, radius: 0.8, rotate: 72, target: [-0.2, 0.2], hotAt: 0.5, blur: 3.2, fill: 2.6 },
   { name: 'Horizon', kind: 'ring', size: 5, rotate: 0, target: [0, 0.3], hotAt: 0.5, blur: 1.4, fill: 1.6, outside: true, rays: true, turn: 0.3 },
   { name: 'Wash', kind: 'ring', size: 3.4, rotate: 0, target: [-0.1, -0.1], tallTarget: [-0.1, 0], hotAt: 0.5, tall: 1.2, blur: 3, fill: 3.4, soft: true, outside: true, wash: true },
@@ -174,34 +173,24 @@ function placeLayout(def: LayoutDef, aspect: number, jitter: Jitter, homeAt: num
 const RECENTRE_FROM = 0.15
 const RECENTRE_MAX = 0.3
 
-/** The rings beside a rings layout's big ring (short sides): their radius, how far along the big ring from the main
- * light's place, and the gap between them and the big ring. */
-const RINGS_RADIUS = [0.3, 0.42]
-const RINGS_ALONG = [0.55, 0.8]
-const RINGS_GAP = [0.12, 0.22]
+/**
+ * The layout of each of nine seeds in turn. The sixth was Halo, separate rings that the owner removed (2026-11-11,
+ * "dont think we need this one"); its seeds draw another layout, and every other seed keeps its layout and design.
+ */
+const SEED_SLOTS: readonly (number | null)[] = [0, 1, 2, 3, 4, null, 5, 6, 7]
 
 /**
- * Two smaller rings beside a rings layout's big ring, one to each side of the main light's place along it, on the side
- * of the big ring the frame's middle is on, apart from it and kept inside the frame, from the seed alone (like the
- * moodboard's separate rings): x, y and radius each, around the origin as placed.
+ * A seed in a free slot: a seeded pick among the logo layouts that the seed before and after it don't show, turned a
+ * quarter turn either way, so its crop shows the outline from another side than the seeds already showing that layout
+ * and is not a moved copy of them. A rounded square's corner or a ring looks the same turned, so those are left out.
  */
-function ringsBeside(seed: number, spec: MergedShapeSpec, anchor: Vec2, aspect: number, homeAt: number): number[] {
-  const rand = seededRandom(Math.round(seed), 4127)
-  const [fw, fh] = frameSize(aspect)
-  const home = pointAlong(longestRun(visibleRuns(buildMergedShape(spec), anchor, aspect)), homeAt) ?? ([0, 0] as Vec2)
-  const rel: Vec2 = [home[0] - anchor[0], home[1] - anchor[1]]
-  const l = Math.hypot(rel[0], rel[1]) || 1
-  const u: Vec2 = [rel[0] / l, rel[1] / l]
-  const t: Vec2 = [-u[1], u[0]]
-  const toMiddle = -(home[0] * u[0] + home[1] * u[1]) >= 0 ? 1 : -1
-  return [1, -1].flatMap((side) => {
-    const r = lerp(RINGS_RADIUS[0], RINGS_RADIUS[1], rand())
-    const along = side * lerp(RINGS_ALONG[0], RINGS_ALONG[1], rand())
-    const across = toMiddle * (r + lerp(RINGS_GAP[0], RINGS_GAP[1], rand()))
-    const x = Math.min(fw / 2 - 0.6 * r, Math.max(-fw / 2 + 0.6 * r, home[0] + t[0] * along + u[0] * across))
-    const y = Math.min(fh / 2 - 0.6 * r, Math.max(-fh / 2 + 0.6 * r, home[1] + t[1] * along + u[1] * across))
-    return [round4(x - anchor[0]), round4(y - anchor[1]), round4(r)]
-  })
+function freedLayout(s: number, slot: number): { layout: number; turn: number } {
+  const n = SEED_SLOTS.length
+  const neighbours = [SEED_SLOTS[(slot + n - 1) % n], SEED_SLOTS[(slot + 1) % n]]
+  const choices = LAYOUTS.map((_, i) => i).filter((i) => LAYOUTS[i].kind === 'logo' && !neighbours.includes(i))
+  const rand = seededRandom(s, 6151)
+  const layout = choices[Math.min(choices.length - 1, Math.floor(rand() * choices.length))]
+  return { layout, turn: rand() < 0.5 ? -90 : 90 }
 }
 
 /**
@@ -211,7 +200,7 @@ function ringsBeside(seed: number, spec: MergedShapeSpec, anchor: Vec2, aspect: 
 export function seedDesign(seed: number) {
   const s = Math.round(seed)
   const rand = seededRandom(s, 913)
-  const variant = Math.floor((s - 1) / LAYOUTS.length)
+  const variant = Math.floor((s - 1) / SEED_SLOTS.length)
   const turn = lerp(-24, 24, rand())
   const shift: Vec2 = [lerp(-0.12, 0.12, rand()), lerp(-0.12, 0.12, rand())]
   const scale = lerp(0.85, 1.25, rand())
@@ -227,12 +216,14 @@ export function seedDesign(seed: number) {
   }
   // Seeds that share a shape also differ in which stretch of the outline is in the frame, and in how strongly and how
   // far into the face the light reaches.
-  const jitter: Jitter = { turn, shift, scale, mirror, slide: lerp(-1, 1, rand()) }
+  const slot = (((s - 1) % SEED_SLOTS.length) + SEED_SLOTS.length) % SEED_SLOTS.length
+  const freed = SEED_SLOTS[slot] === null ? freedLayout(s, slot) : null
+  const jitter: Jitter = { turn: turn + (freed?.turn ?? 0), shift, scale, mirror, slide: lerp(-1, 1, rand()) }
   const face = { faceDraw: rand(), faceReachDraw: rand() }
   // The second light: which side it takes (the other edge when one shows, else the far stretch), where along it, how
   // strong and how long.
   const second = { secondSide: rand(), secondAt: rand(), secondGain: rand(), secondWidth: rand() }
-  return { layout: (((s - 1) % LAYOUTS.length) + LAYOUTS.length) % LAYOUTS.length, jitter, ...draws, ...face, ...second }
+  return { layout: freed?.layout ?? SEED_SLOTS[slot] ?? 0, jitter, ...draws, ...face, ...second }
 }
 
 /** Index into MERGED_SHAPES of the seed's shape. */
@@ -240,10 +231,10 @@ export const shapeOfSeed = (seed: number): number => seedDesign(seed).layout
 
 /** The seed that shows `shape` and keeps the seed's own place among the seeds sharing a shape, from 1 to `max`. */
 export function seedWithShape(seed: number, shape: number, max = 100): number {
-  const n = LAYOUTS.length
+  const n = SEED_SLOTS.length
   const variant = Math.floor((Math.round(seed) - 1) / n)
-  const k = ((Math.round(shape) % n) + n) % n
-  let s = variant * n + k + 1
+  const k = ((Math.round(shape) % LAYOUTS.length) + LAYOUTS.length) % LAYOUTS.length
+  let s = variant * n + SEED_SLOTS.indexOf(k) + 1
   while (s > max) s -= n
   return Math.max(1, s)
 }
@@ -624,8 +615,6 @@ const THIRD_SAMPLES = 400
 /** Where the second and third lights share a unit, each has four stops: dark at its ends, full over its middle. */
 const SHARED_SHAPE = [-1, -0.3, 0.3, 1]
 const SHARED_LEVEL = [0, 1, 1, 0]
-/** How far all of the third light's stretch keeps from the main light's edge (short sides). */
-const THIRD_OFF_MAIN = 0.1
 /** Color-stage pieces along the third light. */
 const THIRD_PIECES = 8
 const THIRD_OFF = new Array<number>(2 * (THIRD_PIECES + 1)).fill(-9)
@@ -734,12 +723,10 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const seedAt = Math.min(0.75, Math.max(0.25, def.hotAt + design.hotShift))
   const placed = placeLayout(def, aspect, design.jitter, seedAt)
   const anchor = placed.anchor
-  const spec: MergedShapeSpec = def.kind === 'rings' ? { ...placed.spec, rings: ringsBeside(seed, placed.spec, anchor, aspect, seedAt) } : placed.spec
+  const spec: MergedShapeSpec = placed.spec
   const shape0 = buildMergedShape(spec)
   const runs = visibleRuns(shape0, anchor, aspect)
-  // The main light is on the layout's own shape (a rings layout's big ring), never on a ring beside it.
-  const mainRuns = def.kind === 'rings' ? visibleRuns(buildMergedShape(placed.spec), anchor, aspect) : runs
-  const run = longestRun(mainRuns)
+  const run = longestRun(runs)
   const [fw, fh] = frameSize(aspect)
   // The mood control (Light position; the tool holds it at 0.5) moves the light along the edge from the seed's place.
   // The seed's place stays in the middle half of the visible edge, so the face it lights is in the frame.
@@ -779,24 +766,19 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const anchorR: Vec2 = [(atFrame[0] - 0.5) * fw, (atFrame[1] - 0.5) * fh]
   const merged = mergedShape(spec, anchorR, aspect)
   // The contour the light is on starts at the light; every other contour at the seed's place for the light, so a drag
-  // never moves where a light of its own sits along it (on a small ring the start went round with the dragged light and
-  // cut through the stops). A ring beside a rings layout's big ring starts at its side facing the main light, away
-  // from its own light on its far side.
+  // never moves where a light of its own sits along it.
   const seedPlace = pointAlong(clearRun.length > 1 ? clearRun : run, Math.min(0.75, Math.max(0.25, def.hotAt + design.hotShift))) ?? anchor
-  // A rings layout's main light stays on its big ring (contour 0) wherever it is dragged; crossing onto a small ring,
-  // its stops jumped to another contour.
-  const onLightContour = (n: ReturnType<typeof nearestOnContours>) => (def.kind === 'rings' ? { ...n, contour: 0 } : n)
-  const fromHot = onLightContour(nearestOnContours(merged, anchorR, hot))
+  const fromHot = nearestOnContours(merged, anchorR, hot)
   const fromSeed = nearestOnContours(merged, anchorR, seedPlace)
-  const starts = fromHot.ts.map((t, i) => round4(i === fromHot.contour ? t - 0.5 : fromSeed.ts[i] - (def.kind === 'rings' && i > 0 ? 0 : 0.5)))
+  const starts = fromHot.ts.map((t, i) => round4(i === fromHot.contour ? t - 0.5 : fromSeed.ts[i] - 0.5))
   const drawn = startedShape(merged, starts)
   const drawnTips = outlineTips(drawn, anchorR, aspect)
-  const onDrawn = onLightContour(nearestOnContours(drawn, anchorR, hot))
+  const onDrawn = nearestOnContours(drawn, anchorR, hot)
   const tHot = onDrawn.ts[onDrawn.contour]
   // The visible piece the light is on, and its ends measured along the light's own contour (signed, within half a
   // turn), so the stops' span moves smoothly with the light.
   const dist2 = (a: Vec2, b: Vec2) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2
-  const lit = mainRuns.reduce<Vec2[]>((best, r) => {
+  const lit = runs.reduce<Vec2[]>((best, r) => {
     const near = (rr: Vec2[]) => Math.min(...rr.map((p) => dist2(p, hot)))
     return best.length === 0 || (r.length > 1 && near(r) < near(best)) ? r : best
   }, run)
@@ -897,11 +879,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   // Another edge in the frame is a light of its own, like a ring: lit over most of its visible length, hottest at a
   // seeded place inside the frame and far enough from the main light.
   const otherIn = other ? other.r.filter((p) => Math.abs(p[0]) <= fw / 2 - EDGE_MARGIN && Math.abs(p[1]) <= fh / 2 - EDGE_MARGIN) : []
-  // On a ring beside a rings layout's big ring, the light is hottest on the side farthest from the big ring.
-  const farthestFrom = (pts: Vec2[], run: Vec2[]) =>
-    pts.reduce((best, p) => (Math.min(...run.map((q) => dist2(p, q))) > Math.min(...run.map((q) => dist2(best, q))) ? p : best), pts[0])
-  const besideRing = def.kind === 'rings' && !!other && other.contour !== homeContour
-  const otherPoint = !def.wash && otherIn.length > 3 ? (besideRing ? farthestFrom(otherIn, run) : pointAlong(otherIn, lerp(0.3, 0.7, design.secondAt))) : null
+  const otherPoint = !def.wash && otherIn.length > 3 ? pointAlong(otherIn, lerp(0.3, 0.7, design.secondAt)) : null
   const edgeLight = !!otherPoint && Math.sqrt(dist2(otherPoint, seedHome)) >= EDGE_KEEP_OFF
   const halfLength = edgeLight ? Math.min(EDGE_HALF_MAX, Math.max(EDGE_HALF_MIN, EDGE_SHARE * runLength(otherIn))) : stretchHalf
   const i0 = homeRun.reduce((best, p, i) => (dist2(p, seedHome) < dist2(homeRun[best], seedHome) ? i : best), 0)
@@ -943,10 +921,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     // colored rings: a halo as wide and strong as the main light's, in its own color. On the main light's own line its
     // halo would lie over the main light's and the two would add up to mauve or maroon, so there it keeps the narrow
     // glow.
-    // On a ring beside a rings layout's big ring, its middle keeps clear of the big ring and all of it keeps off it.
-    const ringClear = besideRing
-      ? homeRun.every((q) => dist2(secondPoint, q) >= RING_CLEAR * RING_CLEAR) && stretchPoints.every((p) => homeRun.every((q) => dist2(p, q) >= THIRD_OFF_MAIN * THIRD_OFF_MAIN))
-      : stretchPoints.every((p) => homeRun.every((q) => dist2(p, q) >= RING_CLEAR * RING_CLEAR))
+    const ringClear = stretchPoints.every((p) => homeRun.every((q) => dist2(p, q) >= RING_CLEAR * RING_CLEAR))
     ringLight = !def.wash && edgeLight && blur <= WARM_BLUR && ringClear
     // A ring is cool (Cyan, Ice): a cool halo meets the main light's blue cleanly and keeps its hue in dim light, where
     // a warm one read red, and mauve wherever a drag brought the main light near it.
@@ -1259,7 +1234,6 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const rayAt: Vec2 = [hot[0], hot[1] + 0.04]
   const params: Record<string, ParamValue> = {
     shape: MERGED_SHAPE_KINDS.indexOf(spec.kind) + 1,
-    rings: spec.rings ? [...spec.rings] : [0, 0, 0, 0, 0, 0],
     at: atFrame,
     size: round4(spec.size),
     radius: round4(spec.radius),

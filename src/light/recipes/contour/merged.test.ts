@@ -138,7 +138,7 @@ describe('contour.merged', () => {
   })
 
   it('names its shapes and moves a seed to another shape keeping its place among that shape’s seeds', () => {
-    expect(MERGED_SHAPES).toHaveLength(9)
+    expect(MERGED_SHAPES).toHaveLength(8)
     for (let seed = 1; seed <= 100; seed++) {
       for (let shape = 0; shape < MERGED_SHAPES.length; shape++) {
         const moved = seedWithShape(seed, shape)
@@ -146,6 +146,13 @@ describe('contour.merged', () => {
         expect(moved).toBeLessThanOrEqual(100)
         expect(shapeOfSeed(moved)).toBe(shape)
       }
+    }
+  })
+
+  it('has no Halo layout; its seeds show another layout, never the one the seed before or after shows', () => {
+    expect(MERGED_SHAPES).not.toContain('Halo')
+    for (let seed = 6; seed <= 600; seed += 9) {
+      expect([shapeOfSeed(seed - 1), shapeOfSeed(seed + 1)], `seed ${seed}`).not.toContain(shapeOfSeed(seed))
     }
   })
 
