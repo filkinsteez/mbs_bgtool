@@ -76,6 +76,14 @@ float softClamp(float x, float lo, float hi, float k) {
   h = clamp(0.5 - 0.5 * (above - hi) / k, 0.0, 1.0);
   return mix(hi, above, h) - k * h * (1.0 - h);
 }
+// A hue (at luminance 1) whitened by t the way hot light whitens: a warm hue first through yellow, a cool one through
+// pale cyan, then to white, so Orange-red never passes through salmon or pink.
+vec3 hotWhiten(vec3 n, float t) {
+  float warmth = clamp((n.r - n.b) / max(n.r + n.b, 1e-5), -1.0, 1.0);
+  vec3 mid = mix(vec3(0.55, 0.9, 1.0), vec3(1.0, 0.85, 0.25), 0.5 + 0.5 * warmth);
+  mid /= luminance(mid);
+  return t < 0.5 ? mix(n, mid, 2.0 * t) : mix(mid, vec3(1.0), 2.0 * t - 1.0);
+}
 // A color's hue (at luminance 1) at a level of its light: its own at the peak, then each step of its dim path in turn.
 vec3 dimHue(int k, float level) {
   vec3 c = compColor(k);
@@ -198,7 +206,9 @@ vec3 radiance(vec2 uv, vec2 p) {
       // White in the middle: the shoulders keep their own hue and whiten the way hot light does in the tone curve
       // (Orange-red through yellow, not into peach).
       col[i] = -1;
-      fixedHue[i] = mix(side, vec3(1.0), 0.85 * pow(glow, 6.0));
+      // Toward a warm white for a warm side and a cool white for a cool one, so Orange-red whitens through pale orange
+      // and yellow, never through salmon.
+      fixedHue[i] = hotWhiten(side / max(luminance(side), 1e-5), 0.85 * pow(glow, 6.0));
       lum[i] = C.x * glow * env;
       total += lum[i];
       continue;
@@ -252,16 +262,18 @@ vec3 radiance(vec2 uv, vec2 p) {
   // they glow into each other and the overlap is lighter than each alone; no pixel picks one color, so no line
   // divides two colors. Each light keeps its luminance, so the design is the same in every pack.
   vec3 added = vec3(0.0);
-  vec3 leadSum = vec3(0.0);
-  float leadW = 0.0;
+  float whiteLum = 0.0;
+  vec3 hueOf[MAX_LIGHTS];
   float l1 = 0.0;
   float l2 = 0.0;
   vec3 h1 = vec3(1.0);
   vec3 h2 = vec3(1.0);
   for (int i = 0; i < MAX_LIGHTS; i++) {
+    hueOf[i] = vec3(1.0);
     if (i >= uLights) break;
     if (lum[i] <= 1e-7) continue;
     vec3 h = col[i] >= 0 ? dimHue(col[i], clamp(lum[i] / max(peak[i], 1e-4), 0.0, 1.0)) : fixedHue[i];
+    hueOf[i] = h / max(luminance(h), 1e-5);
     if (lum[i] > l1) {
       l2 = l1;
       h2 = h1;
@@ -276,18 +288,46 @@ vec3 radiance(vec2 uv, vec2 p) {
       vec3 own = compColor(col[i]);
       float share = lum[i] / max(total, 1e-5);
       share *= share;
+      share *= share;
       hot += own / max(luminance(own), 1e-5) * coreLum[i] * share * share;
     }
-    added += h / max(luminance(h), 1e-5) * lum[i];
-    float w = lum[i] * 6.0;
-    w *= w;
-    w *= w;
-    w *= w;
-    leadSum += h / max(luminance(h), 1e-5) * w;
-    leadW += w;
   }
+  // Each light adds in its own hue, except that a hue far around the color wheel from the leading light's (Meta Blue's
+  // glow under Yellow and Orange-red) adds in the leading hue, so a third light never tints an overlap pink or teal.
+  // White light (a white streak's middle) is kept apart and takes the temperature of the colored light it meets below,
+  // so Orange-red meeting it goes pale orange, not salmon.
+  vec3 leading = h1 / max(luminance(h1), 1e-5);
+  vec2 leadChroma = vec2(leading.r - leading.g, 0.5 * (leading.r + leading.g) - leading.b);
+  for (int i = 0; i < MAX_LIGHTS; i++) {
+    if (i >= uLights) break;
+    if (lum[i] <= 1e-7) continue;
+    vec3 n = hueOf[i];
+    vec2 c = vec2(n.r - n.g, 0.5 * (n.r + n.g) - n.b);
+    float whiteness = 1.0 - smoothstep(0.05, 0.3, length(c));
+    float far = (1.0 - smoothstep(-0.3, 0.2, dot(c, leadChroma) / max(length(c) * length(leadChroma), 1e-5))) * smoothstep(0.05, 0.3, min(length(c), length(leadChroma)));
+    whiteLum += whiteness * lum[i];
+    added += (1.0 - whiteness) * mix(n, leading, far) * lum[i];
+  }
+  float colored = max(total - whiteLum, 1e-6);
+  float addedWarmth = clamp((added.r - added.b) / max(added.r + added.b, 1e-5), -1.0, 1.0);
+  vec3 tempered = mix(vec3(0.9, 0.98, 1.0), vec3(1.0, 0.92, 0.6), 0.5 + 0.5 * addedWarmth);
+  vec3 whiteHue = mix(vec3(1.0), tempered, smoothstep(0.0, 0.3 * total, colored));
+  added += whiteHue / luminance(whiteHue) * whiteLum;
   vec3 leadHue = total > 1e-6 ? added / total : vec3(1.0);
-  vec3 strongerHue = leadW > 0.0 ? leadSum / leadW : vec3(1.0);
+  // The stronger light's hue, each light counted by its light against the strongest to the eighth power.
+  vec3 strongerHue = vec3(0.0);
+  float strongerW = 0.0;
+  for (int i = 0; i < MAX_LIGHTS; i++) {
+    if (i >= uLights) break;
+    if (lum[i] <= 1e-7) continue;
+    float r = lum[i] / max(l1, 1e-6);
+    r *= r;
+    r *= r;
+    r *= r;
+    strongerHue += hueOf[i] * r;
+    strongerW += r;
+  }
+  strongerHue = strongerW > 0.0 ? strongerHue / strongerW : vec3(1.0);
   // Where two different hues meet at nearly the same strength, they would mix into a third (Cyan and Orange-red to
   // pink, Meta Blue and Orange-red to magenta). Where the light is up, each side keeps its own hue and whitens toward
   // the meeting the way hot light does, a warm hue through pale yellow and a cool one through pale cyan (never through
@@ -301,12 +341,10 @@ vec3 radiance(vec2 uv, vec2 p) {
   vec2 c1 = vec2(n1.r - n1.g, 0.5 * (n1.r + n1.g) - n1.b);
   vec2 c2 = vec2(n2.r - n2.g, 0.5 * (n2.r + n2.g) - n2.b);
   float clash = (1.0 - smoothstep(-0.3, 0.2, dot(c1, c2) / max(length(c1) * length(c2), 1e-5))) * smoothstep(0.05, 0.3, min(length(c1), length(c2)));
-  float warmth = clamp((n1.r - n1.b) / max(n1.r + n1.b, 1e-5), -1.0, 1.0);
-  vec3 hotWhite = mix(vec3(0.85, 0.97, 1.0), vec3(1.0, 0.9, 0.6), 0.5 + 0.5 * warmth);
-  // Far hues are never added: the stronger light's hue leads (each counts by its light to the eighth power), so where
-  // they overlap in dim light they fall through dark instead of mixing into dark magenta or teal.
+  // Far hues are never added: the stronger light's hue leads, so where they overlap in dim light they fall through
+  // dark instead of mixing into dark magenta or teal.
   leadHue = mix(leadHue / max(luminance(leadHue), 1e-5), strongerHue / max(luminance(strongerHue), 1e-5), clash);
-  leadHue = mix(leadHue, hotWhite / luminance(hotWhite), meet * clash * lit);
+  leadHue = hotWhiten(leadHue, meet * clash * lit);
   vec3 sum = leadHue / max(luminance(leadHue), 1e-5) * total;
   // A soft shoulder on the streaks' light, below the level where the tone curve turns a near-white color (Ice) flat
   // white, while saturated colors still whiten at their cores. White streaks' cores come on top and reach white.
