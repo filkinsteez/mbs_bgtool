@@ -15,8 +15,8 @@ import { compare, MEET, mapsOf, meetingMask } from './lib/design-maps.mjs'
 import { startHarness } from './lib/harness.mjs'
 
 const LOOKS = ['sunset.bands', 'sunset.ramp', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
-// The merged looks (the tool's sunrise=merged and contour=merged switches) are checked when named; `all` is the seven.
-const MERGED = ['sunset.merged', 'contour.merged']
+// The tool's three looks (the merged Sunrise and Contour, and Rush's split) are checked when named; `all` is the seven.
+const MERGED = ['sunset.merged', 'contour.merged', 'rush.split']
 const PACK_IDS = ['bold', 'elemental', 'atmospheric']
 // The palette check's test drags (palette-check.mjs DRAGS), in frame units as in the URL.
 const DRAGS = {
@@ -38,9 +38,12 @@ const T = {
   // every param kept fails, and Bold's different beams in seeds 3 and 5 are the only judged differences missed.
   // Sunrise frames are lit all over, so another color's lightness moves more of their layout: Bands' different stacks
   // are all caught and about 1 in 17 recolors with every param kept fails, where the swap turns a light part dark.
+  // Rush takes Contour's limits, the stricter pair, not set by eye: on cb6934c its packs score at most a tenth of them
+  // (compare round 33).
   limits: {
     contour: { layout: 0.12, light: 0.21 },
     sunset: { layout: 0.2, light: 0.3 },
+    rush: { layout: 0.12, light: 0.21 },
   },
 }
 
@@ -195,7 +198,8 @@ const seconds = Math.round((Date.now() - started) / 1000)
 const nameOf = (key) => labels.get(key) ?? key
 const viewText = (v) => (v === 'default' ? 'default view' : `drag ${v}`)
 const pairText = (p) => `${p.frames.map(nameOf).join(' / ')} (layout ${p.layout}, light ${p.light}${p.allowed ? `; ${p.allowed} px on far-hue meeting lines left out` : ''})`
-const limitText = Object.entries(T.limits).map(([mood, l]) => `${mood === 'sunset' ? 'Sunrise' : 'Contour'}: layout over ${l.layout} or light over ${l.light}`).join('; ')
+const MOOD_NAMES = { sunset: 'Sunrise', contour: 'Contour', rush: 'Rush' }
+const limitText = Object.entries(T.limits).map(([mood, l]) => `${MOOD_NAMES[mood]}: layout over ${l.layout} or light over ${l.light}`).join('; ')
 const lines = [
   mixArg ? '# Same design in every pack and mix (color stage on)' : '# Same design in every pack',
   '',
