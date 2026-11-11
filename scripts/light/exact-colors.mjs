@@ -16,9 +16,11 @@ import { list, parseArgs } from './lib/args.mjs'
 import { mixByName } from './lib/color-read.mjs'
 import { EXACT, exactRead, exactRules } from './lib/exact-read.mjs'
 import { ROOT, startHarness } from './lib/harness.mjs'
-import { stagesArg } from './lib/stage-args.mjs'
+import { runMixSet, stagesArg } from './lib/stage-args.mjs'
 
 const args = parseArgs()
+const mixSetCode = runMixSet(args, import.meta.url)
+if (mixSetCode !== null) process.exit(mixSetCode)
 const looks = list(args.look).length ? list(args.look) : ['sunset.merged', 'contour.merged', 'rush.split']
 const packIds = list(args.packs).length ? list(args.packs) : ['bold', 'elemental', 'atmospheric']
 const seeds = list(args.seeds ?? '1-8').flatMap((part) => {

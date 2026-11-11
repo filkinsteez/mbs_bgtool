@@ -10,10 +10,10 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
 import { list, parseArgs } from './lib/args.mjs'
-import { mixByName } from './lib/color-read.mjs'
+import { HALF_COLOR, mixByName } from './lib/color-read.mjs'
 import { compare, MEET, mapsOf, meetingLines, meetMask } from './lib/design-maps.mjs'
 import { startHarness } from './lib/harness.mjs'
-import { stageArgs } from './lib/stage-args.mjs'
+import { MIX_SET, stageArgs } from './lib/stage-args.mjs'
 
 const LOOKS = ['sunset.bands', 'sunset.ramp', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
 // The tool's three looks (the merged Sunrise and Contour, and Rush's split) are checked when named; `all` is the seven.
@@ -70,7 +70,7 @@ const intensity = args.intensity === undefined ? null : Number(args.intensity)
 // As the app draws (lib/stage-args.mjs): the color stage on at the default mix. --mix <names> compares those mixes
 // (a bare --mix: the default mix, Meta Blue off and the pack's first other color at 60%); --stage off compares each
 // pack's look without the stage.
-const mixArg = !stageArgs(args).on ? null : args.mix === undefined ? ['default'] : list(args.mix)
+const mixArg = !stageArgs(args).on ? null : args.mix === undefined ? ['default'] : args.mix === 'set' ? MIX_SET : list(args.mix)
 // --from <dir>: judge renders kept by an earlier run (--keep) instead of rendering.
 const fromDir = typeof args.from === 'string' ? path.resolve(args.from) : null
 const keep = Boolean(args.keep)
@@ -78,7 +78,8 @@ const sheetAll = args.sheet === 'all'
 const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, '')
 const outDir = path.resolve(typeof args.out === 'string' ? args.out : path.join('artifacts', 'same-design', stamp))
 
-const mixLabel = (name) => (name === 'default' ? 'default mix' : name === 'blue-off' ? 'Meta Blue off' : `${name.split(':')[0]} ${Math.round(Number(name.split(':')[1]) * 100)}%`)
+const mixLabelOf = (name) => (name === 'default' ? 'default mix' : name === 'blue-off' ? 'Meta Blue off' : name === 'even' ? 'even split' : name === 'half' ? 'one color at half' : `${name.split(':')[0]} ${Math.round(Number(name.split(':')[1]) * 100)}%`)
+const mixLabel = (name, packId) => (name === 'half' ? `${HALF_COLOR[packId]} 50%` : mixLabelOf(name))
 
 // --- render and compare ---
 
@@ -117,7 +118,7 @@ try {
       const other = pack.colors.find((c) => c.hex.toUpperCase() !== META_BLUE)
       for (const name of mixArg.length ? mixArg : ['default', 'blue-off', `${other.name}:0.6`]) {
         const mix = mixByName(mixes, pack, name)
-        if (mix) variants.push({ key: `${id}-${name.replace(/[^A-Za-z0-9]+/g, '')}`, label: `${pack.name} ${mixLabel(name)}`, pack, mix, mixName: name, design: getPack(stage.COLOR_DESIGN_PACK) })
+        if (mix) variants.push({ key: `${id}-${name.replace(/[^A-Za-z0-9]+/g, '')}`, label: `${pack.name} ${mixLabel(name, id)}`, pack, mix, mixName: name, design: getPack(stage.COLOR_DESIGN_PACK) })
       }
     }
   }
@@ -220,6 +221,16 @@ for (const look of looks) {
   const failing = [...new Set(mine.filter((r) => r.differs).map((r) => r.seed))]
   printed.push(`${look}: ${failing.length} of ${seeds.length} seeds differ${failing.length ? ` (s${failing.join(', s')})` : ''}`)
   lines.push(`## ${look}`, '', `${failing.length} of ${seeds.length} seeds differ in design${failing.length ? `: s${failing.join(', s')}` : ''}.`, '')
+  if (mixArg && mixArg.length > 1) {
+    // Across packs at the default mix, and across mixes: each pack's other mixes against its default.
+    const kinds = [['packs at the default mix', (k) => k.every((key) => key.endsWith('-default'))], ...mixArg.filter((m) => m !== 'default').map((m) => [`${mixLabelOf(m)} against the default`, (k) => k.some((key) => key.endsWith(`-${m.replace(/[^A-Za-z0-9]+/g, '')}`))])]
+    lines.push('| Pairs | Differ |', '| --- | --- |')
+    for (const [name, test] of kinds) {
+      const ps = mine.flatMap((r) => r.pairs.filter((p) => test(p.frames)))
+      lines.push(`| ${name} | ${ps.filter((p) => p.differs).length} of ${ps.length} |`)
+    }
+    lines.push('')
+  }
   if (formats.length > 1 || views.length > 1) {
     lines.push(`| Format | ${views.map(viewText).join(' | ')} |`, `| --- | ${views.map(() => '---').join(' | ')} |`)
     for (const f of formats) lines.push(`| ${f.replace('x', ':')} | ${views.map((v) => mine.filter((r) => r.format === f && r.view === v && r.differs).map((r) => `s${r.seed}`).join(', ') || '-').join(' | ')} |`)

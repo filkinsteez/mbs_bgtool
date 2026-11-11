@@ -530,12 +530,17 @@ export function blendSharesOf(rules, rgb, width, height, labels, wantMap = false
   return { shares: Object.fromEntries(keys.map((k) => [k, lit ? counts[k] / lit : 0])), own: Object.fromEntries(names.map((name, k) => [name, lit ? area[k] / lit : 0])), split }
 }
 
-// A color mix by name, from src/light/color/mix.ts: `default`, `blue-off` (Meta Blue at 0%), or `<color>:<share>`
-// such as `Cyan:0.6`, set on the default mix with the others keeping their ratios; null when the pack has no such
-// color.
+// The color the mix set holds at half (SHARED, Wed 8:31 AM).
+export const HALF_COLOR = { bold: 'Yellow', elemental: 'Lime', atmospheric: 'Ice' }
+
+// A color mix by name, from src/light/color/mix.ts: `default`, `blue-off` (Meta Blue at 0%), `even` (every color the
+// same share), `half` (HALF_COLOR at 50%), or `<color>:<share>` such as `Cyan:0.6`, set on the default mix with the
+// others keeping their ratios; null when the pack has no such color.
 export function mixByName(mixes, pack, name) {
   if (name === 'default') return mixes.defaultMix(pack)
   if (name === 'blue-off') return mixes.setMetaBlue(pack, mixes.defaultMix(pack), false)
+  if (name === 'even') return mixes.mixFromShares(pack, pack.colors.map(() => 1))
+  if (name === 'half') return mixByName(mixes, pack, `${HALF_COLOR[pack.id]}:0.5`)
   const [color, share] = name.split(':')
   const index = pack.colors.findIndex((c) => c.name.toLowerCase() === color.toLowerCase())
   if (index < 0 || !(Number(share) >= 0)) return null

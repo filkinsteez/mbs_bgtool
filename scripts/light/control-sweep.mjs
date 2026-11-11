@@ -31,7 +31,7 @@ import sharp from 'sharp'
 import { list, parseArgs } from './lib/args.mjs'
 import { mixByName } from './lib/color-read.mjs'
 import { ROOT, startHarness } from './lib/harness.mjs'
-import { stageArgs, stageText } from './lib/stage-args.mjs'
+import { runMixSet, stageArgs, stageText } from './lib/stage-args.mjs'
 
 const LOOKS = ['sunset.ramp', 'sunset.bands', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
 /** Looks the tool draws only behind a switch in the URL, swept when named in full: the switch for each. */
@@ -75,6 +75,8 @@ const JPEG_QUALITY = 82
 const SNAPSHOT_FLAGS = ['rev', 'tree']
 
 const args = parseArgs()
+const mixSetCode = runMixSet(args, import.meta.url)
+if (mixSetCode !== null) process.exit(mixSetCode)
 
 // --rev and --tree run this script again inside a copy of the code (a commit, or the working tree as it is now), so
 // edits other agents make during the run cannot change the frames halfway through a sweep.

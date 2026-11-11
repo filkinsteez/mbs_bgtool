@@ -8,7 +8,7 @@ import sharp from 'sharp'
 import { list, parseArgs } from './lib/args.mjs'
 import { BLEND, blendSharesOf, BLUE_LIGHT, blueLight, blueVerdict, LABELS, mixByName, READ, readAs, rulesFor, sharesOf } from './lib/color-read.mjs'
 import { startHarness } from './lib/harness.mjs'
-import { stageArgs, stageText } from './lib/stage-args.mjs'
+import { runMixSet, stageArgs, stageText } from './lib/stage-args.mjs'
 
 const LOOKS = ['sunset.bands', 'sunset.ramp', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
 // The looks behind the tool's switches (sunrise=merged, contour=merged, rush=split) are measured when named; `all` is
@@ -25,8 +25,13 @@ const DRAGS = {
 const FORMATS = { '16x9': [16, 9], '9x16': [9, 16], '1x1': [1, 1], '4x5': [4, 5] }
 const RENDER_LONG = 320
 const META_BLUE = '#0064E0'
+// A picture is off its set shares when a pack color's share of the pack colors it shows is more than this far from
+// the share set for it: half of the smallest slider step (20% in the five-color packs; SHARED, Wed 8:40 AM).
+const SET_TOLERANCE = 0.1
 
 const args = parseArgs()
+const mixSetCode = runMixSet(args, import.meta.url)
+if (mixSetCode !== null) process.exit(mixSetCode)
 const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, '')
 const outDir = path.resolve(typeof args.out === 'string' ? args.out : path.join('artifacts', 'color-shares', stamp))
 
@@ -232,7 +237,8 @@ async function looksRun(harness, rulesById, getPack) {
             const r = sharesOf(rulesById[packId], rgb, width * height, true)
             const flags = !mixName || mixName === 'default' ? flagsOf(pack, r.shares) : []
             const blend = args.blend ? blendOf(rulesById[packId], rgb, width, height, r.labels) : {}
-            frames.push({ look, pack: packId, seed, format, view, lit: +r.lit.toFixed(4), asked: round(asked), shares: round(r.shares), ...blend, flags, blue: blueOf(rulesById[packId], rgb, width, height, r.labels) })
+            const error = setError(asked, r.shares)
+            frames.push({ look, pack: packId, seed, format, view, lit: +r.lit.toFixed(4), asked: round(asked), shares: round(r.shares), error: +error.toFixed(4), off: error > SET_TOLERANCE, ...blend, flags, blue: blueOf(rulesById[packId], rgb, width, height, r.labels) })
             if (args.maps) items.push({ title: `${packId} s${seed} ${format.replace('x', ':')} ${view}`, png: await sharp(rgb, { raw: { width, height, channels: 3 } }).png().toBuffer(), labels: r.labels, rules: rulesById[packId], shares: r.shares, flags, w: width, h: height })
           }
         }
@@ -297,7 +303,31 @@ function summaryOf(frames, looks, formats, views, seeds, getPack, rulesById, mix
       }
     lines.push('')
   }
+  lines.push(
+    '## Against the set shares',
+    '',
+    `Each picture's error: the largest gap, over the pack colors, between a color's share of the pack colors the picture shows and the share set for it. Off: more than ${Math.round(100 * SET_TOLERANCE)} points, half of the smallest slider step (20% in the five-color packs), where a picture reads closer to the next step than to its own.`,
+    '',
+    '| Look | Pack | Median error | Worst | Off |',
+    '| --- | --- | --- | --- | --- |',
+  )
+  for (const look of looks)
+    for (const packId of PACK_IDS) {
+      const set = frames.filter((f) => f.look === look && f.pack === packId)
+      if (!set.length) continue
+      const worst = set.reduce((a, b) => (b.error > a.error ? b : a))
+      lines.push(`| ${look} | ${packId} | ${pct(median(set.map((f) => f.error)))} | ${pct(worst.error)} (s${worst.seed} ${worst.format.replace('x', ':')} ${worst.view}) | ${set.filter((f) => f.off).length} of ${set.length} |`)
+    }
   return `${lines.join('\n')}\n`
+}
+
+// How far a picture's pack colors are from the shares set for them: the largest gap over the pack colors between a
+// color's share of the pack colors read (grey and other left out) and its set share.
+function setError(asked, shares) {
+  const names = Object.keys(asked)
+  const total = names.reduce((s, n) => s + (shares[n] ?? 0), 0)
+  if (!(total > 0)) return 1
+  return Math.max(...names.map((n) => Math.abs((shares[n] ?? 0) / total - asked[n])))
 }
 
 // --- main ---

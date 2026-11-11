@@ -12,9 +12,11 @@ import { mixByName } from './lib/color-read.mjs'
 import { compareDrag, gridDrags, SHOWN, TEST_DRAGS, worstCases } from './lib/drag-colors.mjs'
 import { exactRead, exactRules } from './lib/exact-read.mjs'
 import { ROOT, startHarness } from './lib/harness.mjs'
-import { stagesArg } from './lib/stage-args.mjs'
+import { runMixSet, stagesArg } from './lib/stage-args.mjs'
 
 const args = parseArgs()
+const mixSetCode = runMixSet(args, import.meta.url)
+if (mixSetCode !== null) process.exit(mixSetCode)
 const looks = list(args.look).length ? list(args.look) : ['sunset.merged', 'contour.merged', 'rush.split']
 const packIds = list(args.packs ?? args.pack).length ? list(args.packs ?? args.pack) : ['bold', 'elemental', 'atmospheric']
 const seeds = list(args.seeds ?? '1-8').flatMap((part) => {

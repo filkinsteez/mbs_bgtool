@@ -15,7 +15,7 @@ import { list, parseArgs } from './lib/args.mjs'
 import { LIN, mixByName, oklab, rulesFor, sharesOf } from './lib/color-read.mjs'
 import { atLimit, verdictChanges } from './lib/edge-limit.mjs'
 import { startHarness } from './lib/harness.mjs'
-import { stageArgs, stageText } from './lib/stage-args.mjs'
+import { runMixSet, stageArgs, stageText } from './lib/stage-args.mjs'
 
 const LOOKS = ['sunset.ramp', 'sunset.bands', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
 // The looks behind the tool's switches (sunrise=merged, contour=merged, rush=split); `merged` names all three.
@@ -66,6 +66,8 @@ const OWN_PATHS = { bold: [['Yellow', 'Orange-red'], ['Cyan', 'Meta Blue']], ele
 const onOwnPath = (packId, light, dim) => (OWN_PATHS[packId] ?? []).some((p) => p.indexOf(light) >= 0 && p.indexOf(light) < p.indexOf(dim))
 
 const args = parseArgs()
+const mixSetCode = runMixSet(args, import.meta.url)
+if (mixSetCode !== null) process.exit(mixSetCode)
 const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, '')
 const outDir = path.resolve(typeof args.out === 'string' ? args.out : path.join('artifacts', 'color-edges', stamp))
 const pct = (v, digits = 0) => `${(100 * v).toFixed(digits)}%`

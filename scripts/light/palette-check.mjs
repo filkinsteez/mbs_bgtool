@@ -14,7 +14,7 @@ import sharp from 'sharp'
 import { list, parseArgs } from './lib/args.mjs'
 import { BLEND, BLUE_LIGHT, blendSharesOf, blueLight, blueVerdict, mixByName, rulesFor, sharesOf } from './lib/color-read.mjs'
 import { ROOT, startHarness } from './lib/harness.mjs'
-import { stageArgs, stageText } from './lib/stage-args.mjs'
+import { runMixSet, stageArgs, stageText } from './lib/stage-args.mjs'
 import { raw } from './lib/images.mjs'
 import { loadReferences } from './lib/references.mjs'
 
@@ -254,6 +254,8 @@ const HUE_FAMILIES = [
 ]
 
 const args = parseArgs()
+const mixSetCode = runMixSet(args, import.meta.url)
+if (mixSetCode !== null) process.exit(mixSetCode)
 const lookArg = list(args.look)
 // --refs <id,...|sunset|contour|all>: reference IDs from public/references/awe/manifest.json, or a whole mood.
 const refArg = list(args.refs)
