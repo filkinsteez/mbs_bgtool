@@ -6,17 +6,21 @@ import type { OutputFilter } from './filters/types'
  * before dither, like Figma's Noise effect (the deck's Grain picture, 44:204)
  * and the brief's fine film grain. A speck is one pixel at 1080 px on the short
  * side: cells are shortSide / 1080 px, about 2 px in a 4K export and under a
- * pixel in a small preview. The strength is the Density: the share of cells
- * with a speck, from none at 0 to every cell at 1. Each speck is lighter or
- * darker by a fixed amount, so the mean stays, and neither its size nor its
+ * pixel in a small preview. The strength is the Density: how many cells have a
+ * speck, from none at 0 to SPECK_SHARE of them at 1, so most specks stand apart
+ * with the picture clean between them, as in the deck's picture. Most specks
+ * are darker, as there, and the rest lighter, each by a fixed amount; the
+ * specks' mean is taken off, so the mean stays. Neither a speck's size nor its
  * strength changes with Density.
  *
  *   L' = L + amp(L) * weight * G(x)
- *   G  = the cells' specks blended bilinearly between cell centres (which sit
- *        on pixel centres), averaged over the output pixel, so a 4K speck is a
- *        pixel with soft edges and a pixel larger than a cell shows what a
- *        larger render shrunk to its size shows
- *   speck = 0, or +-(0.5..1) for a share `density` of cells
+ *   G  = the cells' specks as squares a cell wide (edges on whole multiples of
+ *        the cell from the frame's corner), averaged over the output pixel, so
+ *        a 4K speck is a crisp 2 x 2 px square and a pixel larger than a cell
+ *        shows what a larger render shrunk to its size shows; minus the specks'
+ *        mean, so a flat area keeps its level
+ *   speck = 0, or darker (a share DARK_SHARE of specks) or lighter by 0.5..1,
+ *           for a share `density * SPECK_SHARE` of cells
  *   amp(L) = SPECK * smoothstep(0, shadowEnd, L) * (1 - smoothstep(highlightStart, 1, L))
  *
  * Black stays black, and the grain fades out near white, where lighter specks
@@ -25,15 +29,23 @@ import type { OutputFilter } from './filters/types'
 
 /** Cells across the short side: a speck is one pixel at 1080 px. */
 export const GRAIN_CELLS_PER_SHORT_SIDE = 1080
-/** Oklab L change of a full speck: Density 0.5 gives about 1.7 % L of grain in mid-tones, Density 1 about 2.4 %. */
-const SPECK = 0.05
+/** Oklab L change of a full speck: Density 0.5 gives about 1.7 % L of grain in mid-tones in a 4K export, Density 1 about 2.3 %. */
+const SPECK = 0.0575
+/** Share of cells with a speck at Density 1. */
+const SPECK_SHARE = 0.3
+/** Share of specks that are darker; the rest are lighter. */
+const DARK_SHARE = 0.8
+/** Mean size of a speck, 0.5 to 1. */
+const SPECK_MEAN_SIZE = 0.75
 const SHADOW_END = 0.2
 const HIGHLIGHT_START = 0.94
-/** Cells averaged per axis at most; frames under about 300 px on the short side lose a little grain. */
+/** Cells averaged per axis at most; frames under about 220 px on the short side lose a little grain. */
 const SPAN = 6
 
+const glslFloat = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v))
+
 export interface GrainParams {
-  /** Share of cells with a speck, 0..1. */
+  /** The Density, 0..1: a share `density * SPECK_SHARE` of cells has a speck. */
   density: number
   speck: number
   shadowEnd: number
@@ -92,36 +104,39 @@ function pcg3d(a: number, b: number, c: number): [number, number, number] {
 
 const unit = (v: number) => (v >>> 8) / 16777216
 
-/** A cell's speck: 0, or lighter or darker by 0.5 to 1, for a share `density` of cells (GLSL grainSpeck). */
+/**
+ * A cell's speck (GLSL grainSpeck): 0, or darker (a share DARK_SHARE of specks) or lighter by 0.5 to 1, for a share
+ * `density * SPECK_SHARE` of cells.
+ */
 export function grainSpeck(cx: number, cy: number, seed: number, density: number): number {
   const [hx, hy, hz] = pcg3d(cx + 1048576, cy + 1048576, grainSeed(seed) + 1048576)
-  if (unit(hx) >= density) return 0
-  return (unit(hy) < 0.5 ? -0.5 : 0.5) * (1 + unit(hz))
+  if (unit(hx) >= density * SPECK_SHARE) return 0
+  return (unit(hy) < DARK_SHARE ? -0.5 : 0.5) * (1 + unit(hz))
+}
+
+/** The mean speck over all cells at a density, which grainField takes off so a flat area keeps its level. */
+export function grainSpeckMean(density: number): number {
+  return density * SPECK_SHARE * SPECK_MEAN_SIZE * (1 - 2 * DARK_SHARE)
 }
 
 function grainSeed(seed: number): number {
   return seed * 131 + 1048576
 }
 
-/** Integral of the unit tent (1 - |t|) from -1 to t. */
-function tentArea(t: number): number {
-  const s = Math.min(1, Math.max(-1, t))
-  return s < 0 ? 0.5 * (1 + s) * (1 + s) : 1 - 0.5 * (1 - s) * (1 - s)
-}
-
+/** How much of the pixel [a, a + len) (in cells) each cell from floor(a) on covers, as a share of the pixel. */
 function axisWeights(a: number, len: number): { first: number; weights: number[] } {
   const first = Math.floor(a)
-  const count = Math.min(Math.ceil(a + len) - first + 1, SPAN)
+  const count = Math.min(Math.ceil(a + len) - first, SPAN)
   const weights = []
-  for (let k = 0; k < count; k++) weights.push((tentArea(a + len - (first + k)) - tentArea(a - (first + k))) / len)
+  for (let k = 0; k < count; k++) weights.push((Math.min(a + len, first + k + 1) - Math.max(a, first + k)) / len)
   return { first, weights }
 }
 
 /** The speck field G at output pixel (x, y) (GLSL grainField). */
 export function grainField(x: number, y: number, density: number, cellPx: number, seed: number): number {
   const len = 1 / cellPx
-  const ax = axisWeights((x - 0.5) * len, len)
-  const ay = axisWeights((y - 0.5) * len, len)
+  const ax = axisWeights(x * len, len)
+  const ay = axisWeights(y * len, len)
   let g = 0
   ay.weights.forEach((wy, j) => {
     if (wy <= 0) return
@@ -129,42 +144,36 @@ export function grainField(x: number, y: number, density: number, cellPx: number
       if (wx > 0) g += wy * wx * grainSpeck(ax.first + i, ay.first + j, seed, density)
     })
   })
-  return g
+  return g - grainSpeckMean(density)
 }
 
 /** Needs CHUNK_LIBRARY (hashes, Oklab) and uSeed. */
 export const GRAIN_GLSL = /* glsl */ `
 uniform float uGrainAmp;      // Oklab L change of a full speck; 0 is off
-uniform float uGrainDensity;  // share of cells with a speck
+uniform float uGrainDensity;  // the Density: a share uGrainDensity * ${glslFloat(SPECK_SHARE)} of cells has a speck
 uniform float uGrainCell;     // cell size in output pixels: short side / ${GRAIN_CELLS_PER_SHORT_SIDE}
 uniform vec2 uGrainCurve;     // lightness where the grain is full above black, where it starts to fade below white
 
-// A cell's speck: 0, or lighter or darker by 0.5 to 1, for a share uGrainDensity of cells.
+// A cell's speck: 0, or darker (a share ${glslFloat(DARK_SHARE)} of specks) or lighter by 0.5 to 1.
 float grainSpeck(ivec2 cell, int seed) {
   vec3 u = unitFromUint(hashKey(ivec3(cell, seed)));
-  if (u.x >= uGrainDensity) return 0.0;
-  return (u.y < 0.5 ? -0.5 : 0.5) * (1.0 + u.z);
+  if (u.x >= uGrainDensity * ${glslFloat(SPECK_SHARE)}) return 0.0;
+  return (u.y < ${glslFloat(DARK_SHARE)} ? -0.5 : 0.5) * (1.0 + u.z);
 }
 
-// Integral of the unit tent (1 - |t|) from -1 to t.
-float grainTentArea(float t) {
-  t = clamp(t, -1.0, 1.0);
-  return t < 0.0 ? 0.5 * (1.0 + t) * (1.0 + t) : 1.0 - 0.5 * (1.0 - t) * (1.0 - t);
-}
-
-// The cells' specks blended bilinearly, averaged over the pixel. Cell centres sit on pixel centres (cell i on pixel
-// i * uGrainCell), so a 2 px cell gives a speck with a one-pixel core and soft edges rather than a soft 2 x 2 block.
+// The specks as squares a cell wide, edges on whole multiples of the cell from the frame's corner, averaged over the
+// pixel, so a 2 px cell gives a crisp 2 x 2 speck; minus the specks' mean, so a flat area keeps its level.
 float grainField(ivec2 px) {
   float len = 1.0 / uGrainCell;
-  vec2 a = (vec2(px) - 0.5) * len;
+  vec2 a = vec2(px) * len;
   ivec2 first = ivec2(floor(a));
-  ivec2 count = min(ivec2(ceil(a + len)) - first + 1, ivec2(${SPAN}));
+  ivec2 count = min(ivec2(ceil(a + len)) - first, ivec2(${SPAN}));
   float wx[${SPAN}];
   float wy[${SPAN}];
   for (int k = 0; k < ${SPAN}; k++) {
     vec2 cell = vec2(first + k);
-    wx[k] = k < count.x ? (grainTentArea(a.x + len - cell.x) - grainTentArea(a.x - cell.x)) / len : 0.0;
-    wy[k] = k < count.y ? (grainTentArea(a.y + len - cell.y) - grainTentArea(a.y - cell.y)) / len : 0.0;
+    wx[k] = k < count.x ? (min(a.x + len, cell.x + 1.0) - max(a.x, cell.x)) / len : 0.0;
+    wy[k] = k < count.y ? (min(a.y + len, cell.y + 1.0) - max(a.y, cell.y)) / len : 0.0;
   }
   int seed = uSeed * 131 + 1048576;
   float g = 0.0;
@@ -178,7 +187,7 @@ float grainField(ivec2 px) {
     }
     g += wy[j] * row;
   }
-  return g;
+  return g - uGrainDensity * ${glslFloat(grainSpeckMean(1))};
 }
 
 float grainAmplitude(float L) {
