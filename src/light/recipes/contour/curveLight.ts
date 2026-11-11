@@ -228,7 +228,7 @@ export function curveLightGlsl(layout: CurveLightLayout): string {
 #define CL_F ${layout.far}
 #define CL_CHUNKS ${Math.ceil(layout.primitives / CHUNK)}
 #define CL_AIR ${AIR_GLOWS}
-#define CL_FLOOR 5e-5
+#define CL_FLOOR 1e-4
 
 // Per primitive: (ax, ay, bx, by) or (cx, cy, radius, start); (kind, sweep, inside side, length);
 // emission at the start (rgb); emission at the end (rgb). Kind 1 segment, 2 arc, 3 mask-only segment.
@@ -521,7 +521,8 @@ void clNearSetup(int cb, float sd, float light1, float light2,
   s2p = 2.0 * float(p) * sigmaEff * sigmaEff;
   offs = c1.w + c3.rgb;
   amp = mask * c0.x * c1.rgb * (sigma / sigmaEff);
-  // Reach: where this part's light falls below CL_FLOOR (a small fraction of one 8-bit step at black).
+  // Reach: where this part's light falls below CL_FLOOR (a third of one 8-bit step at black; the light beyond it changes
+  // a frame by at most 2 code values, and every outline piece within reach costs time at every pixel).
   float peak = maxComponent(amp) * lit * c5.w;
   bool on = c0.x > 0.0 && peak > CL_FLOOR;
   float factor = on ? pow(CL_FLOOR / peak, -1.0 / float(p)) - 1.0 : 0.0;
