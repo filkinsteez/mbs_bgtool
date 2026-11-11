@@ -115,7 +115,11 @@ Contour's Halo layout of separate circles (a big ring with smaller rings beside 
     unless the owner asks.
 - Still in force from 2026-11-06 (owner): the filter's Strength slider
   keeps the key `density`; the engine's `intensity` input stays, at a
-  fixed value, now that its slider is gone. Mood is picked from
+  fixed value, now that its slider is gone. With Pixel picked, the slider
+  reads "Density": its low end gives bigger pixels and its high end
+  smaller ones (owner, 2026-11-11: "for pixel strenght the slider is
+  backwards bigger at the bottom. smaller at the top and relabel slider
+  from strength to density"). Grain's slider still reads "Strength". Mood is picked from
   small pictures, Filter from icons and Format from shapes, each with its
   name, not dropdowns; the pictures are fixed renders from
   `scripts/light/panel-pictures.mjs`, not live, in the Atmospheric pack
