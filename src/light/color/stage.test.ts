@@ -171,6 +171,13 @@ describe('color stage', () => {
     expect(partWeightsAt([1, 0.3], asked, (k) => [0.3, 0][k])).toEqual([1, 0.3])
     expect(partWeightsAt([1, 0.3], asked, (k) => [0.5, 0.5][k])).toEqual([1, 0.3])
     expect(partWeightsAt([0.4, 1], asked, (k) => [0.9, 0.3][k])).toEqual([0.4, 1])
+    // Lime's dome (asked, weight 0.01) holding Tan's band (asked, 0.2): on the dome Tan keeps its weight and Meta Blue
+    // weighs no more than Lime.
+    expect(partWeightsAt([1, 0.01, 0.2], [false, true, true], (k) => [0.3, 0.9, 0.7][k])).toEqual([0.01, 0.01, 0.2])
+    // Where the dome and the band are even, Meta Blue weighs no more than the two weights' blend.
+    const even = partWeightsAt([1, 0.01, 0.2], [false, true, true], (k) => [0.3, 0.9, 0.9][k])
+    expect(even[0]).toBeCloseTo(0.105, 6)
+    expect(even.slice(1)).toEqual([0.01, 0.2])
   })
 
   it('counts a part by its strength and gives the dark spots to the dark fields in their order', () => {

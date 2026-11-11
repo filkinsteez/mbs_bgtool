@@ -357,7 +357,8 @@ export function asksLight(want: FieldWant | undefined): boolean {
 }
 
 /**
- * Which colors' parts no other color's weight may repaint (coordinator, 2026-11-11 12:05 AM): a part asking for a light
+ * Which colors' parts no other color's weight may repaint, but each other's where they overlap (partWeightsAt;
+ * coordinator, 2026-11-11 12:05 AM): a part asking for a light
  * color far in hue from Meta Blue by meetColor's test (meetApart above 0, more than 45 degrees round white), as Yellow,
  * Orange-red, Lime and Tan. Parts asking for Cyan, Ice or Steel keep the plain weighting, so Sunrise's cool skies stay
  * Meta Blue. `wants[k]`: the want of the field color k takes. None with Meta Blue off.
@@ -373,24 +374,32 @@ const PART_OWNS = [0, 0.15] as const
 
 /**
  * The colors' weights in one cell (coordinator, 2026-11-10 11:14 PM: Meta Blue carries its own light and doesn't cover
- * other lights). Where the strongest field before weights is a part asking for a light color (`asked`), that color owns
+ * other lights). Where the strongest field before weights is a part asking for a light color (`asked`), that color holds
  * the cell and every other color weighs no more there than it does, so the weight that brings Meta Blue (or another
- * color) to its share can't repaint the part. Meta Blue's own parts and the light no part asks for, where its lead field
- * is the strongest, keep every weight, so colors still reach their shares there. `at(k)`: color k's field in the cell
- * with its lightness mask, before weights.
+ * color) to its share can't repaint the part. A color whose own part is asked too keeps its weight there, so two such
+ * parts that overlap share the overlap by their weights and each can still reach its share (Sunrise Elemental's Tan
+ * band inside its Lime dome; coordinator, 2026-11-11 1:43 AM). An asked part holds the cell fully where its field is
+ * the strongest and not at all PART_OWNS[1] under the strongest; where two hold it, the others weigh no more than the
+ * blend of their weights, so the limit changes smoothly from one part to the next. Meta Blue's own parts and the light
+ * no part asks for, where its lead field is the strongest, keep every weight, so colors still reach their shares there.
+ * `at(k)`: color k's field in the cell with its lightness mask, before weights.
  */
 export function partWeightsAt(weights: readonly number[], asked: readonly boolean[], at: (k: number) => number): number[] {
-  let owner = -1
   let top = 0
+  for (let k = 0; k < weights.length; k++) top = Math.max(top, at(k))
+  let held = 0
+  let holds = 0
+  let limit = 0
   for (let k = 0; k < weights.length; k++) {
-    const v = at(k)
-    if (v > top) {
-      owner = k
-      top = v
-    }
+    if (!asked[k]) continue
+    const hold = 1 - smooth(PART_OWNS[0], PART_OWNS[1], top - at(k))
+    held = Math.max(held, hold)
+    holds += hold
+    limit += hold * weights[k]
   }
-  if (owner < 0 || !asked[owner]) return [...weights]
-  return weights.map((w, k) => (k === owner || w <= weights[owner] ? w : w * (weights[owner] / w) ** smooth(PART_OWNS[0], PART_OWNS[1], top - at(k))))
+  if (held <= 0) return [...weights]
+  limit /= holds
+  return weights.map((w, k) => (asked[k] || w <= limit ? w : w * (limit / w) ** (held * smooth(PART_OWNS[0], PART_OWNS[1], top - at(k)))))
 }
 
 export interface StageSolution {
