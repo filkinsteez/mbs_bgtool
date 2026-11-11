@@ -10,11 +10,10 @@ import { mergedAlong } from '../recipes/contour/mergedCompose'
 import { lightnessOnlyParams } from '../recipes/sunset/merged'
 import { isRecipeId, type ColorMixSettings, type LensSettings, type RecipeContext, type RecipeId, type RecipeProgram, type Scene, type UniformMap } from '../scene'
 import { defaultMix, META_BLUE_HEX, mixFromShares, type ColorMix } from './mix'
-import { linearToOklab, oklchToLinear } from './oklab'
-import { getPack, hueOrder, isPackId, type ColorPack, type PackId } from './packs'
+import { oklchToLinear } from './oklab'
+import { getPack, isPackId, type ColorPack, type PackId } from './packs'
 import { rampFor, rampSteps } from './ramps'
-import { hexToLinear } from './srgb'
-import { BODY_LIFT, carriedShares, lighterLast, SWATCH_DIM, swatchFull, SWATCH_PALEST, type CarryWay } from './stageCarry'
+import { carriedShares, type CarryWay } from './stageCarry'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
 import { blurGrid, buildFields, COVERAGE_SPLIT, GRID_SHORT, gridSize, lightSlope, lookParts, makeNoise, mulberry32, VISIBLE, type StageField, type StageGrid } from './stageFields'
 import { assignFields, colorFields, coloredByParts, farPairs, guardedParts, KIND_DARK, KIND_PLAIN, KIND_TO_NEIGHBOR, lightPartHolds, neighbourPairs, softFields, solveWeights, stageColors, stageDimPaths, STAGE_SHARPNESS, type StageColor } from './stageSolve'
@@ -81,10 +80,6 @@ interface Solved {
   values: Float32Array[]
   /** Whether the look's parts say where colors go (a narrower neutral line where far hues meet). */
   byParts: boolean
-  /** For a look colored by its parts: the design lightness where colors reach black, where they reach their swatch, and where highlights start and peak. */
-  tone: readonly [number, number, number, number]
-  /** For a look colored by its parts, per color: the design lightness in the middle of its area, where its falloff starts, and how far lighter and darker than its swatch the design's light takes it (bodyLevels). */
-  body: readonly (readonly [number, number, number, number])[]
   weights: number[]
   light: number[]
   reads: number[]
@@ -471,18 +466,8 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
     void wants
     const id = input.program.id
     const sky = isRecipeId(id) ? lookParts(id, input.ctx.params, input.ctx.aspect).find((p) => p.kind === 'horizon') : undefined
-    const run = id === 'rush.split' ? input.ctx.params.run : undefined
-    const toward = Array.isArray(run) && typeof run[2] === 'number' ? ([-Math.sin(run[2]), Math.cos(run[2])] as const) : undefined
-    const lighter = lighterLast(hueOrder(pack).map((i) => linearToOklab(hexToLinear(pack.colors[i].hex))[0]))
-    const way: CarryWay =
-      id === 'contour.merged'
-        ? { kind: 'outline', along: design.along, lighterLast: lighter }
-        : sky && sky.kind === 'horizon'
-          ? { kind: 'grain', axis: sky.sky, lighterLast: lighter }
-          : { kind: 'grain', axis: null, toward, lighterLast: toward ? lighter : undefined }
-    const tone = toneLevels(grid)
-    const soft = byParts ? carriedShares(grid, colors, values, input.ctx.seed, way, tone) : []
-    const body = byParts ? bodyLevels(grid, colors, soft) : colors.map((): [number, number, number, number] => [SWATCH_DIM[1], BODY_REACH, 0, 0])
+    const way: CarryWay = id === 'contour.merged' ? { kind: 'outline', along: design.along } : { kind: 'grain', axis: sky && sky.kind === 'horizon' ? sky.sky : null }
+    const soft = byParts ? carriedShares(grid, colors, values, input.ctx.seed, way) : []
     const drawn = byParts
       ? {
           values: [
@@ -501,7 +486,7 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
     const bridge = new Float32Array(grid.width * grid.height)
     const darkBridge = new Float32Array(grid.width * grid.height)
     const lift = new Float32Array(grid.width * grid.height)
-    solved = remember(solves, solveKey, { colors, assignment, byParts, tone, body, ...solution, ...drawn, bridge, darkBridge, lift })
+    solved = remember(solves, solveKey, { colors, assignment, byParts, ...solution, ...drawn, bridge, darkBridge, lift })
   }
   lastReport = { hexes: solved.colors.map((c) => c.hex), light: solved.light, reads: solved.reads, fields: solved.assignment.map((f) => fields[f]?.name ?? '') }
   const textures = { ...fieldTextures(input.gpu, grid, solved.values), uMixRamps: rampTexture(input.gpu, solved.colors, grid, solved.bridge, solved.darkBridge, solved.lift) }
@@ -516,18 +501,13 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
   }
 }
 
-function stageUniforms({ colors, weights, byParts, tone, body }: Solved): UniformMap {
+function stageUniforms({ colors, weights, byParts }: Solved): UniformMap {
   const color = new Float32Array(20)
   const turn = new Float32Array(20)
   const field = new Float32Array(20)
-  const swatch = new Float32Array(20)
-  const bodies = new Float32Array(20)
   colors.slice(0, 5).forEach((c, k) => {
-    const linear = hexToLinear(c.hex)
-    swatch.set([c.lightness, 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2], swatchFull(c.lightness), 0], 4 * k)
-    bodies.set(body[k] ?? [SWATCH_DIM[1], BODY_REACH, 0, 0], 4 * k)
     // In a look colored by its parts every color takes its share of the area at whatever light is there, so the shader
-    // neither masks nor turns it: it shows the color at its swatch (colorSwatch in stageGlsl).
+    // neither masks nor turns it: it shows the color's ramp at the pixel's light (pale where bright, deep where dim).
     color.set([...c.unit, byParts ? KIND_PLAIN : c.kind], 4 * k)
     const range = c.kind === KIND_TO_NEIGHBOR ? c.turn : c.fade
     turn.set([c.neighborIndex, c.edge, range[0], range[1]], 4 * k)
@@ -544,95 +524,7 @@ function stageUniforms({ colors, weights, byParts, tone, body }: Solved): Unifor
     uMixBridge: 1,
     uMixNarrow: byParts ? 1 : 0,
     uMixSoft: byParts ? 1 : 0,
-    uMixSwatch: byParts ? 1 : 0,
-    uMixSwatchAt: swatch,
-    uMixBody: bodies,
-    uMixTone: [...tone],
-    uMixToneTop: SWATCH_PALEST,
   }
-}
-
-/** The shares of the colored area, by its light, over which highlights go from none to their most. */
-const TONE_HIGH_SHARES = [0.92, 0.997] as const
-/** The design lightness under which there are no highlights, so a dim look's glow (Contour) shows its colors at their swatches. */
-const TONE_HIGH_LEAST = 0.75
-
-/**
- * The design's light levels for a look colored by its parts (owner, 2026-11-11 2:37 PM: each color shows at its own
- * swatch; highlights add light toward white, dim falloff darkens toward black, and both are limited so that across its
- * area each color reads as its swatch): where a color is black, where it reaches its swatch (SWATCH_DIM), and where its
- * highlights start and peak (the brightest 15% of the colored area, and no lower than TONE_HIGH_LEAST). They depend
- * only on the design, so every pack and mix gets the same light positions.
- */
-function toneLevels(grid: StageGrid): [number, number, number, number] {
-  const L = grid.lightness
-  const cover = grid.softCoverage ?? L.map((v) => (v >= VISIBLE ? 1 : 0))
-  const lit = Array.from(L.keys()).filter((i) => cover[i] > 1e-6).sort((a, b) => L[a] - L[b])
-  const total = lit.reduce((a, i) => a + cover[i], 0)
-  const at = (share: number) => {
-    let run = 0
-    for (const i of lit) {
-      run += cover[i]
-      if (run >= share * total) return L[i]
-    }
-    return lit.length ? L[lit[lit.length - 1]] : 1
-  }
-  const high = Math.max(TONE_HIGH_LEAST, at(TONE_HIGH_SHARES[0]))
-  const peak = Math.max(high + TONE_HIGH_WIDTH, at(TONE_HIGH_SHARES[1]))
-  return [SWATCH_DIM[0], SWATCH_DIM[1], high, peak]
-}
-
-/** The least design lightness over which highlights go from none to their most, so a color pales as softly as the light rises. */
-const TONE_HIGH_WIDTH = 0.15
-/** How far brighter design light takes a color lighter than its swatch (Oklab L), and at most this share of the way to white, so a light color (Yellow, Lime) doesn't go cream. */
-export const BODY_REACH = 0.08
-const BODY_PALE = 0.35
-/** Two grey pack colors (Atmospheric's) differ only in lightness: each goes at most this share of the way to the next lighter one. */
-const BODY_GREY_GAP = 0.45
-/** The share of a color's area, by light, under which it fades in step with the design. Meta Blue keeps more of the design's falloff, so it carries its own light and gradients (owner, 2026-11-09 10:05 PM). */
-const BODY_FALL = 0.2
-const BODY_FALL_BLUE = 0.4
-/** Even where its whole area is dim, at most how many times lighter than the design a color is shown. */
-const BODY_LIFT_MOST = 2
-
-/**
- * Each color's light levels for the shader (colorSwatch, coordinator 2026-11-11 3:12 PM: keep some of the design's
- * light inside each color, fade to black over the design's own falloff): the design lightness from which it shows at
- * its swatch, and how far lighter than its swatch brighter light takes it. That lightness is the light under the
- * dimmest BODY_FALL of the color's area, but no lower than its swatch's lightness over BODY_LIFT, so a falloff is
- * never more than that many times lighter than the design's. Where the color's whole area is dimmer than that, its
- * brightest part shows at its swatch, up to BODY_LIFT_MOST times lighter than the design.
- */
-function bodyLevels(grid: StageGrid, colors: readonly StageColor[], shares: readonly Float32Array[]): [number, number, number, number][] {
-  const L = grid.lightness
-  const cover = grid.softCoverage ?? L.map((v) => (v >= VISIBLE ? 1 : 0))
-  const byLight = Array.from(L.keys()).filter((i) => cover[i] > 1e-6).sort((a, b) => L[a] - L[b])
-  const levels = (weight: (i: number) => number, falls: number): [number, number] => {
-    const total = byLight.reduce((a, i) => a + weight(i), 0)
-    if (total <= 1e-6) return [SWATCH_DIM[1], SWATCH_DIM[1]]
-    const at = (share: number) => {
-      let run = 0
-      for (const i of byLight) {
-        run += weight(i)
-        if (run >= share * total) return L[i]
-      }
-      return L[byLight[byLight.length - 1]]
-    }
-    return [at(falls), at(0.9)]
-  }
-  return colors.map((c, k) => {
-    const share = shares[k]
-    const falls = c.hex === META_BLUE_HEX ? BODY_FALL_BLUE : BODY_FALL
-    const [fall, bright] = levels(share ? (i) => cover[i] * share[i] : (i) => cover[i], falls)
-    let up = Math.min(BODY_REACH, BODY_PALE * (1 - c.lightness))
-    if (c.chroma < 0.04)
-      for (const o of colors) {
-        const gap = o.lightness - c.lightness
-        if (o !== c && o.chroma < 0.04 && gap > 0) up = Math.min(up, BODY_GREY_GAP * gap)
-      }
-    const from = Math.max(fall, Math.min(c.lightness / BODY_LIFT, Math.max(bright, c.lightness / BODY_LIFT_MOST)))
-    return [from, up, 0, 0]
-  })
 }
 
 /** Steps in a color's ramp, evenly spaced in the cube root of luminance from black to white. */

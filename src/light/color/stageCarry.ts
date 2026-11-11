@@ -11,8 +11,7 @@ import type { StageColor } from './stageSolve'
 //    In Contour they are mirrored round Meta Blue on the main light.
 // 3. Each color takes first the cells of its stretch whose light is nearest its swatch's lightness, and reaches past
 //    its stretch or into other light only as far as its share of the colored area needs. The shader shows each color
-//    at its swatch, dimmed toward black only where the design falls to black (SWATCH_DIM) and paler only in the
-//    design's brightest part (colorSwatch in stageGlsl).
+//    at the design's light from its ramp (ramps.ts): paler where the light is bright, deeper where it is dim.
 
 /** The kernel light spreads with: Gaussian sigmas in grid cells and their weights (a heavy tail, like haze). */
 const CARRY_SIGMAS = [1.5, 4, 9] as const
@@ -31,79 +30,17 @@ const LIGHT_REACH = 0.13
 const LIGHT_BLUR = 3.5
 /** Stretches of an outline whose light a color's pull compares with its swatch. */
 const ALONG_BINS = 48
-/** How much more than its share Meta Blue aims for when it leads (share 40% or more), so it stays at least 45%; it starts and finishes leading over this range of its share. */
-const LEAD_MORE = 0.02
-const LEAD_RANGE = [0.35, 0.45] as const
+/** How much more than its share Meta Blue aims for when it leads (share 40% or more), so it stays at least 45%. */
+const LEAD_MORE = 0.05
 /** How much nearer the swatches' lightness one way of the hue order must be to beat the way the look's parts ask for. */
 const FIT_CLEAR = 0.15
-/** How far the look's parts must lean one way (in places times places along the order) to settle it alone. */
-const AGREE_CLEAR = 0.1
-/** Where neither way is clearly better, the two are drawn blended, over this much of the lean either way (0 to 1). */
-const FLIP_BLEND = 0.5
-/** Contour: how much larger one other color's share must be to take the end Meta Blue moves to alone, and over what difference in distance the two ends are blended. */
-const END_SOFT = 0.02
-const END_BLEND = 0.1
 /** Blur of each color's share on the grid (cells), so a hand-over is smooth where the places crowd together. */
 const SHARE_BLUR = 1.5
 /** Passes that set each color's pull until it covers its share. */
 const PASSES = 24
-/** Contour: Meta Blue's share under which it starts to move off the main light, and the share at which it has moved to the end of the outline; and how much larger another color must be for it to move all the way. */
-const MB_HOLDS = [0.4, 0.2] as const
-const MB_HOLDS_LEAD = 0.1
-/** The design lightness (cube root of luminance) at which the stage shows a color black, and from which it shows it at its swatch. */
-export const SWATCH_DIM = [0.08, 0.45] as const
-/** How far toward white the stage takes a color in the design's brightest light: a share of the way from its swatch's lightness to white. */
-export const SWATCH_PALEST = 0.55
 
-/**
- * The design lightness from which the stage shows a color with swatch lightness `own` at its swatch: SWATCH_DIM[1],
- * or the swatch's own lightness for a dark color, so a dark color shows at its swatch in light as dim as itself.
- */
-export function swatchFull(own: number): number {
-  return Math.min(SWATCH_DIM[1], Math.max(SWATCH_DIM[0] + 0.12, own))
-}
-
-/** At most how many times lighter than the design the stage shows a color in its falloff (bodyLevels in stage.ts). */
-export const BODY_LIFT = 1.5
-
-/**
- * About the lightness the stage shows a color with swatch lightness `own` at a design lightness (colorSwatch in
- * stageGlsl, with its falloff starting at own / BODY_LIFT): its swatch from there up, under it the design's falloff,
- * from the design's own lightness at the outer edge to the swatch, and paler from tone[2] to tone[3].
- */
-function shownLightness(own: number, light: number, tone: readonly number[]): number {
-  const t = Math.min(1, Math.max(0, (light - tone[2]) / Math.max(tone[3] - tone[2], 1e-6)))
-  const from = own / BODY_LIFT
-  const base = light < from ? light * BODY_LIFT ** (light / from) : own
-  return base + SWATCH_PALEST * t * t * (3 - 2 * t) * (1 - base)
-}
-
-/**
- * `along`: the look's own place along its outline per cell (0 to 1), used instead of the estimate from the light.
- * `axis`: the look's own direction across its bands (Sunrise's sky direction, from its light up into the sky), else
- * the grain read from the light, turned to point along `toward` (Rush's run, across it). `lighterLast`: whether the
- * lighter end of the pack's hue order is its last color; that end goes at the start of the places (Sunrise's light,
- * the start of Contour's outline, Rush's side against `toward`), so no slider or drag can flip the order.
- */
-export type CarryWay =
-  | { kind: 'outline'; along?: Float32Array; lighterLast?: boolean }
-  | { kind: 'grain'; axis: readonly [number, number] | null; toward?: readonly [number, number]; lighterLast?: boolean }
-
-/**
- * Whether the lighter end of colors in hue order (their swatches' lightness) is the last one: lightness against place
- * in the order, over the whole pack, so a slider can't change it.
- */
-export function lighterLast(lightness: readonly number[]): boolean {
-  const n = lightness.length
-  const mean = lightness.reduce((a, b) => a + b, 0) / Math.max(n, 1)
-  return lightness.reduce((s, l, i) => s + (l - mean) * (i - (n - 1) / 2), 0) > 0
-}
-
-/** 0 under 0, 1 over 1, smooth between. */
-function smooth01(v: number): number {
-  const t = Math.min(1, Math.max(0, v))
-  return t * t * (3 - 2 * t)
-}
+/** `along`: the look's own place along its outline per cell (0 to 1), used instead of the estimate from the light. */
+export type CarryWay = { kind: 'outline'; along?: Float32Array } | { kind: 'grain'; axis: readonly [number, number] | null }
 
 function carry(src: Float32Array, w: number, h: number): Float32Array {
   const out = new Float32Array(src.length)
@@ -202,7 +139,7 @@ function outlinePlace(emit: Float32Array, w: number, h: number): Float32Array {
 }
 
 /** A place across the light's grain that stays the same along each band: a seeded, fanning warp of the axis, spread along the grain. */
-function grainPlace(L: Float32Array, w: number, h: number, axis: readonly [number, number] | null, seed: number, toward?: readonly [number, number]): Float32Array {
+function grainPlace(L: Float32Array, w: number, h: number, axis: readonly [number, number] | null, seed: number): Float32Array {
   const n = w * h
   const short = Math.min(w, h)
   const lb = blurGrid(L, w, h, 1.5)
@@ -220,10 +157,11 @@ function grainPlace(L: Float32Array, w: number, h: number, axis: readonly [numbe
   let ux: number
   let uy: number
   if (axis) {
-    // The look gives its sky direction in short-side units (Sunrise's `up`), and grid cells are square.
-    const d = Math.hypot(axis[0], axis[1]) || 1
-    ux = axis[0] / d
-    uy = axis[1] / d
+    const dx = axis[0] * w
+    const dy = axis[1] * h
+    const d = Math.hypot(dx, dy) || 1
+    ux = dx / d
+    uy = dy / d
   } else {
     let jxx = 0
     let jxy = 0
@@ -234,10 +172,8 @@ function grainPlace(L: Float32Array, w: number, h: number, axis: readonly [numbe
       jyy += gyy[i]
     }
     const theta = 0.5 * Math.atan2(2 * jxy, jxx - jyy)
-    // The grain's direction has no sign of its own; turned along the look's, it doesn't flip as it passes upright.
-    const sign = toward && Math.cos(theta) * toward[0] + Math.sin(theta) * toward[1] < 0 ? -1 : 1
-    ux = sign * Math.cos(theta)
-    uy = sign * Math.sin(theta)
+    ux = Math.cos(theta)
+    uy = Math.sin(theta)
   }
   const jx = blurGrid(gxx, w, h, 3)
   const jm = blurGrid(gxy, w, h, 3)
@@ -303,10 +239,9 @@ function grainPlace(L: Float32Array, w: number, h: number, axis: readonly [numbe
 
 /**
  * Each color's share per grid cell. `fields[k]`: where the look's parts ask for color k (only to pick which end of the
- * hue order goes where, and where Meta Blue's main light is); `way`: how the look's light runs; `tone`: the design
- * lightness where the stage shows a color black, at its swatch, and where it starts and finishes going paler.
+ * hue order goes where, and where Meta Blue's main light is); `way`: how the look's light runs.
  */
-export function carriedShares(grid: StageGrid, colors: readonly StageColor[], fields: readonly Float32Array[], seed: number, way: CarryWay, tone: readonly number[]): Float32Array[] {
+export function carriedShares(grid: StageGrid, colors: readonly StageColor[], fields: readonly Float32Array[], seed: number, way: CarryWay): Float32Array[] {
   const { width: w, height: h } = grid
   const n = w * h
   const K = colors.length
@@ -321,7 +256,7 @@ export function carriedShares(grid: StageGrid, colors: readonly StageColor[], fi
     const num = carry(Float32Array.from(emit, (e, i) => e * along[i]), w, h)
     const den = carry(emit, w, h)
     place = num.map((v, i) => (den[i] > 1e-12 ? v / den[i] : along[i]))
-  } else place = grainPlace(L, w, h, way.axis, seed, way.toward)
+  } else place = grainPlace(L, w, h, way.axis, seed)
   // Each cell's place as the share of the colored area before it, so a stretch's length is a share of the area.
   const byPlace = Array.from({ length: n }, (_, i) => i).sort((a, b) => place[a] - place[b])
   const u = new Float32Array(n)
@@ -352,49 +287,22 @@ export function carriedShares(grid: StageGrid, colors: readonly StageColor[], fi
   const sum = colors.reduce((a, c) => a + Math.max(c.share, 1e-4), 0)
   const width = colors.map((c) => Math.max(c.share, 1e-4) / sum)
   const slots: { k: number; lo: number; hi: number }[] = []
-  let slide = 0
   if (mirror) {
-    // Meta Blue holds the main light while it leads. As its share falls under MB_HOLDS[0] with another color larger,
-    // it moves off the main light to the end of the outline that puts the largest color on the main light
-    // (coordinator, 2026-11-11 3:12 PM), and each other color's two halves move to that color's side.
     const wm = width[mbK]
-    const rest = Math.max(1e-6, 1 - wm)
-    const held = Math.min(rest, Math.max(0, center - wm / 2))
-    const most = Math.max(0, ...sideColors.map((k) => colors[k].share))
-    slide = smooth01((MB_HOLDS[0] - colors[mbK].share) / (MB_HOLDS[0] - MB_HOLDS[1])) * smooth01((most - colors[mbK].share) / MB_HOLDS_LEAD)
-    let end = 0
-    if (slide > 0) {
-      // Each other color's end, weighed by how far it leads the others, so two colors of about the same share don't
-      // swap the end between them, and each end is taken gradually where the two are about as near.
-      let weights = 0
-      let ends = 0
-      for (const big of sideColors) {
-        const middleOf = (ks: readonly number[], from: number) => {
-          let x = from
-          for (const k of ks) {
-            if (k === big) return x + width[k] / 2
-            x += width[k]
-          }
-          return x
-        }
-        const gap = Math.abs(middleOf(sideColors, wm) - center) - Math.abs(middleOf([...sideColors].reverse(), 0) - center)
-        const weight = Math.exp((colors[big].share - most) / END_SOFT)
-        weights += weight
-        ends += weight * smooth01(gap / END_BLEND + 0.5)
-      }
-      end = (rest * ends) / Math.max(weights, 1e-12)
-    }
-    const left = (held + slide * (end - held)) / rest
+    const half = sideColors.reduce((a, k) => a + width[k] / 2, 0)
+    const sl = half > 0 ? Math.max(0, center - wm / 2) / half : 0
+    const sr = half > 0 ? Math.max(0, 1 - center - wm / 2) / half : 0
+    const norm = wm + half * (sl + sr) || 1
     let x = 0
     for (const k of [...sideColors].reverse()) {
-      const wd = width[k] * left
+      const wd = ((width[k] / 2) * sl) / norm
       if (wd > 0) slots.push({ k, lo: x, hi: x + wd })
       x += wd
     }
-    slots.push({ k: mbK, lo: x, hi: x + wm })
-    x += wm
+    slots.push({ k: mbK, lo: x, hi: x + wm / norm })
+    x += wm / norm
     for (const k of sideColors) {
-      const wd = width[k] * (1 - left)
+      const wd = ((width[k] / 2) * sr) / norm
       if (wd > 0) slots.push({ k, lo: x, hi: x + wd })
       x += wd
     }
@@ -429,120 +337,91 @@ export function carriedShares(grid: StageGrid, colors: readonly StageColor[], fi
     })
   }
   const Lp = grid.peak && way.kind !== 'outline' ? blurGrid(grid.peak, w, h, LIGHT_BLUR) : Lc
-  // Meta Blue sits in any light while it holds the main light; as it moves off, it weighs its light as the others do,
-  // so it doesn't come back to the main light for the light it counts in there.
   const lightOff = colors.map((c, k) =>
     Float32Array.from(Lc, (lo, i) => {
-      if (k === mbK && slide <= 0) return 0
-      const off = Math.min(Math.abs(shownLightness(c.lightness, lo, tone) - c.lightness), Math.abs(shownLightness(c.lightness, Math.max(lo, Lp[i]), tone) - c.lightness))
-      return (k === mbK ? slide : 1) * (off / LIGHT_REACH) ** 2
+      if (k === mbK) return 0
+      const hi = Math.max(lo, Lp[i])
+      const off = c.lightness < lo ? lo - c.lightness : c.lightness > hi ? c.lightness - hi : 0
+      return (off / LIGHT_REACH) ** 2
     }),
   )
-  // How much a cell counts for each color in the shares, as the shares reading counts the color as the stage shows it
-  // there (near-black counts less, but a color's own lightness counts fully; greys count fully).
+  // How much a cell counts for each color in the shares, as the shares reading counts it (near-black counts less, but
+  // a color's own lightness counts fully; greys count fully).
   const step = (v: number) => {
     const t = Math.min(1, Math.max(0, (v - 0.15) / 0.2))
     return t * t * (3 - 2 * t)
   }
-  const counts = colors.map((c) => Float32Array.from(L, (v, i) => area[i] * (c.chroma < 0.04 ? 1 : Math.min(1, step(shownLightness(c.lightness, v, tone)) / Math.max(1e-6, step(c.lightness))))))
-  // Which end of the hue order goes where. No small change of a slider or a drag may flip it, or whole colors would
-  // jump from one side of the picture to the other (owner, 2026-11-11 4:40 PM: "colors pop in and out from really
-  // small adjustments"). The looks in the tool give it (`lighterLast`), whatever the shares and the light. Otherwise
-  // the way whose stretches lie on light clearly nearer their colors' swatches, else the way that keeps each color
-  // nearer the part of the look that asks for it; where neither is clear, both ways are drawn, blended by how far
-  // each leans.
-  let flipBy: number
-  if (mirror) flipBy = 0
-  else if (way.lighterLast !== undefined) flipBy = way.lighterLast ? 1 : 0
-  else {
-    // The way is picked by the design's own light against the swatches' lightness, as before the stage showed colors
-    // at their swatches, so a seed's colors keep their sides.
-    const designOff = colors.map((c, k) =>
-      Float32Array.from(Lc, (lo, i) => {
-        if (k === mbK) return 0
-        const hi = Math.max(lo, Lp[i])
-        const off = c.lightness < lo ? lo - c.lightness : c.lightness > hi ? c.lightness - hi : 0
-        return Math.min(4, (off / LIGHT_REACH) ** 2)
-      }),
-    )
-    const fit = (flip: boolean) => {
-      let f = 0
-      for (const s of slots)
-        for (let i = 0; i < n; i++) {
-          const v = flip ? 1 - u[i] : u[i]
-          if (v >= s.lo && v < s.hi) f += area[i] * designOff[s.k][i]
-        }
-      return f
-    }
-    let agree = 0
-    colors.forEach((_, k) => {
-      let s = 0
-      let m = 0
+  const counts = colors.map((c) => Float32Array.from(L, (v, i) => area[i] * (c.chroma < 0.04 ? 1 : Math.min(1, step(v) / Math.max(1e-6, step(c.lightness))))))
+  // Which end of the hue order goes where: the way whose stretches lie on light clearly nearer their colors' swatches,
+  // else the way that keeps each color nearer the part of the look that asks for it, as today.
+  const fit = (flip: boolean) => {
+    let f = 0
+    for (const s of slots)
       for (let i = 0; i < n; i++) {
-        const f = (fields[k]?.[i] ?? 0) * emit[i]
-        s += f
-        m += f * u[i]
+        const v = flip ? 1 - u[i] : u[i]
+        if (v >= s.lo && v < s.hi) f += area[i] * Math.min(4, lightOff[s.k][i])
       }
-      if (s > 1e-12) agree += (m / s - 0.5) * (order.indexOf(k) - (K - 1) / 2)
-    })
-    const [kept, flipped] = [fit(false), fit(true)]
-    const byFit = Math.max(-1, Math.min(1, (kept - flipped) / Math.max(kept, flipped, 1e-9) / FIT_CLEAR))
-    const byParts = Math.max(-1, Math.min(1, -agree / AGREE_CLEAR))
-    flipBy = smooth01((byFit + (1 - Math.abs(byFit)) * byParts + FLIP_BLEND) / (2 * FLIP_BLEND))
+    return f
   }
+  let agree = 0
+  colors.forEach((_, k) => {
+    let s = 0
+    let m = 0
+    for (let i = 0; i < n; i++) {
+      const f = (fields[k]?.[i] ?? 0) * emit[i]
+      s += f
+      m += f * u[i]
+    }
+    if (s > 1e-12) agree += (m / s - 0.5) * (order.indexOf(k) - (K - 1) / 2)
+  })
+  const [kept, flipped] = [fit(false), fit(true)]
+  const flip = Math.abs(flipped - kept) > FIT_CLEAR * Math.max(flipped, kept) ? flipped < kept : agree < 0
+  if (!mirror && flip) for (let i = 0; i < n; i++) u[i] = 1 - u[i]
+  // How far each cell is from what each color asks for: past the color's stretch, and off its swatch's lightness.
+  const cost = colors.map((_, k) => {
+    const own = slots.filter((s) => s.k === k)
+    return Float32Array.from(u, (v, i) => {
+      let past = Infinity
+      for (const s of own) past = Math.min(past, v < s.lo ? s.lo - v : v > s.hi ? v - s.hi : 0)
+      return (past / PLACE_REACH) ** 2 + lightOff[k][i]
+    })
+  })
   // Each color's pull, set until it covers its share of the colored area: it takes the cells nearest what it asks for
   // first and reaches further only as far as its share needs.
-  const mbShare = colors[mbK]?.share ?? 0
-  const lead = mbK >= 0 ? Math.min(LEAD_MORE, 1 - mbShare) * smooth01((mbShare - LEAD_RANGE[0]) / (LEAD_RANGE[1] - LEAD_RANGE[0])) : 0
-  const aim = colors.map((c, k) => (k === mbK ? c.share + lead : (c.share * (1 - mbShare - lead)) / Math.max(1e-6, 1 - mbShare)))
-  const solve = (places: Float32Array): Float32Array[] => {
-    // How far each cell is from what each color asks for: past the color's stretch, and off its swatch's lightness.
-    const cost = colors.map((_, k) => {
-      const own = slots.filter((s) => s.k === k)
-      return Float32Array.from(places, (v, i) => {
-        let past = Infinity
-        for (const s of own) past = Math.min(past, v < s.lo ? s.lo - v : v > s.hi ? v - s.hi : 0)
-        return (past / PLACE_REACH) ** 2 + lightOff[k][i]
-      })
-    })
-    const pull = new Float64Array(K)
-    const shares = colors.map(() => new Float32Array(n))
-    const raw = colors.map(() => new Float32Array(n))
-    for (let pass = 0; pass <= PASSES; pass++) {
-      for (let i = 0; i < n; i++) {
-        let top = -Infinity
-        for (let k = 0; k < K; k++) top = Math.max(top, pull[k] - cost[k][i])
-        let s = 0
-        for (let k = 0; k < K; k++) {
-          raw[k][i] = Math.exp(pull[k] - cost[k][i] - top)
-          s += raw[k][i]
-        }
-        for (let k = 0; k < K; k++) raw[k][i] /= s
+  const lead = mbK >= 0 && colors[mbK].share >= 0.4 ? Math.min(LEAD_MORE, 1 - colors[mbK].share) : 0
+  const aim = colors.map((c, k) => (k === mbK ? c.share + lead : c.share * (1 - (colors[mbK]?.share ?? 0) - lead) / Math.max(1e-6, 1 - (colors[mbK]?.share ?? 0))))
+  const pull = new Float64Array(K)
+  const shares = colors.map(() => new Float32Array(n))
+  const raw = colors.map(() => new Float32Array(n))
+  for (let pass = 0; pass <= PASSES; pass++) {
+    for (let i = 0; i < n; i++) {
+      let top = -Infinity
+      for (let k = 0; k < K; k++) top = Math.max(top, pull[k] - cost[k][i])
+      let s = 0
+      for (let k = 0; k < K; k++) {
+        raw[k][i] = Math.exp(pull[k] - cost[k][i] - top)
+        s += raw[k][i]
       }
-      const soft = raw.map((r) => blurGrid(r, w, h, SHARE_BLUR))
-      for (let i = 0; i < n; i++) {
-        let s = 0
-        for (let k = 0; k < K; k++) s += soft[k][i]
-        for (let k = 0; k < K; k++) shares[k][i] = s > 1e-9 ? soft[k][i] / s : 1 / K
-      }
-      let counted = 0
-      const shown = colors.map((_, k) => {
-        let v = 0
-        for (let i = 0; i < n; i++) v += counts[k][i] * shares[k][i]
-        counted += v
-        return v
-      })
-      for (let k = 0; k < K; k++) shown[k] /= counted || 1
-      if (pass === PASSES) break
-      colors.forEach((_, k) => {
-        pull[k] += 0.9 * Math.log(Math.max(aim[k], 1e-4) / Math.max(shown[k], 1e-6))
-      })
+      for (let k = 0; k < K; k++) raw[k][i] /= s
     }
-    return shares
+    const soft = raw.map((r) => blurGrid(r, w, h, SHARE_BLUR))
+    for (let i = 0; i < n; i++) {
+      let s = 0
+      for (let k = 0; k < K; k++) s += soft[k][i]
+      for (let k = 0; k < K; k++) shares[k][i] = s > 1e-9 ? soft[k][i] / s : 1 / K
+    }
+    let counted = 0
+    const shown = colors.map((_, k) => {
+      let v = 0
+      for (let i = 0; i < n; i++) v += counts[k][i] * shares[k][i]
+      counted += v
+      return v
+    })
+    for (let k = 0; k < K; k++) shown[k] /= counted || 1
+    if (pass === PASSES) break
+    colors.forEach((_, k) => {
+      pull[k] += 0.9 * Math.log(Math.max(aim[k], 1e-4) / Math.max(shown[k], 1e-6))
+    })
   }
-  const kept = flipBy < 1 ? solve(u) : null
-  const flipped = flipBy > 0 ? solve(u.map((v) => 1 - v)) : null
-  if (!flipped) return kept as Float32Array[]
-  if (!kept) return flipped
-  return kept.map((s, k) => s.map((v, i) => v + flipBy * (flipped[k][i] - v)))
+  return shares
 }

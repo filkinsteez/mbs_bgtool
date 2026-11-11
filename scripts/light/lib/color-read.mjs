@@ -50,9 +50,6 @@ export const READ = {
   // With ramps (src/light/color/ramps.ts, the shades the color stage paints): a pixel reads as the pack color whose
   // shade at the pixel's lightness is nearest, when it lies within this Oklab distance (a, b) of it.
   rampNear: 0.04,
-  // Shades nearer to each other than this (every ramp goes white at the top and black at the bottom) leave the pixel to
-  // the color whose hex is nearest in lightness, so a white pixel reads as the pack's lightest color, not its first.
-  rampTie: 0.005,
 }
 
 export const LIN = Float32Array.from({ length: 256 }, (_, i) => {
@@ -111,9 +108,8 @@ function nearestShade(rules, L, a, b) {
   for (const c of rules.colors) {
     const s = rampOklab(c.ramp, L)
     const gap = Math.hypot(a - s[1], b - s[2])
-    const tie = best !== null && Math.abs(gap - bestGap) <= READ.rampTie
-    if (tie ? Math.abs(L - c.L0) < Math.abs(L - best.L0) : gap < bestGap) {
-      bestGap = Math.min(gap, bestGap)
+    if (gap < bestGap) {
+      bestGap = gap
       best = c
     }
   }
