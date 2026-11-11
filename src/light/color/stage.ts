@@ -11,7 +11,7 @@ import { defaultMix, META_BLUE_HEX, mixFromShares, type ColorMix } from './mix'
 import { getPack, isPackId, type ColorPack, type PackId } from './packs'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
 import { blurGrid, buildFields, COVERAGE_SPLIT, GRID_SHORT, gridSize, lightSlope, lookParts, makeNoise, mulberry32, VISIBLE, type StageField, type StageGrid } from './stageFields'
-import { assignFields, colorFields, coloredByParts, farPairs, KIND_DARK, KIND_TO_NEIGHBOR, softFields, solveWeights, stageColors, stageDimPaths, STAGE_SHARPNESS, type StageColor } from './stageSolve'
+import { assignFields, colorFields, coloredByParts, farPairs, guardedParts, KIND_DARK, KIND_TO_NEIGHBOR, softFields, solveWeights, stageColors, stageDimPaths, STAGE_SHARPNESS, type StageColor } from './stageSolve'
 
 /**
  * The pack every design is drawn in while the color stage is on, so one mood, seed, drag and format give one
@@ -389,7 +389,7 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
     const solution = solveWeights(grid, own, colors, colors.map((_, k) => k), STAGE_SHARPNESS, byParts)
     // A look colored by its parts draws the soft blend: each color's share, spread as far as the light changes, then
     // the light as the picture shows it, which its lightness masks key on.
-    const soft = byParts ? softFields(grid, values, colors, solution.weights) : []
+    const soft = byParts ? softFields(grid, values, colors, solution.weights, STAGE_SHARPNESS, guardedParts(colors, colors.map((_, k) => fields[assignment[k]]?.want))) : []
     const drawn = byParts
       ? {
           values: [

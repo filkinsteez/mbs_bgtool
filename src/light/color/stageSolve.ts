@@ -1,3 +1,4 @@
+import { meetApart } from '../engine/meet'
 import { defaultMix, META_BLUE_HEX, mixColors, type ColorMix } from './mix'
 import { linearToOklab } from './oklab'
 import type { ColorPack } from './packs'
@@ -347,6 +348,51 @@ export function colorFields(fields: readonly StageField[], assignment: readonly 
  */
 const BORROWED_DARK = [0.22, 0.36] as const
 
+/** The wants of parts that ask for a light color of their own: not Meta Blue's lead, not a dark place. */
+const ASKED_LIGHT: ReadonlySet<FieldWant> = new Set<FieldWant>(['cool', 'warm', 'warm2', 'bright', 'pale'])
+
+/** Whether a color's field is a part asking for a light color of its own (ASKED_LIGHT). */
+export function asksLight(want: FieldWant | undefined): boolean {
+  return want !== undefined && ASKED_LIGHT.has(want)
+}
+
+/**
+ * Which colors' parts no other color's weight may repaint (coordinator, 2026-11-11 12:05 AM): a part asking for a light
+ * color far in hue from Meta Blue by meetColor's test (meetApart above 0, more than 45 degrees round white), as Yellow,
+ * Orange-red, Lime and Tan. Parts asking for Cyan, Ice or Steel keep the plain weighting, so Sunrise's cool skies stay
+ * Meta Blue. `wants[k]`: the want of the field color k takes. None with Meta Blue off.
+ */
+export function guardedParts(colors: readonly StageColor[], wants: readonly (FieldWant | undefined)[]): boolean[] {
+  const blue = colors.find((c) => c.hex === META_BLUE_HEX)
+  const atLuminance1 = (c: readonly number[]) => c.map((v) => v / Math.max(0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2], 1e-6))
+  return colors.map((c, k) => blue !== undefined && c !== blue && asksLight(wants[k]) && meetApart(atLuminance1(c.unit), atLuminance1(blue.unit)) > 0)
+}
+
+/** How far a color's field must lead another's, before weights, for the cell to be that color's part. */
+const PART_OWNS = [0, 0.15] as const
+
+/**
+ * The colors' weights in one cell (coordinator, 2026-11-10 11:14 PM: Meta Blue carries its own light and doesn't cover
+ * other lights). Where the strongest field before weights is a part asking for a light color (`asked`), that color owns
+ * the cell and every other color weighs no more there than it does, so the weight that brings Meta Blue (or another
+ * color) to its share can't repaint the part. Meta Blue's own parts and the light no part asks for, where its lead field
+ * is the strongest, keep every weight, so colors still reach their shares there. `at(k)`: color k's field in the cell
+ * with its lightness mask, before weights.
+ */
+export function partWeightsAt(weights: readonly number[], asked: readonly boolean[], at: (k: number) => number): number[] {
+  let owner = -1
+  let top = 0
+  for (let k = 0; k < weights.length; k++) {
+    const v = at(k)
+    if (v > top) {
+      owner = k
+      top = v
+    }
+  }
+  if (owner < 0 || !asked[owner]) return [...weights]
+  return weights.map((w, k) => (k === owner || w <= weights[owner] ? w : w * (weights[owner] / w) ** smooth(PART_OWNS[0], PART_OWNS[1], top - at(k))))
+}
+
 export interface StageSolution {
   /** Per color, its field's weight (the largest is 1). */
   weights: number[]
@@ -383,6 +429,7 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
     m.forEach((v, k) => (masks[k][j] = v))
   })
   const capped = colors.map((_, k) => byParts && fields[assignment[k]].want !== 'lead')
+  const askedPart = guardedParts(colors, colors.map((_, k) => fields[assignment[k]]?.want))
   const most = masks.map((m, k) => m.reduce((a, b, j) => a + b * cover[j] * (capped[k] ? smooth(0.01, 0.06, F[k][visible[j]]) : 1), 0) / n)
   const asked = colors.map((c) => c.share)
   const askedTotal = asked.reduce((a, b) => a + b, 0) || 1
@@ -435,8 +482,9 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
     }
     visible.forEach((i, j) => {
       let s = 0
+      const wsAt = byParts ? partWeightsAt(ws, askedPart, (k) => F[k][i] * masks[k][j]) : ws
       for (let k = 0; k < K; k++) {
-        p[k] = Math.max(0, ws[k] * F[k][i] * masks[k][j]) ** sharpness
+        p[k] = Math.max(0, wsAt[k] * F[k][i] * masks[k][j]) ** sharpness
         s += p[k]
       }
       if (s <= 1e-30) {
@@ -524,7 +572,7 @@ const SOFT_LEVELS = [0.5, 1, 2, 4]
  * black (Cyan's glow falling to black). The shader draws these shares as they are,
  * sharpening only where far hues meet at mid lightness.
  */
-export function softFields(grid: StageGrid, values: readonly Float32Array[], colors: readonly StageColor[], weights: readonly number[], sharpness = STAGE_SHARPNESS): Float32Array[] {
+export function softFields(grid: StageGrid, values: readonly Float32Array[], colors: readonly StageColor[], weights: readonly number[], sharpness = STAGE_SHARPNESS, asked: readonly boolean[] = []): Float32Array[] {
   const { width: w, height: h } = grid
   const L = grid.seen ?? grid.lightness
   const n = w * h
@@ -532,7 +580,8 @@ export function softFields(grid: StageGrid, values: readonly Float32Array[], col
   for (let i = 0; i < n; i++) {
     const l = Math.max(L[i], VISIBLE)
     const masks = pairedMasks(colors, values.map((v) => v[i]), l, grid.slope?.[i] ?? 0)
-    const x = colors.map((_, k) => Math.max(0, weights[k] * values[k][i] * masks[k]))
+    const wsAt = partWeightsAt(weights, asked, (k) => values[k][i] * masks[k])
+    const x = colors.map((_, k) => Math.max(0, wsAt[k] * values[k][i] * masks[k]))
     // Taken relative to the strongest, so a cell where every field is faint still blends smoothly.
     const top = Math.max(...x)
     if (top <= 1e-12) {

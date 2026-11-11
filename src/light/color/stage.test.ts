@@ -10,7 +10,7 @@ import { COLOR_DESIGN_PACK, colorRamp, darkMeetingLines, meetingLines, RAMP_STEP
 import { buildFields, gridSize, lookParts, type StageField, type StageGrid, type StagePart } from './stageFields'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
 import { hexToLinear } from './srgb'
-import { assignFields, colorFields, colorMask, KIND_BRIGHT, KIND_DARK, KIND_PLAIN, KIND_TO_NEIGHBOR, pairedMasks, solveWeights, stageColors, stageDimPaths, type StageDimPath } from './stageSolve'
+import { assignFields, colorFields, colorMask, guardedParts, KIND_BRIGHT, KIND_DARK, KIND_PLAIN, KIND_TO_NEIGHBOR, pairedMasks, partWeightsAt, solveWeights, stageColors, stageDimPaths, type StageDimPath } from './stageSolve'
 
 const CONTROLS = { intensity: 0.5, softness: 0.5, mood: 0.5 }
 
@@ -146,6 +146,31 @@ describe('color stage', () => {
       const nameOf = (hex: string) => lit[at[cool.findIndex((c) => c.hex === hex)]]?.name
       expect([nameOf('#F2F4F7'), nameOf('#6A7788')]).toEqual(['bright', 'warm'])
     }
+  })
+
+  it('guards the parts that ask for a light color far in hue from Meta Blue, and only those', () => {
+    const guarded = (packId: 'bold' | 'elemental' | 'atmospheric') => {
+      const colors = stageColors(getPack(packId), defaultMix(getPack(packId)), true)
+      const flags = guardedParts(colors, colors.map((c) => (c.kind === KIND_DARK ? 'dark' : 'warm')))
+      return colors.filter((_, k) => flags[k]).map((c) => c.hex)
+    }
+    expect(guarded('bold')).toEqual(['#FFD61E', '#FF4F00'])
+    expect(guarded('elemental')).toEqual(['#D6F26C', '#B8996E'])
+    expect(guarded('atmospheric')).toEqual([])
+    const bold = stageColors(getPack('bold'), defaultMix(getPack('bold')), true)
+    expect(guardedParts(bold, bold.map(() => 'lead')).some(Boolean)).toBe(false)
+  })
+
+  it("keeps a color's weight from repainting a part that is another color's", () => {
+    // Meta Blue (the lead) weighs 1 and Yellow (asked) 0.3. On Yellow's part Meta Blue weighs no more than Yellow; on
+    // Meta Blue's own part, in light no part asks for and where the two fields are even, the weights stay, and so does a
+    // weight that brings Yellow into Meta Blue's light.
+    const asked = [false, true]
+    expect(partWeightsAt([1, 0.3], asked, (k) => [0.3, 0.9][k])).toEqual([0.3, 0.3])
+    expect(partWeightsAt([1, 0.3], asked, (k) => [0.9, 0.3][k])).toEqual([1, 0.3])
+    expect(partWeightsAt([1, 0.3], asked, (k) => [0.3, 0][k])).toEqual([1, 0.3])
+    expect(partWeightsAt([1, 0.3], asked, (k) => [0.5, 0.5][k])).toEqual([1, 0.3])
+    expect(partWeightsAt([0.4, 1], asked, (k) => [0.9, 0.3][k])).toEqual([0.4, 1])
   })
 
   it('counts a part by its strength and gives the dark spots to the dark fields in their order', () => {
