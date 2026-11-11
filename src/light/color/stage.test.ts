@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { composeScene } from '../compose'
-import { meetBridgeLight } from '../engine/meet'
+import { meetBridgeLight, meetDarkLight } from '../engine/meet'
 import { buildRecipeShader } from '../engine/recipeShader'
 import { getRecipe } from '../recipes'
 import { RECIPE_IDS, type RecipeId, type Scene } from '../scene'
@@ -275,8 +275,9 @@ describe('color stage', () => {
   it('keeps the design lightness under any mix: the default, Meta Blue off and one color at 60%', () => {
     // The shader's last step, which alone sets the output's luminance: any blend of colors, at the design's luminance,
     // raised only on a meeting line (meetBridgeLight, which leaves the luminance as it is where there is no line).
-    expect(COLOR_STAGE_GLSL).toContain('return m / max(dot(m, LUMA), 1e-6) * y * meetBridgeLight(yE, bridge) / max(yE, 1e-8);')
+    expect(COLOR_STAGE_GLSL).toContain('return m / max(dot(m, LUMA), 1e-6) * y * meetBridgeLight(yE, bridge) / max(yE, 1e-8) * yDark / max(yE, 1e-8);')
     for (const y of [0.001, 0.1, 0.6, 1.4]) expect(meetBridgeLight(y, 0)).toBe(y)
+    for (const y of [0.001, 0.1, 0.6, 1.4]) expect(meetDarkLight(y, 0)).toBe(y)
     const luma = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
     const atLuminance = (m: readonly number[], y: number) => m.map((v) => (v / Math.max(luma(m), 1e-6)) * y)
     for (const packId of ['bold', 'elemental', 'atmospheric'] as const) {

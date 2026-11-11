@@ -99,10 +99,17 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
   float yE = y * uExposureScale;
   vec4 fa = sampleSmooth4(uMixFieldsA, uv);
   vec4 fb = sampleSmooth4(uMixFieldsB, uv);
-  // On a meeting line of two far hues (none in dim light, where a lifted middle still reads grey), every color's share
-  // meets softly through white (meetColors5) and the light rises (meetBridgeLight).
-  float bridge = mixBridgeAt(uv) * meetBridgeLit(yE);
+  // On a meeting line of two far hues, every color's share meets softly (meetColors5): in light enough for a white
+  // middle to read as white (meetBridgeLit) through white, and the light rises (meetBridgeLight); in dim light, where a
+  // lifted middle would still read grey, each color dims toward its own dark shade and they meet near black
+  // (meetDarkLight), so there is no dark line where the picture is lit.
+  float line = mixBridgeAt(uv);
+  float lit = meetBridgeLit(yE);
+  float bridge = line * lit;
   float onLine = smoothstep(0.0, 1.0, bridge);
+  float dark = line * (1.0 - lit);
+  float onDark = smoothstep(0.0, 1.0, dark);
+  float yDark = meetDarkLight(yE, dark);
   // With the soft blend the lightness masks key on the light as the picture shows it: the pixel's own light and the
   // glow the lens adds round brighter light (fb.y), so a dark color stays where the picture is dim.
   float L = pow(uMixSoft > 0.5 ? yE + max(fb.y, 0.0) : yE, 1.0 / 3.0);
@@ -179,7 +186,7 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
       }
     }
     float mid = smoothstep(0.25, 0.4, L) * (1.0 - smoothstep(0.65, 0.9, L));
-    float g = 1.0 + (1.0 - onLine) * mid * smoothstep(0.05, 0.3, min(far, 1.0));
+    float g = 1.0 + (1.0 - max(onLine, onDark)) * mid * smoothstep(0.05, 0.3, min(far, 1.0));
     float t = 0.0;
     for (int k = 0; k < 5; k++) {
       if (k >= uMixCount) continue;
@@ -215,18 +222,21 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
   // Far hues meet through neutral along a narrow line, so they never mix into mauve, indigo or teal.
   // With the soft blend the line whitens only where the design is light; in the dim it would read as a grey line.
   m = mix(m, vec3(1.0), uMixBridge * b * b * (uMixSoft > 0.5 ? smoothstep(0.45, 0.75, L) : 1.0));
-  if (onLine > 0.0) {
+  if (onLine > 0.0 || onDark > 0.0) {
+    // On a dark line each color is taken at the dimmed light, so it follows its own dim path (its ramp and turn).
+    float yAt = mix(yE, yDark, onDark);
+    float LAt = pow(uMixSoft > 0.5 ? yAt + max(fb.y, 0.0) : yAt, 1.0 / 3.0);
     vec3 cs[5];
     float qs[5];
     for (int k = 0; k < 5; k++) {
-      cs[k] = k < uMixCount ? mixColorAt(k, L, yE, near[k]) : vec3(1.0);
+      cs[k] = k < uMixCount ? mixColorAt(k, LAt, yAt, near[k]) : vec3(1.0);
       qs[k] = k < uMixCount ? (uMixSoft > 0.5 ? p[k] : p[k] * p[k]) : 0.0;
     }
     vec3 met = meetColors5(cs, qs, uMixCount, 1.5);
-    m = mix(m / max(dot(m, LUMA), 1e-6), met / max(dot(met, LUMA), 1e-6), onLine);
+    m = mix(m / max(dot(m, LUMA), 1e-6), met / max(dot(met, LUMA), 1e-6), max(onLine, onDark));
   }
   // The design's luminance, whatever the colors and the mix, so the light and dark layout never moves; only a meeting
-  // line's light rises.
-  return m / max(dot(m, LUMA), 1e-6) * y * meetBridgeLight(yE, bridge) / max(yE, 1e-8);
+  // line's light rises (in light) or dims (in dim light).
+  return m / max(dot(m, LUMA), 1e-6) * y * meetBridgeLight(yE, bridge) / max(yE, 1e-8) * yDark / max(yE, 1e-8);
 }
 `
