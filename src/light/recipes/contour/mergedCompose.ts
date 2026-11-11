@@ -407,8 +407,9 @@ interface ColorPlan {
   ground: { near: number; far: number }
 }
 
-/** An accent's stretch is this share of its color's share of the light colors. */
-const ACCENT = 0.6
+/** An accent's stretch is this share of its color's share of the light colors: long enough that its color shows in
+ * full between its cross-fades, so the line changes through the pack's colors. */
+const ACCENT = 1.2
 
 /**
  * The stand-in color filler: the leading color is the light along the whole edge, through the core and out to both
@@ -564,6 +565,19 @@ const WARM_BLUR = 1.5
 const SECOND_L = 0.75
 /** A part that is not in this frame (off it, so its field is empty). */
 const PART_OFF = [-9, -9, -9, -9]
+/** The second light's stretch of edge as the color stage's parts: this many equal pieces along it. */
+const SECOND_PIECES = 16
+const SECOND_OFF = new Array<number>(2 * (SECOND_PIECES + 1)).fill(-9)
+/** Along the second light (u from -1 at its cool end to 1 at its warm end) its warm part is exp(CROSS_SLOPE u) times as
+ * strong as its cool part: the same slow change all along, so wherever the stage's weights put the turn, the colors
+ * turn over the same stretch, and the turn stays on the light while one color's weight is up to e^CROSS_SLOPE times
+ * the other's. */
+const CROSS_SLOPE = 1.2
+/** From this share of its half length out, the second light's parts weaken, by this much at its ends: past half its
+ * half length the main light takes the line back (HANDOVER_DARK), so its color is Meta Blue's there. */
+const SECOND_END_TAPER = [0.35, 0.9]
+/** The second light's parts fade out between these distances (frame units) from the main light's part. */
+const LEAD_CLEAR = [0.12, 0.28]
 /** Where the main light's far stretch is, along its edge from the seed's place for the light, in short sides. */
 const COOL_AT = [0.5, 0.8, 1.1]
 /** How wide the parts along an edge are: its light and the face light just beside it. */
@@ -807,7 +821,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const secondParams: Record<string, ParamValue> = { secondUnit: 0, secondAt: [-40, -40] }
   let secondOn: { contour: number; t: number; tSpan: number; near: number } | null = null
   // A warm second light only where its glow stays off the main light's face (over it the two blend into violet): in
-  // focus, on the main edge, where the main light goes dark along it, or on another edge that keeps clear of the main
+  // focus, on the main edge, where the main light hands over to it, or on another edge that keeps clear of the main
   // edge.
   let edgeWarm = false
   if (secondPoint && host >= 0) {
@@ -945,11 +959,14 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     const p = contourPoint(c, c.closed ? t - Math.floor(t) : Math.min(1, Math.max(0, t))).point
     return [p[0] + anchorR[0], p[1] + anchorR[1]]
   }
-  const partParams: Record<string, ParamValue> = { partWarm: PART_OFF, partWarm2: PART_OFF, partWarmFade: 0, partEdgeWarm: 0 }
+  const partParams: Record<string, ParamValue> = { partSecond: SECOND_OFF, partWarmFade: 0, partWarmSide: 1, partEdgeWarm: 0 }
   if (secondOn && Number(secondParams.secondUnit) > 0) {
     const { contour, t, tSpan, near } = secondOn
-    const [a, b, c] = [-1, 0, 1].map((k) => framePoint(pointOn(contour, t + k * tSpan)))
-    Object.assign(partParams, { partWarm: [...a, ...b], partWarm2: [...b, ...c], partWarmFade: round4(near), partEdgeWarm: edgeWarm ? 1 : 0 })
+    // Points at equal steps along it, so each piece stays on the light it colors and the colors can cross-fade.
+    const points = Array.from({ length: SECOND_PIECES + 1 }, (_, k) => framePoint(pointOn(contour, t + (-1 + (2 * k) / SECOND_PIECES) * tSpan)))
+    // The half farther from the seed's place for the main light is the warm one, away from the main light's face.
+    const farSecond = dist2(pointOn(contour, t + tSpan), seedHome) >= dist2(pointOn(contour, t - tSpan), seedHome)
+    Object.assign(partParams, { partSecond: points.flat(), partWarmFade: round4(near), partWarmSide: farSecond ? 1 : 0, partEdgeWarm: edgeWarm ? 1 : 0 })
   }
   const onHome = nearestOnContours(drawn, anchorR, seedHome)
   const tHome = onHome.ts[onHome.contour]
@@ -1098,18 +1115,40 @@ const vec = (params: Readonly<Record<string, ParamValue>>, key: string, fallback
 }
 
 /**
- * Where the merged look's light is, from its params, always nine parts in this order: the main light with the face
- * near it (the lead color); the second light's stretch of edge in two pieces, asking for a warm color (Yellow over
- * Orange-red, Tan, or in a pack with no warm color its brightest left, Atmospheric's Steel or Ice) or a cool one (Cyan,
- * Ice or Steel) as the seed picks, and the same two asking for a pale color when it is cool (at strength 0 when it is
- * warm); the main light's far stretch of edge, dimmer than its brightest (cool) in two pieces; two dim stretches of the
- * outline (dark: Forest and Plum, Slate and Near-black). A part not in the frame sits off it. Nothing here reads the
- * colors.
+ * Where the merged look's light is, from its params, always thirty-seven parts in this order: the main light with the
+ * face near it (the lead color); the second light's stretch of edge in sixteen pieces asking for a warm color (Yellow
+ * over Orange-red, Tan, or in a pack with no warm color its brightest left, Atmospheric's Steel or Ice), then the same
+ * sixteen asking for a cool one (Cyan, Ice or Steel), the warm ones strongest at the end farther from the main light
+ * and the cool ones at the other, so its color turns along its length over a stretch, never at a point, weaker toward
+ * its ends and near the main light's part, and all cool where the second light may not be warm (no pale part: Lime
+ * beside Tan on one light mixed to grey-brown); the main light's far stretch of edge, dimmer than its brightest
+ * (cool) in two pieces; two dim stretches of the outline (dark: Forest and Plum, Slate and Near-black). A part not in
+ * the frame sits off it. Nothing here reads the colors.
  */
 export function mergedParts(params: Readonly<Record<string, ParamValue>>): StagePart[] {
-  // The second light's parts fade with it as a dragged main light comes near.
+  // The second light's parts fade with it as a dragged main light comes near, the warm ones faster: a warm light
+  // color in dim light goes brown.
   const fading = Math.min(1, Math.max(0, Number(params.partWarmFade ?? 0)))
-  const edge: FieldWant = Number(params.partEdgeWarm ?? 0) > 0.5 ? 'warm' : 'cool'
+  const warmSign = Number(params.partWarmSide ?? 1) > 0.5 ? 1 : -1
+  // Where the second light may not be warm (out of focus, or near the main edge) every piece asks the cool color.
+  const warmOk = Number(params.partEdgeWarm ?? 0) > 0.5
+  const given = vec(params, 'partSecond', SECOND_OFF)
+  const path = given.length === SECOND_OFF.length ? given : SECOND_OFF
+  const lead = vec(params, 'partLead', PART_OFF)
+  const smoothstep = (a: number, b: number, v: number) => {
+    const t = Math.min(1, Math.max(0, (v - a) / (b - a)))
+    return t * t * (3 - 2 * t)
+  }
+  const seconds = Array.from({ length: SECOND_PIECES }, (_, i) => {
+    const u = warmSign * (-1 + (2 * i + 1) / SECOND_PIECES)
+    const warmOverCool = warmOk ? Math.exp(CROSS_SLOPE * u) : 0
+    // Weaker toward its ends, where its own light fades and the main light comes back, and near the main light's own
+    // part, so its colors don't take the main light's brightest light.
+    const fromLead = Math.hypot((path[2 * i] + path[2 * i + 2]) / 2 - lead[0], (path[2 * i + 1] + path[2 * i + 3]) / 2 - lead[1])
+    const end = (1 - SECOND_END_TAPER[1] * smoothstep(SECOND_END_TAPER[0], 1, Math.abs(u))) * smoothstep(LEAD_CLEAR[0], LEAD_CLEAR[1], fromLead)
+    const piece = (want: FieldWant, strength: number): StagePart => ({ kind: 'line', from: [path[2 * i], path[2 * i + 1]], to: [path[2 * i + 2], path[2 * i + 3]], width: WARM_PART_WIDTH, want, strength })
+    return { warm: piece('warm', end * fading * fading * Math.min(1, warmOverCool)), cool: piece('cool', end * fading * Math.min(1, 1 / warmOverCool)) }
+  })
   const line = (key: string, want: FieldWant, strength = 1, width = EDGE_PART_WIDTH): StagePart => {
     const v = vec(params, key, PART_OFF)
     return { kind: 'line', from: [v[0], v[1]], to: [v[2], v[3]], width, want, strength }
@@ -1120,12 +1159,8 @@ export function mergedParts(params: Readonly<Record<string, ParamValue>>): Stage
   }
   return [
     spot('partLead', 'any'),
-    line('partWarm', edge, fading, WARM_PART_WIDTH),
-    line('partWarm2', edge, fading, WARM_PART_WIDTH),
-    // A cool second light asks for a pale color too (Lime, where the pack has no cool color; Ice, where Steel took the
-    // cool one). Not `bright`, which takes Yellow when no part asks for a warm color.
-    line('partWarm', 'pale', edge === 'cool' ? fading : 0, WARM_PART_WIDTH),
-    line('partWarm2', 'pale', edge === 'cool' ? fading : 0, WARM_PART_WIDTH),
+    ...seconds.map((s) => s.warm),
+    ...seconds.map((s) => s.cool),
     line('partCool', 'cool'),
     line('partCool2', 'cool'),
     line('partDark', 'dark', 1, DARK_PART_WIDTH),
