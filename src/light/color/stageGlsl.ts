@@ -46,6 +46,11 @@ uniform float uMixBridge;
 uniform float uMixNarrow;
 uniform float uMixSoft;
 uniform vec2 uMixBridgeSize;
+uniform float uMixSwatch;
+uniform vec4 uMixSwatchAt[5];
+uniform vec4 uMixBody[5];
+uniform vec4 uMixTone;
+uniform float uMixToneTop;
 
 const int MIX_RAMP_STEPS = 32;
 
@@ -171,11 +176,79 @@ vec3 mixNeighbours(vec3 plain, vec3 c[5], vec2 hs[5], float q[5]) {
   return mix(plainUnit, polar / max(dot(polar, LUMA), 1e-6), clamp(close / max(pairs, 1e-12), 0.0, 1.0));
 }
 
+// A look colored by its parts (owner, 2026-11-11 2:37 PM): each color shows near its own swatch (uMixSwatchAt: Oklab
+// lightness and luminance) across its area, and keeps some of the design's light there (uMixBody, coordinator
+// 3:12 PM): from the design lightness x it shows at its swatch, and brighter design light takes it lighter by up to y
+// (Oklab L), one to one at first. Under x it fades to black with the design's own falloff, at the design's own
+// lightness at the outer edge and lighter or darker toward its swatch nearer x. The light takes a
+// color toward white in the design's brightest part (uMixTone.zw, at most uMixToneTop of the way), along the color's
+// own ramp, so each color reads as its swatch with the design's depth in it. Neighbours in the hue order hand over
+// through the hue between them (mixNeighbours). Returns radiance.
+vec3 colorSwatch(vec2 uv, float yE) {
+  vec4 fa = sampleSmooth4(uMixFieldsA, uv);
+  vec4 fb = sampleSmooth4(uMixFieldsB, uv);
+  float Ld = pow(yE, 1.0 / 3.0);
+  float high = uMixToneTop * smoothstep(uMixTone.z, uMixTone.w, Ld);
+  vec3 own[5];
+  vec2 hs[5];
+  float q[5];
+  float s = 0.0;
+  for (int k = 0; k < 5; k++) {
+    own[k] = vec3(1.0);
+    hs[k] = vec2(0.0);
+    q[k] = 0.0;
+    if (k >= uMixCount) continue;
+    q[k] = max(mixFieldValue(int(uMixField[k].x + 0.5), fa, fb), 0.0);
+    s += q[k];
+  }
+  float ys[5];
+  for (int k = 0; k < 5; k++) {
+    ys[k] = 0.0;
+    if (k >= uMixCount) continue;
+    q[k] = s > 1e-9 ? q[k] / s : 1.0 / float(uMixCount);
+    float L0 = max(uMixSwatchAt[k].x, 1e-4);
+    vec4 body = uMixBody[k];
+    float reach = max(body.y, 1e-4);
+    float from = max(body.x, 1e-4);
+    float Lk = Ld < from ? Ld * pow(L0 / from, Ld / from) : L0 + reach * tanh((Ld - from) / reach);
+    Lk += high * (1.0 - Lk);
+    ys[k] = uMixSwatchAt[k].y * pow(max(Lk, 0.0) / L0, 3.0);
+    own[k] = mixRamp(k, ys[k]);
+    hs[k] = mixHueSat(own[k]);
+  }
+  // Two colors far apart in hue (not neighbours) that share a pixel would mix into mauve or grey: their shares sharpen
+  // there, so they meet along a narrow soft line.
+  float far = 0.0;
+  for (int i = 0; i < 5; i++) {
+    for (int j = 0; j < 5; j++) {
+      if (j <= i || j >= uMixCount) continue;
+      far += 4.0 * q[i] * q[j] * mixPairFar(i, j, hs);
+    }
+  }
+  float g = 1.0 + 3.0 * smoothstep(0.05, 0.3, min(far, 1.0));
+  float t = 0.0;
+  for (int k = 0; k < 5; k++) {
+    if (k >= uMixCount) continue;
+    q[k] = pow(q[k], g);
+    t += q[k];
+  }
+  vec3 plain = vec3(0.0);
+  float y = 0.0;
+  for (int k = 0; k < 5; k++) {
+    if (k >= uMixCount) continue;
+    q[k] /= max(t, 1e-9);
+    plain += q[k] * own[k];
+    y += q[k] * ys[k];
+  }
+  return mixNeighbours(plain, own, hs, q) * y / max(uExposureScale, 1e-8);
+}
+
 vec3 colorStage(vec2 uv, vec3 radiance) {
   vec3 rad = max(radiance, vec3(0.0));
   float y = dot(rad, LUMA);
   if (uMixCount <= 0 || y <= 1e-8) return radiance;
   float yE = y * uExposureScale;
+  if (uMixSwatch > 0.5) return colorSwatch(uv, yE);
   vec4 fa = sampleSmooth4(uMixFieldsA, uv);
   vec4 fb = sampleSmooth4(uMixFieldsB, uv);
   // On a meeting line of two far hues, every color's share meets softly (meetColors5): in light enough for a white
