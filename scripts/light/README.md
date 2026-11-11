@@ -289,6 +289,15 @@ Soft changes that pass: Rush split Bold s3 (a Meta Blue streak fading into pale 
 node scripts/light/color-edges.mjs --look sunset.merged --seeds 1-8 --format 16x9,9x16 --drag default,owner --maps --out artifacts/<yours>/edges
 ```
 
+### Drag colors
+
+```sh
+node scripts/light/drag-colors.mjs [--look sunset.merged,contour.merged,rush.split] [--packs bold,elemental,atmospheric]
+  [--seeds 1-8] [--formats 16x9,9x16] [--stage off,on] [--mix default] [--grid 3] [--sheet 4] [--size 480] [--out dir]
+```
+
+Whether a drag keeps the pack colors a frame shows (coordinator, 2026-11-11 7:29 AM; owner, 7:26 AM: "dragging control to change color often overrides all original colors to just meta blue it should retain its original"). A drag moves the light and keeps the picture's colors. Each frame is drawn as the tool draws it, stage off or on, at the default view and under 13 drags: the palette check's four test drags (owner, mirror, above, side) and a 3 by 3 grid of light positions (`--grid`), each line starting in the middle of a cell and pointing 0.4 of the frame toward the frame's middle (the middle cell's points down). Each render is read with the exact-color reading (`lib/exact-read.mjs`, as `exact-colors.mjs` reads), 480 pixels on the long side. A pack color is shown at 1% of the frame or more (its exact share). A drag loses a color when the default view shows it and the drag doesn't, and makes the frame one color when the default view shows two colors or more and the drag one or none (`lib/drag-colors.mjs`). `summary.md` gives per look, pack and stage the drags that lose a color, those that make the frame one color and which colors go; then the losing drags per drag and look; the worst seeds; and each frame's losing drags. `drag.json` has every frame's and drag's shares. `worst-off.jpg` and `worst-on.jpg` show the worst drags (`--sheet`, one per frame), the default view beside the drag with the drag's line drawn from a dot. It exits 1 when any drag loses a color.
+
 ## Metrics (`metrics.json`)
 
 All ΔE values are plain Euclidean Oklab distances (L on 0..1; about 0.02 is one just-noticeable difference). The roadmap's starting targets are mean under 0.03 and p95 under 0.06. Ignore rects and rounded corners are masked everywhere.
