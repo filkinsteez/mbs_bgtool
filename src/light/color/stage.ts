@@ -13,6 +13,7 @@ import { oklchToLinear } from './oklab'
 import { getPack, isPackId, type ColorPack, type PackId } from './packs'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
 import { blurGrid, buildFields, COVERAGE_SPLIT, GRID_SHORT, gridSize, lightSlope, lookParts, makeNoise, mulberry32, VISIBLE, type StageField, type StageGrid } from './stageFields'
+import { rampFor, rampSteps } from './ramps'
 import { assignFields, colorFields, coloredByParts, farPairs, guardedParts, KIND_DARK, KIND_TO_NEIGHBOR, lightPartHolds, neighbourPairs, softFields, solveWeights, stageColors, stageDimPaths, STAGE_SHARPNESS, type StageColor } from './stageSolve'
 
 /**
@@ -564,7 +565,8 @@ function rampTexture(gpu: Gpu, colors: readonly StageColor[], grid: StageGrid, b
   const height = 5 + grid.height
   const data = new Float32Array(width * height * 4)
   colors.slice(0, 5).forEach((c, k) => {
-    const ramp = colorRamp(c.unit, c.path)
+    const own = rampFor(c.hex)
+    const ramp = own ? rampSteps(own, RAMP_STEPS) : colorRamp(c.unit, c.path)
     for (let j = 0; j < RAMP_STEPS; j++) data.set([ramp[3 * j], ramp[3 * j + 1], ramp[3 * j + 2], 1], 4 * (k * width + j))
   })
   for (let y = 0; y < grid.height; y++)

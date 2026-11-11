@@ -1,0 +1,48 @@
+import { describe, expect, it } from 'vitest'
+import { linearToOklab } from './oklab'
+import { HUE_ORDER, PACKS } from './packs'
+import { rampAtLuminance, rampFor, rampOklab, rampSteps } from './ramps'
+import { hexToLinear } from './srgb'
+
+const luminance = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+describe('pack color ramps', () => {
+  const colors = PACKS.flatMap((pack) => pack.colors)
+
+  it('every pack color has a ramp through its own hex at its own lightness', () => {
+    for (const color of colors) {
+      const ramp = rampFor(color.hex)
+      expect(ramp, color.name).toBeDefined()
+      const [L, a, b] = linearToOklab(hexToLinear(color.hex))
+      const shade = rampOklab(ramp!, L)
+      expect(Math.hypot(shade[1] - a, shade[2] - b), color.name).toBeLessThan(0.003)
+    }
+  })
+
+  it('runs from black to white, lighter at every step', () => {
+    for (const color of colors) {
+      const ramp = rampFor(color.hex)!
+      let last = -1
+      for (let L = 0; L <= 1.0001; L += 0.02) {
+        const y = luminance(rampAtLuminance(ramp, Math.max(0, Math.min(1, L)) ** 3))
+        expect(y, `${color.name} at ${L.toFixed(2)}`).toBeGreaterThanOrEqual(last - 1e-6)
+        last = y
+      }
+      const steps = rampSteps(ramp, 32)
+      expect([steps[93], steps[94], steps[95]].map((v) => Number(v.toFixed(3))), color.name).toEqual([1, 1, 1])
+    }
+  })
+
+  it('keeps hue neighbours apart at the same lightness in Bold and Elemental', () => {
+    for (const pack of PACKS.filter((p) => p.id !== 'atmospheric')) {
+      const order = HUE_ORDER[pack.id]
+      for (let i = 1; i < order.length; i++) {
+        const [x, y] = [order[i - 1], order[i]].map((name) => rampFor(pack.colors.find((c) => c.name === name)!.hex)!)
+        for (let L = 0.3; L <= 0.9001; L += 0.05) {
+          const [p, q] = [rampOklab(x, L), rampOklab(y, L)]
+          expect(Math.hypot(p[1] - q[1], p[2] - q[2]), `${order[i - 1]} and ${order[i]} at ${L.toFixed(2)}`).toBeGreaterThan(0.04)
+        }
+      }
+    }
+  })
+})
