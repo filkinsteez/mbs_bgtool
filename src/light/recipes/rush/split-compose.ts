@@ -138,6 +138,9 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
   // Every flow bends in a wide arc: a big sweep in about half of the seeds, a gentle one in the others, never straight.
   const curvy = random() < 0.55
   const hook: [number, number] = [either(random) * (curvy ? lerp(0.35, 0.7, random()) : lerp(0.18, 0.32, random())), curvy ? either(random) * lerp(0.05, 0.25, random()) : 0]
+  // How far the seed's own stack runs down a tall frame (a flat flow there), where its bands would read as horizontal
+  // stripes. From the seed's direction, not the line's, so moving the line never adds or drops a streak.
+  const downTall = hy > hx ? Math.min(Math.max((Math.abs(seedRun.nrm[1]) - 0.5) / 0.4, 0), 1) : 0
   // How much of the stack is lit and where, from the seed (a stream of its own). Half of the seeds have a white bridge
   // and soft streaks that fill the stack edge to edge; most others have no bridge and a band of streaks that fills
   // 67-80% of it along one side with dark room beyond, which the arc turns into a broad bright curve with a dark side.
@@ -147,7 +150,10 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
   const edgeToEdge = hasBridge || coverRandom() < 0.3
   const coverShare = edgeToEdge ? 1 : lerp(0.67, 0.8, coverRandom())
   const brightAt = lerp(0.25, 0.75, coverRandom())
-  const cover = { share: coverShare, from: coverRandom() < 0.5 ? 0 : 1 - coverShare, at: brightAt }
+  const coverFrom = coverRandom() < 0.5 ? 0 : 1 - coverShare
+  // Where the stack runs down a tall frame, its streaks keep to the middle 80% of it, so no streak sits half off the
+  // frame's edge.
+  const cover = downTall > 0.5 ? { share: Math.min(coverShare, 0.8), from: 0.1, at: brightAt } : { share: coverShare, from: coverFrom, at: brightAt }
   // Half of the seeds fan out strongly, as from a point behind the start, off the frame; in the others the stack
   // narrows a little or widens mildly along the flow.
   const fan = random() < 0.5 ? lerp(0.8, 1.6, random()) : lerp(-0.15, 0.4, random())
@@ -188,10 +194,15 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
   const kindDraw = random()
   const kind = kindDraw < 0.35 ? 'broad' : kindDraw < 0.7 ? 'narrow' : 'dominant'
   const spacing = kind === 'broad' ? lerp(0.34, 0.44, random()) : kind === 'narrow' ? lerp(0.17, 0.24, random()) : lerp(0.24, 0.32, random())
-  const n = Math.max(3, Math.min(MAX_BANDS, Math.round((seedFrame.hi - seedFrame.lo) / spacing)))
+  // Where the stack runs down a tall frame, at most four streaks with one lead among them, so they never read as
+  // evenly spaced horizontal stripes and every accent still has its streak.
+  const tallStack = downTall > 0.5
+  const roomFor = Math.max(3, Math.min(MAX_BANDS, Math.round((seedFrame.hi - seedFrame.lo) / spacing)))
+  const n = tallStack ? Math.min(roomFor, 4) : roomFor
   const whiteDraw = random()
-  const leads = Math.max(1, Math.round(n * lerp(0.3, 0.42, random())))
-  const hasWhite = whiteDraw < 0.4 && n - leads >= 3
+  const drawnLeads = Math.max(1, Math.round(n * lerp(0.3, 0.42, random())))
+  const leads = tallStack ? 1 : drawnLeads
+  const hasWhite = whiteDraw < 0.4 && n - leads >= (tallStack ? 4 : 3)
   const accentRoles: Role[] = ['cool', 'warm', 'deep']
   for (let k = accentRoles.length - 1; k > 0; k--) {
     const j = Math.floor(random() * (k + 1))
@@ -222,11 +233,12 @@ export function rushLayout(seed: number, aspect: number, drag?: ControlValues['d
       ? lerp(0.45, 0.6, random())
       : scale * (r === 'lead' ? lerp(0.22, 0.32, random()) : r === 'white' ? lerp(0.16, 0.24, random()) : r === 'deep' ? lerp(0.12, 0.18, random()) : lerp(0.16, 0.26, random())),
   )
-  // Widths vary a lot within a frame: in a broad seed one band is much wider than the rest, and every other band is
-  // narrower by its own amount. These draws come from a separate random stream, so the draws above and below stay as
-  // they were.
+  // Widths vary a lot within a frame: in a broad seed one band is much wider than the rest (not where the stack runs
+  // down a tall frame, whose four streaks share it), and every other band is narrower by its own amount. These draws
+  // come from a separate random stream, so the draws above and below stay as they were.
   const extra = seededRandom(seed, 0x3c7d)
-  const wideAt = dominantAt >= 0 ? dominantAt : kind === 'broad' ? Math.floor(extra() * roles.length) : -1
+  const wideDraw = kind === 'broad' ? Math.floor(extra() * roles.length) : -1
+  const wideAt = dominantAt >= 0 ? dominantAt : tallStack ? -1 : wideDraw
   const widths = baseWidths.map((w, i) => w * (i === wideAt ? (dominantAt >= 0 ? 1 : lerp(1.5, 2.1, extra())) : lerp(0.45, 1, extra())))
   // Neighbours are spaced at uneven distances, and their swells overlap across the gaps, dipping between them to a
   // dim light where colors hand over, never to black. Two draws per gap as before.
