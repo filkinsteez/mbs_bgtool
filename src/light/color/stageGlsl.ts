@@ -138,8 +138,9 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
     for (int k = 0; k < 5; k++) p[k] = k == best ? 1.0 : 0.0;
     s = 1.0;
   }
-  // With the soft blend, two far hues sharing a pixel at mid lightness would mix into grey, lavender or pink: their
-  // shares sharpen there, so that meeting stays narrow. Near black, toward white and between near hues it stays soft.
+  // With the soft blend, two far hues sharing a pixel at mid lightness or in pale light would mix into grey, lavender
+  // or pink: their shares sharpen there, so that meeting stays narrow and a warm band keeps its color up to it. Near
+  // black, at white and between near hues it stays soft.
   if (uMixSoft > 0.5) {
     float far = 0.0;
     for (int i = 0; i < 5; i++) {
@@ -149,7 +150,7 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
         far += 4.0 * p[i] * p[j] / (s * s);
       }
     }
-    float mid = smoothstep(0.25, 0.4, L) * (1.0 - smoothstep(0.6, 0.75, L));
+    float mid = smoothstep(0.25, 0.4, L) * (1.0 - smoothstep(0.65, 0.9, L));
     float g = 1.0 + mid * smoothstep(0.05, 0.3, min(far, 1.0));
     float t = 0.0;
     for (int k = 0; k < 5; k++) {
