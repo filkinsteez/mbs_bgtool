@@ -902,8 +902,13 @@ float skyBridge(float sa, float sb, vec3 ca, vec3 cb) {
 vec4 skyHue(float a, float h, float L) {
   float dome = domeAt(a, h);
   float inner = smoothstep(0.35, 0.85, dome);
-  float warmPart = clamp(max(smoothstep(0.3, 0.8, warmAt(a, h)), smoothstep(0.1, 0.45, dome)), 0.0, 1.0);
-  vec3 warmColor = mix(uWarmColor, uGlowColor, inner);
+  // Round a high light the warm streak's color reaches out to where its light has a fifth of its strength, so its core
+  // is wider than the lens's blur and keeps the warm color's own chroma, and its bright end near the light is the
+  // glow's color. A horizon's warm band keeps its width: widened the same way, it made a low sun's light and dark
+  // layout differ between packs.
+  float wide = uKind == 1 ? 1.0 : 0.0;
+  float warmPart = clamp(max(smoothstep(mix(0.3, 0.12, wide), mix(0.8, 0.5, wide), warmAt(a, h)), smoothstep(0.1, 0.45, dome)), 0.0, 1.0);
+  vec3 warmColor = mix(uWarmColor, uGlowColor, max(inner, wide * smoothstep(0.86, 0.94, L)));
   float pale = paleAt(a, h);
   float palePart = smoothstep(0.4, 0.8, pale) * (1.0 - warmPart);
   float skyPart = (1.0 - smoothstep(0.05, 0.4, pale)) * (1.0 - warmPart);
