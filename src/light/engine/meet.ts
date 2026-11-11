@@ -89,6 +89,22 @@ export function meetBridgeLit(shown: number): number {
   return t * t * (3 - 2 * t)
 }
 
+/**
+ * The dark half of the rule, for meetings in dim light, where a lifted middle would still read grey: the two colors
+ * dim toward their own dark shades and meet near black. At a dark bridge's middle the light falls to MEET_DARK_KEEP of
+ * itself, by at most MEET_LINE_CHANGE in OKLab L (Compare's same-design allowance on a meeting line).
+ */
+export const MEET_DARK_KEEP = 0.15
+export const MEET_LINE_CHANGE = 0.15
+
+/** A displayed luminance with a dark bridge's dip (dark 0 to 1: the meeting line's strength where the light is dim). */
+export function meetDarkLight(shown: number, dark: number): number {
+  const d = Math.min(1, Math.max(0, dark))
+  const y = Math.max(shown, 0)
+  const floor = Math.max(Math.cbrt(y) - MEET_LINE_CHANGE, 0) ** 3
+  return Math.max(y * (1 - (1 - MEET_DARK_KEEP) * d), y + (floor - y) * d)
+}
+
 /** A displayed luminance with a bridge's light added (bridge 0 to 1, from meetBridge or meetBridgeShares). */
 export function meetBridgeLight(shown: number, bridge: number): number {
   const b = Math.min(1, Math.max(0, bridge))
@@ -234,7 +250,8 @@ export function meetLight(ca: readonly number[], la: number, cb: readonly number
 /**
  * GLSL: `vec3 meetColor(vec3 ca, float la, vec3 cb, float lb, float sharp)`, `meetLight` (same arguments),
  * `float meetSharpness(float y)`, `float meetBridge(float fa, float fb, float slope)`, `float meetBridgeShares(float
- * sa, float sb)`, `float meetBridgeLit(float shown)` and `float meetBridgeLight(float shown, float bridge)`. A look and the
+ * sa, float sb)`, `float meetBridgeLit(float shown)`, `float meetBridgeLight(float shown, float bridge)` and `float meetDarkLight(float
+ * shown, float dark)`. A look and the
  * color stage may both include it in one shader; the guard keeps one copy.
  */
 export const MEET_GLSL = /* glsl */ `
@@ -256,6 +273,13 @@ float meetBridgeShares(float sa, float sb) {
 
 float meetBridgeLit(float shown) {
   return smoothstep(${MEET_BRIDGE_LIT[0].toFixed(4)}, ${MEET_BRIDGE_LIT[1].toFixed(4)}, shown);
+}
+
+float meetDarkLight(float shown, float dark) {
+  float d = clamp(dark, 0.0, 1.0);
+  float y = max(shown, 0.0);
+  float floorY = pow(max(pow(y, 1.0 / 3.0) - ${MEET_LINE_CHANGE.toFixed(4)}, 0.0), 3.0);
+  return max(y * (1.0 - ${(1 - MEET_DARK_KEEP).toFixed(4)} * d), mix(y, floorY, d));
 }
 
 float meetBridgeLight(float shown, float bridge) {

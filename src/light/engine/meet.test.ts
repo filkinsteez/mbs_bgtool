@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { linearToOklch } from '../color/oklab'
 import { hexToLinear } from '../color/srgb'
-import { MEET_BRIDGE_TO, MEET_BRIDGE_WIDTH, MEET_SHARPNESS, MEET_SHARPNESS_DIM, meetApart, meetBridge, meetBridgeLight, meetColor, meetColors, meetLight, meetSharpness } from './meet'
+import { MEET_BRIDGE_TO, MEET_BRIDGE_WIDTH, MEET_DARK_KEEP, MEET_LINE_CHANGE, meetDarkLight, MEET_SHARPNESS, MEET_SHARPNESS_DIM, meetApart, meetBridge, meetBridgeLight, meetColor, meetColors, meetLight, meetSharpness } from './meet'
 
 const luminance = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 const unit = (c: readonly number[]) => c.map((v) => v / luminance(c))
@@ -156,6 +156,23 @@ describe('where two lights meet', () => {
       last = now
     }
     expect(largest).toBeLessThan(Math.max(0.05 * path, 1e-3))
+  })
+
+  it('dims a dim meeting toward black, by at most the line allowance, and leaves it where there is no line', () => {
+    const L = (y: number) => Math.cbrt(y)
+    expect(meetDarkLight(0.05, 0)).toBe(0.05)
+    // Dim light reaches near black at the middle (MEET_DARK_KEEP of its light) where that is within the allowance.
+    expect(meetDarkLight(0.004, 1)).toBeCloseTo(0.004 * MEET_DARK_KEEP, 9)
+    // Brighter dim light falls by the allowance, no more.
+    for (const y of [0.05, 0.1, 0.2]) expect(L(y) - L(meetDarkLight(y, 1))).toBeLessThanOrEqual(MEET_LINE_CHANGE + 1e-9)
+    // Softly: no jump as the line's strength grows.
+    let last = 0.1
+    for (let k = 1; k <= 100; k++) {
+      const now = meetDarkLight(0.1, k / 100)
+      expect(Math.abs(now - last)).toBeLessThan(0.002)
+      expect(now).toBeLessThanOrEqual(last + 1e-12)
+      last = now
+    }
   })
 
   it('changes smoothly along a crossfade, with no jump where the lead passes', () => {
