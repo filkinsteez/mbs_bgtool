@@ -187,6 +187,9 @@ export function mergedLayout(seed: number, aspect: number, drag?: ControlValues[
     // hills about 12.
     ground = groundDraw < 0.75
     sun = toP(across, ground ? lerp(0.84, 0.72, rise) : lerp(0.6, 1.0, rise))
+    // A low sun always has a clear glow round it, which a plain sky never has.
+    dome[0] = lerp(0.24, 0.55, domeDraw)
+    dome[1] = dome[0] * lerp(0.4, 0.7, height)
     tilt = tiltDraw * (ground ? 0.4 : 1.05)
     mostLean = lerp(0.2, 0.45, leanDraw)
     if (ground) {
@@ -205,18 +208,25 @@ export function mergedLayout(seed: number, aspect: number, drag?: ControlValues[
     farDim()
     deep[0] -= 0.08
   } else if (kind === 2) {
-    // A sky lit from one side: the light on the left or right edge, the sky turned toward the far side.
-    sun = toP(side > 0 ? lerp(0.97, 1.03, height) : lerp(-0.03, 0.03, height), lerp(0.25, 0.75, rise))
-    tilt = -side * lerp(1.15, 1.65, tiltDraw + 0.5)
+    // A sky lit from one side: the light on the left or right edge, anywhere from a top corner to a bottom corner,
+    // the sky turned toward the far side and in some seeds on down past it; the seed picks the glow along the edge
+    // from narrow to wide and how far the warm band reaches, so two side lights differ in shape and not only in which
+    // side they are on.
+    sun = toP(side > 0 ? lerp(0.97, 1.03, height) : lerp(-0.03, 0.03, height), lerp(0.08, 0.92, rise))
+    tilt = -side * lerp(1.15, 2.2, tiltDraw + 0.5)
     mostLean = 1.7
+    dome[0] = lerp(0.12, 0.7, domeDraw)
+    dome[1] = dome[0] * lerp(0.3, 0.8, height)
+    warm[0] = lerp(0.2, 1.1, (warm[0] - 0.25) / 0.45)
     farDim()
   } else {
     // A plain sky gradient with no light in sight: no glow, the pale light low across the width and the warm light
-    // low near where the light would be, over a soft dim band along the bottom. The horizon bows and waves, the warm
+    // low near where the light would be, over a soft dim band along the bottom. It leans less than a low sun's ground,
+    // and under a line its ground sits lower, so the two kinds differ in shape. The horizon bows and waves, the warm
     // band's top and the pale sky's edge each rise and fall their own way, so no two boundaries run parallel.
     sun = toP(lerp(0.2, 0.8, (across - 0.06) / 0.88), lerp(0.74, 0.86, height))
-    tilt = tiltDraw * 0.25
-    mostLean = 0.4
+    tilt = tiltDraw * 0.15
+    mostLean = 0.2
     ground = true
     groundL[3] = lerp(0.05, 0.1, rise)
     horizon[3] = lerp(0.03, 0.06, dimDraw)
@@ -270,7 +280,8 @@ export function mergedLayout(seed: number, aspect: number, drag?: ControlValues[
       }
       up = [Math.sin(lean), -Math.cos(lean)]
       const along = [-up[1], up[0]]
-      const base = [mid[0], ground ? hold(mid[1], atV(0.62), atV(0.9)) : hold(mid[1], atV(0.5), atV(1.0))]
+      // A plain sky's ground stays lower and flatter than a low sun's, so the two differ in shape under a line too.
+      const base = [mid[0], kind === 3 ? hold(mid[1], atV(0.76), atV(0.94)) : ground ? hold(mid[1], atV(0.62), atV(0.9)) : hold(mid[1], atV(0.5), atV(1.0))]
       const s = kind === 0 ? (f[0] - base[0]) * along[0] + (f[1] - base[1]) * along[1] : 0
       const room = (0.44 * frameW) / Math.max(along[0], 0.3)
       const onLine = hold(s + base[0] / Math.max(along[0], 0.3), -room, room) - base[0] / Math.max(along[0], 0.3)
