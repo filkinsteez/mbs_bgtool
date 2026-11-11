@@ -31,17 +31,19 @@ describe('pixel filter', () => {
     expect(buildOutputShader([PIXEL_FILTER])).toContain('display = filterPixel(display, px, weight);')
   })
 
-  it('sets the cell size: 144 cells on the short side at 0, 8 at 1, by the same ratio per step', () => {
-    expect(pixelCells(0)).toBe(PIXEL_MAX_CELLS)
-    expect(pixelCells(1)).toBe(PIXEL_MIN_CELLS)
+  it('sets the cell size: 8 cells on the short side at 0, 144 at 1, by the same ratio per step', () => {
+    expect(pixelCells(0)).toBe(PIXEL_MIN_CELLS)
+    expect(pixelCells(1)).toBe(PIXEL_MAX_CELLS)
     expect(PIXEL_MAX_CELLS).toBeGreaterThanOrEqual(144)
     // The biggest cells are more than twice the old biggest (18 cells on the short side).
     expect(PIXEL_MIN_CELLS).toBeLessThanOrEqual(9)
-    expect([0.25, 0.5, 0.75].map(pixelCells)).toEqual([70, 34, 16])
+    expect([0.25, 0.5, 0.75].map(pixelCells)).toEqual([16, 34, 70])
     expect(pixelCells(Number.NaN)).toBe(pixelCells(0.5))
     for (let k = 0; k < STEPS.length; k++) {
-      expect(Math.abs(pixelCells(STEPS[k]) - PIXEL_MAX_CELLS * (PIXEL_MIN_CELLS / PIXEL_MAX_CELLS) ** STEPS[k])).toBeLessThanOrEqual(0.5)
-      if (k > 0) expect(pixelCells(STEPS[k])).toBeLessThanOrEqual(pixelCells(STEPS[k - 1]))
+      expect(Math.abs(pixelCells(STEPS[k]) - PIXEL_MIN_CELLS * (PIXEL_MAX_CELLS / PIXEL_MIN_CELLS) ** STEPS[k])).toBeLessThanOrEqual(0.5)
+      if (k > 0) expect(pixelCells(STEPS[k])).toBeGreaterThanOrEqual(pixelCells(STEPS[k - 1]))
+      // Each value gives the size 1 - value gave when 0 was the smallest cells, so the range of sizes is the same.
+      expect(pixelCells(STEPS[k])).toBe(Math.round(PIXEL_MAX_CELLS * (PIXEL_MIN_CELLS / PIXEL_MAX_CELLS) ** (1 - STEPS[k])))
     }
   })
 
@@ -93,12 +95,12 @@ describe('pixel filter', () => {
     expect(PIXEL_LINE_MAX).toBeCloseTo(2 / 1080, 9)
     // Line width in a 4K export (2160 px on the short side) at a density.
     const px4k = (d: number) => (pixelLineWidth(d) * 2160) / pixelCells(d)
-    expect(pixelLineWidth(0)).toBe(PIXEL_LINE_SHARE)
-    expect(px4k(0)).toBeCloseTo(1.25, 6)
-    for (const d of [0.5, 0.75, 1]) expect(px4k(d)).toBeCloseTo(4, 6)
+    expect(pixelLineWidth(1)).toBe(PIXEL_LINE_SHARE)
+    expect(px4k(1)).toBeCloseTo(1.25, 6)
+    for (const d of [0, 0.25, 0.5]) expect(px4k(d)).toBeCloseTo(4, 6)
     for (let k = 1; k < STEPS.length; k++) {
       expect(px4k(STEPS[k])).toBeLessThanOrEqual(4 + 1e-9)
-      expect(px4k(STEPS[k])).toBeGreaterThanOrEqual(px4k(STEPS[k - 1]) - 1e-9)
+      expect(px4k(STEPS[k])).toBeLessThanOrEqual(px4k(STEPS[k - 1]) + 1e-9)
     }
     // A pixel on the border is covered, one well inside its cell isn't, and the crossings count once.
     expect(pixelLineCoverage(0, 0.4, 0.06, 0.02)).toBe(1)
@@ -140,8 +142,8 @@ describe('pixel filter', () => {
       uPixelFrame: [3840, 2160],
       uPixelLine: PIXEL_LINE_MAX * 34,
     })
-    expect(pixelUniforms(1, { width: 1080, height: 1920, seed: 3 })).toEqual({ uPixelCells: [8, 14], uPixelFrame: [1080, 1920], uPixelLine: PIXEL_LINE_MAX * 8 })
-    expect(pixelUniforms(0, { width: 1080, height: 1350, seed: 3 })).toEqual({
+    expect(pixelUniforms(0, { width: 1080, height: 1920, seed: 3 })).toEqual({ uPixelCells: [8, 14], uPixelFrame: [1080, 1920], uPixelLine: PIXEL_LINE_MAX * 8 })
+    expect(pixelUniforms(1, { width: 1080, height: 1350, seed: 3 })).toEqual({
       uPixelCells: [144, 180],
       uPixelFrame: [1080, 1350],
       uPixelLine: PIXEL_LINE_SHARE,

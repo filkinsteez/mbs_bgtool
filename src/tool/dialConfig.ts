@@ -1,7 +1,7 @@
 import type { DialConfig } from 'dialkit'
 import { EXPORT_ASPECTS, getPack, isPackId, PACKS, type ColorPack, type MoodId } from '@/light'
 import { defaultMix, mixFromShares, type ColorMix } from '@/light/color/mix'
-import { filterDials, readFilter, STRENGTH_DIAL_KEYS, type FilterChoice } from './filterControl'
+import { filterDials, readFilter, STRENGTH_DIAL_KEYS, STRENGTH_LABELS, type FilterChoice } from './filterControl'
 import { DEFAULT_STATE, isExportAspect, MOOD_LOOKS, readSeed, SEED_MAX, SEED_MIN, type ToolState } from './state'
 
 export const PANEL_ID = 'tool'
@@ -14,10 +14,12 @@ export const PACK_DIAL_KEY = 'colors'
 export const MIX_DIAL_KEY = 'mix'
 
 /**
- * Labels the panel shows in place of DialKit's, which come from the keys: the filter's slider reads "Strength" (owner,
- * 2026-11-06). Its key stays `density` and its URL name `strength=`.
+ * Labels the panel shows in place of DialKit's, which come from the keys: the filter's slider reads "Strength" with
+ * Grain and "Density" with Pixel (`STRENGTH_LABELS`). Its key stays `density` and its URL name `strength=`.
  */
-export const PANEL_LABELS: Readonly<Record<string, string>> = Object.fromEntries(Object.values(STRENGTH_DIAL_KEYS).map((key) => [key, 'Strength']))
+export function panelLabels(filter: FilterChoice): Readonly<Record<string, string>> {
+  return filter === 'none' ? {} : { [STRENGTH_DIAL_KEYS[filter]]: STRENGTH_LABELS[filter] }
+}
 
 /** The moods the panel offers, by the names the user sees; the code ids stay (`sunset` is Sunrise). */
 export const MOOD_OPTIONS = [

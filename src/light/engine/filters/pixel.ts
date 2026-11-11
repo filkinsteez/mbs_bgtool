@@ -6,10 +6,10 @@ import type { FilterFrame, OutputFilter } from './types'
  * The Pixel filter: the frame quantized to a grid of square cells with thin light lines between them, like the deck's
  * Pixel picture (44:280). It is fully on at every slider value.
  *
- * - The slider sets the cell size: 144 cells on the short side at 0 (the smallest cells) and 8 at 1 (the biggest),
- *   the count falling by the same ratio per step (70 at 0.25, 34 at 0.5, 16 at 0.75). Cells are whole across and
- *   down, so the grid depends on the frame's aspect and the density only, and a preview shows the same cells as the
- *   export. Between whole cell counts nothing changes.
+ * - The slider (Density in the tool) sets the cell size: 8 cells on the short side at 0 (the biggest cells) and 144 at
+ *   1 (the smallest), the count rising by the same ratio per step (16 at 0.25, 34 at 0.5, 70 at 0.75). Cells are whole
+ *   across and down, so the grid depends on the frame's aspect and the density only, and a preview shows the same cells
+ *   as the export. Between whole cell counts nothing changes.
  * - Each cell shows its mean color, flat; the color changes to the next cell's under the line between them.
  * - The lines are PIXEL_LINE_SHARE of a cell wide, as in the deck's picture, up to PIXEL_LINE_MAX of the frame's short
  *   side, so big cells keep thin lines (crisp at every size, so a preview shows the grid an export shows). They are
@@ -20,7 +20,7 @@ import type { FilterFrame, OutputFilter } from './types'
  *   since the brief asks for low contrast ("so it reads as light, not pattern").
  */
 
-/** Cells on the short side at density 1 (the biggest cells) and at 0 (the smallest); between them the count falls by the same ratio per step. */
+/** Cells on the short side at density 0 (the biggest cells) and at 1 (the smallest); between them the count rises by the same ratio per step. */
 export const PIXEL_MIN_CELLS = 8
 export const PIXEL_MAX_CELLS = 144
 /**
@@ -36,7 +36,7 @@ const SOURCE_SAMPLES_ON_SHORT_SIDE = 288
 export const PIXEL_LINE_SHARE = 2 / 24
 /**
  * The widest a line gets, as a share of the frame's short side: 2 px at 1080 px, as in the deck's picture at 1x. It
- * takes over from 45 cells down (density 0.4 and up): 4 px in a 4K export, about 1 px in a 606 px tall preview.
+ * takes over from 45 cells down (density 0.6 and down): 4 px in a 4K export, about 1 px in a 606 px tall preview.
  */
 export const PIXEL_LINE_MAX = 2 / 1080
 /** How much lighter a line is than its cell, as a share of the cell's light. */
@@ -66,10 +66,10 @@ export function pixelLineArea(width: number): number {
   return 1 - (1 - w) * (1 - w)
 }
 
-/** Cells on the short side for a density 0..1, fewer and so bigger as it rises (a missing value gives the count at 0.5). */
+/** Cells on the short side for a density 0..1, more and so smaller as it rises (a missing value gives the count at 0.5). */
 export function pixelCells(density: number): number {
   const d = Number.isFinite(density) ? Math.min(1, Math.max(0, density)) : 0.5
-  return Math.round(PIXEL_MAX_CELLS * (PIXEL_MIN_CELLS / PIXEL_MAX_CELLS) ** d)
+  return Math.round(PIXEL_MIN_CELLS * (PIXEL_MAX_CELLS / PIXEL_MIN_CELLS) ** d)
 }
 
 function gridOf(frame: Pick<FilterFrame, 'width' | 'height'>, cellsOnShort: number): { across: number; down: number } {

@@ -1,16 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { buildDialConfig, PANEL_ID, PANEL_LABELS, PANEL_NAME } from './dialConfig'
+import { buildDialConfig, PANEL_ID, PANEL_NAME, panelLabels } from './dialConfig'
+import type { FilterChoice } from './filterControl'
 import { matchByPlace, panelAccessFor } from './panelAccess'
 import { DEFAULT_STATE } from './state'
 
-const toolAccess = (filter: 'none' | 'grain') =>
-  panelAccessFor(PANEL_ID, PANEL_NAME, buildDialConfig(DEFAULT_STATE, 'Export', filter), { labels: PANEL_LABELS })
+const toolAccess = (filter: FilterChoice) =>
+  panelAccessFor(PANEL_ID, PANEL_NAME, buildDialConfig(DEFAULT_STATE, 'Export', filter), { labels: panelLabels(filter) })
 
 describe('panel access', () => {
   it('names sliders by the label the panel shows', () => {
     expect(toolAccess('grain').sliders.map((slider) => [slider.path, slider.where])).toEqual([
       ['seed', 'Seed'],
       ['density', 'Strength'],
+    ])
+    expect(toolAccess('pixel').sliders.map((slider) => [slider.path, slider.where])).toEqual([
+      ['seed', 'Seed'],
+      ['density', 'Density'],
     ])
     expect(toolAccess('none').sliders.map((slider) => slider.path)).toEqual(['seed'])
   })

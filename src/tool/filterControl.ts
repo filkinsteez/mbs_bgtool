@@ -14,10 +14,16 @@ export interface FilterState {
 /** Panel key; DialKit shows it as "Filter". */
 export const FILTER_DIAL_KEY = 'filter'
 /**
- * The key of the slider under Filter for each filter. The tool panel shows it as "Strength" (`PANEL_LABELS`). Its
- * value is the filter's strength, `strength` in the URL.
+ * The key of the slider under Filter for each filter. The tool panel shows it by `STRENGTH_LABELS`. Its value is the
+ * filter's strength, `strength` in the URL.
  */
 export const STRENGTH_DIAL_KEYS: Readonly<Record<FilterKey, string>> = { grain: 'density', pixel: 'density' }
+
+/**
+ * The slider's label for each filter (owner, 2026-11-06 and 2026-11-11): Strength for Grain; Density for Pixel, whose
+ * low end gives the biggest cells and high end the smallest.
+ */
+export const STRENGTH_LABELS: Readonly<Record<FilterKey, string>> = { grain: 'Strength', pixel: 'Density' }
 
 /** Filters the tool offers, in panel order. A filter joins once it runs in the tool. */
 export const TOOL_FILTERS: readonly FilterKey[] = ['grain', 'pixel']
@@ -27,7 +33,7 @@ export const DEFAULT_FILTER: FilterState = { filter: 'none', strength: 0.5 }
 
 /**
  * The least value Pixel gets in the scene: the filter chain leaves out a filter at 0, but Pixel's Density 0 is its
- * finest grid, not off. Grain's Density 0 is no grain.
+ * biggest cells, not off. Grain's Strength 0 is no grain.
  */
 const DENSITY_FLOOR = 0.001
 const FLOORED: readonly FilterKey[] = ['pixel']

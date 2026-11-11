@@ -9,7 +9,7 @@ import { EXPORT_SIZES, getPack, type ExportAspect, type PackId } from '@/light'
 import { mixForPack } from '@/light/color/mix'
 import { COLOR_DESIGN_PACK, withColorMix } from '@/light/color/stage'
 import { buildScene, clampDrag, keepsLine, toolControls, type LightDrag } from './controls'
-import { buildDialConfig, MIX_DIAL_KEY, mixPanelValue, PACK_DIAL_KEY, PANEL_ID, PANEL_LABELS, PANEL_NAME, readToolState, SEED_DIAL_KEY } from './dialConfig'
+import { buildDialConfig, MIX_DIAL_KEY, mixPanelValue, PACK_DIAL_KEY, PANEL_ID, PANEL_NAME, panelLabels, readToolState, SEED_DIAL_KEY } from './dialConfig'
 import { exportImage } from './exportImage'
 import { FILTER_DIAL_KEY, readChoice, withFilter } from './filterControl'
 import { panelAccessFor, usePanelAccess } from './panelAccess'
@@ -97,9 +97,10 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     return withFilter(withColorMix(built, getPack(pack), { shares: shares.split(',').map(Number) }), { filter, strength })
   }, [drawn, pack, seed, drag, format, filter, strength, shares])
 
+  const labels = useMemo(() => panelLabels(chosenFilter), [chosenFilter])
   const access = useMemo(
-    () => panelAccessFor(PANEL_ID, PANEL_NAME, config, { busy: exportStatus === 'busy' ? [EXPORTING_LABEL] : [], labels: PANEL_LABELS }),
-    [config, exportStatus],
+    () => panelAccessFor(PANEL_ID, PANEL_NAME, config, { busy: exportStatus === 'busy' ? [EXPORTING_LABEL] : [], labels }),
+    [config, exportStatus, labels],
   )
   usePanelAccess(panelRef, access)
 
@@ -295,7 +296,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
             },
             { paths: FORMAT_PATHS, node: <FormatPicker value={format} onChange={(next) => setValue('format', next)} />, replace: true, step: '4. Export' },
           ]}
-          labels={PANEL_LABELS}
+          labels={labels}
         />
       </aside>
     </main>

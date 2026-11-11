@@ -1,6 +1,6 @@
 import { DialStore } from 'dialkit'
 import { describe, expect, it } from 'vitest'
-import { buildDialConfig, PANEL_LABELS } from './dialConfig'
+import { buildDialConfig, panelLabels } from './dialConfig'
 import { DEFAULT_STATE } from './state'
 import { panelLayout, panelSteps, withLabels, type PanelBlock, type PanelStep } from './ToolPanel'
 
@@ -83,14 +83,19 @@ describe('tool panel layout', () => {
     ])
   })
 
-  it('shows the filter slider as Strength with its key kept, and every other label as DialKit makes it', () => {
-    const id = 'labels-check'
-    DialStore.registerPanel(id, 'Check', buildDialConfig(DEFAULT_STATE, 'Export', 'grain'))
-    const controls = withLabels(DialStore.getPanel(id)!.controls, PANEL_LABELS)
-    expect(controls.filter((control) => control.type === 'slider').map((control) => [control.path, control.label])).toEqual([
-      ['seed', 'Seed'],
-      ['density', 'Strength'],
-    ])
-    DialStore.unregisterPanel(id)
+  it('shows the filter slider as Strength with Grain and Density with Pixel, its key kept, and every other label as DialKit makes it', () => {
+    for (const [filter, label] of [
+      ['grain', 'Strength'],
+      ['pixel', 'Density'],
+    ] as const) {
+      const id = `labels-check-${filter}`
+      DialStore.registerPanel(id, 'Check', buildDialConfig(DEFAULT_STATE, 'Export', filter))
+      const controls = withLabels(DialStore.getPanel(id)!.controls, panelLabels(filter))
+      expect(controls.filter((control) => control.type === 'slider').map((control) => [control.path, control.label])).toEqual([
+        ['seed', 'Seed'],
+        ['density', label],
+      ])
+      DialStore.unregisterPanel(id)
+    }
   })
 })
