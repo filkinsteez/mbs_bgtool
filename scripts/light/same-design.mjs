@@ -13,6 +13,7 @@ import { list, parseArgs } from './lib/args.mjs'
 import { mixByName } from './lib/color-read.mjs'
 import { compare, MEET, mapsOf, meetingLines, meetMask } from './lib/design-maps.mjs'
 import { startHarness } from './lib/harness.mjs'
+import { stageArgs } from './lib/stage-args.mjs'
 
 const LOOKS = ['sunset.bands', 'sunset.ramp', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
 // The tool's three looks (the merged Sunrise and Contour, and Rush's split) are checked when named; `all` is the seven.
@@ -66,7 +67,10 @@ for (const v of views) if (v !== 'default' && !(v in DRAGS)) throw new Error(`Un
 const formats = (list(args.format ?? args.formats).length ? list(args.format ?? args.formats) : ['16x9']).map((f) => f.replace(':', 'x'))
 for (const f of formats) if (!(f in FORMATS)) throw new Error(`Unknown format ${f}: give ${Object.keys(FORMATS).join(', ')}`)
 const intensity = args.intensity === undefined ? null : Number(args.intensity)
-const mixArg = args.mix === undefined ? null : list(args.mix)
+// As the app draws (lib/stage-args.mjs): the color stage on at the default mix. --mix <names> compares those mixes
+// (a bare --mix: the default mix, Meta Blue off and the pack's first other color at 60%); --stage off compares each
+// pack's look without the stage.
+const mixArg = !stageArgs(args).on ? null : args.mix === undefined ? ['default'] : list(args.mix)
 // --from <dir>: judge renders kept by an earlier run (--keep) instead of rendering.
 const fromDir = typeof args.from === 'string' ? path.resolve(args.from) : null
 const keep = Boolean(args.keep)
@@ -202,6 +206,8 @@ const MOOD_NAMES = { sunset: 'Sunrise', contour: 'Contour', rush: 'Rush' }
 const limitText = Object.entries(T.limits).map(([mood, l]) => `${MOOD_NAMES[mood]}: layout over ${l.layout} or light over ${l.light}`).join('; ')
 const lines = [
   mixArg ? '# Same design in every pack and mix (color stage on)' : '# Same design in every pack',
+  '',
+  mixArg ? `Stage on, mix ${mixArg.length ? mixArg.join(', ') : 'default, blue-off and the first other color at 60%'}.` : 'Stage off.',
   '',
   `Seeds ${seeds.join(', ')}; ${formats.map((f) => f.replace('x', ':')).join(' and ')}; ${views.map(viewText).join(', ')}; ${results.reduce((s, r) => s + r.frames.length, 0)} frames in ${seconds} s. Two frames differ in design when (${limitText}). Pixels near a meeting line of two pack colors ${MEET.hue} degrees or more apart in hue, whose lightness differs by ${MEET.allow} or less, are left out, the strongest lines first and at most ${Math.round(100 * MEET.cap)}% of a frame (owner, 2026-11-10 9:50 PM).`,
   '',

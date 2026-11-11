@@ -9,15 +9,16 @@
 // 0.01 of the short side, from each base line (--line), and the scene is what the tool shows for that drag
 // (controlsForDrag: the line and the mood control set from its start). --grid writes two sheets per look: one start
 // with 8 directions at one length, and one direction at 3 lengths.
-// --mix default|blue-off|Cyan:0.6 draws every frame as the tool does with colormix=1 at that mix (each design drawn in
-// the color stage's design pack, the line's controls too, and given the frame's pack colors by the stage), so a color
-// that flips as the line moves shows as a jump. Each jump gives the share of its worst block's change that is color
-// rather than lightness. The looks behind a switch in the tool (sunset.merged, contour.merged, rush.split) are swept
+// Every frame is drawn as the app draws it (lib/stage-args.mjs): the color stage on at the default mix, or at --mix
+// default|blue-off|Cyan:0.6 (each design drawn in the color stage's design pack, the line's controls too, and given the
+// frame's pack colors by the stage), so a color that flips as the line moves shows as a jump. --stage off draws each
+// look in the frame's pack without the stage, for comparisons (not with --tool-check: the page always has the stage).
+// Each jump gives the share of its worst block's change that is color rather than lightness. The looks behind a switch in the tool (sunset.merged, contour.merged, rush.split) are swept
 // when named in full.
 // Usage: node scripts/light/control-sweep.mjs [--look ramp,bands,...,sunset.merged,contour.merged,rush.split]
 //   [--control intensity,softness,horizon|light,startx,starty,angle,length|line] [--pack bold,...] [--seeds 1-12,5081]
 //   [--format 16x9,9x16] [--at intensity=0.75,softness=1,horizon=0.79] [--from 0] [--to 1]
-//   [--line 0.35,0.7,-40,0.6 ...] [--quick] [--mix default] [--rev HEAD [--patch file] | --tree] [--label text]
+//   [--line 0.35,0.7,-40,0.6 ...] [--quick] [--mix default | --stage off] [--rev HEAD [--patch file] | --tree] [--label text]
 //   [--out dir] [--ratio 4] [--floor 0.003] [--peak-floor 0.02] [--frames 0:1:0.1] [--no-strips] [--worst 6] [--strip-all]
 //   [--tool-check http://localhost:3000]
 //   node scripts/light/control-sweep.mjs --grid [--look ...] [--pack bold] [--seeds 1-3] [--format 16x9] [--out dir]
@@ -30,6 +31,7 @@ import sharp from 'sharp'
 import { list, parseArgs } from './lib/args.mjs'
 import { mixByName } from './lib/color-read.mjs'
 import { ROOT, startHarness } from './lib/harness.mjs'
+import { stageArgs, stageText } from './lib/stage-args.mjs'
 
 const LOOKS = ['sunset.ramp', 'sunset.bands', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
 /** Looks the tool draws only behind a switch in the URL, swept when named in full: the switch for each. */
@@ -112,8 +114,9 @@ const strips = args['no-strips'] !== true
 /** --worst N: strips only for the N largest jumps (by mean ΔE) of each look and format, written after the sweeps. */
 const worst = args.worst === undefined ? null : Number(args.worst)
 const frameValues = parseFrames(args.frames)
-const mixName = typeof args.mix === 'string' ? args.mix : null
-const label = `${typeof args.label === 'string' ? args.label : `working tree at ${clock()}`}${mixName ? `, color stage on at the mix ${mixName}` : ''}`
+const mixName = stageArgs(args).mix
+if (!mixName && args['tool-check']) throw new Error('--tool-check with --stage off: the tool page always draws with the color stage on')
+const label = `${typeof args.label === 'string' ? args.label : `working tree at ${clock()}`}, ${stageText(Boolean(mixName), mixName)}`
 const outDir = path.resolve(ROOT, typeof args.out === 'string' ? args.out : defaultOut())
 
 for (const pack of packs) if (!PACKS.includes(pack)) throw new Error(`Unknown pack ${pack}`)
@@ -126,7 +129,7 @@ function range(a, b) {
 
 function defaultOut() {
   const dir = args.grid === true ? 'artifacts/control-sweep/grid' : args.quick === true ? 'artifacts/control-sweep/quick' : 'artifacts/control-sweep'
-  return typeof args.mix === 'string' ? `${dir}-mix` : dir
+  return list(args.stage)[0] === 'off' ? `${dir}-stage-off` : typeof args.mix === 'string' && args.mix !== 'default' ? `${dir}-mix` : dir
 }
 
 function lookId(name) {
@@ -532,7 +535,7 @@ try {
   const { recipeContext, resolveScene } = await harness.ssr('/src/light/engine/resolve.ts')
   const toLinear = Float32Array.from({ length: 256 }, (_, i) => srgbToLinear(i / 255))
   const stage = mixName ? await harness.ssr('/src/light/color/stage.ts') : null
-  if (mixName && !stage?.withColorMix) throw new Error('--mix: this code has no color stage (src/light/color/stage.ts with withColorMix)')
+  if (mixName && !stage?.withColorMix) throw new Error('this code has no color stage (src/light/color/stage.ts with withColorMix): use --stage off')
   const mixes = mixName ? await harness.ssr('/src/light/color/mix.ts') : null
   const mixOf = (pack) => mixByName(mixes, getPack(pack), mixName)
   for (const pack of mixName ? packs : []) if (!mixOf(pack)) throw new Error(`--mix ${mixName}: the ${pack} pack has no such color`)

@@ -12,6 +12,7 @@ import { mixByName } from './lib/color-read.mjs'
 import { compareDrag, gridDrags, SHOWN, TEST_DRAGS, worstCases } from './lib/drag-colors.mjs'
 import { exactRead, exactRules } from './lib/exact-read.mjs'
 import { ROOT, startHarness } from './lib/harness.mjs'
+import { stagesArg } from './lib/stage-args.mjs'
 
 const args = parseArgs()
 const looks = list(args.look).length ? list(args.look) : ['sunset.merged', 'contour.merged', 'rush.split']
@@ -21,7 +22,7 @@ const seeds = list(args.seeds ?? '1-8').flatMap((part) => {
   return b ? Array.from({ length: b - a + 1 }, (_, i) => a + i) : [a]
 })
 const formats = list(args.formats ?? args.format).length ? list(args.formats ?? args.format).map((f) => f.replace(':', 'x')) : ['16x9', '9x16']
-const stages = list(args.stage).length ? list(args.stage) : ['off', 'on']
+const stages = stagesArg(args, ['on', 'off'])
 const mixName = typeof args.mix === 'string' ? args.mix : 'default'
 const grid = Number(args.grid ?? 3)
 const sheetCount = Number(args.sheet ?? 4)

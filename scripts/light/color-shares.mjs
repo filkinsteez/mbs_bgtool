@@ -8,6 +8,7 @@ import sharp from 'sharp'
 import { list, parseArgs } from './lib/args.mjs'
 import { BLEND, blendSharesOf, BLUE_LIGHT, blueLight, blueVerdict, LABELS, mixByName, READ, readAs, rulesFor, sharesOf } from './lib/color-read.mjs'
 import { startHarness } from './lib/harness.mjs'
+import { stageArgs, stageText } from './lib/stage-args.mjs'
 
 const LOOKS = ['sunset.bands', 'sunset.ramp', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
 // The looks behind the tool's switches (sunrise=merged, contour=merged, rush=split) are measured when named; `all` is
@@ -183,7 +184,7 @@ const blendOf = (rules, rgb, width, height, labels) => ({ blendShares: round(ble
 // The looks at HEAD: each look, pack, seed, format and view, rendered as the tool shows it.
 async function looksRun(harness, rulesById, getPack) {
   const lookArg = list(args.look)
-  if (!lookArg.length) throw new Error('usage: color-shares.mjs --look <contour.beam|beam|...|all> [--seeds 1-8] [--drag default,owner|all] [--format 16x9,9x16] [--mix name] [--blend] [--maps] [--out dir]; or --files <dir> [--pack id] [--blend] [--maps]; or --swatches')
+  if (!lookArg.length) throw new Error('usage: color-shares.mjs --look <contour.beam|beam|...|all> [--seeds 1-8] [--drag default,owner|all] [--format 16x9,9x16] [--mix name | --stage off] [--blend] [--maps] [--out dir]; or --files <dir> [--pack id] [--blend] [--maps]; or --swatches')
   const looks = lookArg.includes('all') ? LOOKS : lookArg.map((l) => (l.includes('.') ? l : LOOKS.find((id) => id.endsWith(`.${l}`)) ?? l))
   for (const look of looks) if (!LOOKS.includes(look) && !MERGED.includes(look)) throw new Error(`Unknown look ${look}`)
   const seeds = list(args.seeds ?? '1-8').flatMap((part) => {
@@ -196,14 +197,14 @@ async function looksRun(harness, rulesById, getPack) {
   const formats = (list(args.format ?? args.formats).length ? list(args.format ?? args.formats) : ['16x9']).map((f) => f.replace(':', 'x'))
   const tool = await harness.ssr('/src/tool/controls.ts')
   const { getRecipe } = await harness.ssr('/src/light/recipes/index.ts')
-  // --mix <name>: the shared color stage on at that mix (src/light/color/stage.ts): the design is drawn in the
-  // stage's design pack and the stage gives it the picked pack's colors.
-  const mixName = typeof args.mix === 'string' ? args.mix : null
+  // As the app draws (lib/stage-args.mjs): the shared color stage on at the default mix or --mix <name>, the design
+  // drawn in the stage's design pack and given the picked pack's colors; --stage off: the look in the picked pack.
+  const { mix: mixName } = stageArgs(args)
   let stage = null
   let mixes = null
   if (mixName) {
     stage = await harness.ssr('/src/light/color/stage.ts').catch(() => null)
-    if (!stage?.withColorMix || !stage.COLOR_DESIGN_PACK) throw new Error('--mix: this checkout has no color stage yet (src/light/color/stage.ts with withColorMix and COLOR_DESIGN_PACK)')
+    if (!stage?.withColorMix || !stage.COLOR_DESIGN_PACK) throw new Error('this checkout has no color stage (src/light/color/stage.ts with withColorMix and COLOR_DESIGN_PACK): use --stage off')
     mixes = await harness.ssr('/src/light/color/mix.ts')
   }
   const frames = []
@@ -248,8 +249,8 @@ async function looksRun(harness, rulesById, getPack) {
 // Per look, pack, format and view: the median share of each entry over the seeds (with its range), next to the
 // asked shares, and the seeds flagged.
 function summaryOf(frames, looks, formats, views, seeds, getPack, rulesById, mixName, seconds) {
-  const source = mixName ? `the color stage on at the mix \`${mixName}\`; asked: that mix's shares` : "today's coloring (no color stage); asked: the default mix, Meta Blue 50% and the other pack colors even"
-  const lines = ['# Color shares', '', `Seeds ${seeds[0]}-${seeds.at(-1)}; ${formats.map((f) => f.replace('x', ':')).join(' and ')}; ${views.join(', ')}; ${source}; ${frames.length} frames in ${seconds} s. Each cell: the median share of the visibly lit pixels (Oklab L ${READ.visible} and up) over the seeds, with the lowest and highest in brackets.${!mixName || mixName === 'default' ? ' Flagged: Meta Blue under 45% or a pack color under 5%.' : ''}`, '']
+  const source = mixName ? `${stageText(true, mixName)}; asked: that mix's shares` : `${stageText(false)} (the look in each pack); asked: the default mix, Meta Blue 50% and the other pack colors even`
+  const lines = ['# Color shares', '', `${source[0].toUpperCase()}${source.slice(1)}.`, '', `Seeds ${seeds[0]}-${seeds.at(-1)}; ${formats.map((f) => f.replace('x', ':')).join(' and ')}; ${views.join(', ')}; ${frames.length} frames in ${seconds} s. Each cell: the median share of the visibly lit pixels (Oklab L ${READ.visible} and up) over the seeds, with the lowest and highest in brackets.${!mixName || mixName === 'default' ? ' Flagged: Meta Blue under 45% or a pack color under 5%.' : ''}`, '']
   const median = (v) => [...v].sort((a, b) => a - b)[Math.floor((v.length - 1) / 2)]
   for (const look of looks) {
     lines.push(`## ${look}`, '')

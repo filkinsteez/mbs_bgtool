@@ -15,6 +15,7 @@ import { list, parseArgs } from './lib/args.mjs'
 import { LIN, mixByName, oklab, rulesFor, sharesOf } from './lib/color-read.mjs'
 import { atLimit, verdictChanges } from './lib/edge-limit.mjs'
 import { startHarness } from './lib/harness.mjs'
+import { stageArgs, stageText } from './lib/stage-args.mjs'
 
 const LOOKS = ['sunset.ramp', 'sunset.bands', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
 // The looks behind the tool's switches (sunrise=merged, contour=merged, rush=split); `merged` names all three.
@@ -461,9 +462,10 @@ const formats = (list(args.format ?? args.formats).length ? list(args.format ?? 
 const viewArg = list(args.drag ?? args.drags).map((v) => (v === 'none' ? 'default' : v))
 const views = !viewArg.length ? ['default', 'owner'] : viewArg.includes('all') ? ['default', ...Object.keys(DRAGS)] : [...new Set(viewArg)]
 for (const v of views) if (v !== 'default' && !(v in DRAGS)) throw new Error(`Unknown drag ${v}`)
-const mixName = typeof args.mix === 'string' ? args.mix : 'default'
-const stageOff = args.stage === 'off'
-const source = stageOff ? 'color stage off (the look in each pack, judged against its own lightness)' : `color stage on at the mix ${mixName}`
+const stageAsked = stageArgs(args)
+const stageOff = !stageAsked.on
+const mixName = stageAsked.mix ?? 'default'
+const source = stageOff ? `${stageText(false)} (the look in each pack, judged against its own lightness)` : stageText(true, mixName)
 
 await fs.mkdir(outDir, { recursive: true })
 if (args.maps) await fs.mkdir(path.join(outDir, 'maps'), { recursive: true })
@@ -519,7 +521,7 @@ try {
 }
 const seconds = Math.round((Date.now() - started) / 1000)
 const changes = against ? verdictChanges(frames, against.frames) : null
-await fs.writeFile(path.join(outDir, 'edges.json'), JSON.stringify({ thresholds: E, mix: mixName, seeds, formats, views, frames, ...(changes ? { against: against.file, changes } : {}) }, null, 1))
+await fs.writeFile(path.join(outDir, 'edges.json'), JSON.stringify({ thresholds: E, stage: stageOff ? 'off' : 'on', mix: stageOff ? null : mixName, seeds, formats, views, frames, ...(changes ? { against: against.file, changes } : {}) }, null, 1))
 await fs.writeFile(path.join(outDir, 'summary.md'), summaryOf(seconds))
 console.log(`${frames.length} frames in ${seconds} s; ${frames.filter(failsClear).length} fail; ${frames.filter((f) => f.atLimit).length} at the limit, listed apart${changes ? `; against ${against.file}: ${changes.changed.length} changed, ${changes.atLimit.length} more at the limit` : ''}; summary: ${path.relative(process.cwd(), path.join(outDir, 'summary.md'))}`)
 if (frames.some(failsClear)) process.exitCode = 1

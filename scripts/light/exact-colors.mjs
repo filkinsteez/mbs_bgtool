@@ -4,17 +4,19 @@
 // thin meeting lines between far-apart colors, other thin areas and wide areas (lib/exact-read.mjs has the rules).
 //
 //   node scripts/light/exact-colors.mjs [--look sunset.merged,contour.merged,rush.split]
-//     [--packs bold,elemental,atmospheric] [--seeds 1-8] [--formats 16x9,9x16] [--stage off,on] [--mix default]
+//     [--packs bold,elemental,atmospheric] [--seeds 1-8] [--formats 16x9,9x16] [--stage on|off|on,off] [--mix default]
 //     [--out dir]
 //
-// Writes <out>/summary.md (a line per frame, then a table per look, pack and stage) and <out>/exact.json. With the
-// stage on, each pack's colors come from the color stage at the mix --mix (default: the default mix).
+// Writes <out>/summary.md (a line per frame, then a table per look, pack and stage) and <out>/exact.json. As the app
+// draws by default (lib/stage-args.mjs): the stage on, each pack's colors from the color stage at the mix --mix
+// (default: the default mix). --stage off or on,off adds the look in each pack without the stage, for comparisons.
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { list, parseArgs } from './lib/args.mjs'
 import { mixByName } from './lib/color-read.mjs'
 import { EXACT, exactRead, exactRules } from './lib/exact-read.mjs'
 import { ROOT, startHarness } from './lib/harness.mjs'
+import { stagesArg } from './lib/stage-args.mjs'
 
 const args = parseArgs()
 const looks = list(args.look).length ? list(args.look) : ['sunset.merged', 'contour.merged', 'rush.split']
@@ -24,7 +26,7 @@ const seeds = list(args.seeds ?? '1-8').flatMap((part) => {
   return b ? Array.from({ length: b - a + 1 }, (_, i) => a + i) : [a]
 })
 const formats = list(args.formats).length ? list(args.formats) : ['16x9', '9x16']
-const stages = list(args.stage).length ? list(args.stage) : ['off', 'on']
+const stages = stagesArg(args)
 const mixName = typeof args.mix === 'string' ? args.mix : 'default'
 const outDir = path.resolve(typeof args.out === 'string' ? args.out : path.join(ROOT, 'artifacts', 'exact-colors', new Date().toTimeString().slice(0, 8).replace(/:/g, '')))
 const RENDER = { '16x9': { width: 640, height: 360 }, '9x16': { width: 360, height: 640 } }
