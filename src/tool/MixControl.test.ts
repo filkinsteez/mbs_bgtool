@@ -2,9 +2,9 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { getPack, PACKS, type ColorPack } from '@/light'
-import { defaultMix, mixPercents, setColorOn, setShare, type ColorMix } from '@/light/color/mix'
+import { defaultMix, formatMix, linkMix, mixPercents, neighbourMixes, setColorOn, setShare, type ColorMix } from '@/light/color/mix'
 import { HUE_ORDER, hueOrder } from '@/light/color/packs'
-import { MixControl } from './MixControl'
+import { MixControl, runStep, type MixRun } from './MixControl'
 
 /** The control's markup for a pack and mix, as the server draws it. */
 const markup = (pack: ColorPack, mix: ColorMix) => renderToStaticMarkup(createElement(MixControl, { pack, mix, onChange: () => {} }))
@@ -12,6 +12,44 @@ const all = (html: string, pattern: RegExp) => [...html.matchAll(pattern)].map((
 const labels = (html: string) => all(html, /class="dialkit-slider-label">([^<]+)</g)
 const values = (html: string) => all(html, /class="dialkit-slider-value[^"]*"[^>]*>(\d+)</g).map(Number)
 const at = (pack: ColorPack, name: string) => pack.colors.findIndex((color) => color.name === name)
+
+describe("a run of changes to one color's slider", () => {
+  const key = (mix: ColorMix) => mix.shares.map((share) => share.toFixed(9)).join(',')
+
+  it('lands every step on a mix the preview solved ahead of time, whatever steps came before in the run', () => {
+    for (const pack of PACKS) {
+      const start = defaultMix(pack)
+      const near = new Set(neighbourMixes(pack, start).map(key))
+      for (const index of hueOrder(pack)) {
+        let run: MixRun | null = null
+        let mix = start
+        for (const value of [0.2, 0.4, 0.6, 0.8, 0.25, 0.5, 0.75, 0, 0.4]) {
+          ;({ mix, run } = runStep(pack, run, mix, index, value, true))
+          if (key(mix) !== key(start)) expect(near.has(key(mix)), `${pack.id} ${pack.colors[index].name} ${value}`).toBe(true)
+        }
+      }
+    }
+  })
+
+  it('gives mixes in the link’s whole percents, so a link brings back exactly the mix on screen', () => {
+    const elemental = getPack('elemental')
+    let run: MixRun | null = null
+    let mix = defaultMix(elemental)
+    for (const [index, value] of [[1, 0.2], [2, 0.4], [1, 0.6], [4, 0.2]] as const) {
+      ;({ mix, run } = runStep(elemental, run, mix, index, value, true))
+      expect(linkMix(elemental, mix), formatMix(elemental, mix) ?? 'default').toEqual(mix)
+    }
+  })
+
+  it('starts again from the mix on screen for another color or a mix changed elsewhere', () => {
+    const bold = getPack('bold')
+    const first = runStep(bold, null, defaultMix(bold), 1, 0.25, true)
+    const other = runStep(bold, first.run, first.mix, 2, 0.25, true)
+    expect(other.run.from).toBe(first.mix)
+    const elsewhere = linkMix(bold, setShare(bold, first.mix, 3, 0.5))
+    expect(runStep(bold, first.run, elsewhere, 1, 0.5, true).run.from).toBe(elsewhere)
+  })
+})
 
 describe('the color percentages control', () => {
   it("is one of DialKit's sliders per pack color in hue order, labeled with the color's name and its exact hex", () => {

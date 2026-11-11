@@ -129,9 +129,18 @@ export function stepForKey(pack: ColorPack, mix: ColorMix, index: number, key: s
 }
 
 /**
+ * The mix as a link carries it: its whole percents (formatMix), read back. The tool keeps every mix the user sets in
+ * this form, so a link, a history entry and an export show exactly the picture that was on screen.
+ */
+export function linkMix(pack: ColorPack, mix: ColorMix): ColorMix {
+  return parseMix(pack, formatMix(pack, mix))
+}
+
+/**
  * The mixes one slider move away from `mix`: each color at each other step of its range, the others keeping their
- * ratios, nearest steps first. A drag or keys on one color only reach these, since moving a color keeps the others'
- * ratios, so the preview can solve them ahead of time.
+ * ratios, in the link's whole percents, nearest steps first. A drag or keys on one color only reach these (the color
+ * sliders set every step of a run on one color from the mix the run started at), so the preview can solve them ahead
+ * of time.
  */
 export function neighbourMixes(pack: ColorPack, mix: ColorMix): ColorMix[] {
   const step = mixStep(pack)
@@ -140,7 +149,7 @@ export function neighbourMixes(pack: ColorPack, mix: ColorMix): ColorMix[] {
     const [lowest, highest] = stepRange(pack, mix, index)
     for (let k = Math.round(lowest / step); k <= Math.round(highest / step); k++) {
       const distance = Math.abs(k * step - mix.shares[index])
-      if (distance > ON_STEP) found.push({ distance, mix: setShare(pack, mix, index, k * step) })
+      if (distance > ON_STEP) found.push({ distance, mix: linkMix(pack, setShare(pack, mix, index, k * step)) })
     }
   }
   return found.sort((a, b) => a.distance - b.distance).map((entry) => entry.mix)
@@ -182,14 +191,14 @@ export function setMetaBlue(pack: ColorPack, mix: ColorMix, on: boolean, restore
 
 /**
  * The mix a newly picked pack starts with: Meta Blue keeps its share (0% if it was off) and the new pack's other
- * colors share the rest evenly. Packs never mix, so no other color's share carries over.
+ * colors share the rest evenly, in the link's whole percents. Packs never mix, so no other color's share carries over.
  */
 export function mixForPack(from: ColorPack, mix: ColorMix, to: ColorPack): ColorMix {
   const fromBlue = metaBlueIndex(from)
   const toBlue = metaBlueIndex(to)
   if (fromBlue < 0 || toBlue < 0) return defaultMix(to)
   const share = mix.shares[fromBlue]
-  return Math.abs(share - DEFAULT_META_BLUE_SHARE) < EPSILON ? defaultMix(to) : setShare(to, defaultMix(to), toBlue, share)
+  return Math.abs(share - DEFAULT_META_BLUE_SHARE) < EPSILON ? defaultMix(to) : linkMix(to, setShare(to, defaultMix(to), toBlue, share))
 }
 
 /** The colors that are on, in pack order, with their shares (summing to 1). */
@@ -199,17 +208,19 @@ export function mixColors(pack: ColorPack, mix: ColorMix): MixColor[] {
 
 /**
  * Whole percents in pack order that sum to 100, by largest remainder, for labels and the URL; of equal remainders the
- * color first in hue order gets the extra percent, so the rows read the same way down whatever the pack order.
+ * color first in hue order gets the extra percent, so the rows read the same way down whatever the pack order. A color
+ * that is on gets at least 1% (taken from the biggest), so the rounding never turns a color off.
  */
 export function mixPercents(pack: ColorPack, mix: ColorMix): number[] {
   const exact = mix.shares.map((share) => share * 100)
-  const percents = exact.map(Math.floor)
+  const percents = mix.shares.map((share, index) => (share > EPSILON ? Math.max(1, Math.floor(exact[index])) : 0))
   const rank = new Map(hueOrder(pack).map((index, place) => [index, place]))
   const order = exact
-    .map((value, index) => ({ index, rest: value - Math.floor(value) }))
+    .map((value, index) => ({ index, rest: value - percents[index] }))
     .sort((a, b) => b.rest - a.rest || (rank.get(a.index) ?? a.index) - (rank.get(b.index) ?? b.index))
   const missing = 100 - sum(percents)
   for (let k = 0; k < missing; k++) percents[order[k % order.length].index]++
+  for (let k = 0; k < -missing; k++) percents[percents.indexOf(Math.max(...percents))]--
   return percents
 }
 

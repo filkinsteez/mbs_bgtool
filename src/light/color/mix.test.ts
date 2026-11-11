@@ -10,6 +10,7 @@ import {
   formatMix,
   isColorOn,
   isMetaBlueOn,
+  linkMix,
   metaBlueIndex,
   mixColors,
   mixForPack,
@@ -53,6 +54,17 @@ describe('default mix', () => {
     expect(inHueOrder(bold)).toEqual([50, 17, 17, 16])
     expect(inHueOrder(elemental)).toEqual([13, 13, 12, 50, 12])
     expect(inHueOrder(atmospheric)).toEqual([50, 13, 13, 12, 12])
+  })
+
+  it('keeps a color that is on at 1% or more, so the rounding never turns it off', () => {
+    const lime = elemental.colors.findIndex((color) => color.name === 'Lime')
+    const limeUp = linkMix(elemental, setShare(elemental, defaultMix(elemental), lime, 0.8))
+    const both = setShare(elemental, limeUp, metaBlueIndex(elemental), 0.8)
+    expect(Math.min(...both.shares)).toBeLessThan(0.01)
+    const percents = mixPercents(elemental, both)
+    expect(Math.min(...percents)).toBe(1)
+    expect(percents.reduce((total, percent) => total + percent, 0)).toBe(100)
+    expect(linkMix(elemental, both).shares.every((share) => share > 0)).toBe(true)
   })
 
   it('finds Meta Blue by its hex, not its place in the pack', () => {
@@ -204,11 +216,12 @@ describe('a new pack', () => {
     expect(mixForPack(elemental, defaultMix(elemental), atmospheric)).toEqual(defaultMix(atmospheric))
   })
 
-  it("keeps Meta Blue's share, and the new pack's other colors share the rest evenly", () => {
+  it("keeps Meta Blue's share, and the new pack's other colors share the rest evenly, in whole percents", () => {
     const next = mixForPack(bold, setShare(bold, defaultMix(bold), metaBlueIndex(bold), 0.3), elemental)
     const blue = metaBlueIndex(elemental)
     expect(next.shares[blue]).toBeCloseTo(0.3, 12)
-    next.shares.forEach((share, i) => i !== blue && expect(share).toBeCloseTo(0.7 / 4, 12))
+    expect(mixPercents(elemental, next).filter((_, i) => i !== blue).sort((a, b) => a - b)).toEqual([17, 17, 18, 18])
+    expect(linkMix(elemental, next)).toEqual(next)
     const back = mixForPack(elemental, next, bold)
     expect(mixPercents(bold, back)[metaBlueIndex(bold)]).toBe(30)
     expect([...mixPercents(bold, back)].sort((a, b) => a - b)).toEqual([23, 23, 24, 30])
@@ -297,16 +310,11 @@ describe('the mixes one slider move away', () => {
     expect(distances[0]).toBeLessThan(distances.at(-1)!)
   })
 
-  it('hold every mix a drag or the keys on one color reach, whatever steps came before', () => {
+  it('are each the mix its own link carries, in whole percents', () => {
     for (const pack of PACKS) {
-      const start = defaultMix(pack)
-      const near = new Set(neighbourMixes(pack, start).map(key))
-      for (const index of hueOrder(pack)) {
-        let mix = start
-        for (const value of [0.2, 0.4, 0.6, 0.8, 0.25, 0.5, 0.75, 0, 0.4]) {
-          mix = setStep(pack, mix, index, value)
-          if (key(mix) !== key(start)) expect(near.has(key(mix)), `${pack.id} ${pack.colors[index].name} ${value}`).toBe(true)
-        }
+      for (const mix of neighbourMixes(pack, defaultMix(pack))) {
+        expect(key(linkMix(pack, mix)), pack.id).toBe(key(mix))
+        expect(mix.shares.every((share) => Math.abs(share * 100 - Math.round(share * 100)) < 1e-9), pack.id).toBe(true)
       }
     }
   })

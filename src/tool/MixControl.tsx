@@ -1,8 +1,29 @@
 import { Slider } from 'dialkit'
 import { useLayoutEffect, useRef, type CSSProperties, type KeyboardEvent } from 'react'
 import type { ColorPack } from '@/light'
-import { isColorOn, mixPercents, mixStep, setShare, setStep, stepForKey, stepRange, type ColorMix } from '@/light/color/mix'
+import { isColorOn, linkMix, mixPercents, mixStep, setShare, setStep, stepForKey, stepRange, type ColorMix } from '@/light/color/mix'
 import { hueOrder } from '@/light/color/packs'
+
+/** A run of changes to one color: the mix it started from and the last mix it set. */
+export interface MixRun {
+  index: number
+  from: ColorMix
+  last: ColorMix
+}
+
+const sameMix = (a: ColorMix, b: ColorMix) => a.shares.length === b.shares.length && a.shares.every((share, i) => Math.abs(share - b.shares[i]) < 1e-9)
+
+/**
+ * The mix that color `index` at `value` gives (on the pack's nearest step with `snap`), in the link's whole percents,
+ * set from the mix the run of changes to that color started from: so each step of a drag or of keys lands on a mix
+ * the preview solved ahead of time (neighbourMixes) and the rounding to whole percents doesn't build up. A change to
+ * another color, or a mix changed from elsewhere, starts a new run.
+ */
+export function runStep(pack: ColorPack, run: MixRun | null, mix: ColorMix, index: number, value: number, snap: boolean): { mix: ColorMix; run: MixRun } {
+  const from = run && run.index === index && sameMix(run.last, mix) ? run.from : mix
+  const next = linkMix(pack, snap ? setStep(pack, from, index, value) : setShare(pack, from, index, value))
+  return { mix: next, run: { index, from, last: next } }
+}
 
 interface MixControlProps {
   pack: ColorPack
@@ -17,17 +38,21 @@ interface MixControlProps {
  * swatch, from 0 to 100% in its pack's step (MIX_STEPS: a quarter in Bold, a fifth in the five-color packs), with its
  * share in whole percents. A drag, a click or an arrow key sets the color to a step; the others share the rest in their
  * ratios, so the percents always add up to 100, and a color the user hasn't set may sit between steps (Meta Blue's
- * default 50% in a five-color pack). 0% is off; at least two colors stay on, so the last two stop one step above it.
+ * default 50% in a five-color pack). Every mix it sets is in the link's whole percents (runStep). 0% is off; at least
+ * two colors stay on, so the last two stop one step above it.
  */
 export function MixControl({ pack, mix, onChange, onDragging }: MixControlProps) {
   const rowsRef = useRef<HTMLDivElement>(null)
   const draggingRef = useRef(false)
+  const runRef = useRef<MixRun | null>(null)
   const percents = mixPercents(pack, mix)
   const order = hueOrder(pack)
   const step = Math.round(mixStep(pack) * 100)
 
-  function change(next: ColorMix) {
-    if (next.shares.some((share, i) => Math.abs(share - mix.shares[i]) > 1e-12)) onChange(next)
+  function setColor(index: number, value: number, snap: boolean) {
+    const { mix: next, run } = runStep(pack, runRef.current, mix, index, value, snap)
+    runRef.current = run
+    if (!sameMix(next, mix)) onChange(next)
   }
 
   function dragging(on: boolean) {
@@ -41,7 +66,7 @@ export function MixControl({ pack, mix, onChange, onDragging }: MixControlProps)
     const next = stepForKey(pack, mix, index, event.key)
     if (next === null) return
     event.preventDefault()
-    change(setShare(pack, mix, index, next))
+    setColor(index, next, false)
   }
 
   // DialKit's sliders take no focus or keys of their own; as usePanelAccess does for the panel's other sliders, each
@@ -78,7 +103,7 @@ export function MixControl({ pack, mix, onChange, onDragging }: MixControlProps)
             onPointerCancel={() => dragging(false)}
             onLostPointerCapture={() => dragging(false)}
           >
-            <Slider label={color.name} value={percents[index]} min={0} max={100} step={step} onChange={(value) => change(setStep(pack, mix, index, value / 100))} />
+            <Slider label={color.name} value={percents[index]} min={0} max={100} step={step} onChange={(value) => setColor(index, value / 100, true)} />
           </div>
         )
       })}
