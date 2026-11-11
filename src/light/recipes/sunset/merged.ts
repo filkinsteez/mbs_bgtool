@@ -683,8 +683,9 @@ float gHalo = 0.0;           // round a high light: the warm glow at this pixel
 float gHaloOuter = 0.0;      // round a high light: the warm glow's wider, dimmer outer light at this pixel
 float gHaloLight = 0.0;      // round a high light: the warm glow's lightness at this pixel, falling from the light
 float gPatch = 0.0;          // round a high light: Meta Blue's lit patch at this pixel
-float gPaleWave = 0.0;       // round a high light: how far the pale sky's edge bulges out (+) or dips in (-) here
-float gPaleSoft = 0.5;       // round a high light: how soft the pale sky's edge is here (0 to 1)
+float gPaleWave = 0.0;       // round a high or side light: how far the pale sky's edge bulges out (+) or dips in (-) here
+float gPaleSoft = 0.5;       // round a high or side light: how soft the pale sky's edge is here (0 to 1)
+float gPaleAway = 1.0;       // beside a side light: how far the place in the frame shapes the pale sky's edge (0 by the light)
 float gDeepWave = 0.0;       // round a high light: how far the deep sky's edge comes in (-) or stays out (+) here
 float gDeepSoft = 0.5;       // round a high light: how soft the deep sky's edge is here (0 to 1)
 uniform int uLightnessOnly;  // 1: the design's lightness as grey, for proof sheets and the color stage
@@ -741,9 +742,9 @@ float paleTop(float a) {
 float paleAt(float a, float h) {
   float top = paleTop(a);
   float softBy = 0.5 + 0.5 * gradientNoise(vec2(a * 0.9 + 3.7, 8.2), uHorizonSeed + 29);
-  if (uKind == 1) {
-    top *= 1.0 + 0.6 * gPaleWave;
-    softBy = gPaleSoft;
+  if (uKind == 1 || uKind == 2) {
+    top *= 1.0 + (uKind == 1 ? 0.6 : 0.4) * gPaleWave;
+    softBy = mix(softBy, gPaleSoft, gPaleAway);
   }
   float soft = top * (0.2 + 0.5 * uPale.w * softBy);
   return 1.0 - smoothstep(top - soft, top + soft, h);
@@ -880,6 +881,15 @@ vec3 auxRadiance(vec2 uv, vec2 p) {
   float a = dot(d, vec2(-uUp.y, uUp.x));
   float v = dot(d, uUp);
   float h = v - baseAt(a);
+  if (uKind == 2) {
+    // Beside a side light the horizon runs up the frame, and the pale sky's edge with it: away from the light it
+    // bulges, dips and changes softness with the place in the frame, so it curves instead of running straight up. By
+    // the light a dip would cut a dark notch into the bright light, and a firmer stretch would draw a hard edge there.
+    vec2 s = vec2(a, v);
+    gPaleAway = smoothstep(0.35, 1.0, length(s));
+    gPaleWave = gPaleAway * (0.75 * gradientNoise(s * 1.2 + vec2(4.2, 0.7), uHorizonSeed + 85) + 0.45 * gradientNoise(s * 2.3 + vec2(1.6, 9.4), uHorizonSeed + 99));
+    gPaleSoft = 0.5 + 0.5 * gradientNoise(s * 1.1 + vec2(9.1, 5.5), uHorizonSeed + 87);
+  }
   if (uKind == 1) {
     // A light high in the frame: height in the sky is the distance from the light, stretched the way the pale sky
     // spreads so the light sits at its brightest end, wavering with the direction (read from the direction itself,
