@@ -560,8 +560,10 @@ export const LENS_COMPOSITE_GLSL =
   /* glsl */ `
 uniform sampler2D uBloomTex;
 uniform sampler2D uLensLeadTex;
+#ifndef LENS_NO_HALATION
 uniform sampler2D uHalationTex;
 uniform sampler2D uHalationSurround;
+#endif
 uniform float uBloomMix;
 uniform sampler2D uLensVeilTex;
 uniform float uLensVeil; // the veil's strength, 0 off
@@ -625,6 +627,7 @@ vec3 lensAndTone(vec3 radiance, vec2 uv) {
     vec4 lead = sampleSmooth4(uLensLeadTex, uv);
     if (lift > 0.0) c = leadMix(c, vec3(lift), lead, ${SPREAD_LEAD_POWER.toFixed(1)});
   }
+#ifndef LENS_NO_HALATION
   if (uHalation > 0.0) {
     // Not over the hot core itself (only light above the light's own level fades it), and held back only where
     // the wide surroundings are brighter than 0.15 of that level, so a light on a bright background does not
@@ -635,6 +638,7 @@ vec3 lensAndTone(vec3 radiance, vec2 uv) {
     vec4 halo = sampleSmooth4(uHalationTex, uv);
     c += uHalation * (halo.rgb + halo.a * uHalationDriftColor) * fade * hold;
   }
+#endif
   if (uLensVignette > 0.0) {
     vec2 q = (2.0 * uv - 1.0) * uLensVignetteAxes;
     c *= pow(1.0 + dot(q, q), -2.0 * uLensVignette);

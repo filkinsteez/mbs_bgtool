@@ -328,7 +328,7 @@ export class ProgramRenderer {
       ? gpu.program(TEXTURE_COMPOSITE_SHADER)
       : pixelScene
         ? gpu.program(TEXEL_COMPOSITE_SHADER)
-        : gpu.program(buildRecipeShader(program, 'composite', stage?.chunk))
+        : gpu.program(buildRecipeShader(program, 'composite', stage?.chunk, resolved.lens.halation > 0))
     const sceneTextures = postScene
       ? { ...lensTextures, uRadianceTex: postScene }
       : pixelScene

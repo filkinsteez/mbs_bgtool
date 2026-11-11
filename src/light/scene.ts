@@ -337,6 +337,11 @@ export interface ScatterBlur {
    */
   size?: (ctx: RecipeContext) => number
   /**
+   * false: the entry is never blurred (its radius is always 0), so the shaders read one texture for it instead of the
+   * two a blur needs past an edge-level switch. A shader has 16 texture units, and the lens and color stage take some.
+   */
+  blur?: false
+  /**
    * 'gaussian' (the default) blurs with a gaussian of sigma `radius`.
    * 'lens' is one out-of-focus lens: `radius` is the disc radius R in
    * short-side units (Sunset uses 0.045 to 0.12), and the kernel is 65 % a
@@ -351,7 +356,7 @@ export interface ScatterBlur {
   shape?: 'gaussian' | 'lens'
 }
 
-export const MAX_SCATTER_BLURS = 4
+export const MAX_SCATTER_BLURS = 5
 
 /** What the renderer needs to draw a scene. Test programs implement only this. */
 export interface RecipeProgram {

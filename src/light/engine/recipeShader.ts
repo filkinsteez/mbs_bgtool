@@ -76,8 +76,12 @@ function ownRadianceGlsl(program: Pick<RecipeProgram, 'scatter'>): string {
   if (blurs.length === 0) return `vec3 sceneRadiance(vec2 uv, vec2 p) { return radiance(uv, p); }\n`
   // uScatterB<i> is the same blur with the edges of the edge level before, mixed in just past a switch (runScatter).
   const reads = blurs
-    .map(
-      (_, i) => `uniform sampler2D uScatter${i};
+    .map((blur, i) =>
+      blur.blur === false
+        ? `uniform sampler2D uScatter${i};
+uniform vec4 uScatterMap${i};
+vec3 engineScatter${i}(vec2 uv) { return sampleSmooth(uScatter${i}, uv * uScatterMap${i}.xy + uScatterMap${i}.zw); }`
+        : `uniform sampler2D uScatter${i};
 uniform vec4 uScatterMap${i};
 uniform sampler2D uScatterB${i};
 uniform vec4 uScatterMapB${i};
@@ -106,14 +110,23 @@ function grainWeightGlsl(program: Pick<RecipeProgram, 'grainWeight'>): string {
  */
 export type RecipeShaderMode = 'radiance' | 'composite' | 'source' | 'aux'
 
-/** `stage`: the color stage's GLSL, for the modes that draw the scene radiance (radiance, composite). */
-export function buildRecipeShader(program: Pick<RecipeProgram, 'fragment' | 'scatter' | 'grainWeight'>, mode: RecipeShaderMode, stage?: string): string {
+/**
+ * `stage`: the color stage's GLSL, for the modes that draw the scene radiance (radiance, composite). `halation`: false
+ * builds the composite without halation, so its two textures don't count against the shader's 16 texture units (a
+ * scene whose halation is 0 draws the same picture either way).
+ */
+export function buildRecipeShader(
+  program: Pick<RecipeProgram, 'fragment' | 'scatter' | 'grainWeight'>,
+  mode: RecipeShaderMode,
+  stage?: string,
+  halation = true,
+): string {
   const head = GLSL_HEADER + ENGINE_UNIFORMS + CHUNK_LIBRARY
   switch (mode) {
     case 'radiance':
       return head + program.fragment + sceneRadianceGlsl(program, stage) + grainWeightGlsl(program) + subsampledMain('sceneRadiance', true, true)
     case 'composite':
-      return head + LENS_COMPOSITE_GLSL + program.fragment + sceneRadianceGlsl(program, stage) + grainWeightGlsl(program) + COMPOSITE_MAIN
+      return head + (halation ? '' : '#define LENS_NO_HALATION\n') + LENS_COMPOSITE_GLSL + program.fragment + sceneRadianceGlsl(program, stage) + grainWeightGlsl(program) + COMPOSITE_MAIN
     case 'source':
       return head + program.fragment + subsampledMain('radiance', true, false)
     case 'aux':
