@@ -7,6 +7,9 @@ import { DIM_TURN, PAIR_GAP, PAIR_PRESENT, PAIR_THIN, PAIR_WIDTH } from './stage
  */
 const LINE_LIGHTER = [0.04, 0.12] as const
 
+/** The light (cube root of luminance before the tone curve; shown, about Oklab L 0.065 to 0.125) over which the soft blend's color comes in from neutral. */
+const NEAR_BLACK = [0.045, 0.085] as const
+
 /**
  * The color stage in GLSL: `vec3 colorStage(vec2 uv, vec3 radiance)` keeps each pixel's luminance and gives it
  * the colors of the color fields (two textures of four fields on the stage grid, one per color), weighted and added like
@@ -255,6 +258,9 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
     vec3 met = meetColors5(cs, qs, uMixCount, 1.5);
     m = mix(m / max(dot(m, LUMA), 1e-6), met / max(dot(met, LUMA), 1e-6), max(onLine, onDark));
   }
+  // With the soft blend, in the last few 8-bit levels above black, where no hue can be seen, the color goes to neutral,
+  // so a dark color's tiny share can't flip a dim room's last levels between navy and plum as a part moves.
+  if (uMixSoft > 0.5) m = mix(vec3(1.0), m / max(dot(m, LUMA), 1e-6), smoothstep(${NEAR_BLACK[0].toFixed(4)}, ${NEAR_BLACK[1].toFixed(4)}, pow(yE, 1.0 / 3.0)));
   // The design's luminance, whatever the colors and the mix, so the light and dark layout never moves; only a meeting
   // line's light rises (in light) or dims (in dim light).
   return m / max(dot(m, LUMA), 1e-6) * y * meetBridgeLight(yE, rise) / max(yE, 1e-8) * yDark / max(yE, 1e-8);
