@@ -7,7 +7,7 @@ import { NO_PROFILE } from '../engine/profile'
 import { buildRecipeShader } from '../engine/recipeShader'
 import { lightnessOnlyParams } from '../recipes/sunset/merged'
 import { isRecipeId, type ColorMixSettings, type LensSettings, type RecipeContext, type RecipeId, type RecipeProgram, type Scene, type UniformMap } from '../scene'
-import { defaultMix, mixFromShares, type ColorMix } from './mix'
+import { defaultMix, META_BLUE_HEX, mixFromShares, type ColorMix } from './mix'
 import { getPack, isPackId, type ColorPack, type PackId } from './packs'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
 import { blurGrid, buildFields, COVERAGE_SPLIT, GRID_SHORT, gridSize, lightSlope, lookParts, makeNoise, mulberry32, VISIBLE, type StageField, type StageGrid } from './stageFields'
@@ -76,8 +76,10 @@ interface Solved {
   weights: number[]
   light: number[]
   reads: number[]
-  /** Where two of this pack's far hues meet, the thin line whose light rises (meetingLines); 0 elsewhere. */
+  /** Where two of this pack's far hues meet, the spill whose light rises (meetingLines); 0 elsewhere. */
   bridge: Float32Array
+  /** Where a light color meets a dark color far from it in hue, the line that dims (darkMeetingLines); 0 elsewhere. */
+  darkBridge: Float32Array
 }
 
 /**
@@ -134,14 +136,6 @@ const SPILL_GAIN = 2
 export function meetingLines(grid: StageGrid, shares: readonly Float32Array[], colors: readonly StageColor[], seed = 1): Float32Array {
   const { width: w, height: h } = grid
   const perShort = Math.min(w, h)
-  const reach = LINE_REACH * perShort
-  const out = new Float32Array(w * h)
-  const n = Math.min(5, colors.length, shares.length)
-  const far = farPairs(colors.slice(0, 5))
-  const smooth = (v: number, [lo, hi]: readonly [number, number]) => {
-    const t = Math.min(1, Math.max(0, (v - lo) / (hi - lo)))
-    return t * t * (3 - 2 * t)
-  }
   // makeNoise has a bump every 0.6 of its units, so the frame is scaled to put one every SPILL_DRIFT_SIZE short sides.
   const scale = 0.6 / SPILL_DRIFT_SIZE / perShort
   const rng = mulberry32(Math.imul(seed, 7919) + 11)
@@ -150,9 +144,63 @@ export function meetingLines(grid: StageGrid, shares: readonly Float32Array[], c
   const power = new Float32Array(w * h)
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) power[y * w + x] = SPILL_OVERLAP * (1 + SPILL_NARROWS * (0.5 + 0.5 * narrows((x + 0.5) * scale, (y + 0.5) * scale)))
+  const out = farMeetings(grid, shares, colors, (a, c) => colors[a].kind !== KIND_DARK && colors[c].kind !== KIND_DARK, power, (a, c, lead) => {
+    // The lighter color's light spills over the darker one: on the lighter color's own side the spill drops away, so
+    // the lighter shape keeps its color up to the meeting and its light fades out over its neighbor.
+    const lighterLeads = colors[a].lightness >= colors[c].lightness ? lead : -lead
+    return 1 - SPILL_LIGHT_SIDE * smoothRange(lighterLeads, [0, 0.5])
+  })
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x
+      if (out[i] <= 0) continue
+      const falloff = smoothRange(grid.slope?.[i] ?? 0, SPILL_FALLOFF)
+      const along = 1 - SPILL_DRIFT * (0.5 - 0.5 * weakens((x + 0.5) * scale, (y + 0.5) * scale))
+      out[i] *= (1 - (1 - SPILL_ON_FALLOFF) * falloff) * along
+    }
+  return blurGrid(out, w, h, SPILL_SOFT).map((v) => Math.min(1, SPILL_GAIN * v))
+}
+
+/** How sharply a dark meeting line follows the even split of its two colors, its blur (grid cells) and its gain. */
+const DARK_LINE_POWER = 1.5
+const DARK_LINE_SOFT = 1
+const DARK_LINE_GAIN = 1.5
+
+/**
+ * Where a light color other than Meta Blue meets a dark color far from it in hue (Lime and Plum, Tan and Plum, Tan and
+ * Forest) in a look colored by its parts: a soft line along their meeting, by the same test as meetingLines (the shares
+ * trade places quickly and each color holds its own side). The shader dims it as a dark bridge (meetDarkLight), so the
+ * two colors meet near black instead of through a thin violet or magenta line; it never lifts the light. Meta Blue's
+ * meetings with Plum and Forest keep the plain blend: dimmed, they took Plum under 5% in five more frames.
+ */
+export function darkMeetingLines(grid: StageGrid, shares: readonly Float32Array[], colors: readonly StageColor[]): Float32Array {
+  const { width: w, height: h } = grid
+  const lit = (k: number) => colors[k].kind !== KIND_DARK && colors[k].hex !== META_BLUE_HEX
+  const out = farMeetings(grid, shares, colors, (a, c) => (lit(a) && colors[c].kind === KIND_DARK) || (lit(c) && colors[a].kind === KIND_DARK), new Float32Array(w * h).fill(DARK_LINE_POWER), () => 1)
+  return blurGrid(out, w, h, DARK_LINE_SOFT).map((v) => Math.min(1, DARK_LINE_GAIN * v))
+}
+
+function smoothRange(v: number, [lo, hi]: readonly [number, number]): number {
+  const t = Math.min(1, Math.max(0, (v - lo) / (hi - lo)))
+  return t * t * (3 - 2 * t)
+}
+
+/**
+ * For every pair of the first five colors that are far apart in hue (farPairs) and that `accept` takes, where their
+ * soft shares trade places quickly (LINE_SLOPE) and each holds its own side (LINE_REACH): how evenly the cell splits
+ * between the two, to `power` (per cell), at the shares' presence, times `side(a, c, sa - sc)`. The strongest pair per
+ * grid cell.
+ */
+function farMeetings(grid: StageGrid, shares: readonly Float32Array[], colors: readonly StageColor[], accept: (a: number, c: number) => boolean, power: Float32Array, side: (a: number, c: number, lead: number) => number): Float32Array {
+  const { width: w, height: h } = grid
+  const perShort = Math.min(w, h)
+  const reach = LINE_REACH * perShort
+  const out = new Float32Array(w * h)
+  const n = Math.min(5, colors.length, shares.length)
+  const far = farPairs(colors.slice(0, 5))
   for (let a = 0; a < n; a++)
     for (let c = a + 1; c < n; c++) {
-      if (((far >> (a * 5 + c)) & 1) === 0 || colors[a].kind === KIND_DARK || colors[c].kind === KIND_DARK) continue
+      if (((far >> (a * 5 + c)) & 1) === 0 || !accept(a, c)) continue
       const sa = shares[a]
       const sc = shares[c]
       const d = (x: number, y: number) => sa[y * w + x] - sc[y * w + x]
@@ -185,23 +233,11 @@ export function meetingLines(grid: StageGrid, shares: readonly Float32Array[], c
           const i = y * w + x
           const pair = sa[i] + sc[i]
           const balance = pair > 1e-6 ? (4 * sa[i] * sc[i]) / (pair * pair) : 0
-          const present = smooth(Math.min(sa[i], sc[i]), MEET_BRIDGE_PRESENT)
-          // The lighter color's light spills over the darker one: on the lighter color's own side the spill drops away,
-          // so the lighter shape keeps its color up to the meeting and its light fades out over its neighbor.
-          const lighterLeads = (colors[a].lightness >= colors[c].lightness ? 1 : -1) * (sa[i] - sc[i])
-          const side = 1 - SPILL_LIGHT_SIDE * smooth(lighterLeads, [0, 0.5])
-          out[i] = Math.max(out[i], balance ** power[i] * present * side * t * t * (3 - 2 * t) * smooth(held, LINE_HOLD))
+          const present = smoothRange(Math.min(sa[i], sc[i]), MEET_BRIDGE_PRESENT)
+          out[i] = Math.max(out[i], balance ** power[i] * present * side(a, c, sa[i] - sc[i]) * t * t * (3 - 2 * t) * smoothRange(held, LINE_HOLD))
         }
     }
-  for (let y = 0; y < h; y++)
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x
-      if (out[i] <= 0) continue
-      const falloff = smooth(grid.slope?.[i] ?? 0, SPILL_FALLOFF)
-      const along = 1 - SPILL_DRIFT * (0.5 - 0.5 * weakens((x + 0.5) * scale, (y + 0.5) * scale))
-      out[i] *= (1 - (1 - SPILL_ON_FALLOFF) * falloff) * along
-    }
-  return blurGrid(out, w, h, SPILL_SOFT).map((v) => Math.min(1, SPILL_GAIN * v))
+  return out
 }
 
 /**
@@ -366,10 +402,11 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
         }
       : { values, weights: solution.weights }
     const bridge = byParts ? meetingLines(grid, soft, colors, input.ctx.seed) : new Float32Array(grid.width * grid.height)
-    solved = remember(solves, solveKey, { colors, assignment, byParts, ...solution, ...drawn, bridge })
+    const darkBridge = byParts ? darkMeetingLines(grid, soft, colors) : new Float32Array(grid.width * grid.height)
+    solved = remember(solves, solveKey, { colors, assignment, byParts, ...solution, ...drawn, bridge, darkBridge })
   }
   lastReport = { hexes: solved.colors.map((c) => c.hex), light: solved.light, reads: solved.reads, fields: solved.assignment.map((f) => fields[f]?.name ?? '') }
-  const textures = { ...fieldTextures(input.gpu, grid, solved.values), uMixRamps: rampTexture(input.gpu, solved.colors, grid, solved.bridge) }
+  const textures = { ...fieldTextures(input.gpu, grid, solved.values), uMixRamps: rampTexture(input.gpu, solved.colors, grid, solved.bridge, solved.darkBridge) }
   return {
     chunk: COLOR_STAGE_GLSL,
     // The engine's glow reads the colors' dim paths with these, so a glow fades through the same colors as its light.
@@ -439,10 +476,10 @@ export function colorRamp(unit: readonly number[]): Float32Array {
 
 /**
  * Every color's ramp as one texture: a row per color, a column per step; below the five ramp rows, the meeting lines
- * on the stage grid (red, row 5 the grid's top row). They share the texture because one more would take a look's
- * shader past WebGL's 16 texture units.
+ * on the stage grid (the spill in red, the dark lines in green, row 5 the grid's top row). They share the texture
+ * because one more would take a look's shader past WebGL's 16 texture units.
  */
-function rampTexture(gpu: Gpu, colors: readonly StageColor[], grid: StageGrid, bridge: Float32Array): Target {
+function rampTexture(gpu: Gpu, colors: readonly StageColor[], grid: StageGrid, bridge: Float32Array, darkBridge: Float32Array): Target {
   const gl = gpu.gl
   const width = Math.max(RAMP_STEPS, grid.width)
   const height = 5 + grid.height
@@ -451,7 +488,11 @@ function rampTexture(gpu: Gpu, colors: readonly StageColor[], grid: StageGrid, b
     const ramp = colorRamp(c.unit)
     for (let j = 0; j < RAMP_STEPS; j++) data.set([ramp[3 * j], ramp[3 * j + 1], ramp[3 * j + 2], 1], 4 * (k * width + j))
   })
-  for (let y = 0; y < grid.height; y++) for (let x = 0; x < grid.width; x++) data[4 * ((5 + y) * width + x)] = bridge[y * grid.width + x]
+  for (let y = 0; y < grid.height; y++)
+    for (let x = 0; x < grid.width; x++) {
+      data[4 * ((5 + y) * width + x)] = bridge[y * grid.width + x]
+      data[4 * ((5 + y) * width + x) + 1] = darkBridge[y * grid.width + x]
+    }
   const target = gpu.acquire(width, height)
   gl.bindTexture(gl.TEXTURE_2D, target.texture)
   gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGBA, gl.FLOAT, data)

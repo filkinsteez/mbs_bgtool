@@ -6,7 +6,7 @@ import { getRecipe } from '../recipes'
 import { RECIPE_IDS, type RecipeId, type Scene } from '../scene'
 import { defaultMix, mixFromShares, setMetaBlue, setShare } from './mix'
 import { getPack } from './packs'
-import { COLOR_DESIGN_PACK, colorRamp, meetingLines, RAMP_STEPS, withColorMix } from './stage'
+import { COLOR_DESIGN_PACK, colorRamp, darkMeetingLines, meetingLines, RAMP_STEPS, withColorMix } from './stage'
 import { buildFields, gridSize, lookParts, type StageField, type StageGrid, type StagePart } from './stageFields'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
 import { hexToLinear } from './srgb'
@@ -336,6 +336,31 @@ describe('color stage', () => {
       })
     expect(Math.max(...meetingLines(grid, streak(2), colors))).toBeLessThan(0.1)
     expect(Math.max(...meetingLines(grid, streak(10), colors))).toBeGreaterThan(0.3)
+  })
+
+  it('marks a dark line only where a light color meets a dark color far from it in hue', () => {
+    const grid = flatGrid(16 / 9)
+    const { width: w, height: h } = grid
+    const colors = stageColors(getPack('elemental'), defaultMix(getPack('elemental')), true)
+    const at = (hex: string) => colors.findIndex((c) => c.hex === hex)
+    const [blue, lime, forest, plum] = ['#0064E0', '#D6F26C', '#0F3D33', '#4A0A3C'].map(at)
+    const shares = (a: number, b: number) =>
+      colors.map((_, k) => {
+        const out = new Float32Array(w * h)
+        for (let y = 0; y < h; y++)
+          for (let x = 0; x < w; x++) {
+            const s = 1 / (1 + Math.exp(x - w / 2))
+            out[y * w + x] = k === a ? s : k === b ? 1 - s : 0
+          }
+        return out
+      })
+    // Lime meeting Plum gets a line, and the light spill (meetingLines) leaves it alone; Lime meeting Forest (near in
+    // hue), Lime meeting Meta Blue (two light colors) and Meta Blue meeting Plum get no dark line.
+    expect(Math.max(...darkMeetingLines(grid, shares(lime, plum), colors))).toBeGreaterThan(0.5)
+    expect(Math.max(...meetingLines(grid, shares(lime, plum), colors))).toBe(0)
+    expect(Math.max(...darkMeetingLines(grid, shares(lime, forest), colors))).toBe(0)
+    expect(Math.max(...darkMeetingLines(grid, shares(lime, blue), colors))).toBe(0)
+    expect(Math.max(...darkMeetingLines(grid, shares(blue, plum), colors))).toBe(0)
   })
 
   it('turns on only through withColorMix, and leaves the recipe shaders as they were without it', () => {

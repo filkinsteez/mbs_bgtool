@@ -36,21 +36,21 @@ uniform vec2 uMixBridgeSize;
 
 const int MIX_RAMP_STEPS = 32;
 
-// The meeting lines on the stage grid (in the ramp texture below its five rows), read with the same cubic B-spline as
-// the fields (sampleSmooth4), from 16 texels.
-float mixBridgeAt(vec2 uv) {
-  if (uMixBridgeSize.x < 0.5) return 0.0;
+// The meeting lines on the stage grid (in the ramp texture below its five rows: the spill in red, the dark lines in
+// green), read with the same cubic B-spline as the fields (sampleSmooth4), from 16 texels.
+vec2 mixBridgeAt(vec2 uv) {
+  if (uMixBridgeSize.x < 0.5) return vec2(0.0);
   vec2 st = uv * uMixBridgeSize - 0.5;
   vec2 f = fract(st);
   ivec2 base = ivec2(floor(st)) - 1;
   vec4 wx = bsplineWeights(f.x);
   vec4 wy = bsplineWeights(f.y);
   ivec2 last = ivec2(uMixBridgeSize) - 1;
-  float sum = 0.0;
+  vec2 sum = vec2(0.0);
   for (int j = 0; j < 4; j++) {
     int y = clamp(base.y + j, 0, last.y);
-    float row = 0.0;
-    for (int i = 0; i < 4; i++) row += wx[i] * texelFetch(uMixRamps, ivec2(clamp(base.x + i, 0, last.x), 5 + y), 0).r;
+    vec2 row = vec2(0.0);
+    for (int i = 0; i < 4; i++) row += wx[i] * texelFetch(uMixRamps, ivec2(clamp(base.x + i, 0, last.x), 5 + y), 0).rg;
     sum += wy[j] * row;
   }
   return sum;
@@ -102,12 +102,14 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
   // On a meeting line of two far hues, every color's share meets softly (meetColors5): in light enough for a white
   // middle to read as white (meetBridgeLit) through white, and the light rises (meetBridgeLight); in dim light, where a
   // lifted middle would still read grey, each color dims toward its own dark shade and they meet near black
-  // (meetDarkLight), so there is no dark line where the picture is lit.
-  float line = mixBridgeAt(uv);
+  // (meetDarkLight), so there is no dark line where the picture is lit. A light color meeting a dark color far from it
+  // in hue (the second line) only ever takes the dark half.
+  vec2 lines = mixBridgeAt(uv);
+  float line = lines.x;
   float lit = meetBridgeLit(yE);
   float bridge = line * lit;
   float onLine = smoothstep(0.0, 1.0, bridge);
-  float dark = line * (1.0 - lit);
+  float dark = max(line, lines.y) * (1.0 - lit);
   float onDark = smoothstep(0.0, 1.0, dark);
   float yDark = meetDarkLight(yE, dark);
   // With the soft blend the lightness masks key on the light as the picture shows it: the pixel's own light and the
