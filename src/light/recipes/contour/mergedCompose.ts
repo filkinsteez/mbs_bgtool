@@ -404,9 +404,11 @@ interface ColorPlan {
   ground: { near: number; far: number }
 }
 
-/** An accent's stretch is this share of its color's share of the light colors: long enough that its color shows in
- * full between its cross-fades, so the line changes through the pack's colors. */
-const ACCENT = 1.2
+/** An accent's stretch is this share of its color's share of the light colors: long enough that the main ring walks
+ * through the pack's colors beside its core, Meta Blue still holding the longest stretch. */
+const ACCENT = 2
+/** The least of the edge the key keeps at each end beyond the accents. */
+const KEY_END = 0.02
 
 /**
  * The stand-in color filler: the leading color is the light along the whole edge, through the core and out to both
@@ -459,11 +461,16 @@ function planColors(colors: readonly string[], shares: readonly number[], keyDra
   accents.sort((a, b) => needsLight(a) - needsLight(b) || units[b].colors.reduce((s, i) => s + width(i), 0) - units[a].colors.reduce((s, i) => s + width(i), 0))
   const sides: number[][] = [[...keyPartners], []]
   accents.forEach((k, n) => sides[(n + (keyPartners.length ? 1 : 0)) % 2].push(...units[k].colors))
-  const accentWidth = (i: number) => ACCENT * accentScale * width(i)
   const core = Math.max(0.04, Math.min(0.12, 0.25 * width(key)))
+  // The accents shrink together where they would leave the key less than KEY_END of the edge at either end, so the key
+  // still lights the edge out to both ends.
+  const rawWidth = (i: number) => ACCENT * accentScale * width(i)
+  const rawAccents = [...sides[0], ...sides[1]].reduce((s, i) => s + rawWidth(i), 0)
+  const fit = Math.min(1, Math.max(0, 1 - core - 2 * KEY_END) / Math.max(rawAccents, 1e-9))
+  const accentWidth = (i: number) => rawWidth(i) * fit
   const lowAccents = sides[0].reduce((s, i) => s + accentWidth(i), 0)
   const highAccents = sides[1].reduce((s, i) => s + accentWidth(i), 0)
-  const coreFrom = Math.min(Math.max(hotAt - core / 2, lowAccents + 0.02), 1 - highAccents - core - 0.02)
+  const coreFrom = Math.min(Math.max(hotAt - core / 2, lowAccents + KEY_END), 1 - highAccents - core - KEY_END)
   const stretches: Stretch[] = []
   const push = (color: number, from: number, to: number) => {
     if (to - from > 1e-4) stretches.push({ color, unit: unitOf(color), from, to })
