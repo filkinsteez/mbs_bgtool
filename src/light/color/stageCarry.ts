@@ -4,11 +4,11 @@ import type { StageColor } from './stageSolve'
 
 // Colors by area, for any mix (Color agent, round 37).
 //
-// 1. Each cell gets a place along the look's own shape: the length along its outline (Contour), or a place across its
-//    grain that stays the same along each band (Sunrise's band stack, Rush's flow).
+// 1. Each cell gets a place along the look's own shape: the length along its outline (Contour; a cell off the outline
+//    takes the place of the light that reaches it), or a place across its grain that stays the same along each band
+//    (Sunrise's band stack, Rush's flow).
 // 2. The colors take stretches of those places in the pack's hue order, each as long as its share of the colored area.
-//    Along Contour's outline the stretches lie on the outline's own light, and its glow and haze take the colors of
-//    the outline's light that reaches them.
+//    In Contour they are mirrored round Meta Blue on the main light.
 // 3. Each color takes first the cells of its stretch whose light is nearest its swatch's lightness, and reaches past
 //    its stretch or into other light only as far as its share of the colored area needs. The shader shows each color
 //    at its swatch, dimmed toward black only where the design falls to black (SWATCH_DIM) and paler only in the
@@ -40,10 +40,16 @@ const FIT_CLEAR = 0.15
 const AGREE_CLEAR = 0.1
 /** Where neither way is clearly better, the two are drawn blended, over this much of the lean either way (0 to 1). */
 const FLIP_BLEND = 0.5
+/** Contour: how much larger one other color's share must be to take the end Meta Blue moves to alone, and over what difference in distance the two ends are blended. */
+const END_SOFT = 0.02
+const END_BLEND = 0.1
 /** Blur of each color's share on the grid (cells), so a hand-over is smooth where the places crowd together. */
 const SHARE_BLUR = 1.5
 /** Passes that set each color's pull until it covers its share. */
 const PASSES = 24
+/** Contour: Meta Blue's share under which it starts to move off the main light, and the share at which it has moved to the end of the outline; and how much larger another color must be for it to move all the way. */
+const MB_HOLDS = [0.4, 0.2] as const
+const MB_HOLDS_LEAD = 0.1
 /** The design lightness (cube root of luminance) at which the stage shows a color black, and from which it shows it at its swatch. */
 export const SWATCH_DIM = [0.08, 0.45] as const
 /** How far toward white the stage takes a color in the design's brightest light: a share of the way from its swatch's lightness to white. */
@@ -297,7 +303,7 @@ function grainPlace(L: Float32Array, w: number, h: number, axis: readonly [numbe
 
 /**
  * Each color's share per grid cell. `fields[k]`: where the look's parts ask for color k (only to pick which end of the
- * hue order goes where, for a look that doesn't give it); `way`: how the look's light runs; `tone`: the design
+ * hue order goes where, and where Meta Blue's main light is); `way`: how the look's light runs; `tone`: the design
  * lightness where the stage shows a color black, at its swatch, and where it starts and finishes going paler.
  */
 export function carriedShares(grid: StageGrid, colors: readonly StageColor[], fields: readonly Float32Array[], seed: number, way: CarryWay, tone: readonly number[]): Float32Array[] {
@@ -308,37 +314,96 @@ export function carriedShares(grid: StageGrid, colors: readonly StageColor[], fi
   const emit = L.map((v) => v * v * v)
   const coverage = grid.softCoverage ?? L.map((v) => (v >= VISIBLE ? 1 : 0))
   const area = coverage.reduce((a, b) => a + b, 0) > 1e-6 ? coverage : emit
-  // Contour: the colors take their stretches on the outline's own light, and the glow and haze take the colors of the
-  // outline's light that reaches them (owner, 2026-11-11 5:18 PM: "the banding here is really bad"). A place carried
-  // into the glow from two stretches of the outline is a place between them, which laid the hue order out again as
-  // arcs and gave unlit haze the colors at the outline's ends. The light is weighed squared, so the bright outline
-  // outweighs the glow and haze round it.
-  const fromRim = way.kind === 'outline'
-  const src = fromRim ? emit.map((e) => e * e) : emit
-  const place = way.kind === 'outline' ? (way.along ?? outlinePlace(emit, w, h)) : grainPlace(L, w, h, way.axis, seed, way.toward)
-  // Each cell's place as the share of the colored area before it (along an outline, of the outline's light), so a
-  // stretch's length is a share of the area.
-  const rankBy = fromRim ? src : area
-  const rankTotal = rankBy.reduce((a, b) => a + b, 0) || 1
+  const total = area.reduce((a, b) => a + b, 0) || 1
+  let place: Float32Array
+  if (way.kind === 'outline') {
+    const along = way.along ?? outlinePlace(emit, w, h)
+    const num = carry(Float32Array.from(emit, (e, i) => e * along[i]), w, h)
+    const den = carry(emit, w, h)
+    place = num.map((v, i) => (den[i] > 1e-12 ? v / den[i] : along[i]))
+  } else place = grainPlace(L, w, h, way.axis, seed, way.toward)
+  // Each cell's place as the share of the colored area before it, so a stretch's length is a share of the area.
   const byPlace = Array.from({ length: n }, (_, i) => i).sort((a, b) => place[a] - place[b])
   const u = new Float32Array(n)
   let run = 0
   for (const i of byPlace) {
-    u[i] = (run + rankBy[i] / 2) / rankTotal
-    run += rankBy[i]
+    u[i] = (run + area[i] / 2) / total
+    run += area[i]
   }
-  const srcCarried = fromRim ? carry(src, w, h) : null
   const order = colors.map((_, k) => k).sort((a, b) => colors[a].packIndex - colors[b].packIndex)
   const mbK = colors.findIndex((c) => c.hex === META_BLUE_HEX)
-  // The stretches: in hue order, each as long as its share, one run of the order along Contour's outline too, so its
-  // colors change slowly along the rim (owner, 2026-11-11 5:18 PM).
+  const mbAt = order.indexOf(mbK)
+  const mirror = way.kind === 'outline' && mbAt >= 0 && K > 1 && (mbAt === 0 || mbAt === K - 1)
+  const sideColors = mirror ? (mbAt === 0 ? order.slice(1) : order.slice(0, -1).reverse()) : []
+  // Where Meta Blue's main light is along the places: the light-weighted middle of the part that asks for it.
+  let center = 0.5
+  if (mirror) {
+    let s = 0
+    let m = 0
+    for (let i = 0; i < n; i++) {
+      const f = (fields[mbK]?.[i] ?? 0) * emit[i]
+      s += f
+      m += f * u[i]
+    }
+    if (s > 1e-12) center = m / s
+  }
+  // The stretches: in hue order, each as long as its share, or mirrored round Meta Blue, which sits on the main light
+  // with the other colors beside it on both sides.
   const sum = colors.reduce((a, c) => a + Math.max(c.share, 1e-4), 0)
   const width = colors.map((c) => Math.max(c.share, 1e-4) / sum)
   const slots: { k: number; lo: number; hi: number }[] = []
-  let x = 0
-  for (const k of order) {
-    slots.push({ k, lo: x, hi: x + width[k] })
-    x += width[k]
+  let slide = 0
+  if (mirror) {
+    // Meta Blue holds the main light while it leads. As its share falls under MB_HOLDS[0] with another color larger,
+    // it moves off the main light to the end of the outline that puts the largest color on the main light
+    // (coordinator, 2026-11-11 3:12 PM), and each other color's two halves move to that color's side.
+    const wm = width[mbK]
+    const rest = Math.max(1e-6, 1 - wm)
+    const held = Math.min(rest, Math.max(0, center - wm / 2))
+    const most = Math.max(0, ...sideColors.map((k) => colors[k].share))
+    slide = smooth01((MB_HOLDS[0] - colors[mbK].share) / (MB_HOLDS[0] - MB_HOLDS[1])) * smooth01((most - colors[mbK].share) / MB_HOLDS_LEAD)
+    let end = 0
+    if (slide > 0) {
+      // Each other color's end, weighed by how far it leads the others, so two colors of about the same share don't
+      // swap the end between them, and each end is taken gradually where the two are about as near.
+      let weights = 0
+      let ends = 0
+      for (const big of sideColors) {
+        const middleOf = (ks: readonly number[], from: number) => {
+          let x = from
+          for (const k of ks) {
+            if (k === big) return x + width[k] / 2
+            x += width[k]
+          }
+          return x
+        }
+        const gap = Math.abs(middleOf(sideColors, wm) - center) - Math.abs(middleOf([...sideColors].reverse(), 0) - center)
+        const weight = Math.exp((colors[big].share - most) / END_SOFT)
+        weights += weight
+        ends += weight * smooth01(gap / END_BLEND + 0.5)
+      }
+      end = (rest * ends) / Math.max(weights, 1e-12)
+    }
+    const left = (held + slide * (end - held)) / rest
+    let x = 0
+    for (const k of [...sideColors].reverse()) {
+      const wd = width[k] * left
+      if (wd > 0) slots.push({ k, lo: x, hi: x + wd })
+      x += wd
+    }
+    slots.push({ k: mbK, lo: x, hi: x + wm })
+    x += wm
+    for (const k of sideColors) {
+      const wd = width[k] * (1 - left)
+      if (wd > 0) slots.push({ k, lo: x, hi: x + wd })
+      x += wd
+    }
+  } else {
+    let x = 0
+    for (const k of order) {
+      slots.push({ k, lo: x, hi: x + width[k] })
+      x += width[k]
+    }
   }
   // How far each cell's light is from each color's swatch lightness (owner, 2026-11-11 11:44 AM: shades as close as
   // possible to the swatches). A cell spans the light from its mean to its brightest point, so a thin bright rim can
@@ -352,8 +417,8 @@ export function carriedShares(grid: StageGrid, colors: readonly StageColor[], fi
     const wsum = new Float64Array(nb)
     for (let i = 0; i < n; i++) {
       const b = Math.min(nb - 1, Math.floor(u[i] * nb))
-      sum[b] += rankBy[i] * Lc[i] ** 3
-      wsum[b] += rankBy[i]
+      sum[b] += area[i] * Lc[i] ** 3
+      wsum[b] += area[i]
     }
     const binLight = Float64Array.from(sum, (v, b) => Math.cbrt(wsum[b] > 1e-9 ? v / wsum[b] : 0))
     Lc = Float32Array.from(u, (v) => {
@@ -364,12 +429,13 @@ export function carriedShares(grid: StageGrid, colors: readonly StageColor[], fi
     })
   }
   const Lp = grid.peak && way.kind !== 'outline' ? blurGrid(grid.peak, w, h, LIGHT_BLUR) : Lc
-  // Meta Blue, the lead, sits in any light, so it carries the light on its stretch.
+  // Meta Blue sits in any light while it holds the main light; as it moves off, it weighs its light as the others do,
+  // so it doesn't come back to the main light for the light it counts in there.
   const lightOff = colors.map((c, k) =>
     Float32Array.from(Lc, (lo, i) => {
-      if (k === mbK) return 0
+      if (k === mbK && slide <= 0) return 0
       const off = Math.min(Math.abs(shownLightness(c.lightness, lo, tone) - c.lightness), Math.abs(shownLightness(c.lightness, Math.max(lo, Lp[i]), tone) - c.lightness))
-      return (off / LIGHT_REACH) ** 2
+      return (k === mbK ? slide : 1) * (off / LIGHT_REACH) ** 2
     }),
   )
   // How much a cell counts for each color in the shares, as the shares reading counts the color as the stage shows it
@@ -386,7 +452,8 @@ export function carriedShares(grid: StageGrid, colors: readonly StageColor[], fi
   // nearer the part of the look that asks for it; where neither is clear, both ways are drawn, blended by how far
   // each leans.
   let flipBy: number
-  if (way.lighterLast !== undefined) flipBy = way.lighterLast ? 1 : 0
+  if (mirror) flipBy = 0
+  else if (way.lighterLast !== undefined) flipBy = way.lighterLast ? 1 : 0
   else {
     // The way is picked by the design's own light against the swatches' lightness, as before the stage showed colors
     // at their swatches, so a seed's colors keep their sides.
@@ -452,9 +519,7 @@ export function carriedShares(grid: StageGrid, colors: readonly StageColor[], fi
         }
         for (let k = 0; k < K; k++) raw[k][i] /= s
       }
-      // Along an outline each cell takes the colors of the light that reaches it; elsewhere a short blur smooths the
-      // hand-overs where the places crowd together.
-      const soft = srcCarried ? raw.map((r) => carry(Float32Array.from(r, (v, i) => v * src[i]), w, h).map((v, i) => (srcCarried[i] > 1e-12 ? v / srcCarried[i] : 0))) : raw.map((r) => blurGrid(r, w, h, SHARE_BLUR))
+      const soft = raw.map((r) => blurGrid(r, w, h, SHARE_BLUR))
       for (let i = 0; i < n; i++) {
         let s = 0
         for (let k = 0; k < K; k++) s += soft[k][i]

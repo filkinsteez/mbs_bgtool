@@ -678,8 +678,8 @@ const MAIN_GLOW_WEIGHT = 1.65
 /** Through the color stage the glow along the rim is the bright light the light colors (Yellow, Lime, Ice, Tan) show
  * in, so it is wider and stronger than the main light's own glow above. The second light's glow is set relative to
  * the main light's, so it grows with it. */
-const STAGE_GLOW = 1
-const STAGE_GLOW_WEIGHT = 1
+const STAGE_GLOW = 2
+const STAGE_GLOW_WEIGHT = 3
 const SECOND_GLOW_WEIGHT = 1.1
 /** Red over blue in sRGB: above zero for warm colors. */
 const warmthOf = (hex: string) => parseInt(hex.slice(1, 3), 16) - parseInt(hex.slice(5, 7), 16)
@@ -758,7 +758,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   // times, so the far stretch still carries bright light for the colors beside Meta Blue and no dim stretch opens
   // before the second light (a wash's whole edge is lit).
   const power = lerp(1.8, 3.4, design.powerDraw)
-  const factor = def.wash ? 2 : lerp(2.5, 16, design.reachDraw)
+  const factor = def.wash ? 2 : lerp(1.6, 4, design.reachDraw)
   const reach = flatRadius(run, home, factor, power)
   const hazeScale = lerp(0.7, 1.5, design.hazeDraw)
   const dragReach = dragged ? Math.hypot(dragged.lineLength, 0.12) : 0
