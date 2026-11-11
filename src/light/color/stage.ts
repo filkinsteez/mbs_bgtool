@@ -221,7 +221,7 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
     const byParts = coloredByParts(fields)
     const colors = stageColors(pack, mix, byParts)
     const assignment = assignFields(colors, fields, input.ctx.seed)
-    const values = colorFields(fields, assignment, colors)
+    const values = colorFields(fields, assignment, colors, byParts ? (grid.seen ?? grid.lightness) : undefined)
     const own = values.map((v, k): StageField => ({ name: fields[assignment[k]]?.name ?? 'none', want: fields[assignment[k]]?.want ?? 'any', values: v }))
     const solution = solveWeights(grid, own, colors, colors.map((_, k) => k), STAGE_SHARPNESS, byParts)
     // A look colored by its parts draws the soft blend: each color's share, spread as far as the light changes, then

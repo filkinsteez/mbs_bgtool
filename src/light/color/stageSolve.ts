@@ -297,9 +297,10 @@ export function assignFields(colors: readonly StageColor[], fields: readonly Sta
 /**
  * Each color's field on the stage grid. The dark fields no color takes (more dark spots than dark colors) go to the
  * dark colors in turn; in a pack with no dark color Meta Blue takes them, so the dark there is Meta Blue's own navy
- * and not a dim neighbor's brown. A dark color takes a dark field as it lies on its lines (StageField.onLine).
+ * and not a dim neighbor's brown, and, given the light, only where it is dark under a warm light's falloff. A dark
+ * color takes a dark field as it lies on its lines (StageField.onLine).
  */
-export function colorFields(fields: readonly StageField[], assignment: readonly number[], colors: readonly StageColor[]): Float32Array[] {
+export function colorFields(fields: readonly StageField[], assignment: readonly number[], colors: readonly StageColor[], lightness?: Float32Array): Float32Array[] {
   const own = (field: StageField, k: number) => (colors[k].keepsDark && field.reach) || (colors[k].kind === KIND_DARK && field.onLine) || field.values
   const out = assignment.map((f, k) => (f >= 0 ? own(fields[f], k) : new Float32Array(fields[0]?.values.length ?? 0)))
   const taken = new Set(assignment)
@@ -308,16 +309,33 @@ export function colorFields(fields: readonly StageField[], assignment: readonly 
   const lead = colors.findIndex((c) => c.hex === META_BLUE_HEX)
   const takers = darks.length ? darks : lead >= 0 ? [lead] : []
   if (!spare.length || !takers.length) return out
+  // Given the light, under a warm light's falloff Meta Blue takes a dark place only where the light is dark there, so
+  // the warm light fades into the dark in its own color before the navy starts, instead of handing over to Meta Blue
+  // halfway down its falloff (SHARED 3:52).
+  const warm = new Float32Array(out[0]?.length ?? 0)
+  if (!darks.length && lightness)
+    colors.forEach((c, k) => {
+      if (c.keepsDark && c.group === 'warm' && assignment[k] >= 0) for (let i = 0; i < warm.length; i++) warm[i] = Math.max(warm[i], out[k][i])
+    })
   const copied = new Set<number>()
   spare.forEach((field, s) => {
     const k = takers[s % takers.length]
     if (!copied.has(k)) out[k] = Float32Array.from(out[k])
     copied.add(k)
     const values = own(field, k)
-    for (let i = 0; i < out[k].length; i++) out[k][i] = Math.max(out[k][i], values[i])
+    for (let i = 0; i < out[k].length; i++) {
+      const v = lightness ? values[i] * (1 - smooth(BORROWED_DARK[0], BORROWED_DARK[1], lightness[i]) * Math.min(1, 2 * warm[i])) : values[i]
+      out[k][i] = Math.max(out[k][i], v)
+    }
   })
   return out
 }
+
+/**
+ * The light (cube root) over which a dark place Meta Blue takes in a pack with no dark color gives way to a warm
+ * light's falloff (fully where the warm color's field is at half or more).
+ */
+const BORROWED_DARK = [0.22, 0.36] as const
 
 export interface StageSolution {
   /** Per color, its field's weight (the largest is 1). */
