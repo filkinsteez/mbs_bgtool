@@ -307,148 +307,43 @@
   white-space: nowrap;
 }
 
-/* The color percentages (MixControl), under the pack strips: a row per pack color with its swatch, its On/Off switch
-   and its slider, as in the owner's sketch (Figma 111:588). */
+/* The color percentages (MixControl), under the pack strips: DialKit's sliders, one per pack color, as far apart as
+   DialKit's controls in a folder, or as the card's parts where the panel is shorter. */
 .tool-mix {
-  --mix-row: 24px;
-  --mix-switch: 38px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 4px;
+  gap: min(6px, var(--card-gap));
 }
 
-.tool-mix-row {
-  display: grid;
-  grid-template-columns: var(--mix-row) var(--mix-switch) minmax(0, 1fr);
-  align-items: stretch;
-  gap: 6px;
-  height: var(--mix-row);
-}
-
-.tool-mix-swatch {
-  position: relative;
-  border-radius: 6px;
-  background: var(--mix-color);
-}
-
-/* A thin edge, as on the strips, so Forest, Plum and Near-black stay visible on the dark panel. */
-.tool-mix-swatch::after {
+/* The color's swatch before its name. The thin edge, as on the strips, keeps Forest, Plum and Near-black visible. */
+.tool-mix .dialkit-slider-label::before {
   content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-right: 7px;
+  border-radius: 3px;
+  background: var(--mix-color);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
 }
 
-.tool-mix-slider {
-  height: auto;
+/* DialKit's slider shows its value without a unit. */
+.tool-mix .dialkit-slider-value::after {
+  content: '%';
 }
 
-.tool-mix-slider .dialkit-slider {
-  border-radius: 6px;
+/* The steps: DialKit's own marks, which it shows only on hover, kept at their hover color. */
+.tool-mix .dialkit-slider-hashmark {
+  background: var(--dial-border-hover);
 }
 
-.tool-mix-slider :is(.dialkit-slider-label, .dialkit-slider-value) {
-  font-size: 12px;
-}
-
-.tool-mix-slider .dialkit-slider-label {
-  left: 8px;
-}
-
-.tool-mix-slider .dialkit-slider-value {
-  right: 8px;
-}
-
-.tool-mix-slider .dialkit-slider[data-off] :is(.dialkit-slider-label, .dialkit-slider-value) {
+/* A color at 0% is off. */
+.tool-mix-row[data-off] :is(.dialkit-slider-label, .dialkit-slider-value) {
   color: var(--dial-text-tertiary);
 }
 
-/* A line at each step the slider moves in. */
-.tool-mix-step {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: rgba(255, 255, 255, 0.14);
-  pointer-events: none;
-}
-
-.tool-mix-handle {
-  left: max(5px, calc(var(--fill) - 9px));
-  opacity: 0;
-  transform: translateY(-50%);
-  transition: opacity 0.15s;
-}
-
-.dialkit-slider-active .tool-mix-handle {
-  opacity: 0.5;
-}
-
-.dialkit-slider[data-dragging] .tool-mix-handle {
-  opacity: 0.9;
-}
-
-/* The switch: a pill with the knob and its word on the left for Off, on the right for On. */
-.tool-mix-switch {
-  display: flex;
-  align-items: center;
-  padding: 2px;
-  border: none;
-  border-radius: 999px;
-  background: var(--dial-surface-active);
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.tool-mix-switch:focus-visible {
-  outline: 2px solid var(--text);
-  outline-offset: 2px;
-}
-
-.tool-mix-switch-knob {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  aspect-ratio: 1;
-  height: 100%;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.14);
-  color: var(--dial-text-secondary);
-  font-size: 8px;
-  font-weight: 600;
-  line-height: 1;
-  transition: transform 0.15s, background 0.15s, color 0.15s;
-}
-
-.tool-mix-switch[aria-checked='true'] {
-  background: rgba(255, 255, 255, 0.22);
-}
-
-.tool-mix-switch[aria-checked='true'] .tool-mix-switch-knob {
-  background: var(--dial-text-primary);
-  color: var(--chrome-1);
-  transform: translateX(calc(var(--mix-switch) - var(--mix-row)));
-}
-
-/* One of the last two colors on: its switch can't turn it off. */
-.tool-mix-switch[aria-disabled='true'] {
-  cursor: default;
-  opacity: 0.5;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .tool-mix-handle,
-  .tool-mix-switch,
-  .tool-mix-switch-knob {
-    transition: none;
-  }
-}
-
-/* The full-size panel is about 870px tall with a filter on. */
-@media (max-height: 870px) {
+/* The full-size panel is about 940px tall with a filter on and a five-color pack's sliders. */
+@media (max-height: 940px) {
   .tool-panel {
     --step-gap: 14px;
     --block-gap: 8px;
@@ -478,11 +373,6 @@
 
   .tool-tile-mark {
     gap: 4px;
-  }
-
-  .tool-mix {
-    --mix-row: 22px;
-    gap: 5px;
   }
 }
 
@@ -542,13 +432,6 @@
     flex-direction: row;
     gap: 6px;
   }
-
-  .tool-mix {
-    --mix-row: 20px;
-    --mix-switch: 34px;
-    gap: 4px;
-    margin-top: 2px;
-  }
 }
 
 @media (max-height: 620px) {
@@ -595,17 +478,6 @@
 
   .tool-tiles[data-kind='swatch'] {
     --tile-height: 16px;
-  }
-
-  .tool-mix {
-    --mix-row: 18px;
-    --mix-switch: 30px;
-    gap: 3px;
-    margin-top: 0;
-  }
-
-  .tool-mix-slider :is(.dialkit-slider-label, .dialkit-slider-value) {
-    font-size: 11px;
   }
 }
 
