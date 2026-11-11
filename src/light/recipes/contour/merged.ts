@@ -373,10 +373,11 @@ vec3 contourMeet(vec3 e0, vec3 e1, vec3 e2) {
   return hue / max(cmLum(hue), 1e-5) * total * metShown / max(shown, 1e-5);
 }
 float rayHash(float i) { return fract(sin(i * 127.1 + 311.7) * 43758.5453); }
-float rayNoise(float x) {
+// Smooth noise round the circle in n cells: the same at both sides of atan's jump, so no ray ends at a line there.
+float rayNoise(float x, float n) {
   float i = floor(x);
   float f = fract(x);
-  return mix(rayHash(i), rayHash(i + 1.0), f * f * (3.0 - 2.0 * f));
+  return mix(rayHash(mod(i, n)), rayHash(mod(i + 1.0, n)), f * f * (3.0 - 2.0 * f));
 }
 vec3 radiance(vec2 uv, vec2 p) { return vec3(0.0); }
 vec3 auxRadiance(vec2 uv, vec2 p) { return clAux(p, true); }
@@ -391,9 +392,12 @@ vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 b0, vec3 b1, vec3 b2, vec3 b3) {
     // Light from behind the edge seen through haze: brightest at its source, in rays, only above the edge.
     vec2 d = p - uRay.xy;
     float r = length(d);
-    float x = atan(d.y, d.x) / TAU * uRayShape.x + uRayShape.z;
-    float n = 0.6 * rayNoise(x) + 0.4 * rayNoise(2.37 * x + 5.1);
-    float pattern = mix(1.0, 0.2 + 1.6 * n, uRayShape.y);
+    // A whole number of cells round the circle, and a ray's contrast grows away from its source: near the source the
+    // rays' edges crowd together, and one strong edge read as a straight cut through the haze.
+    float cells = max(1.0, floor(uRayShape.x + 0.5));
+    float x = atan(d.y, d.x) / TAU * cells + uRayShape.z;
+    float n = 0.75 * rayNoise(x, cells) + 0.25 * rayNoise(2.0 * x + 5.0, 2.0 * cells);
+    float pattern = mix(1.0, 0.2 + 1.6 * n, uRayShape.y * r / (r + 0.2));
     float glow = uRay.z * exp(-r / uRayReach) * (0.08 / (r + 0.08));
     int e = int(uRayUnit + 0.5);
     float sd = clEmitterMask(e, p - clAnchor(e));
