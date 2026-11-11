@@ -630,6 +630,8 @@ const WALK = [-1, 0, 1.5]
 const SECOND_END_TAPER = [0.35, 0.9]
 /** The second light's parts fade out between these distances (frame units) from the main light's part. */
 const LEAD_CLEAR = [0.12, 0.28]
+/** How far (short sides) the second light keeps from a dragged main light: nearer, it slides along its edge. */
+const SLIDE_CLEAR = 0.55
 /** Where the main light's far stretch is, along its edge from the seed's place for the light, in short sides. */
 const COOL_AT = [0.5, 0.8, 1.1]
 /** How wide the parts along an edge are: its light and the face light just beside it. */
@@ -894,7 +896,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const secondPoint = edgeLight ? otherPoint : (tries.find((p): p is Vec2 => !!p && Math.sqrt(dist2(p, seedHome)) >= keepOff) ?? null)
   const host = plan.second >= 0 ? plan.second : plan.units.length < MERGED_UNITS ? plan.units.length : -1
   const secondParams: Record<string, ParamValue> = { secondUnit: 0, secondAt: [-40, -40] }
-  let secondOn: { contour: number; t: number; tSpan: number; near: number } | null = null
+  let secondOn: { contour: number; t: number; t0: number; tSpan: number; near: number } | null = null
   // The second light is warm wherever its glow stays off the main light's face (over it the two blend into violet): in
   // focus, on the main edge, where the main light hands over to it, or on another edge that keeps clear of the main
   // edge; so the frame shows the pack's warm color beside the main light's and its accents' (the owner, 2026-11-10
@@ -903,12 +905,30 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   let ringLight = false
   let secondStretch: Vec2[] = []
   let secondColor = -1
-  let secondLight: { e: number; contour: number; t: number; tSpan: number; peak: number; end: number; side: number; brightest: number; cool: boolean } | null = null
+  let secondLight: { e: number; contour: number; t: number; tSpan: number; peak: number; level: number; end: number; side: number; brightest: number; cool: boolean } | null = null
   if (secondPoint && host >= 0) {
     const on2 = nearestOnContours(drawn, anchorR, secondPoint)
     const tSpan = halfLength / (contourLength(drawn.contours[on2.contour]) || 1)
-    const near = smooth01(0.3, 0.55, Math.sqrt(dist2(hot, secondPoint)))
-    secondOn = { contour: on2.contour, t: on2.ts[on2.contour], tSpan, near }
+    // As a dragged main light comes near, it slides along its edge away from the seed's place for the main light,
+    // keeping the clearance it has at the default view (up to SLIDE_CLEAR), as far as its edge stays in the frame; only
+    // past that does it fade. Its colors are chosen at its seed's place, so a drag never changes them.
+    const c2 = drawn.contours[on2.contour]
+    const wrap = (d: number) => (c2.closed ? d - Math.round(d) : d)
+    const t0 = on2.ts[on2.contour]
+    const fromHome = wrap(t0 - nearestOnContours(drawn, anchorR, seedHome).ts[on2.contour])
+    const dir = fromHome >= 0 ? 1 : -1
+    const need = Math.min(dir * fromHome, Math.sqrt(Math.max(0, SLIDE_CLEAR ** 2 - onDrawn.ds[on2.contour] ** 2)) / (contourLength(c2) || 1))
+    const ahead = dir * wrap(t0 - onDrawn.ts[on2.contour])
+    const nearest = (r: Vec2[]) => Math.min(Infinity, ...r.map((p) => dist2(p, secondPoint)))
+    const run2 = edgeLight ? otherIn : ([...arms].sort((a, b) => nearest(a) - nearest(b))[0] ?? [])
+    const ends = run2.length > 1 ? [run2[0], run2[run2.length - 1]].map((p) => wrap(nearestOnContours(drawn, anchorR, p).ts[on2.contour] - t0)) : [0]
+    const room = Math.max(0, dir * (dir > 0 ? Math.max(...ends) : Math.min(...ends)) - 0.5 * tSpan)
+    const t2 = t0 + dir * Math.min(room, Math.max(0, need - ahead))
+    const onC2 = (t: number) => contourPoint(c2, c2.closed ? t - Math.floor(t) : Math.min(1, Math.max(0, t))).point
+    const [p0, p2] = [onC2(t0), onC2(t2)]
+    const slid: Vec2 = [secondPoint[0] + p2[0] - p0[0], secondPoint[1] + p2[1] - p0[1]]
+    const near = smooth01(0.3, 0.55, Math.sqrt(dist2(hot, slid)))
+    secondOn = { contour: on2.contour, t: t2, t0, tSpan, near }
     const stretchPoints = [-1, -0.5, 0, 0.5, 1].map((k) => {
       const c = drawn.contours[on2.contour]
       const t = on2.ts[on2.contour] + k * tSpan
@@ -933,8 +953,9 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     // and the rest of it is Meta Blue, which would then be Meta Blue's brightest light, lit only beside another color.
     // A ring is as bright as a warm light, so a light color reads as itself in its halo (Lime only shows near its own
     // lightness).
-    const peak = (def.wash ? lerp(0.5, 0.75, design.secondGain) : edgeWarm || ringLight ? lerp(WARM_PEAK[0], WARM_PEAK[1], design.secondGain) : lerp(COOL_PEAK[0], COOL_PEAK[1], design.secondGain)) * near
-    const at = (def.wash ? SECOND_SHAPE : FADE_SHAPE).map((o) => round4(Math.min(0.999, Math.max(0.001, on2.ts[on2.contour] + o * tSpan))))
+    const level = def.wash ? lerp(0.5, 0.75, design.secondGain) : edgeWarm || ringLight ? lerp(WARM_PEAK[0], WARM_PEAK[1], design.secondGain) : lerp(COOL_PEAK[0], COOL_PEAK[1], design.secondGain)
+    const peak = level * near
+    const at = (def.wash ? SECOND_SHAPE : FADE_SHAPE).map((o) => round4(Math.min(0.999, Math.max(0.001, t2 + o * tSpan))))
     const gains = (def.wash ? SECOND_LEVEL : FADE_LEVEL).map((g) => round4(g * peak))
     // The pack's warm or bright color: the unit's warmest (Orange-red) along the stretch and its brightest at the core
     // (Yellow); a wash's glow takes the brightest, like the poster's yellow glow in the blue.
@@ -949,7 +970,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     // A warm one's ends, where the main light comes back, are the pale bridge between the key's color and its own.
     const end = edgeWarm ? 10 * slotOf(plan.key) + side : side
     const e = host + 1
-    secondLight = { e, contour: on2.contour, t: on2.ts[on2.contour], tSpan, peak, end, side, brightest, cool }
+    secondLight = { e, contour: on2.contour, t: t0, tSpan, peak, level, end, side, brightest, cool }
     delete unitParams[`e${e}Drift`]
     delete unitParams[`e${e}DriftShape`]
     // As it dims it follows its color's own dim path inside the pack (Lime through Forest, Ice through Steel), which
@@ -976,7 +997,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     })
     Object.assign(secondParams, {
       secondUnit: e,
-      secondAt: [round4(secondPoint[0] - anchorR[0]), round4(secondPoint[1] - anchorR[1])],
+      secondAt: [round4(slid[0] - anchorR[0]), round4(slid[1] - anchorR[1])],
       // An edge's own light turns near white where it is hottest, like a ring's; a ring's core reaches the lightness of a
       // light pack color (Ice near white, Lime about 0.9), or the color stage keeps that color out of it.
       secondCore: ringLight ? RING_CORE : edgeLight ? EDGE_CORE : SECOND_CORE,
@@ -988,7 +1009,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
       secondGlowSide: def.wash ? -1 : 0,
       // Along the second light's stretch the main light's line hands over to it: dark round the second light's middle
       // and back to full at its ends, so the line has no dark gap.
-      gapAt: round4(on2.ts[on2.contour]),
+      gapAt: round4(t2),
       gapContour: on2.contour,
       // The hand-over fades out with the second light as a dragged main light comes near, so the main light is never
       // cut; its length stays (shrinking it left a sharp notch on the main light that flickered as it moved).
@@ -1068,9 +1089,20 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
       const slot3 = ownPath(own3) || ownPath(s.side - 2) ? s.side : slotOf(own3)
       const near3 = smooth01(0.3, 0.55, Math.sqrt(dist2(hot, p3)))
       const peak3 = lerp(WARM_PEAK[0], WARM_PEAK[1], 1 - design.secondGain) * near3
+      // Sharing a unit with the third light, the second light stays at its own place and fades as the main light comes
+      // near: sliding, its stops could pass the third light's.
+      const home2 = secondPoint ?? secondMid
+      const near2 = smooth01(0.3, 0.55, Math.sqrt(dist2(hot, home2)))
+      const peak2 = s.level * near2
+      if (secondOn) secondOn = { ...secondOn, t: secondOn.t0, near: near2 }
+      Object.assign(secondParams, {
+        secondAt: [round4(home2[0] - anchorR[0]), round4(home2[1] - anchorR[1])],
+        gapAt: round4(s.t),
+        gapDepth: round4(near2),
+      })
       const four = (t: number, span: number) => SHARED_SHAPE.map((o) => round4(Math.min(0.999, Math.max(0.001, t + o * span))))
       const lights = [
-        { at: four(s.t, s.tSpan), gain: SHARED_LEVEL.map((g) => round4(g * s.peak)), color: [s.end, s.side, s.brightest, s.end] },
+        { at: four(s.t, s.tSpan), gain: SHARED_LEVEL.map((g) => round4(g * peak2)), color: [s.end, s.side, s.brightest, s.end] },
         { at: four(t3, tSpan3), gain: SHARED_LEVEL.map((g) => round4(g * peak3)), color: [slot3, slot3, slot3, slot3] },
       ].sort((a, b) => a.at[0] - b.at[0])
       const at = lights.flatMap((l) => l.at)
@@ -1157,7 +1189,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     // Points at equal steps along it, so each piece stays on the light it colors and the colors can cross-fade.
     const points = Array.from({ length: SECOND_PIECES + 1 }, (_, k) => framePoint(pointOn(contour, t + (-1 + (2 * k) / SECOND_PIECES) * tSpan)))
     // The half farther from the seed's place for the main light is the warm one, away from the main light's face.
-    const farSecond = dist2(pointOn(contour, t + tSpan), seedHome) >= dist2(pointOn(contour, t - tSpan), seedHome)
+    const farSecond = dist2(pointOn(contour, secondOn.t0 + tSpan), seedHome) >= dist2(pointOn(contour, secondOn.t0 - tSpan), seedHome)
     Object.assign(partParams, { partSecond: points.flat(), partWarmFade: round4(near), partWarmSide: farSecond ? 1 : 0, partEdgeWarm: edgeWarm ? 1 : 0 })
   }
   if (thirdOn) {
@@ -1195,7 +1227,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     const q = contourPoint(c, c.closed ? t - Math.floor(t) : Math.min(1, Math.max(0, t))).point
     return [q[0] + anchorR[0], q[1] + anchorR[1]]
   }
-  const secondMiddle = secondOn ? pointOn(secondOn.contour, secondOn.t) : null
+  const secondMiddle = secondOn ? pointOn(secondOn.contour, secondOn.t0) : null
   const coolMiddle = pointOn(onHome.contour, tHome + (away * COOL_AT[1]) / homeLength)
   const clearOf = (p: Vec2) =>
     Math.abs(p[0]) <= fw / 2 - DARK_MARGIN &&
