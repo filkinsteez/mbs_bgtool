@@ -515,17 +515,29 @@ describe('grain', () => {
   }
   const mean = (values: Float64Array) => values.reduce((s, v) => s + v, 0) / values.length
 
-  it('is fine specks one pixel across at 1080 px on the short side, the same size and strength at every density', () => {
+  it('is fine specks one pixel across at 1080 px on the short side; up to Strength 0.5 only their count changes, above it the grain grows', () => {
     expect(grainCellPx(1920, 1080)).toBe(1)
     expect(grainCellPx(1080, 1920)).toBe(1)
     expect(grainCellPx(3840, 2160)).toBe(2)
-    const full = grainUniforms(1, 3840, 2160)
-    for (const density of [0.1, 0.25, 0.5, 0.75, 1]) {
+    const low = grainUniforms(0.25, 3840, 2160)
+    for (const density of [0.1, 0.25, 0.5]) {
       const uniforms = grainUniforms(density, 3840, 2160)
       expect(uniforms.uGrainCell).toBe(2)
-      expect(uniforms.uGrainAmp).toBe(full.uGrainAmp)
-      expect(uniforms.uGrainDensity).toBe(density)
+      expect(uniforms.uGrainAmp).toBe(low.uGrainAmp)
+      expect(uniforms.uGrainShare).toBeCloseTo(density * 0.3, 10)
+      expect(uniforms.uGrainDark).toBe(low.uGrainDark)
+      expect(uniforms.uGrainClump).toBe(0)
     }
+    // Toward Strength 1 (owner, 2026-11-11 3:15 PM: "v subtle at 1"): more specks, stronger, more of them in soft clumps.
+    let last = grainUniforms(0.5, 3840, 2160)
+    for (const density of [0.6, 0.73, 0.85, 1]) {
+      const uniforms = grainUniforms(density, 3840, 2160)
+      expect(uniforms.uGrainAmp as number).toBeGreaterThan(last.uGrainAmp as number)
+      expect(uniforms.uGrainShare as number).toBeGreaterThan(last.uGrainShare as number)
+      expect(uniforms.uGrainClump as number).toBeGreaterThan(last.uGrainClump as number)
+      last = uniforms
+    }
+    expect(grainUniforms(1, 3840, 2160).uGrainAmp as number).toBeLessThan(1.5 * (low.uGrainAmp as number))
     expect(grainUniforms(0, 3840, 2160).uGrainAmp).toBe(0)
   })
 
@@ -534,7 +546,8 @@ describe('grain', () => {
     expect(grainAmplitude(params, 0)).toBe(0)
     expect(grainAmplitude(params, 1)).toBe(0)
     expect(grainAmplitude(params, 0.3)).toBeCloseTo(grainAmplitude(params, 0.8), 10)
-    expect(grainAmplitude(grainParams(0.25), 0.5)).toBe(grainAmplitude(params, 0.5))
+    expect(grainAmplitude(grainParams(0.25), 0.5)).toBe(grainAmplitude(grainParams(0.5), 0.5))
+    expect(grainAmplitude(params, 0.5)).toBeGreaterThan(grainAmplitude(grainParams(0.5), 0.5))
   })
 
   it('changes nothing at Density 0 and leaves black exact at Density 1', () => {
@@ -581,7 +594,10 @@ describe('grain', () => {
       }
       return together / alone
     }
-    expect(Math.abs(neighbours(0.25) - neighbours(1))).toBeLessThan(0.06)
+    expect(Math.abs(neighbours(0.25) - neighbours(0.5))).toBeLessThan(0.06)
+    // Toward Strength 1 part of the grain comes from soft two-cell clumps: a little larger, still fine.
+    expect(neighbours(1)).toBeGreaterThan(neighbours(0.5))
+    expect(neighbours(1)).toBeLessThan(neighbours(0.5) + 0.15)
   })
 
   it('has fewer specks in deep shadows and near white than in the midtones', () => {
@@ -646,7 +662,7 @@ describe('grain', () => {
   it('clumps a little larger in the dark', () => {
     const neighbours = (code: number) => {
       const size = 192
-      const values = grainedGrey(code, 1, 2, size)
+      const values = grainedGrey(code, 0.5, 2, size)
       const m = mean(values)
       let together = 0
       let alone = 0
