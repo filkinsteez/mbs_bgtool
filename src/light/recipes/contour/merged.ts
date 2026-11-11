@@ -29,9 +29,38 @@ import type { Vec2 } from './shapes'
 const COLORS = 8
 const UNITS = 3
 const STOPS = 8
-// Three emitters (one per group of colors that dim together) of up to 64 pieces each, as Halo's rings: far pieces of a
-// large shape are merged into chords, and only the contour the light is on is cut at the color stops.
+// Three emitters (one per group of colors that dim together, and the lights of their own) of up to 64 pieces each, as
+// Halo's rings: far pieces of a large shape are merged into chords, and only the contour the light is on is cut at the
+// color stops. A fourth emitter of 64 pieces passes WebGL's 1024 uniform vectors (each piece takes four).
 export const MERGED_LAYOUT: CurveLightLayout = { emitters: UNITS, primitives: 64, near: 3, far: 3 }
+
+/**
+ * The lights of their own besides the main one (a second light, a third): each is a unit lit only by its own stops,
+ * with its own core, glow, haze and face, and the other units go dark round the middle of its stretch (its gap). Each
+ * takes a unit the main light's colors leave free; more fit by adding a name here.
+ */
+export const OWN_LIGHTS = [
+  { name: 'second', label: 'Second light', gap: 'gap' },
+  { name: 'third', label: 'Third light', gap: 'gap3' },
+] as const
+
+const ownLightParams = ({ name, label, gap }: (typeof OWN_LIGHTS)[number]): ParamSpec[] => [
+  { kind: 'number', key: `${name}Unit`, label: `Unit that is the ${label.toLowerCase()} (0 none)`, min: 0, max: UNITS, step: 1, default: 0 },
+  { kind: 'vector', key: `${name}At`, label: `${label}, from the origin`, min: -40, max: 40, step: 0.0001, default: [-40, -40] },
+  { kind: 'number', key: `${name}Core`, label: `${label} core line (times the main one)`, min: 0, max: 2, step: 0.01, default: 1 },
+  { kind: 'number', key: `${name}Pale`, label: `${label} haze and face in the key color (share)`, min: 0, max: 1, step: 0.01, default: 0 },
+  { kind: 'number', key: `${name}Reach`, label: `${label} haze and face reach (times the main ones)`, min: 0.1, max: 2, step: 0.01, default: 0.5 },
+  { kind: 'number', key: `${name}FaceSide`, label: `${label} face side (-1 as the main one, 1 inside, 2 outside)`, min: -1, max: 2, step: 1, default: -1 },
+  { kind: 'number', key: `${gap}At`, label: `The other lights go dark here along the ${label.toLowerCase()}'s edge (-1 nowhere)`, min: -1, max: 1, step: 0.0001, default: -1 },
+  { kind: 'number', key: `${gap}Contour`, label: `Contour of the ${label.toLowerCase()}'s gap`, min: 0, max: 16, step: 1, default: 0 },
+  { kind: 'number', key: `${gap}Dark`, label: `${label} gap dark half length`, min: 0, max: 2, step: 0.0001, default: 0.05 },
+  { kind: 'number', key: `${gap}Fade`, label: `${label} gap fade length`, min: 0, max: 2, step: 0.0001, default: 0.1 },
+  { kind: 'number', key: `${gap}Depth`, label: `How much of the light the ${label.toLowerCase()}'s gap takes away (0..1)`, min: 0, max: 1, step: 0.0001, default: 1 },
+  { kind: 'number', key: `${name}Far`, label: `${label} haze and face (times the main ones, reach halved)`, min: 0, max: 2, step: 0.01, default: 1 },
+  { kind: 'number', key: `${name}Glow`, label: `${label} glow width (times the main one)`, min: 0.1, max: 8, step: 0.0001, default: 1 },
+  { kind: 'number', key: `${name}GlowWeight`, label: `${label} glow strength (times the main one)`, min: 0, max: 4, step: 0.0001, default: 1 },
+  { kind: 'number', key: `${name}GlowSide`, label: `${label} glow side (-1 as the main one, 0 both, 1 inside, 2 outside)`, min: -1, max: 2, step: 1, default: -1 },
+]
 
 const unitParams = (i: number): ParamSpec[] => [
   { kind: 'boolean', key: `e${i}On`, label: `Unit ${i} on`, default: false },
@@ -50,7 +79,8 @@ const unitParams = (i: number): ParamSpec[] => [
 ]
 
 const params: ParamSpec[] = [
-  { kind: 'number', key: 'shape', label: 'Shape (1 logo, 2 rounded square, 3 ring)', min: 1, max: 3, step: 1, default: 2 },
+  { kind: 'number', key: 'shape', label: 'Shape (1 logo, 2 rounded square, 3 ring, 4 rings)', min: 1, max: 4, step: 1, default: 2 },
+  { kind: 'vector', key: 'rings', label: 'Rings beside the main one (shape 4): x, y, radius each, from the origin (short sides)', min: -40, max: 40, step: 0.0001, default: [0, 0, 0, 0, 0, 0] },
   { kind: 'vector', key: 'at', label: 'Shape origin', min: -8, max: 9, step: 0.0001, default: [0.5, 0.5] },
   { kind: 'number', key: 'size', label: 'Size', min: 0, max: 40, step: 0.0001, default: 1 },
   { kind: 'number', key: 'radius', label: 'Corner radius', min: 0, max: 6, step: 0.0001, default: 0.3 },
@@ -64,7 +94,7 @@ const params: ParamSpec[] = [
   { kind: 'number', key: 'tipFade', label: 'Fade before the unlit stretch', min: 0, max: 1, step: 0.0005, default: 0 },
   { kind: 'number', key: 'keySlot', label: 'The key color slot (the light along the edge)', min: 1, max: COLORS, step: 1, default: 2 },
   { kind: 'number', key: 'restBlend', label: 'How far the other contours\' color has turned from the key\'s to their own (0 the key\'s)', min: 0, max: 1, step: 0.0001, default: 1 },
-  ...[1, 2, 3].flatMap(unitParams),
+  ...Array.from({ length: UNITS }, (_, k) => k + 1).flatMap(unitParams),
   ...nearParams('n1', 'Core', { Weight: 2.5, Width: 0.0008, Shape: 8, Light: 2 }),
   ...nearParams('n2', 'Glow', { Weight: 0.7, Width: 0.004, Shape: 3, Side: 1, Light: 1, Grow: 2, GrowBy: [1.5, 2] }),
   ...nearParams('n3', 'Near part 3'),
@@ -85,8 +115,7 @@ const params: ParamSpec[] = [
   { kind: 'number', key: 'rayLevel', label: 'Rays level', min: 0, max: 8, step: 0.001, default: 0.9 },
   { kind: 'number', key: 'rayReach', label: 'Rays reach (short sides)', min: 0.05, max: 3, step: 0.001, default: 0.5 },
   { kind: 'number', key: 'rayUnit', label: 'Rays take this unit color', min: 1, max: UNITS, step: 1, default: 1 },
-  { kind: 'number', key: 'secondUnit', label: 'Unit that is the second light (0 none)', min: 0, max: UNITS, step: 1, default: 0 },
-  { kind: 'vector', key: 'secondAt', label: 'Second light, from the origin', min: -40, max: 40, step: 0.0001, default: [-40, -40] },
+  ...OWN_LIGHTS.flatMap(ownLightParams),
   { kind: 'vector', key: 'faceDir', label: 'Into the face at the light', min: -1, max: 1, step: 0.0001, default: [0, 1] },
   { kind: 'vector', key: 'partLead', label: 'Color stage: main light with the face near it (place, radius)', min: -9, max: 9, step: 0.0001, default: [-9, -9, -9, -9] },
   { kind: 'vector', key: 'partSecond', label: 'Color stage: second light, 17 points at equal steps along its stretch, x then y (frame units)', min: -9, max: 9, step: 0.0001, default: new Array<number>(34).fill(-9) },
@@ -95,23 +124,13 @@ const params: ParamSpec[] = [
   { kind: 'number', key: 'partEdgeWarm', label: 'Color stage: the second light may ask a warm color (1) or only a cool one (0)', min: 0, max: 1, step: 1, default: 0 },
   { kind: 'number', key: 'partSecondWidth', label: 'Color stage: how wide the second light\'s parts are (short sides)', min: 0.01, max: 0.3, step: 0.0001, default: 0.05 },
   { kind: 'number', key: 'partRing', label: 'Color stage: the second light is a ring of its own on another edge (1) or not (0)', min: 0, max: 1, step: 1, default: 0 },
+  { kind: 'vector', key: 'partThird', label: 'Color stage: third light, 9 points at equal steps along its stretch, x then y (frame units)', min: -9, max: 9, step: 0.0001, default: new Array<number>(18).fill(-9) },
+  { kind: 'number', key: 'partThirdFade', label: 'Color stage: third light strength', min: 0, max: 1, step: 0.0001, default: 0 },
+  { kind: 'number', key: 'partThirdBright', label: 'Color stage: the third light asks the bright color (1) or the cool one (0)', min: 0, max: 1, step: 1, default: 0 },
   { kind: 'vector', key: 'partCool', label: 'Color stage: main light far stretch, first piece', min: -9, max: 9, step: 0.0001, default: [-9, -9, -9, -9] },
   { kind: 'vector', key: 'partCool2', label: 'Color stage: main light far stretch, second piece', min: -9, max: 9, step: 0.0001, default: [-9, -9, -9, -9] },
   { kind: 'vector', key: 'partDark', label: 'Color stage: dim stretch of outline on the other edge (or the main edge)', min: -9, max: 9, step: 0.0001, default: [-9, -9, -9, -9] },
   { kind: 'vector', key: 'partDark2', label: 'Color stage: dim stretch of outline past the main light\'s far stretch', min: -9, max: 9, step: 0.0001, default: [-9, -9, -9, -9] },
-  { kind: 'number', key: 'secondCore', label: 'Second light core line (times the main one)', min: 0, max: 2, step: 0.01, default: 1 },
-  { kind: 'number', key: 'secondPale', label: 'Second light haze and face in the key color (share)', min: 0, max: 1, step: 0.01, default: 0 },
-  { kind: 'number', key: 'secondReach', label: 'Second light haze and face reach (times the main ones)', min: 0.1, max: 2, step: 0.01, default: 0.5 },
-  { kind: 'number', key: 'secondFaceSide', label: 'Second light face side (-1 as the main one, 1 inside, 2 outside)', min: -1, max: 2, step: 1, default: -1 },
-  { kind: 'number', key: 'gapAt', label: 'The main light goes dark here along the edge (-1 nowhere)', min: -1, max: 1, step: 0.0001, default: -1 },
-  { kind: 'number', key: 'gapContour', label: 'Contour of that gap', min: 0, max: 16, step: 1, default: 0 },
-  { kind: 'number', key: 'gapDark', label: 'Gap dark half length', min: 0, max: 2, step: 0.0001, default: 0.05 },
-  { kind: 'number', key: 'gapFade', label: 'Gap fade length', min: 0, max: 2, step: 0.0001, default: 0.1 },
-  { kind: 'number', key: 'gapDepth', label: 'How much of the light the gap takes away (0..1)', min: 0, max: 1, step: 0.0001, default: 1 },
-  { kind: 'number', key: 'secondFar', label: 'Second light haze and face (times the main ones, reach halved)', min: 0, max: 2, step: 0.01, default: 1 },
-  { kind: 'number', key: 'secondGlow', label: 'Second light glow width (times the main one)', min: 0.1, max: 8, step: 0.0001, default: 1 },
-  { kind: 'number', key: 'secondGlowWeight', label: 'Second light glow strength (times the main one)', min: 0, max: 4, step: 0.0001, default: 1 },
-  { kind: 'number', key: 'secondGlowSide', label: 'Second light glow side (-1 as the main one, 0 both, 1 inside, 2 outside)', min: -1, max: 2, step: 1, default: -1 },
   { kind: 'number', key: 'gain', label: 'Overall gain', min: 0, max: 20, step: 0.001, default: 1 },
   { kind: 'number', key: 'soften', label: 'Overall width', min: 0.05, max: 16, step: 0.001, default: 1 },
 ]
@@ -197,6 +216,7 @@ export function mergedEmitters(ctx: RecipeContext): EmitterSettings[] {
     radius: ctx.num('radius'),
     rotate: ctx.num('rotate'),
     flip: ctx.bool('flip'),
+    rings: ctx.vec('rings'),
   }
   const shape = startedShape(mergedShape(spec, anchor, ctx.aspect), ctx.vec('starts'))
   const stopContour = Math.round(ctx.num('stopContour'))
@@ -204,9 +224,11 @@ export function mergedEmitters(ctx: RecipeContext): EmitterSettings[] {
   const fades = ctx
     .vec('tipAt')
     .flatMap((t, i) => (t >= 0 ? [{ contour: Math.round(tipContour[i]), t, dark: ctx.num('tipDark'), fade: ctx.num('tipFade') }] : []))
-  // Along the second light's stretch the other units go dark, so each light keeps one color there.
-  const gapAt = ctx.num('gapAt')
-  const gap = gapAt >= 0 ? [{ contour: Math.round(ctx.num('gapContour')), t: gapAt, dark: ctx.num('gapDark'), fade: ctx.num('gapFade'), depth: ctx.num('gapDepth') }] : []
+  // Along each light of its own the other units go dark, so each light keeps one color there.
+  const gaps = OWN_LIGHTS.flatMap(({ gap }) => {
+    const t = ctx.num(`${gap}At`)
+    return t >= 0 ? [{ contour: Math.round(ctx.num(`${gap}Contour`)), t, dark: ctx.num(`${gap}Dark`), fade: ctx.num(`${gap}Fade`), depth: ctx.num(`${gap}Depth`) }] : []
+  })
   const keySlot = ctx.num('keySlot')
   return Array.from({ length: UNITS }, (_, k) => {
     const i = k + 1
@@ -215,7 +237,9 @@ export function mergedEmitters(ctx: RecipeContext): EmitterSettings[] {
     // face and the far haze read as the key's light instead of a mix of every color, and no brightness changes.
     // The second light is lit by its own stops along the edge, not by the main light's fields, and keeps its own
     // color from its dim ends to its hot core.
-    const second = Math.round(ctx.num('secondUnit')) === i
+    const ownLight = OWN_LIGHTS.find(({ name }) => Math.round(ctx.num(`${name}Unit`)) === i)
+    const second = !!ownLight
+    const own = (key: string) => ctx.num(`${ownLight?.name ?? 'second'}${key}`)
     const free = <T extends { light: number }>(part: T): T => (second ? { ...part, light: 0 } : part)
     const accent = !second && Math.round(ctx.num(`e${i}Own`)) !== Math.round(keySlot) && Math.round(ctx.num(`e${i}Rest`)) === 1
     const farPale = [0.5, 0.8, 1]
@@ -232,7 +256,7 @@ export function mergedEmitters(ctx: RecipeContext): EmitterSettings[] {
       // As the light comes between two edges the other contours turn back to the key's color, so when the light passes
       // to the other edge the two edges' colors don't swap in a jump.
       restStops: [{ t: 0, color: restColor(ctx, ctx.num(`e${i}Rest`), keySlot), gain: 1 }],
-      fades: second ? fades : [...fades, ...gap],
+      fades: second ? fades : [...fades, ...gaps],
       // The drift measures the light against the color's own level, so a color under the stand-in's lightness dims
       // through its darker neighbour where its light is low.
       own: slotColor(ctx, ctx.num(`e${i}Own`)),
@@ -240,13 +264,13 @@ export function mergedEmitters(ctx: RecipeContext): EmitterSettings[] {
         const read = free(readNear(ctx, `n${n}`, soften, gain))
         const part =
           second && n === 1
-            ? { ...read, weight: read.weight * ctx.num('secondCore') }
+            ? { ...read, weight: read.weight * own('Core') }
             : second && n === 2
               ? {
                   ...read,
-                  weight: read.weight * ctx.num('secondGlowWeight'),
-                  sigma: read.sigma * ctx.num('secondGlow'),
-                  ...(ctx.num('secondGlowSide') >= 0 ? { side: ctx.num('secondGlowSide') } : {}),
+                  weight: read.weight * own('GlowWeight'),
+                  sigma: read.sigma * own('Glow'),
+                  ...(own('GlowSide') >= 0 ? { side: own('GlowSide') } : {}),
                 }
               : read
         return accent ? { ...part, pale: nearPale[n - 1] } : part
@@ -255,14 +279,14 @@ export function mergedEmitters(ctx: RecipeContext): EmitterSettings[] {
         const read = free(readFar(ctx, `f${n}`, soften, gain))
         // The second light's haze and face may take the key's color at the same luminance, so its own color stays on
         // its stretch of the edge and never mixes over the key's face.
-        const faceSide = n === 3 && ctx.num('secondFaceSide') >= 0 ? { side: ctx.num('secondFaceSide') } : {}
-        const f = second ? { ...read, ...faceSide, weight: read.weight * ctx.num('secondFar'), sigma: read.sigma * ctx.num('secondReach'), pale: ctx.num('secondPale') * farPale[n - 1] } : read
+        const faceSide = n === 3 && own('FaceSide') >= 0 ? { side: own('FaceSide') } : {}
+        const f = second ? { ...read, ...faceSide, weight: read.weight * own('Far'), sigma: read.sigma * own('Reach'), pale: own('Pale') * farPale[n - 1] } : read
         return accent ? { ...f, pale: farPale[n - 1] } : f
       }),
       maskShift: [0, 0],
       maskGrow: 0,
       drift: readDrift(ctx, `e${i}Drift`),
-      ...(accent || (second && ctx.num('secondPale') > 0) ? { pale: litSlot(ctx, keySlot) } : {}),
+      ...(accent || (second && own('Pale') > 0) ? { pale: litSlot(ctx, keySlot) } : {}),
     }
   })
 }

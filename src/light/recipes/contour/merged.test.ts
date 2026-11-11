@@ -23,7 +23,7 @@ const CONTROLS: ControlValues = { intensity: 0.5, softness: 0.7, mood: 0.5 }
 const OWNER: ControlValues = { ...CONTROLS, drag: { from: [1.011, 1.224], to: [-0.078, -0.067] } }
 /** Params that place the shape and the light and set its brightness and widths; the rest only say which color goes where. */
 const isLayout = (key: string) =>
-  !/^e\d/.test(key) && !['keySlot', 'groundNear', 'groundFar', 'air1Color', 'air2Color', 'air3Color', 'rayUnit', 'secondUnit'].includes(key)
+  !/^e\d/.test(key) && !['keySlot', 'groundNear', 'groundFar', 'air1Color', 'air2Color', 'air3Color', 'rayUnit', 'secondUnit', 'thirdUnit'].includes(key)
 const layoutOf = (params: Record<string, ParamValue>) => Object.fromEntries(Object.entries(params).filter(([key]) => isLayout(key)))
 
 describe('contour.merged', () => {
@@ -104,7 +104,11 @@ describe('contour.merged', () => {
         // The second light's sixteen pieces ask for the warm color, the other warm color (a ring of its own: a light color
         // that isn't warm) and a cool one, walking along it.
         expect(['warm2', 'pale'], `seed ${seed}`).toContain(wants[17])
-        expect(wants, `seed ${seed}`).toEqual(['any', ...Array(16).fill('warm'), ...Array(16).fill(wants[17]), ...Array(16).fill('cool'), 'cool', 'cool', 'dark', 'dark'])
+        expect(wants.slice(0, 53), `seed ${seed}`).toEqual(['any', ...Array(16).fill('warm'), ...Array(16).fill(wants[17]), ...Array(16).fill('cool'), 'cool', 'cool', 'dark', 'dark'])
+        // The third light's eight pieces ask its own color (the bright one or the cool one) and, beside a cool one, `pale`;
+        // without a third light they ask nothing new.
+        expect(wants.length, `seed ${seed}`).toBe(69)
+        for (const want of wants.slice(53)) expect(['bright', 'cool', 'pale'], `seed ${seed}`).toContain(want)
         for (const part of parts) expect(JSON.stringify(part)).not.toMatch(/null|NaN/)
         // The parts are part of the design: the same in every list, and the second light there in every list or none.
         expect(new Set(seconds.map((p) => Number(p.secondUnit) > 0)).size, `seed ${seed}`).toBe(1)

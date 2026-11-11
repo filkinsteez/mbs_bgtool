@@ -89,7 +89,7 @@ const LAYOUTS: readonly LayoutDef[] = [
   { name: 'Bend', kind: 'logo', feature: 'rightBottom', size: 4.4, rotate: -25, target: [-0.15, 0.2], hotAt: 0.5, slide: [0.1, -0.01] },
   { name: 'Corner', kind: 'roundedSquare', size: 2.4, radius: 0.6, rotate: -12, target: [0.3, -0.2], hotAt: 0.5 },
   { name: 'Ribbon', kind: 'logo', feature: 'ribbon', size: 4.6, rotate: -30, target: [0, 0.05], hotAt: 0.5, slide: [0.08, 0.04] },
-  { name: 'Halo', kind: 'ring', size: 2.2, rotate: 0, target: [0.3, 0.05], hotAt: 0.5 },
+  { name: 'Halo', kind: 'rings', size: 2.2, rotate: 0, target: [0.3, 0.05], hotAt: 0.5 },
   { name: 'Close', kind: 'roundedSquare', size: 1.6, radius: 0.8, rotate: 72, target: [-0.2, 0.2], hotAt: 0.5, blur: 3.2, fill: 2.6 },
   { name: 'Horizon', kind: 'ring', size: 5, rotate: 0, target: [0, 0.3], hotAt: 0.5, blur: 1.4, fill: 1.6, outside: true, rays: true, turn: 0.3 },
   { name: 'Wash', kind: 'ring', size: 3.4, rotate: 0, target: [-0.1, -0.1], tallTarget: [-0.1, 0], hotAt: 0.5, tall: 1.2, blur: 3, fill: 3.4, soft: true, outside: true, wash: true },
@@ -173,6 +173,36 @@ function placeLayout(def: LayoutDef, aspect: number, jitter: Jitter, homeAt: num
 /** Re-centring: from how far off the middle (short sides) the visible edge's midpoint moves in, and at most how far. */
 const RECENTRE_FROM = 0.15
 const RECENTRE_MAX = 0.3
+
+/** The rings beside a rings layout's big ring (short sides): their radius, how far along the big ring from the main
+ * light's place, and the gap between them and the big ring. */
+const RINGS_RADIUS = [0.2, 0.32]
+const RINGS_ALONG = [0.45, 0.7]
+const RINGS_GAP = [0.12, 0.22]
+
+/**
+ * Two smaller rings beside a rings layout's big ring, one to each side of the main light's place along it, on the side
+ * of the big ring the frame's middle is on, apart from it and kept inside the frame, from the seed alone (like the
+ * moodboard's separate rings): x, y and radius each, around the origin as placed.
+ */
+function ringsBeside(seed: number, spec: MergedShapeSpec, anchor: Vec2, aspect: number, homeAt: number): number[] {
+  const rand = seededRandom(Math.round(seed), 4127)
+  const [fw, fh] = frameSize(aspect)
+  const home = pointAlong(longestRun(visibleRuns(buildMergedShape(spec), anchor, aspect)), homeAt) ?? ([0, 0] as Vec2)
+  const rel: Vec2 = [home[0] - anchor[0], home[1] - anchor[1]]
+  const l = Math.hypot(rel[0], rel[1]) || 1
+  const u: Vec2 = [rel[0] / l, rel[1] / l]
+  const t: Vec2 = [-u[1], u[0]]
+  const toMiddle = -(home[0] * u[0] + home[1] * u[1]) >= 0 ? 1 : -1
+  return [1, -1].flatMap((side) => {
+    const r = lerp(RINGS_RADIUS[0], RINGS_RADIUS[1], rand())
+    const along = side * lerp(RINGS_ALONG[0], RINGS_ALONG[1], rand())
+    const across = toMiddle * (r + lerp(RINGS_GAP[0], RINGS_GAP[1], rand()))
+    const x = Math.min(fw / 2 - 0.6 * r, Math.max(-fw / 2 + 0.6 * r, home[0] + t[0] * along + u[0] * across))
+    const y = Math.min(fh / 2 - 0.6 * r, Math.max(-fh / 2 + 0.6 * r, home[1] + t[1] * along + u[1] * across))
+    return [round4(x - anchor[0]), round4(y - anchor[1]), round4(r)]
+  })
+}
 
 /**
  * The seed's design, from the seed alone. Seeds that share a shape (seed, seed + 9, ...) differ in which part of the
@@ -581,6 +611,22 @@ const PART_OFF = [-9, -9, -9, -9]
 /** The second light's stretch of edge as the color stage's parts: this many equal pieces along it. */
 const SECOND_PIECES = 16
 const SECOND_OFF = new Array<number>(2 * (SECOND_PIECES + 1)).fill(-9)
+/** How far the third light's stretch keeps from the second light's (short sides). */
+const THIRD_APART = 0.2
+/** How far the third light's middle keeps from the main light's place (short sides), so it reads as a light of its own. */
+const THIRD_FROM_MAIN = 0.4
+/** The third light's half length (short sides), at most the second light's. */
+const THIRD_HALF = 0.15
+/** Places tried along the second light's edge for the third light (a large shape's contour is mostly out of frame). */
+const THIRD_SAMPLES = 400
+/** Where the second and third lights share a unit, each has four stops: dark at its ends, full over its middle. */
+const SHARED_SHAPE = [-1, -0.3, 0.3, 1]
+const SHARED_LEVEL = [0, 1, 1, 0]
+/** How far all of the third light's stretch keeps from the main light's edge (short sides). */
+const THIRD_OFF_MAIN = 0.1
+/** Color-stage pieces along the third light. */
+const THIRD_PIECES = 8
+const THIRD_OFF = new Array<number>(2 * (THIRD_PIECES + 1)).fill(-9)
 /** Along the second light (u from -1 at its end nearer the main light to 1 at its far end) its parts walk through three
  * of the pack's colors, each strongest at its place here: the cool one (Cyan), the warm one round its middle (Yellow,
  * Tan) and the pack's other warm color (`warm2`: Orange-red, Lime). Two neighbours' ratio changes by e^CROSS_SLOPE per
@@ -677,10 +723,14 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const shares = input.shares ?? defaultShares(colors)
   const design = seedDesign(seed)
   const def = LAYOUTS[input.layout ?? design.layout]
-  const { spec, anchor } = placeLayout(def, aspect, design.jitter, Math.min(0.75, Math.max(0.25, def.hotAt + design.hotShift)))
+  const seedAt = Math.min(0.75, Math.max(0.25, def.hotAt + design.hotShift))
+  const placed = placeLayout(def, aspect, design.jitter, seedAt)
+  const anchor = placed.anchor
+  const spec: MergedShapeSpec = def.kind === 'rings' ? { ...placed.spec, rings: ringsBeside(seed, placed.spec, anchor, aspect, seedAt) } : placed.spec
   const shape0 = buildMergedShape(spec)
   const runs = visibleRuns(shape0, anchor, aspect)
-  const run = longestRun(runs)
+  // The main light is on the layout's own shape (a rings layout's big ring), never on a ring beside it.
+  const run = longestRun(def.kind === 'rings' ? visibleRuns(buildMergedShape(placed.spec), anchor, aspect) : runs)
   const [fw, fh] = frameSize(aspect)
   // The mood control (Light position; the tool holds it at 0.5) moves the light along the edge from the seed's place.
   // The seed's place stays in the middle half of the visible edge, so the face it lights is in the frame.
@@ -719,7 +769,14 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const atFrame = toFrame(anchor, aspect).map(round4)
   const anchorR: Vec2 = [(atFrame[0] - 0.5) * fw, (atFrame[1] - 0.5) * fh]
   const merged = mergedShape(spec, anchorR, aspect)
-  const starts = nearestOnContours(merged, anchorR, hot).ts.map((t) => round4(t - 0.5))
+  // The contour the light is on starts at the light; every other contour at the seed's place for the light, so a drag
+  // never moves where a light of its own sits along it (on a small ring the start went round with the dragged light and
+  // cut through the stops). A ring beside a rings layout's big ring starts at its side facing the main light, away
+  // from its own light on its far side.
+  const seedPlace = pointAlong(clearRun.length > 1 ? clearRun : run, Math.min(0.75, Math.max(0.25, def.hotAt + design.hotShift))) ?? anchor
+  const fromHot = nearestOnContours(merged, anchorR, hot)
+  const fromSeed = nearestOnContours(merged, anchorR, seedPlace)
+  const starts = fromHot.ts.map((t, i) => round4(i === fromHot.contour ? t - 0.5 : fromSeed.ts[i] - (def.kind === 'rings' && i > 0 ? 0 : 0.5)))
   const drawn = startedShape(merged, starts)
   const drawnTips = outlineTips(drawn, anchorR, aspect)
   const onDrawn = nearestOnContours(drawn, anchorR, hot)
@@ -828,7 +885,11 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   // Another edge in the frame is a light of its own, like a ring: lit over most of its visible length, hottest at a
   // seeded place inside the frame and far enough from the main light.
   const otherIn = other ? other.r.filter((p) => Math.abs(p[0]) <= fw / 2 - EDGE_MARGIN && Math.abs(p[1]) <= fh / 2 - EDGE_MARGIN) : []
-  const otherPoint = !def.wash && otherIn.length > 3 ? pointAlong(otherIn, lerp(0.3, 0.7, design.secondAt)) : null
+  // On a ring beside a rings layout's big ring, the light is hottest on the side farthest from the big ring.
+  const farthestFrom = (pts: Vec2[], run: Vec2[]) =>
+    pts.reduce((best, p) => (Math.min(...run.map((q) => dist2(p, q))) > Math.min(...run.map((q) => dist2(best, q))) ? p : best), pts[0])
+  const besideRing = def.kind === 'rings' && !!other && other.contour !== homeContour
+  const otherPoint = !def.wash && otherIn.length > 3 ? (besideRing ? farthestFrom(otherIn, run) : pointAlong(otherIn, lerp(0.3, 0.7, design.secondAt))) : null
   const edgeLight = !!otherPoint && Math.sqrt(dist2(otherPoint, seedHome)) >= EDGE_KEEP_OFF
   const halfLength = edgeLight ? Math.min(EDGE_HALF_MAX, Math.max(EDGE_HALF_MIN, EDGE_SHARE * runLength(otherIn))) : stretchHalf
   const i0 = homeRun.reduce((best, p, i) => (dist2(p, seedHome) < dist2(homeRun[best], seedHome) ? i : best), 0)
@@ -850,6 +911,9 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   // 7:08 PM: the frames showed one color). Elsewhere it is cool.
   let edgeWarm = false
   let ringLight = false
+  let secondStretch: Vec2[] = []
+  let secondColor = -1
+  let secondLight: { e: number; contour: number; t: number; tSpan: number; peak: number; end: number; side: number; brightest: number; cool: boolean } | null = null
   if (secondPoint && host >= 0) {
     const on2 = nearestOnContours(drawn, anchorR, secondPoint)
     const tSpan = halfLength / (contourLength(drawn.contours[on2.contour]) || 1)
@@ -861,12 +925,17 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
       const q = contourPoint(c, c.closed ? t - Math.floor(t) : Math.min(1, Math.max(0, t))).point
       return [q[0] + anchorR[0], q[1] + anchorR[1]] as Vec2
     })
+    secondStretch = stretchPoints
     const clearOfMain = stretchPoints.every((p) => homeRun.every((q) => dist2(p, q) >= WARM_CLEAR * WARM_CLEAR))
     // On another edge well clear of the main one and in focus it is a ring of its own, like the moodboard's separate
     // colored rings: a halo as wide and strong as the main light's, in its own color. On the main light's own line its
     // halo would lie over the main light's and the two would add up to mauve or maroon, so there it keeps the narrow
     // glow.
-    ringLight = !def.wash && edgeLight && blur <= WARM_BLUR && stretchPoints.every((p) => homeRun.every((q) => dist2(p, q) >= RING_CLEAR * RING_CLEAR))
+    // On a ring beside a rings layout's big ring, its middle keeps clear of the big ring and all of it keeps off it.
+    const ringClear = besideRing
+      ? homeRun.every((q) => dist2(secondPoint, q) >= RING_CLEAR * RING_CLEAR) && stretchPoints.every((p) => homeRun.every((q) => dist2(p, q) >= THIRD_OFF_MAIN * THIRD_OFF_MAIN))
+      : stretchPoints.every((p) => homeRun.every((q) => dist2(p, q) >= RING_CLEAR * RING_CLEAR))
+    ringLight = !def.wash && edgeLight && blur <= WARM_BLUR && ringClear
     // A ring is cool (Cyan, Ice): a cool halo meets the main light's blue cleanly and keeps its hue in dim light, where
     // a warm one read red, and mauve wherever a drag brought the main light near it.
     // A ring far enough from the main light's edge that the two halos stay apart may be warm again (Orange-red round a
@@ -889,9 +958,11 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     const warmest = slotOf(cool ? coolest : members.reduce((a, b) => (warmthOf(colors[b]) > warmthOf(colors[a]) ? b : a)))
     const brightest = slotOf(cool ? coolest : members.reduce((a, b) => (L(colors[b]) > L(colors[a]) ? b : a)))
     const side = def.wash ? brightest : warmest
+    secondColor = side - 2
     // A warm one's ends, where the main light comes back, are the pale bridge between the key's color and its own.
     const end = edgeWarm ? 10 * slotOf(plan.key) + side : side
     const e = host + 1
+    secondLight = { e, contour: on2.contour, t: on2.ts[on2.contour], tSpan, peak, end, side, brightest, cool }
     delete unitParams[`e${e}Drift`]
     delete unitParams[`e${e}DriftShape`]
     // As it dims it follows its color's own dim path inside the pack (Lime through Forest, Ice through Steel), which
@@ -945,6 +1016,102 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
       ...(ringLight ? { secondReach: RING_REACH } : {}),
       secondPale: def.wash ? 1 : 0,
     })
+  }
+  // A third light: a ring of its own on another visible edge, clear of the main light's edge and of the second light,
+  // in its own color with its own halo, so a frame can show separate rings like the moodboard's. Like the second light
+  // it is placed from the seed's place for the main light, so a drag never moves it, and it fades out as a dragged main
+  // light comes near. Far enough from the main edge that the two halos stay apart, it takes the pack's brightest light
+  // color that isn't the cool one (Yellow, Lime), whose dim glow falls through its own dim path; nearer, the cool color,
+  // which meets Meta Blue's light cleanly. Only the color changes with the pack.
+  const thirdParams: Record<string, ParamValue> = { thirdUnit: 0, thirdAt: [-40, -40] }
+  let thirdOn: { contour: number; t: number; tSpan: number; near: number; bright: boolean } | null = null
+  // The main light's colors can take all three units WebGL leaves room for, so the third light shares the second light's
+  // unit, four color stops each, and is on the second light's edge: another edge, or another stretch of the main one.
+  if (!def.wash && blur <= WARM_BLUR && secondLight) {
+    const s = secondLight
+    // Found on the seed's shape (the same for any drag, as the dark parts are), so a drag never moves it.
+    const mc = merged.contours[s.contour]
+    const length = contourLength(mc) || 1
+    const onSeed = (t: number): Vec2 => {
+      const q = contourPoint(mc, mc.closed ? t - Math.floor(t) : Math.min(1, Math.max(0, t))).point
+      return [q[0] + anchorR[0], q[1] + anchorR[1]]
+    }
+    const secondMid = secondStretch[2]
+    const secondHalf = s.tSpan * length
+    const inMargin = (p: Vec2) => Math.abs(p[0]) <= fw / 2 - EDGE_MARGIN && Math.abs(p[1]) <= fh / 2 - EDGE_MARGIN
+    const tSpan3 = Math.min(s.tSpan, THIRD_HALF / length)
+    const stretch = (t: number) => [-1, -0.5, 0, 0.5, 1].map((k) => onSeed(t + k * tSpan3))
+    // A place whose bright middle is in the frame and clear of every sharp tip (so its hot spot is on a smooth stretch),
+    // apart from the second light and far enough from the main light to read as a light of its own; the one farthest
+    // from both.
+    const fits = (t: number) => {
+      if (!mc.closed && (t - tSpan3 < 0 || t + tSpan3 > 1)) return false
+      if (!inMargin(onSeed(t))) return false
+      const pts = stretch(t)
+      return (
+        pts.slice(1, 4).every(inMargin) &&
+        pts.slice(1, 4).every((p) => drawnTips.every((tip) => dist2(p, tip.at) >= TIP_CLEAR * TIP_CLEAR)) &&
+        Math.sqrt(dist2(pts[2], seedHome)) >= THIRD_FROM_MAIN &&
+        Math.sqrt(dist2(pts[2], secondMid)) >= secondHalf + THIRD_APART &&
+        pts.every((p) => secondStretch.every((q) => dist2(p, q) >= THIRD_APART * THIRD_APART))
+      )
+    }
+    const away = (t: number) => Math.min(dist2(onSeed(t), seedHome), dist2(onSeed(t), secondMid))
+    const seedT = Array.from({ length: THIRD_SAMPLES }, (_, k) => (k + 0.5) / THIRD_SAMPLES)
+      .filter(fits)
+      .sort((a, b) => away(b) - away(a))[0]
+    if (seedT !== undefined && secondMid) {
+      const pts = stretch(seedT)
+      const p3 = pts[2]
+      // Along the contour as drawn (started from the light), like the second light.
+      const t3 = nearestOnContours(drawn, anchorR, p3).ts[s.contour]
+      // Warm or bright only where its halo stays clear of the main light's; else the cool color.
+      const bright = pts.every((p) => homeRun.every((q) => dist2(p, q) >= WARM_RING_CLEAR * WARM_RING_CLEAR))
+      const notCool = (i: number) => chroma(colors[i]) > 0.04 && hue(colors[i]) >= 20 && hue(colors[i]) <= 140
+      const brightPick = lightOthers.filter((i) => i !== trueCool && i !== secondColor).sort(byLightness)[0]
+      const coolPick = lightOthers.filter((i) => i !== secondColor && !notCool(i)).sort(byLightness)[0] ?? coolest
+      // One unit has one dim path: where either light's color needs one (Lime through Forest, Ice through Steel, Yellow
+      // through Orange-red), the third light takes the second light's color with the stage off; the color stage still
+      // asks it for a color of its own.
+      const own3 = bright ? (brightPick ?? coolest) : coolPick
+      const inPack = colors.filter((_, i) => shares[i] > 0.001)
+      const ownPath = (i: number) => !!dimPartner(colors[i], inPack)
+      const slot3 = ownPath(own3) || ownPath(s.side - 2) ? s.side : slotOf(own3)
+      const near3 = smooth01(0.3, 0.55, Math.sqrt(dist2(hot, p3)))
+      const peak3 = lerp(WARM_PEAK[0], WARM_PEAK[1], 1 - design.secondGain) * near3
+      const four = (t: number, span: number) => SHARED_SHAPE.map((o) => round4(Math.min(0.999, Math.max(0.001, t + o * span))))
+      const lights = [
+        { at: four(s.t, s.tSpan), gain: SHARED_LEVEL.map((g) => round4(g * s.peak)), color: [s.end, s.side, s.brightest, s.end] },
+        { at: four(t3, tSpan3), gain: SHARED_LEVEL.map((g) => round4(g * peak3)), color: [slot3, slot3, slot3, slot3] },
+      ].sort((a, b) => a.at[0] - b.at[0])
+      const at = lights.flatMap((l) => l.at)
+      const gain = lights.flatMap((l) => l.gain)
+      const color = lights.flatMap((l) => l.color)
+      const e = s.e
+      Object.assign(unitParams, {
+        [`e${e}Stops`]: 8,
+        [`e${e}StopAt`]: at.slice(0, 4),
+        [`e${e}StopAt2`]: at.slice(4),
+        [`e${e}StopColor`]: color.slice(0, 4),
+        [`e${e}StopColor2`]: color.slice(4),
+        [`e${e}StopGain`]: gain.slice(0, 4),
+        [`e${e}StopGain2`]: gain.slice(4),
+      })
+      const half3 = tSpan3 * length
+      Object.assign(thirdParams, {
+        thirdUnit: e,
+        thirdAt: [round4(p3[0] - anchorR[0]), round4(p3[1] - anchorR[1])],
+        gap3At: round4(t3),
+        gap3Contour: s.contour,
+        gap3Dark: round4(HANDOVER_DARK * half3),
+        gap3Fade: round4((1 - HANDOVER_DARK) * half3),
+        gap3Depth: round4(near3),
+      })
+      // The unit's core reaches a light color's own lightness, so the color stage can show that color in it.
+      secondParams.secondCore = Math.max(Number(secondParams.secondCore), RING_CORE)
+      // Through the stage it asks the color the frame lacks: the bright one beside a cool second light, else the cool one.
+      thirdOn = { contour: s.contour, t: t3, tSpan: tSpan3, near: near3, bright: s.cool }
+    }
   }
   // Into the face at the light (for the color stage's parts): the side of the edge the face is on.
   const tangent = contourPoint(drawn.contours[onDrawn.contour], tHot).tangent
@@ -1003,6 +1170,11 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     // The half farther from the seed's place for the main light is the warm one, away from the main light's face.
     const farSecond = dist2(pointOn(contour, t + tSpan), seedHome) >= dist2(pointOn(contour, t - tSpan), seedHome)
     Object.assign(partParams, { partSecond: points.flat(), partWarmFade: round4(near), partWarmSide: farSecond ? 1 : 0, partEdgeWarm: edgeWarm ? 1 : 0 })
+  }
+  if (thirdOn) {
+    const { contour, t, tSpan, near, bright } = thirdOn
+    const points = Array.from({ length: THIRD_PIECES + 1 }, (_, k) => framePoint(pointOn(contour, t + (-1 + (2 * k) / THIRD_PIECES) * tSpan)))
+    Object.assign(partParams, { partThird: points.flat(), partThirdFade: round4(near), partThirdBright: bright ? 1 : 0 })
   }
   const onHome = nearestOnContours(drawn, anchorR, seedHome)
   const tHome = onHome.ts[onHome.contour]
@@ -1073,6 +1245,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const rayAt: Vec2 = [hot[0], hot[1] + 0.04]
   const params: Record<string, ParamValue> = {
     shape: MERGED_SHAPE_KINDS.indexOf(spec.kind) + 1,
+    rings: spec.rings ? [...spec.rings] : [0, 0, 0, 0, 0, 0],
     at: atFrame,
     size: round4(spec.size),
     radius: round4(spec.radius),
@@ -1089,6 +1262,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     restBlend: d2 === undefined ? 1 : round4(smooth01(0, BETWEEN, d2 - d1)),
     ...unitParams,
     ...secondParams,
+    ...thirdParams,
     faceDir,
     ...partParams,
     ...parts,
@@ -1211,6 +1385,19 @@ export function mergedParts(params: Readonly<Record<string, ParamValue>>): Stage
     const v = vec(params, key, PART_OFF)
     return { kind: 'spot', at: [v[0], v[1]], radius: Math.max(0.01, v[2]), want, strength }
   }
+  // The third light asks its own color: the bright one where it is bright (Yellow, Lime, Ice), else the cool one, with
+  // `pale` beside it for a pack with no cool color. Without a third light its pieces ask nothing new.
+  const givenThird = vec(params, 'partThird', THIRD_OFF)
+  const thirdPath = givenThird.length === THIRD_OFF.length ? givenThird : THIRD_OFF
+  const thirdHere = thirdPath[0] > -8
+  const thirdFade = Math.min(1, Math.max(0, Number(params.partThirdFade ?? 0)))
+  const thirdBright = thirdHere && Number(params.partThirdBright ?? 0) > 0.5
+  const thirds = Array.from({ length: THIRD_PIECES }, (_, i) => {
+    const u = -1 + (2 * i + 1) / THIRD_PIECES
+    const end = (1 - SECOND_END_TAPER[1] * smoothstep(SECOND_END_TAPER[0], 1, Math.abs(u))) * thirdFade
+    const piece = (want: FieldWant, strength: number): StagePart => ({ kind: 'line', from: [thirdPath[2 * i], thirdPath[2 * i + 1]], to: [thirdPath[2 * i + 2], thirdPath[2 * i + 3]], width: RING_PART_WIDTH, want, strength })
+    return { own: piece(thirdBright ? 'bright' : 'cool', end), pale: thirdHere && !thirdBright ? piece('pale', end) : piece('cool', 0) }
+  })
   return [
     spot('partLead', 'any'),
     ...seconds.map((s) => s.warm),
@@ -1220,5 +1407,7 @@ export function mergedParts(params: Readonly<Record<string, ParamValue>>): Stage
     line('partCool2', 'cool'),
     line('partDark', 'dark', 1, DARK_PART_WIDTH),
     line('partDark2', 'dark', 1, DARK2_PART_WIDTH),
+    ...thirds.map((s) => s.own),
+    ...thirds.map((s) => s.pale),
   ]
 }

@@ -39,7 +39,7 @@ function mergedLogo(): Shape {
 }
 
 /** Shape kinds of the merged Contour look's layouts. */
-export const MERGED_SHAPE_KINDS = ['logo', 'roundedSquare', 'ring'] as const
+export const MERGED_SHAPE_KINDS = ['logo', 'roundedSquare', 'ring', 'rings'] as const
 export type MergedShapeKind = (typeof MERGED_SHAPE_KINDS)[number]
 
 export interface MergedShapeSpec {
@@ -51,6 +51,9 @@ export interface MergedShapeSpec {
   /** Degrees. */
   rotate: number
   flip: boolean
+  /** Rings beside the main one (the rings kind): x, y and radius of each, around the origin as placed (short sides),
+   * radius 0 for none. */
+  rings?: readonly number[]
 }
 
 /** A closed rounded square around the origin, inside on the left (positive signed area). */
@@ -118,6 +121,7 @@ export function buildMergedShape(s: MergedShapeSpec): Shape {
       shape = roundedSquare(s.size, s.radius)
       break
     case 'ring':
+    case 'rings':
       shape = ring(s.size)
       break
     default: {
@@ -125,5 +129,10 @@ export function buildMergedShape(s: MergedShapeSpec): Shape {
       throw new Error(`Unknown shape: ${String(unknown)}`)
     }
   }
-  return transformShape(shape, { rotate: (s.rotate * Math.PI) / 180, flip: s.flip })
+  const placed = transformShape(shape, { rotate: (s.rotate * Math.PI) / 180, flip: s.flip })
+  const extra = s.kind === 'rings' ? (s.rings ?? []) : []
+  const beside: Contour[] = Array.from({ length: Math.floor(extra.length / 3) }, (_, k) => k)
+    .filter((k) => extra[3 * k + 2] > 0)
+    .map((k) => ({ closed: true, primitives: [arc([extra[3 * k], extra[3 * k + 1]], extra[3 * k + 2], 0, 2 * Math.PI)] }))
+  return beside.length ? { contours: [...placed.contours, ...beside] } : placed
 }
