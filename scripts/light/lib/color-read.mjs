@@ -153,19 +153,23 @@ export function sharesOf(rules, rgb, n, wantMap = false) {
 // 0.04 of their median lightness (one flat level); how far the brightest tenth's lightness lies above Meta Blue's
 // hex; and `borrowed`, the share of that brightest tenth lying within 3% of the short side of a lit pixel at least
 // 0.05 lighter that reads as another chromatic color (another pack color or `other`; white, grey and Atmospheric's
-// greys are left out, so a blue glow around a white core is Meta Blue's own): Meta Blue lit only where it meets
-// another color's light. Null for a pack without Meta Blue.
+// greys are left out, and so is a pale pixel near Meta Blue's hue (BLUE_LIGHT.core), its own core whitening, so a
+// blue glow around its core is Meta Blue's own): Meta Blue lit only where it meets another color's light. Null for a
+// pack without Meta Blue.
 export function blueLight(rules, rgb, width, height, labels) {
   if (!rules.blue) return null
   const n = width * height
   const L = new Float32Array(n)
+  const ownCore = new Uint8Array(n)
   const values = []
   let lit = 0
   for (let p = 0; p < n; p++) {
     if (labels[p] === 'none') continue
     lit++
-    L[p] = oklab([LIN[rgb[3 * p]], LIN[rgb[3 * p + 1]], LIN[rgb[3 * p + 2]]])[0]
-    if (labels[p] === rules.blue.name) values.push([L[p], p])
+    const [l, a, b] = oklab([LIN[rgb[3 * p]], LIN[rgb[3 * p + 1]], LIN[rgb[3 * p + 2]]])
+    L[p] = l
+    if (labels[p] === rules.blue.name) values.push([l, p])
+    else if (Math.hypot(a, b) < BLUE_LIGHT.core.chroma && Math.abs(signedGap(hueOf(a, b), rules.blue.h0)) <= BLUE_LIGHT.core.hue) ownCore[p] = 1
   }
   const share = lit ? values.length / lit : 0
   if (values.length < 50) return { share, spread: 0, flat: 1, peak: -1, borrowed: 0 }
@@ -182,7 +186,7 @@ export function blueLight(rules, rgb, width, height, labels) {
     search: for (let y = Math.max(0, y0 - r); y <= Math.min(height - 1, y0 + r); y++) {
       for (let x = Math.max(0, x0 - r); x <= Math.min(width - 1, x0 + r); x++) {
         const q = y * width + x
-        if (others.has(labels[q]) && L[q] >= Lb + 0.05) {
+        if (others.has(labels[q]) && !ownCore[q] && L[q] >= Lb + 0.05) {
           borrowed++
           break search
         }
@@ -203,8 +207,11 @@ export function blueLight(rules, rgb, width, height, labels) {
 // its lightness spreads `spread` or more (even skies and haze fields spread 0.08 to 0.18; skies and glows with light
 // in them 0.28 and more), its brightest tenth reaches its hex's lightness (dim navy fields stay 0.2 under it), and
 // under `borrowed` of that brightest tenth sits next to another color's lighter light (the screenshot 0.43, Bold
-// skies lit only where they meet Cyan or Yellow 0.36 to 0.48, frames with their own blue light 0 to 0.26).
-export const BLUE_LIGHT = { applies: 0.1, spread: 0.25, peak: 0, borrowed: 0.3 }
+// skies lit only where they meet Cyan or Yellow 0.36 to 0.48, frames with their own blue light 0 to 0.26). A lighter
+// pixel under `core.chroma` within `core.hue` degrees of Meta Blue's hue is its own core whitening, as white is: at
+// 320 px a Contour line's white-hot core mixes with its blue glow into a pale lavender-blue (hue about 271 against
+// Meta Blue's 259, chroma about 0.06) that reads as `other` (compare round 32).
+export const BLUE_LIGHT = { applies: 0.1, spread: 0.25, peak: 0, borrowed: 0.3, core: { hue: 20, chroma: 0.1 } }
 // The reasons Meta Blue doesn't carry light (`flat`, `dim`, `borrowed`), and whether the rule applies at all.
 export function blueVerdict(light) {
   if (!light || light.share < BLUE_LIGHT.applies) return { applies: false, reasons: [] }
