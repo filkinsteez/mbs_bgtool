@@ -27,7 +27,11 @@ Later on 2026-11-02 the owner asked for crops of the Meta logo outline as Contou
 - Changing the color pack keeps the design (owner, 2026-11-09): the same
   mood, seed, drag and format give the same shapes, light positions and
   light and dark layout in every pack, and only the colors change. Shuffle
-  gives a new design. The Meta Blue toggle and the mix control, once
+  gives a new design. One exception (owner, 2026-11-10): where two colors
+  far apart in hue meet, the light along that thin meeting line rises so
+  the meeting reads lighter instead of grey, and how much it rises may
+  differ by pack. Shapes, light positions and the light and dark layout
+  stay the same. The Meta Blue toggle and the mix control, once
   built, also change only the colors.
 - Build systems, not copies. Shapes, light and packs combine with the
   seed into endless backgrounds. The moodboard references test whether
