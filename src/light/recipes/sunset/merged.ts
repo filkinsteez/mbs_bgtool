@@ -683,6 +683,10 @@ float gHalo = 0.0;           // round a high light: the warm glow at this pixel
 float gHaloOuter = 0.0;      // round a high light: the warm glow's wider, dimmer outer light at this pixel
 float gHaloLight = 0.0;      // round a high light: the warm glow's lightness at this pixel, falling from the light
 float gPatch = 0.0;          // round a high light: Meta Blue's lit patch at this pixel
+float gPaleWave = 0.0;       // round a high light: how far the pale sky's edge bulges out (+) or dips in (-) here
+float gPaleSoft = 0.5;       // round a high light: how soft the pale sky's edge is here (0 to 1)
+float gDeepWave = 0.0;       // round a high light: how far the deep sky's edge comes in (-) or stays out (+) here
+float gDeepSoft = 0.5;       // round a high light: how soft the deep sky's edge is here (0 to 1)
 uniform int uLightnessOnly;  // 1: the design's lightness as grey, for proof sheets and the color stage
 uniform vec4 uLowest;        // lowest light of the sky, glow, warm band and pale sky colors (share of their own)
 uniform vec3 uSky;
@@ -736,7 +740,12 @@ float paleTop(float a) {
 
 float paleAt(float a, float h) {
   float top = paleTop(a);
-  float soft = top * (0.2 + 0.5 * uPale.w * (0.5 + 0.5 * gradientNoise(vec2(a * 0.9 + 3.7, 8.2), uHorizonSeed + 29)));
+  float softBy = 0.5 + 0.5 * gradientNoise(vec2(a * 0.9 + 3.7, 8.2), uHorizonSeed + 29);
+  if (uKind == 1) {
+    top *= 1.0 + 0.6 * gPaleWave;
+    softBy = gPaleSoft;
+  }
+  float soft = top * (0.2 + 0.5 * uPale.w * softBy);
   return 1.0 - smoothstep(top - soft, top + soft, h);
 }
 
@@ -771,10 +780,16 @@ float skyHeight(float a, float h) {
 // How far into the deep sky a place is (0 to 1); the edge drifts, changes softness along its length, and comes lower
 // far from the light, so the deep sky can be a far corner rather than a band across the top.
 float deepAt(float a, float t) {
-  // Round a high light the edge's waver also drifts with distance, so it curves instead of running in straight bands.
-  float drift = uKind == 1 ? 1.4 * t : 0.0;
-  float edge = uDeep.x + 0.08 * gradientNoise(vec2(a * 0.8 + 6.6, 2.2 + drift), uHorizonSeed + 5) - uDeep.z * (1.0 - sideLight(a, 1.0));
-  float soft = uDeep.y * (0.6 + 0.8 * (0.5 + 0.5 * gradientNoise(vec2(a * 0.7 + 1.4, 9.9 + drift), uHorizonSeed + 9)));
+  float wave = 0.08 * gradientNoise(vec2(a * 0.8 + 6.6, 2.2), uHorizonSeed + 5);
+  float softBy = 0.5 + 0.5 * gradientNoise(vec2(a * 0.7 + 1.4, 9.9), uHorizonSeed + 9);
+  // Round a high light the edge's waver and softness follow the place in the frame, so the edge curves instead of
+  // running straight along the spread.
+  if (uKind == 1) {
+    wave = 0.2 * gDeepWave;
+    softBy = gDeepSoft;
+  }
+  float edge = uDeep.x + wave - uDeep.z * (1.0 - sideLight(a, 1.0));
+  float soft = uDeep.y * (0.6 + 0.8 * softBy);
   return smoothstep(edge - soft, edge + soft + 0.15, t);
 }
 
@@ -896,6 +911,12 @@ vec3 auxRadiance(vec2 uv, vec2 p) {
     vec2 patchOff = q - patchCenter + 0.3 * uPatch.z * vec2(gradientNoise(q * 1.3 + vec2(2.1, 8.4), uHorizonSeed + 81), gradientNoise(q * 1.3 + vec2(6.7, 3.2), uHorizonSeed + 83));
     vec2 patchScaled = vec2(patchOff.x / max(1.35 * uPatch.z * uSquash, 0.05), patchOff.y / max(0.95 * uPatch.z, 0.05));
     gPatch = uPatch.w * exp(-dot(patchScaled, patchScaled));
+    // The pale sky's edge bulges, dips and changes softness with the place in the frame. Read from the distance and
+    // the direction alone, its sides run straight along the spread where the frame cuts through the long lobe.
+    gPaleWave = 0.75 * gradientNoise(q * 1.2 + vec2(4.2, 0.7), uHorizonSeed + 85) + 0.45 * gradientNoise(q * 2.3 + vec2(1.6, 9.4), uHorizonSeed + 99);
+    gPaleSoft = 0.5 + 0.5 * gradientNoise(q * 1.1 + vec2(9.1, 5.5), uHorizonSeed + 87);
+    gDeepWave = 0.75 * gradientNoise(q * 1.2 + vec2(2.6, 6.3), uHorizonSeed + 89) + 0.45 * gradientNoise(q * 2.3 + vec2(5.8, 0.3), uHorizonSeed + 101);
+    gDeepSoft = 0.5 + 0.5 * gradientNoise(q * 1.1 + vec2(7.4, 1.8), uHorizonSeed + 97);
   }
   // The ground's edge drifts off the horizon line and its softness changes along its length.
   float edgeSoft = uGround.w * (0.4 + 1.2 * (0.5 + 0.5 * gradientNoise(vec2(a * 1.3 + 3.9, 8.8), uHorizonSeed + 69)));
