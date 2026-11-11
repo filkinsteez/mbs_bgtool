@@ -1,6 +1,7 @@
 // Renders the small pictures on the tool panel's Mood buttons into public/panel/ (Filter and Format show icons and
-// shapes drawn in the page). Each shows the mood's one look (MOOD_LOOKS) in one pack, at the tool's fixed controls and
-// no drag; the panel shows the same pictures whichever pack is picked, and they are not live. Run again after a look
+// shapes drawn in the page). Each shows the mood's one look (MOOD_LOOKS) in one pack as the tool draws it: the design in
+// COLOR_DESIGN_PACK, colored by the color stage with the pack at its default mix, at the tool's fixed controls and no
+// drag. The panel shows the same pictures whichever pack is picked, and they are not live. Run again after a look
 // changes a lot:
 //   node scripts/light/panel-pictures.mjs [--out public/panel] [--seed n] [--sheet file.jpg]
 // --seed renders every picture at that seed (to compare seeds); --sheet also writes a contact sheet of the results.
@@ -39,11 +40,15 @@ try {
   const { MOOD_LOOKS } = await harness.ssr('/src/tool/state.ts')
   const { buildScene, toolControls } = await harness.ssr('/src/tool/controls.ts')
   const { withFilter } = await harness.ssr('/src/tool/filterControl.ts')
+  const { COLOR_DESIGN_PACK, withColorMix } = await harness.ssr('/src/light/color/stage.ts')
+  const { defaultMix } = await harness.ssr('/src/light/color/mix.ts')
   const pack = PACKS.find((p) => p.id === PACK_ID)
+  const design = PACKS.find((p) => p.id === COLOR_DESIGN_PACK)
   for (const mood of MOODS) {
     const look = MOOD_LOOKS[mood]
     const seed = seedOverride ? Number(seedOverride) : (SEEDS[look] ?? 1)
-    const scene = withFilter(buildScene(look, pack, seed, toolControls(look, pack, seed, 16 / 9), 16 / 9), { filter: 'none', strength: 0 })
+    const built = buildScene(look, design, seed, toolControls(look, design, seed, 16 / 9), 16 / 9)
+    const scene = withFilter(withColorMix(built, pack, defaultMix(pack)), { filter: 'none', strength: 0 })
     const image = await harness.render({ scene, ...LOOK_SIZE, supersample: 2 })
     const file = path.join(outDir, `${fileName(look)}.webp`)
     await raw(image).webp({ quality: 82 }).toFile(file)
