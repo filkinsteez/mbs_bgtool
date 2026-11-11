@@ -1,5 +1,6 @@
-import { linearToOklab } from '../../color/oklab'
+import { linearToOklab, oklchToLinear } from '../../color/oklab'
 import { hexToLinear, type Rgb } from '../../color/srgb'
+import { dimPaths, dimPathSteps, type DimPoint } from '../../engine/dimPath'
 
 /** Lights are list colors at or above this Oklab lightness; darker ones are ground colors, never light sources. */
 const LIGHT_L = 0.45
@@ -14,10 +15,6 @@ const FRINGE_RANGE: readonly [number, number] = [0.55, 1.15]
 /** The ground: the list's first dark color (or a deep shade of the first light), barely lit. */
 const DARK_GROUND = 0.08
 const SHADE_GROUND = 0.003
-
-/** Deep red, the last step of a fire's dim path (Yellow, Orange-red, deep red), and its luminance for placing the step. */
-const DEEP_RED: Rgb = [1, 0.02, 0]
-const DEEP_RED_Y = 0.04
 
 /** Steps on a color's dim path, at most. */
 export const DIM_STEPS = 3
@@ -64,7 +61,6 @@ interface Info {
 const luminance = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 const round4 = (v: number) => Math.round(v * 1e4) / 1e4
-const hueGap = (a: number, b: number) => Math.abs((((a - b) % 360) + 540) % 360 - 180)
 
 function infoOf(hex: string): Info {
   const lin = hexToLinear(hex)
@@ -72,39 +68,19 @@ function infoOf(hex: string): Info {
   return { hex, lin, L, C: Math.hypot(a, b), h: ((Math.atan2(b, a) * 180) / Math.PI + 360) % 360, Y: luminance(lin) }
 }
 
-const isWarm = (c: Info) => c.C > 0.08 && c.h >= 20 && c.h < 105
-
-const grey = (c: Info) => c.C < 0.05
-/** A muted warm color (Tan): dim, it reads brown, so it is never a step on another color's dim path. */
-const mutedWarm = (c: Info) => c.h >= 20 && c.h < 105 && c.C > 0.03 && c.C <= 0.12
-const unitLuminance = (c: readonly number[]): Rgb => {
-  const y = Math.max(luminance(c), 1e-6)
-  return [c[0] / y, c[1] / y, c[2] / y]
-}
-
 /**
- * A color's dim path: how its light turns as it dims, through darker colors of the same pack, so it never goes muddy.
- * Each step is the lightest pack color darker than the last of a near hue (within 70 degrees, not grey and not muted
- * warm) or, from a grey, the next darker grey: Yellow into Orange-red, Cyan into Meta Blue, Lime into Forest, Ice into
- * Steel, Slate and Near-black. A saturated warm color with nowhere darker to go ends in deep red, as fire does. Meta
- * Blue and Tan have no steps and keep their own hue (Tan reads brown dim, so its bands fall off steeply instead). A
- * step takes over a little above the level where the light is as dark as that color (square root), so a dark color
- * (Forest, Plum) never shows much brighter than itself, where its hue reads mint.
+ * A color's dim path as DIM_STEPS steps: the engine's shared path (dimPaths: Lime through green into Forest, Yellow
+ * into Orange-red and fire's deep red, Cyan into Meta Blue, Ice through Steel and Slate, Tan into the ground's color in
+ * the dark), sampled at levels evenly spaced in ratio between 1 and the level of the path's darkest point, so the hue
+ * follows the path as the light dims and never goes olive, teal or brown. Meta Blue has no steps and keeps its hue.
  */
-function dimPath(c: Info, all: readonly Info[]): { hue: Rgb; at: number }[] {
-  const near = (from: Info, d: Info) => (grey(from) ? grey(d) : d.C >= 0.04 && !mutedWarm(d) && hueGap(from.h, d.h) < 70)
-  const stepAt = (y: number) => clamp(Math.sqrt(y / Math.max(c.Y, 1e-6)), 0.1, 0.88)
-  const steps: { hue: Rgb; at: number }[] = []
-  let from = c
-  while (steps.length < DIM_STEPS) {
-    const last = from
-    const next = all.filter((d) => d !== last && d.L < last.L - 0.04 && near(last, d)).sort((a, b) => b.L - a.L)[0]
-    if (!next) break
-    steps.push({ hue: unitLuminance(next.lin), at: stepAt(next.Y) })
-    from = next
-  }
-  if (steps.length < DIM_STEPS && isWarm(from) && from.C > 0.12) steps.push({ hue: unitLuminance(DEEP_RED), at: stepAt(DEEP_RED_Y) })
-  return steps
+function rampSteps(path: readonly DimPoint[]): { hue: Rgb; at: number }[] {
+  if (path.length < 2) return []
+  const end = luminance(oklchToLinear(path[path.length - 1])) / Math.max(luminance(oklchToLinear(path[0])), 1e-6)
+  return dimPathSteps(
+    path,
+    Array.from({ length: DIM_STEPS }, (_, j) => round4(clamp(end, 1e-3, 1) ** ((j + 1) / DIM_STEPS))),
+  )
 }
 
 /** Each color's level so that all of them together are as neutral a white as they can be. */
@@ -167,7 +143,8 @@ export function rushColors(hexes: readonly string[], shares?: readonly number[])
     cellEnd[k] = round4(at / total)
   })
   const fringe = whiteLevels(lights)
-  const paths = lights.map((c) => dimPath(c, all))
+  const shared = dimPaths(hexes)
+  const paths = lights.map((c) => rampSteps(shared[hexes.indexOf(c.hex)]))
   const ramp: number[] = []
   for (let k = 0; k < 4; k++)
     for (let j = 0; j < DIM_STEPS; j++) {

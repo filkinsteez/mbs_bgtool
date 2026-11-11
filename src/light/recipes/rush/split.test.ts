@@ -78,7 +78,7 @@ describe('Rush split', () => {
     expect(rushColors(hexesOf('atmospheric')).spectrum.slice(0, 3)).toEqual([0.5, 0, 1])
   })
 
-  it('dims each color through darker colors of its own pack, and keeps Meta Blue and Tan as they are', () => {
+  it("dims each color along the engine's dim path through darker colors of its own pack, and keeps Meta Blue as it is", () => {
     // Color k's dim path: per step, the step color's RGB at luminance 1 and the level where it takes over.
     const steps = (hexes: string[], k: number) => {
       const ramp = rushColors(hexes).ramp.slice(12 * k, 12 * k + 12)
@@ -86,16 +86,20 @@ describe('Rush split', () => {
     }
     const bold = hexesOf('bold')
     expect(steps(bold, 0)).toHaveLength(0)
-    expect(steps(bold, 1)).toHaveLength(1)
-    expect(steps(bold, 2)).toHaveLength(2)
-    expect(steps(bold, 3)).toHaveLength(1)
-    // Yellow's first step is Orange-red's hue (red over green), Cyan's is Meta Blue's (blue over green).
-    expect(steps(bold, 2)[0][0]).toBeGreaterThan(steps(bold, 2)[0][1] * 5)
-    expect(steps(bold, 1)[0][2]).toBeGreaterThan(steps(bold, 1)[0][1] * 3)
+    for (const k of [1, 2, 3]) expect(steps(bold, k)).toHaveLength(3)
+    // Yellow's last step is fire's deep red (red over green), Cyan's is Meta Blue's hue (blue over green).
+    expect(steps(bold, 2)[2][0]).toBeGreaterThan(steps(bold, 2)[2][1] * 5)
+    expect(steps(bold, 1)[2][2]).toBeGreaterThan(steps(bold, 1)[2][1] * 3)
     const elemental = hexesOf('elemental')
     expect(steps(elemental, 0)).toHaveLength(0)
-    expect(steps(elemental, 1)).toHaveLength(1)
-    expect(steps(elemental, 2)).toHaveLength(0)
+    expect(steps(elemental, 1)).toHaveLength(3)
+    expect(steps(elemental, 2)).toHaveLength(3)
+    // Lime turns greener at each step instead of olive, and Tan's last step is Forest's hue (green and blue over red).
+    const lime = steps(elemental, 1)
+    for (let j = 1; j < 3; j++) expect(lime[j][1] / lime[j][0]).toBeGreaterThan(lime[j - 1][1] / lime[j - 1][0])
+    const tan = steps(elemental, 2)[2]
+    expect(tan[1]).toBeGreaterThan(tan[0])
+    expect(tan[2]).toBeGreaterThan(tan[0])
     expect(steps(hexesOf('atmospheric'), 1)).toHaveLength(3)
   })
 
