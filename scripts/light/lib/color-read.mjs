@@ -2,7 +2,11 @@
 // (black). The reading behind color-shares.mjs and the palette check's mix rule; how the rules were set:
 // scripts/light/README.md, "Color shares".
 
+import { rampFor, rampOklab } from '../../../src/light/color/ramps.ts'
+
 const META_BLUE = '#0064E0'
+// With READ_RAMPS=0 the reading uses the rules below for every color instead of the colors' ramps.
+const USE_RAMPS = process.env.READ_RAMPS !== '0'
 
 export const READ = {
   // Pixels darker than this (Oklab L) are black: none, left out of the shares.
@@ -43,6 +47,9 @@ export const READ = {
   // Atmospheric's greys count fully; grey and other take the plain step. What a pixel doesn't count for is left out,
   // like the black under `visible`: the shares are of the lit, colored part of the picture.
   nearBlack: [0.15, 0.35],
+  // With ramps (src/light/color/ramps.ts, the shades the color stage paints): a pixel reads as the pack color whose
+  // shade at the pixel's lightness is nearest, when it lies within this Oklab distance (a, b) of it.
+  rampNear: 0.04,
 }
 
 export const LIN = Float32Array.from({ length: 256 }, (_, i) => {
@@ -84,12 +91,46 @@ export function rulesFor(pack, order = []) {
   }
   const blue = chromatic.find((c) => c.metaBlue) ?? null
   const cyan = blue ? chromatic.find((c) => !c.metaBlue && signedGap(c.h0, blue.h0) < 0 && signedGap(c.h0, blue.h0) > -60) ?? null : null
-  const byName = (name) => chromatic.find((c) => c.name === name)
+  const ramps = USE_RAMPS && colors.every((c) => rampFor(c.hex))
+  if (ramps) for (const c of colors) c.ramp = rampFor(c.hex)
+  const byName = (name) => (ramps ? colors : chromatic).find((c) => c.name === name)
   const neighbours = order
     .slice(1)
     .map((name, k) => [byName(order[k]), byName(name)])
     .filter(([x, y]) => x && y)
-  return { colors, chromatic, blue, cyan, greys: colors.filter((c) => c.neutral).sort((x, y) => x.L0 - y.L0), neighbours }
+  return { colors, chromatic, blue, cyan, greys: colors.filter((c) => c.neutral).sort((x, y) => x.L0 - y.L0), neighbours, ramps }
+}
+
+// With ramps: the pack color whose shade at lightness L is nearest the pixel (Oklab a, b), and how near.
+function nearestShade(rules, L, a, b) {
+  let best = null
+  let bestGap = Infinity
+  for (const c of rules.colors) {
+    const s = rampOklab(c.ramp, L)
+    const gap = Math.hypot(a - s[1], b - s[2])
+    if (gap < bestGap) {
+      bestGap = gap
+      best = c
+    }
+  }
+  return { best, gap: bestGap }
+}
+
+// With ramps: a blend of two hue neighbours' shades at lightness L (the stage hands over through the hue between them).
+function neighbourSplitRamp(rules, L, a, b) {
+  const C = Math.hypot(a, b)
+  const h = hueOf(a, b)
+  for (const [ca, cb] of rules.neighbours ?? []) {
+    const sa = rampOklab(ca.ramp, L)
+    const sb = rampOklab(cb.ramp, L)
+    const [Ca, Cb] = [Math.hypot(sa[1], sa[2]), Math.hypot(sb[1], sb[2])]
+    const span = signedGap(hueOf(sb[1], sb[2]), hueOf(sa[1], sa[2]))
+    const pos = signedGap(h, hueOf(sa[1], sa[2]))
+    if (pos * span <= 0 || Math.abs(pos) >= Math.abs(span)) continue
+    const u = pos / span
+    if (C >= READ.keep * ((1 - u) * Ca + u * Cb)) return { a: ca.name, b: cb.name, t: u }
+  }
+  return null
 }
 
 /**
@@ -100,6 +141,7 @@ export function rulesFor(pack, order = []) {
  */
 export function neighbourSplit(rules, L, a, b) {
   if (L < READ.visible) return null
+  if (rules.ramps) return neighbourSplitRamp(rules, L, a, b)
   const C = Math.hypot(a, b)
   if (C < Math.min(greyLimit(L), READ.greyDark * L)) return null
   const h = hueOf(a, b)
@@ -127,6 +169,11 @@ const greyLimit = (L) => lerp(READ.grey[0], READ.grey[1], (L - 0.35) / 0.25)
 // What one pixel (Oklab) reads as: a pack color's name, 'grey', 'other' or 'none'.
 export function readAs(rules, L, a, b) {
   if (L < READ.visible) return 'none'
+  if (rules.ramps) {
+    const { best, gap } = nearestShade(rules, L, a, b)
+    if (gap <= READ.rampNear) return best.name
+    return Math.hypot(a, b) < greyLimit(L) ? 'grey' : 'other'
+  }
   const C = Math.hypot(a, b)
   const h = hueOf(a, b)
   let best = null

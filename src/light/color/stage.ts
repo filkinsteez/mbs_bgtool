@@ -11,10 +11,11 @@ import { isRecipeId, type ColorMixSettings, type LensSettings, type RecipeContex
 import { defaultMix, META_BLUE_HEX, mixFromShares, type ColorMix } from './mix'
 import { oklchToLinear } from './oklab'
 import { getPack, isPackId, type ColorPack, type PackId } from './packs'
+import { rampFor, rampSteps } from './ramps'
+import { carriedShares, type CarryWay } from './stageCarry'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
 import { blurGrid, buildFields, COVERAGE_SPLIT, GRID_SHORT, gridSize, lightSlope, lookParts, makeNoise, mulberry32, VISIBLE, type StageField, type StageGrid } from './stageFields'
-import { rampFor, rampSteps } from './ramps'
-import { assignFields, colorFields, coloredByParts, farPairs, guardedParts, KIND_DARK, KIND_TO_NEIGHBOR, lightPartHolds, neighbourPairs, softFields, solveWeights, stageColors, stageDimPaths, STAGE_SHARPNESS, type StageColor } from './stageSolve'
+import { assignFields, colorFields, coloredByParts, farPairs, guardedParts, KIND_DARK, KIND_PLAIN, KIND_TO_NEIGHBOR, lightPartHolds, neighbourPairs, softFields, solveWeights, stageColors, stageDimPaths, STAGE_SHARPNESS, type StageColor } from './stageSolve'
 
 /**
  * The pack every design is drawn in while the color stage is on, so one mood, seed, drag and format give one
@@ -455,7 +456,14 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
     // A look colored by its parts draws the soft blend: each color's share, spread as far as the light changes, then
     // the light as the picture shows it, which its lightness masks key on.
     const wants = colors.map((_, k) => fields[assignment[k]]?.want)
-    const soft = byParts ? softFields(grid, values, colors, solution.weights, STAGE_SHARPNESS, guardedParts(colors, wants), lightPartHolds(colors, wants)) : []
+    void softFields
+    void guardedParts
+    void lightPartHolds
+    void wants
+    const id = input.program.id
+    const sky = isRecipeId(id) ? lookParts(id, input.ctx.params, input.ctx.aspect).find((p) => p.kind === 'horizon') : undefined
+    const way: CarryWay = id === 'contour.merged' ? { kind: 'outline' } : { kind: 'grain', axis: sky && sky.kind === 'horizon' ? sky.sky : null }
+    const soft = byParts ? carriedShares(grid, colors, values, input.ctx.seed, way) : []
     const drawn = byParts
       ? {
           values: [
@@ -467,9 +475,13 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
           weights: colors.map(() => 1),
         }
       : { values, weights: solution.weights }
-    const bridge = byParts ? meetingLines(grid, soft, colors, input.ctx.seed) : new Float32Array(grid.width * grid.height)
-    const darkBridge = byParts ? darkMeetingLines(grid, soft, colors) : new Float32Array(grid.width * grid.height)
-    const lift = byParts ? meetingLift(grid, soft, colors, input.ctx.seed) : new Float32Array(grid.width * grid.height)
+    // Prototype: no meeting lines, no lift and no spill; the hue order keeps far hues apart.
+    void meetingLines
+    void darkMeetingLines
+    void meetingLift
+    const bridge = new Float32Array(grid.width * grid.height)
+    const darkBridge = new Float32Array(grid.width * grid.height)
+    const lift = new Float32Array(grid.width * grid.height)
     solved = remember(solves, solveKey, { colors, assignment, byParts, ...solution, ...drawn, bridge, darkBridge, lift })
   }
   lastReport = { hexes: solved.colors.map((c) => c.hex), light: solved.light, reads: solved.reads, fields: solved.assignment.map((f) => fields[f]?.name ?? '') }
@@ -490,7 +502,9 @@ function stageUniforms({ colors, weights, byParts }: Solved): UniformMap {
   const turn = new Float32Array(20)
   const field = new Float32Array(20)
   colors.slice(0, 5).forEach((c, k) => {
-    color.set([...c.unit, c.kind], 4 * k)
+    // In a look colored by its parts every color takes its share of the area at whatever light is there, so the shader
+    // neither masks nor turns it: it shows the color's ramp at the pixel's light (pale where bright, deep where dim).
+    color.set([...c.unit, byParts ? KIND_PLAIN : c.kind], 4 * k)
     const range = c.kind === KIND_TO_NEIGHBOR ? c.turn : c.fade
     turn.set([c.neighborIndex, c.edge, range[0], range[1]], 4 * k)
     field.set([k, weights[k], c.lightness ** 3, 0], 4 * k)

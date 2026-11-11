@@ -37,13 +37,14 @@ export const RAMPS: Readonly<Record<string, readonly RampPoint[]>> = {
     [0.96, 0.035, 208],
     [0.99, 0, 205],
   ],
-  // Yellow: deep amber, gold, Yellow, butter. At its own hue it would go olive and mustard as it dims.
+  // Yellow: deep amber, dark gold, gold, Yellow, butter. At its own hue it would go olive and mustard as it dims; at
+  // orange hues with the little chroma sRGB has there it goes brown, so the dark end keeps a gold hue near sRGB's edge.
   '#FFD61E': [
-    [0.14, 0.05, 44],
-    [0.32, 0.12, 50],
-    [0.46, 0.15, 60],
-    [0.6, 0.17, 71],
-    [0.75, 0.178, 83],
+    [0.14, 0.06, 60],
+    [0.3, 0.13, 64],
+    [0.44, 0.17, 70],
+    [0.6, 0.19, 78],
+    [0.75, 0.185, 87],
     [0.885, 0.177, 94.4],
     [0.95, 0.1, 98],
     [0.99, 0, 100],
@@ -78,12 +79,12 @@ export const RAMPS: Readonly<Record<string, readonly RampPoint[]>> = {
     [0.95, 0.025, 183],
     [0.99, 0, 185],
   ],
-  // Tan: dark caramel, caramel, Tan, sand, cream. Its dim end leans warmer, with more chroma, so it reads caramel, not
-  // grey-brown mud.
+  // Tan: honey, caramel, Tan, sand, cream. Its dim end keeps a golden hue with more chroma, so it reads honey and
+  // caramel, not grey-brown mud.
   '#B8996E': [
-    [0.14, 0.03, 50],
-    [0.36, 0.075, 54],
-    [0.53, 0.082, 62],
+    [0.14, 0.03, 62],
+    [0.36, 0.08, 66],
+    [0.53, 0.09, 70],
     [0.701, 0.069, 75.3],
     [0.85, 0.045, 80],
     [0.95, 0.02, 84],
@@ -125,9 +126,9 @@ export const RAMPS: Readonly<Record<string, readonly RampPoint[]>> = {
     [0.95, 0.012, 230],
     [0.99, 0, 230],
   ],
-  // Near-black: a teal grey, the greenest of the greys.
+  // Near-black: a teal grey, the greenest of the greys. Under its hex it dims in its own hue, as its light does, so a
+  // dimmed Near-black still reads as Near-black, not Slate.
   '#1C2B33': [
-    [0.12, 0.02, 226],
     [0.279, 0.025, 232.1],
     [0.5, 0.034, 214],
     [0.75, 0.03, 205],
