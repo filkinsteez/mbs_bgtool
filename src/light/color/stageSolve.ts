@@ -1,6 +1,7 @@
+import { dimPaths, type DimPoint } from '../engine/dimPath'
 import { meetApart } from '../engine/meet'
 import { defaultMix, META_BLUE_HEX, mixColors, type ColorMix } from './mix'
-import { linearToOklab } from './oklab'
+import { linearToOklab, oklchToLinear } from './oklab'
 import type { ColorPack } from './packs'
 import { hexToLinear } from './srgb'
 import { blurGrid, mulberry32, VISIBLE, type FieldWant, type StageField, type StageGrid } from './stageFields'
@@ -58,6 +59,13 @@ export interface StageColor {
   clean?: boolean
   /** Whether the color takes its field before the dim fade (StageField.reach), keeping its share down to black. */
   keepsDark?: boolean
+  /**
+   * How its light turns as it dims, through the darker colors that are on (the engine's dimPaths), for the saturated
+   * warm colors that dim like fire in a look colored by its parts: Yellow through orange and Orange-red into deep red,
+   * Orange-red into deep red and maroon. The other colors, and every color in the other looks, keep their own hue down
+   * to black (the path is the color alone), so a thin Cyan line stays Cyan.
+   */
+  path: DimPoint[]
   /** Its share in the pack's default mix, for handing out fields. */
   defaultShare: number
   /** The asked share, of the colors that are on. */
@@ -70,6 +78,19 @@ const toUnit = (c: readonly number[]): [number, number, number] => {
 }
 export const hueGap = (a: number, b: number) => Math.abs(((a - b + 540) % 360) - 180)
 
+/** Oklab chroma over which a warm color dims like fire along its dim path (StageColor.path): Yellow, Orange-red. */
+const DIM_PATH_FIRE = 0.12
+
+/**
+ * A dim path that keeps the color's own hue and chroma down to `from` (Oklab L, for a color that dims into its
+ * neighbor halfway between its edge and where its turn starts), then follows the path: Yellow stays Yellow where it is
+ * bright and turns through orange into Orange-red and fire's reds below.
+ */
+function heldUntilTurn(path: DimPoint[], from: number | undefined): DimPoint[] {
+  if (from === undefined || path.length < 2 || from >= path[0][0] || from <= path[1][0]) return path
+  return [path[0], [from, path[0][1], path[0][2]], ...path.slice(1)]
+}
+
 /**
  * The colors that are on, with how each behaves, in pack order. In a look colored by its parts the color that dims like
  * fire (Yellow) takes its field from before the dim fade, so the color it dims into (Orange-red) keeps its share down
@@ -78,6 +99,7 @@ export const hueGap = (a: number, b: number) => Math.abs(((a - b + 540) % 360) -
 export function stageColors(pack: ColorPack, mix: ColorMix, byParts = false): StageColor[] {
   const defaults = defaultMix(pack).shares
   const on = mixColors(pack, mix)
+  const paths = dimPaths(on.map(({ color }) => color.hex))
   const base = on.map(({ color, share }) => {
     const linear = hexToLinear(color.hex)
     const [L, a, b] = linearToOklab(linear)
@@ -99,9 +121,9 @@ export function stageColors(pack: ColorPack, mix: ColorMix, byParts = false): St
       share,
     }
   })
-  return base.map((c) => {
-    // Yellow dims like fire through a darker warm color within 60 degrees (Orange-red); every other color keeps its
-    // own hue from dim to bright, the way the engine draws a light of it.
+  return base.map((c, index) => {
+    // Yellow dims like fire through a darker warm color within 60 degrees (Orange-red); every color's ramp follows
+    // its dim path (`path`).
     const fire =
       c.brightOnly && c.group === 'warm'
         ? base.filter((o) => o !== c && !o.brightOnly && o.group === 'warm' && o.lightness < c.lightness && hueGap(o.hue, c.hue) <= 60).sort((x, y) => hueGap(x.hue, c.hue) - hueGap(y.hue, c.hue))[0]
@@ -115,6 +137,8 @@ export function stageColors(pack: ColorPack, mix: ColorMix, byParts = false): St
     // where its light falls into that color's own place, over a wide, soft blend; elsewhere it fades as before, so
     // Meta Blue keeps the dim corners (dimEnd, pairedMasks).
     const dim = byParts && kind === KIND_BRIGHT ? dimEnd(c, base) : undefined
+    const edge = kind === KIND_DARK ? c.lightness + (byParts ? DARK_REACH : 0) : kind === KIND_BRIGHT ? c.lightness - 0.1 : c.lightness - (byParts ? 0.12 : 0.16)
+    const turn: [number, number] = kind === KIND_TO_NEIGHBOR ? (byParts ? [0.06, 0.14] : [0.08, 0.12]) : dim ? DIM_TURN : [0, 0]
     return {
       hex: c.hex,
       unit: c.unit,
@@ -123,12 +147,13 @@ export function stageColors(pack: ColorPack, mix: ColorMix, byParts = false): St
       hue: c.hue,
       group: c.group,
       kind,
-      edge: kind === KIND_DARK ? c.lightness + (byParts ? DARK_REACH : 0) : kind === KIND_BRIGHT ? c.lightness - 0.1 : c.lightness - (byParts ? 0.12 : 0.16),
-      turn: kind === KIND_TO_NEIGHBOR ? (byParts ? [0.06, 0.14] : [0.08, 0.12]) : dim ? DIM_TURN : [0, 0],
+      edge,
+      turn,
       fade: kind === KIND_DARK ? [0, 0.1] : kind === KIND_BRIGHT ? [0, 0.2] : [0, 0],
       neighborIndex: fire ? base.indexOf(fire) : dim ? base.indexOf(dim) : -1,
       clean,
       keepsDark: clean || (byParts && Boolean(fire)),
+      path: byParts && c.group === 'warm' && c.hue < 100 && c.chroma > DIM_PATH_FIRE ? heldUntilTurn(paths[index], kind === KIND_TO_NEIGHBOR ? edge + turn[0] / 2 : undefined) : paths[index].slice(0, 1),
       defaultShare: c.defaultShare,
       share: c.share,
     }
@@ -312,7 +337,11 @@ export function assignFields(colors: readonly StageColor[], fields: readonly Sta
  * color takes a dark field as it lies on its lines (StageField.onLine).
  */
 export function colorFields(fields: readonly StageField[], assignment: readonly number[], colors: readonly StageColor[], lightness?: Float32Array): Float32Array[] {
-  const own = (field: StageField, k: number) => (colors[k].keepsDark && field.reach) || (colors[k].kind === KIND_DARK && field.onLine) || field.values
+  const own = (field: StageField, k: number) => {
+    const c = colors[k]
+    if (c.keepsDark && field.reach) return c.kind === KIND_TO_NEIGHBOR && lightness ? reachInTheDim(field.values, field.reach, lightness, c) : field.reach
+    return (c.kind === KIND_DARK && field.onLine) || field.values
+  }
   const out = assignment.map((f, k) => (f >= 0 ? own(fields[f], k) : new Float32Array(fields[0]?.values.length ?? 0)))
   const taken = new Set(assignment)
   const spare = fields.filter((field, i) => field.want === 'dark' && !taken.has(i))
@@ -340,6 +369,15 @@ export function colorFields(fields: readonly StageField[], assignment: readonly 
     }
   })
   return out
+}
+
+/**
+ * A color that dims like fire (Yellow) takes its part's field before the dim fade (`reach`) where its light is under
+ * its edge, where it shows as the color it dims into, down to black; over its edge it takes its part's own field, so
+ * it doesn't cover a neighboring light part (Rush Bold s2: Yellow over the Cyan streak beside its band).
+ */
+function reachInTheDim(values: Float32Array, reach: Float32Array, lightness: Float32Array, c: StageColor): Float32Array {
+  return values.map((v, i) => v + (reach[i] - v) * (1 - smooth(c.edge - c.turn[1], c.edge, lightness[i])))
 }
 
 /**
@@ -384,7 +422,7 @@ const PART_OWNS = [0, 0.15] as const
  * no part asks for, where its lead field is the strongest, keep every weight, so colors still reach their shares there.
  * `at(k)`: color k's field in the cell with its lightness mask, before weights.
  */
-export function partWeightsAt(weights: readonly number[], asked: readonly boolean[], at: (k: number) => number): number[] {
+export function partWeightsAt(weights: readonly number[], asked: readonly boolean[], at: (k: number) => number, farHolds: readonly (readonly boolean[])[] = [], lightness = 0.5): number[] {
   let top = 0
   for (let k = 0; k < weights.length; k++) top = Math.max(top, at(k))
   let held = 0
@@ -397,9 +435,38 @@ export function partWeightsAt(weights: readonly number[], asked: readonly boolea
     holds += hold
     limit += hold * weights[k]
   }
-  if (held <= 0) return [...weights]
-  limit /= holds
-  return weights.map((w, k) => (asked[k] || w <= limit ? w : w * (limit / w) ** (held * smooth(PART_OWNS[0], PART_OWNS[1], top - at(k)))))
+  if (held > 0) limit /= holds
+  const out = weights.map((w, k) => (held <= 0 || asked[k] || w <= limit ? w : w * (limit / w) ** (held * smooth(PART_OWNS[0], PART_OWNS[1], top - at(k)))))
+  farHolds.forEach((row, k) => {
+    if (!row.some(Boolean)) return
+    const hold = (1 - smooth(PART_OWNS[0], PART_OWNS[1], top - at(k))) * smooth(FAR_HOLD_LIGHT[0], FAR_HOLD_LIGHT[1], lightness) * (1 - smooth(FAR_HOLD_LIGHT[2], FAR_HOLD_LIGHT[3], lightness))
+    if (hold <= 0) return
+    row.forEach((far, j) => {
+      if (far && out[j] > weights[k]) out[j] *= (weights[k] / out[j]) ** (hold * smooth(PART_OWNS[0], PART_OWNS[1], top - at(j)))
+    })
+  })
+  return out
+}
+
+/**
+ * The light (cube root) where far hues mix to grey or mauve rather than to white or near black, over which a part
+ * asking for Cyan holds its cells against them (lightPartHolds): in from the first value to the second, out from the
+ * third to the fourth. In brighter light it doesn't, so Sunrise's Yellow glow keeps the bright part of Cyan's sky.
+ */
+const FAR_HOLD_LIGHT = [0.25, 0.4, 0.65, 0.9] as const
+
+/**
+ * For each color whose part asks for a light color near Meta Blue's hue (Cyan, which guardedParts leaves to the plain
+ * weighting), the colors far from it in hue (farPairs: Yellow, Orange-red): in the cells that part holds at mid light
+ * (FAR_HOLD_LIGHT) they weigh no more than its color (partWeightsAt). So a lower weight for Cyan hands its streak to
+ * Meta Blue, not to Yellow, where the two would meet in a grey line (Rush Bold s2). `farHolds[k][j]`: color k's part
+ * holds against j.
+ */
+export function lightPartHolds(colors: readonly StageColor[], wants: readonly (FieldWant | undefined)[]): boolean[][] {
+  const guarded = guardedParts(colors, wants)
+  const far = farPairs(colors.slice(0, 5))
+  const isFar = (a: number, b: number) => a < 5 && b < 5 && ((far >> (Math.min(a, b) * 5 + Math.max(a, b))) & 1) === 1
+  return colors.map((_, k) => colors.map((__, j) => j !== k && asksLight(wants[k]) && !guarded[k] && isFar(k, j)))
 }
 
 export interface StageSolution {
@@ -439,6 +506,7 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
   })
   const capped = colors.map((_, k) => byParts && fields[assignment[k]].want !== 'lead')
   const askedPart = guardedParts(colors, colors.map((_, k) => fields[assignment[k]]?.want))
+  const farHolds = lightPartHolds(colors, colors.map((_, k) => fields[assignment[k]]?.want))
   const most = masks.map((m, k) => m.reduce((a, b, j) => a + b * cover[j] * (capped[k] ? smooth(0.01, 0.06, F[k][visible[j]]) : 1), 0) / n)
   const asked = colors.map((c) => c.share)
   const askedTotal = asked.reduce((a, b) => a + b, 0) || 1
@@ -491,7 +559,7 @@ export function solveWeights(grid: StageGrid, fields: readonly StageField[], col
     }
     visible.forEach((i, j) => {
       let s = 0
-      const wsAt = byParts ? partWeightsAt(ws, askedPart, (k) => F[k][i] * masks[k][j]) : ws
+      const wsAt = byParts ? partWeightsAt(ws, askedPart, (k) => F[k][i] * masks[k][j], farHolds, S[i]) : ws
       for (let k = 0; k < K; k++) {
         p[k] = Math.max(0, wsAt[k] * F[k][i] * masks[k][j]) ** sharpness
         s += p[k]
@@ -578,10 +646,14 @@ const SOFT_LEVELS = [0.5, 1, 2, 4]
  * gradually as the light does, never as a firm outline round a part on even light. In the dim a lit color's blend
  * with navy reads as neither, so there it changes over at most a cell; a dark color is the dim end of a light and
  * comes in over the whole falloff, up to DARK_SOFT_REACH cells, and so does a color that keeps its share down to
- * black (Cyan's glow falling to black). The shader draws these shares as they are,
- * sharpening only where far hues meet at mid lightness.
+ * black (Cyan's glow falling to black). Light adds up: on a steep falloff (STEEP_FALLOFF) near a color that dims like
+ * fire, a light color spreads weighted by the light where it is, so the bright part's color holds its own falloff and
+ * a dim neighbor's color starts where the light is dim (Rush Bold s2's warm band fades through red into the dark
+ * before Meta Blue's navy starts); the light colors share what the dark colors leave in those proportions, and dark
+ * colors spread as they are. The shader draws these shares as they are, sharpening only where far hues meet at mid
+ * lightness.
  */
-export function softFields(grid: StageGrid, values: readonly Float32Array[], colors: readonly StageColor[], weights: readonly number[], sharpness = STAGE_SHARPNESS, asked: readonly boolean[] = []): Float32Array[] {
+export function softFields(grid: StageGrid, values: readonly Float32Array[], colors: readonly StageColor[], weights: readonly number[], sharpness = STAGE_SHARPNESS, asked: readonly boolean[] = [], farHolds: readonly (readonly boolean[])[] = []): Float32Array[] {
   const { width: w, height: h } = grid
   const L = grid.seen ?? grid.lightness
   const n = w * h
@@ -589,7 +661,7 @@ export function softFields(grid: StageGrid, values: readonly Float32Array[], col
   for (let i = 0; i < n; i++) {
     const l = Math.max(L[i], VISIBLE)
     const masks = pairedMasks(colors, values.map((v) => v[i]), l, grid.slope?.[i] ?? 0)
-    const wsAt = partWeightsAt(weights, asked, (k) => values[k][i] * masks[k])
+    const wsAt = partWeightsAt(weights, asked, (k) => values[k][i] * masks[k], farHolds, L[i])
     const x = colors.map((_, k) => Math.max(0, wsAt[k] * values[k][i] * masks[k]))
     // Taken relative to the strongest, so a cell where every field is faint still blends smoothly.
     const top = Math.max(...x)
@@ -614,20 +686,54 @@ export function softFields(grid: StageGrid, values: readonly Float32Array[], col
       darkReach[y * w + x] = Math.min(DARK_SOFT_REACH, Math.max(SOFT_RANGE[0], far))
     }
   const sigmas = [blurGrid(reach, w, h, 2), blurGrid(darkReach, w, h, 2)]
-  return shares.map((share, k) => {
+  const lit = Float32Array.from(L, (l) => l ** 3 + LIGHT_FLOOR)
+  const litBlurred = SOFT_LEVELS.map((s) => blurGrid(lit, w, h, s))
+  const fire = new Float32Array(n)
+  colors.forEach((c, k) => {
+    if (c.keepsDark && c.group === 'warm') for (let i = 0; i < n; i++) fire[i] = Math.max(fire[i], shares[k][i])
+  })
+  const nearFire = blurGrid(fire, w, h, 2)
+  const steep = Float32Array.from(grid.slope ?? new Float32Array(n), (v, i) => smooth(STEEP_FALLOFF[0], STEEP_FALLOFF[1], v) * Math.min(1, 2 * nearFire[i]))
+  const out = shares.map((share, k) => {
     const sigma = sigmas[colors[k].kind === KIND_DARK || colors[k].keepsDark ? 1 : 0]
-    const blurred = SOFT_LEVELS.map((s) => blurGrid(share, w, h, s))
-    const out = new Float32Array(n)
+    const byLight = colors[k].kind !== KIND_DARK
+    const src = byLight ? share.map((v, i) => v * lit[i]) : share
+    const blurred = SOFT_LEVELS.map((s, l) => {
+      if (!byLight) return blurGrid(share, w, h, s)
+      const plain = blurGrid(share, w, h, s)
+      return blurGrid(src, w, h, s).map((v, i) => plain[i] + (v / litBlurred[l][i] - plain[i]) * steep[i])
+    })
+    const soft = new Float32Array(n)
     for (let i = 0; i < n; i++) {
       const s = Math.min(SOFT_LEVELS[SOFT_LEVELS.length - 1], Math.max(SOFT_LEVELS[0], sigma[i]))
       let l = 0
       while (l < SOFT_LEVELS.length - 2 && SOFT_LEVELS[l + 1] < s) l++
       const t = Math.log(s / SOFT_LEVELS[l]) / Math.log(SOFT_LEVELS[l + 1] / SOFT_LEVELS[l])
-      out[i] = blurred[l][i] * (1 - t) + blurred[l + 1][i] * t
+      soft[i] = blurred[l][i] * (1 - t) + blurred[l + 1][i] * t
     }
-    return out
+    return soft
   })
+  for (let i = 0; i < n; i++) {
+    let dark = 0
+    let light = 0
+    out.forEach((o, k) => (colors[k].kind === KIND_DARK ? (dark += o[i]) : (light += o[i])))
+    if (light <= 1e-9) continue
+    const scale = Math.max(0, 1 - dark) / light
+    out.forEach((o, k) => {
+      if (colors[k].kind !== KIND_DARK) o[i] *= scale
+    })
+  }
+  return out
 }
+
+/** Luminance added to every cell's light when light colors spread by the light (softFields), so the dark spreads evenly. */
+const LIGHT_FLOOR = 1e-3
+
+/**
+ * The light's change per grid cell (grid.slope) over which light colors go from spreading as they are to spreading by
+ * the light (softFields): a band's steep edge, not a halo's soft falloff.
+ */
+const STEEP_FALLOFF = [0.08, 0.15] as const
 
 /** A pack color's dim path for the engine's glow: the color, then the darker colors it turns into as its light dims. */
 export interface StageDimPath {
@@ -641,22 +747,24 @@ export interface StageDimPath {
 }
 
 /**
- * Each color's dim path for the engine's glow, from the turns the stage draws, so a glow fades through the same colors
- * as the light it comes from: Yellow into Orange-red (its fire turn), Lime into Forest (its dim end), and a near-neutral
- * light color into the pack's lightest near-neutral darker color (Ice into Steel), which the stage itself leaves to
- * Meta Blue's light. A step has taken over at the level where its turn ends, the turn's lightness against the color's
- * own (as luminance). Colors that keep their hue down to black (Meta Blue, Cyan, Orange-red, Tan, the dark colors)
- * have no steps.
+ * Each color's dim path for the engine's glow, the same path the stage's ramps follow (StageColor.path), so a glow
+ * fades through the same colors as the light it comes from. A step has taken over at its own luminance against the
+ * color's.
  */
 export function stageDimPaths(colors: readonly StageColor[]): StageDimPath[] {
-  const level = (c: StageColor, lightness: number) => Math.min(1, Math.max(0, lightness / c.lightness)) ** 3
+  const luma = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
   return colors.map((c) => {
     const color = hexToLinear(c.hex)
-    if (c.neighborIndex >= 0 && (c.kind === KIND_TO_NEIGHBOR || c.kind === KIND_BRIGHT))
-      return { color, steps: [{ color: hexToLinear(colors[c.neighborIndex].hex), below: level(c, c.edge - c.turn[1]) }] }
+    const own = Math.max(luma(color), 1e-9)
+    if (c.path.length > 1) return { color, steps: c.path.slice(1).map((p) => ({ color: oklchToLinear(p).map((v) => Math.max(v, 0)), below: Math.min(1, luma(oklchToLinear(p)) / own) })) }
+    // The other colors' glow turns where the stage turns them: Yellow into Orange-red (its fire turn, in a look not
+    // colored by its parts), Lime into Forest (its dim end), and a near-neutral light color into the pack's lightest
+    // near-neutral darker color (Ice into Steel), which the stage leaves to Meta Blue.
+    const level = (lightness: number) => Math.min(1, Math.max(0, lightness / c.lightness)) ** 3
+    if (c.neighborIndex >= 0 && (c.kind === KIND_TO_NEIGHBOR || c.kind === KIND_BRIGHT)) return { color, steps: [{ color: hexToLinear(colors[c.neighborIndex].hex), below: level(c.edge - c.turn[1]) }] }
     if (c.kind === KIND_BRIGHT && c.chroma < 0.02) {
       const darker = colors.filter((o) => o !== c && o.chroma < DIM_NEUTRAL && o.lightness < c.lightness).sort((a, b) => b.lightness - a.lightness)[0]
-      if (darker) return { color, steps: [{ color: hexToLinear(darker.hex), below: level(c, c.edge - c.fade[1]) }] }
+      if (darker) return { color, steps: [{ color: hexToLinear(darker.hex), below: level(c.edge - c.fade[1]) }] }
     }
     return { color, steps: [] }
   })

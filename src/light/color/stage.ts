@@ -1,3 +1,4 @@
+import { dimPathColor, type DimPoint } from '../engine/dimPath'
 import type { Gpu, Target } from '../engine/gl'
 import { glowDimUniforms, lensSpread, levelSigma } from '../engine/lens'
 import { MEET_BRIDGE_MOST, MEET_BRIDGE_PRESENT, MEET_BRIDGE_TO } from '../engine/meet'
@@ -8,10 +9,11 @@ import { buildRecipeShader } from '../engine/recipeShader'
 import { lightnessOnlyParams } from '../recipes/sunset/merged'
 import { isRecipeId, type ColorMixSettings, type LensSettings, type RecipeContext, type RecipeId, type RecipeProgram, type Scene, type UniformMap } from '../scene'
 import { defaultMix, META_BLUE_HEX, mixFromShares, type ColorMix } from './mix'
+import { oklchToLinear } from './oklab'
 import { getPack, isPackId, type ColorPack, type PackId } from './packs'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
 import { blurGrid, buildFields, COVERAGE_SPLIT, GRID_SHORT, gridSize, lightSlope, lookParts, makeNoise, mulberry32, VISIBLE, type StageField, type StageGrid } from './stageFields'
-import { assignFields, colorFields, coloredByParts, farPairs, guardedParts, KIND_DARK, KIND_TO_NEIGHBOR, softFields, solveWeights, stageColors, stageDimPaths, STAGE_SHARPNESS, type StageColor } from './stageSolve'
+import { assignFields, colorFields, coloredByParts, farPairs, guardedParts, KIND_DARK, KIND_TO_NEIGHBOR, lightPartHolds, softFields, solveWeights, stageColors, stageDimPaths, STAGE_SHARPNESS, type StageColor } from './stageSolve'
 
 /**
  * The pack every design is drawn in while the color stage is on, so one mood, seed, drag and format give one
@@ -449,7 +451,8 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
     const solution = solveWeights(grid, own, colors, colors.map((_, k) => k), STAGE_SHARPNESS, byParts)
     // A look colored by its parts draws the soft blend: each color's share, spread as far as the light changes, then
     // the light as the picture shows it, which its lightness masks key on.
-    const soft = byParts ? softFields(grid, values, colors, solution.weights, STAGE_SHARPNESS, guardedParts(colors, colors.map((_, k) => fields[assignment[k]]?.want))) : []
+    const wants = colors.map((_, k) => fields[assignment[k]]?.want)
+    const soft = byParts ? softFields(grid, values, colors, solution.weights, STAGE_SHARPNESS, guardedParts(colors, wants), lightPartHolds(colors, wants)) : []
     const drawn = byParts
       ? {
           values: [
@@ -508,9 +511,11 @@ export const RAMP_STEPS = 32
 /**
  * How the engine draws a light of the color `unit` from dim to bright: for each step's luminance (cube-root spaced from
  * 0 to 1), the color the tone curve shows for that light at that luminance, scaled to luminance 1. Meta Blue runs
- * navy, Meta Blue, a lighter blue, white; the last step is white.
+ * navy, Meta Blue, a lighter blue, white; the last step is white. Under the color's own luminance it follows its dim
+ * path (`path`, the engine's dimPaths, for the colors that dim like fire), so Yellow turns orange and red as it dims
+ * instead of mustard.
  */
-export function colorRamp(unit: readonly number[]): Float32Array {
+export function colorRamp(unit: readonly number[], path: readonly DimPoint[] = []): Float32Array {
   const luma = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
   const shown: { y: number; rgb: [number, number, number] }[] = []
   for (let s = 0; s <= 160; s++) {
@@ -532,6 +537,16 @@ export function colorRamp(unit: readonly number[]): Float32Array {
     const l = Math.max(luma(rgb), 1e-9)
     out.set(rgb.map((v) => v / l), 3 * j)
   }
+  if (path.length > 1) {
+    const own = luma(oklchToLinear(path[0]))
+    for (let j = 0; j < RAMP_STEPS; j++) {
+      const y = (j / (RAMP_STEPS - 1)) ** 3
+      if (y >= own) break
+      const rgb = dimPathColor(path, y / own)
+      const l = Math.max(luma(rgb), 1e-9)
+      out.set(rgb.map((v) => v / l), 3 * j)
+    }
+  }
   return out
 }
 
@@ -546,7 +561,7 @@ function rampTexture(gpu: Gpu, colors: readonly StageColor[], grid: StageGrid, b
   const height = 5 + grid.height
   const data = new Float32Array(width * height * 4)
   colors.slice(0, 5).forEach((c, k) => {
-    const ramp = colorRamp(c.unit)
+    const ramp = colorRamp(c.unit, c.path)
     for (let j = 0; j < RAMP_STEPS; j++) data.set([ramp[3 * j], ramp[3 * j + 1], ramp[3 * j + 2], 1], 4 * (k * width + j))
   })
   for (let y = 0; y < grid.height; y++)

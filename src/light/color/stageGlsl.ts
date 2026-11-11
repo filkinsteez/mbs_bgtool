@@ -105,7 +105,8 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
   // lifted middle would still read grey, each color dims toward its own dark shade and they meet near black
   // (meetDarkLight), so there is no dark line where the picture is lit. A light color meeting a dark color far from it
   // in hue (the second line) only ever takes the dark half. A bright meeting's light rises at least to the lighter
-  // color's (the third line), without whitening the colors further.
+  // color's (the third line), without whitening the colors further. With the soft blend the rise and the whitening
+  // follow the pixel's own split between far hues (below), never a band's body.
   vec3 lines = mixBridgeAt(uv);
   float line = lines.x;
   float lit = meetBridgeLit(yE);
@@ -199,6 +200,20 @@ vec3 colorStage(vec2 uv, vec3 radiance) {
       t += p[k];
     }
     s = max(t, 1e-30);
+    // The meeting's own line: the light rises and whitens only where two far hues share the pixel (4 pi pj), most
+    // where they split it evenly, so a band keeps its own color and the design's light up to the meeting.
+    float split = 0.0;
+    for (int i = 0; i < 5; i++) {
+      for (int j = 0; j < 5; j++) {
+        if (j <= i || j >= uMixCount) continue;
+        if (((uMixFar >> (i * 5 + j)) & 1) == 0) continue;
+        split += 4.0 * p[i] * p[j] / (s * s);
+      }
+    }
+    float seam = min(split, 1.0);
+    bridge *= seam;
+    rise *= seam;
+    onLine = smoothstep(0.0, 1.0, bridge);
   }
   // Each side keeps its own color up to the meeting line (shares squared); with the soft blend (uMixSoft) the
   // shares already say how gradually one color changes into the next, and are drawn as they are.

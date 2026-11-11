@@ -10,7 +10,7 @@ import { COLOR_DESIGN_PACK, colorRamp, darkMeetingLines, meetingLift, meetingLin
 import { buildFields, gridSize, lookParts, type StageField, type StageGrid, type StagePart } from './stageFields'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
 import { hexToLinear } from './srgb'
-import { assignFields, colorFields, colorMask, guardedParts, KIND_BRIGHT, KIND_DARK, KIND_PLAIN, KIND_TO_NEIGHBOR, pairedMasks, partWeightsAt, solveWeights, stageColors, stageDimPaths, type StageDimPath } from './stageSolve'
+import { assignFields, colorFields, colorMask, guardedParts, KIND_BRIGHT, KIND_DARK, KIND_PLAIN, KIND_TO_NEIGHBOR, pairedMasks, partWeightsAt, solveWeights, stageColors, stageDimPaths } from './stageSolve'
 
 const CONTROLS = { intensity: 0.5, softness: 0.5, mood: 0.5 }
 
@@ -437,27 +437,52 @@ describe('color stage', () => {
     for (const mode of ['source', 'aux'] as const) expect(buildRecipeShader(withAux, mode, COLOR_STAGE_GLSL)).toBe(buildRecipeShader(withAux, mode))
   })
 
-  it('gives the glow the dim path of each color from the turns the stage draws', () => {
+  it('dims the colors that dim like fire along the engine dim path, in the ramps and the glow', () => {
     const paths = (packId: 'bold' | 'elemental' | 'atmospheric') => {
       const pack = getPack(packId)
       const colors = stageColors(pack, defaultMix(pack), true)
       return Object.fromEntries(stageDimPaths(colors).map((path, k) => [colors[k].hex, path]))
     }
-    const steps = (path: StageDimPath) => path.steps.map((s) => ({ color: s.color.map((v) => v.toFixed(4)).join(','), below: s.below }))
-    const linear = (hex: string) => hexToLinear(hex).map((v) => v.toFixed(4)).join(',')
+    const near = (a: readonly number[], hex: string) => a.forEach((v, i) => expect(v).toBeCloseTo(hexToLinear(hex)[i], 3))
     const bold = paths('bold')
-    expect(steps(bold['#FFD61E']).map((s) => s.color)).toEqual([linear('#FF4F00')])
-    for (const hex of ['#0064E0', '#1FCDF0', '#FF4F00']) expect(bold[hex].steps).toEqual([])
+    // Yellow keeps its hue down to its turn, then goes through Orange-red into fire's deep red and maroon; Orange-red
+    // into fire's end.
+    expect(bold['#FFD61E'].steps).toHaveLength(4)
+    const held = bold['#FFD61E'].steps[0].color
+    expect(held[0] / held[1]).toBeGreaterThan(1.3)
+    expect(held[0] / held[1]).toBeLessThan(1.8)
+    expect(held[2] / held[1]).toBeLessThan(0.05)
+    near(bold['#FFD61E'].steps[1].color, '#FF4F00')
+    expect(bold['#FF4F00'].steps).toHaveLength(2)
+    for (const hex of ['#0064E0', '#1FCDF0']) expect(bold[hex].steps).toEqual([])
     const elemental = paths('elemental')
-    expect(steps(elemental['#D6F26C']).map((s) => s.color)).toEqual([linear('#0F3D33')])
+    // The glow turns Lime into Forest where the stage turns it (its dim end); the others keep their hue.
+    expect(elemental['#D6F26C'].steps).toHaveLength(1)
+    near(elemental['#D6F26C'].steps[0].color, '#0F3D33')
     for (const hex of ['#0064E0', '#0F3D33', '#B8996E', '#4A0A3C']) expect(elemental[hex].steps).toEqual([])
     const atmospheric = paths('atmospheric')
-    expect(steps(atmospheric['#F2F4F7']).map((s) => s.color)).toEqual([linear('#6A7788')])
+    expect(atmospheric['#F2F4F7'].steps).toHaveLength(1)
+    near(atmospheric['#F2F4F7'].steps[0].color, '#6A7788')
     for (const hex of ['#0064E0', '#6A7788', '#384753', '#1C2B33']) expect(atmospheric[hex].steps).toEqual([])
-    for (const path of [bold['#FFD61E'], elemental['#D6F26C'], atmospheric['#F2F4F7']]) {
-      expect(path.steps[0].below).toBeGreaterThan(0.1)
-      expect(path.steps[0].below).toBeLessThan(0.6)
+    for (const path of [bold['#FFD61E'], bold['#FF4F00'], elemental['#D6F26C'], atmospheric['#F2F4F7']]) {
+      const below = path.steps.map((s) => s.below)
+      below.forEach((b, i) => {
+        expect(b).toBeGreaterThan(0)
+        expect(b).toBeLessThan(i === 0 ? 1 : below[i - 1])
+      })
     }
     expect(bold['#FFD61E'].color).toEqual(hexToLinear('#FFD61E'))
+    // The ramp: Yellow turns orange and red under its own luminance, Cyan keeps its hue.
+    const colors = stageColors(getPack('bold'), defaultMix(getPack('bold')), true)
+    const ramp = (hex: string) => {
+      const c = colors.find((o) => o.hex === hex)!
+      return colorRamp(c.unit, c.path)
+    }
+    const yellow = ramp('#FFD61E')
+    const redOverGreen = (j: number) => yellow[3 * j] / yellow[3 * j + 1]
+    expect(redOverGreen(20)).toBeGreaterThan(redOverGreen(28) * 1.5)
+    expect(redOverGreen(12)).toBeGreaterThan(redOverGreen(20))
+    const cyan = ramp('#1FCDF0')
+    expect(cyan[3 * 12 + 2] / cyan[3 * 12 + 1]).toBeCloseTo(cyan[3 * 24 + 2] / cyan[3 * 24 + 1], 5)
   })
 })
