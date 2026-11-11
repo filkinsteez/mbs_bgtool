@@ -671,10 +671,12 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const gain = geo(controls.intensity, 0.35, 1, 2.8)
   const blur = def.blur ?? 1
   const soften = geo(controls.softness, 0.3, 1, 1.7) * blur
-  const power = lerp(2.4, 3.2, design.powerDraw)
-  // How far the light along the edge falls by the far end of the visible stretch: 4 to 16 times, so the far stretch
-  // still carries a dimmer light (a wash's whole edge is lit).
-  const factor = def.wash ? 2 : lerp(4, 16, design.reachDraw)
+  // Per seed, how the light falls along its edge, so seeds that share a shape differ in where their light is, not only
+  // in color: its falloff's power, and how many times dimmer it is by the far end of the visible stretch, 2.5 to 16
+  // times, so the far stretch still carries a dimmer light and no dim stretch opens before the second light (a wash's
+  // whole edge is lit).
+  const power = lerp(1.8, 3.4, design.powerDraw)
+  const factor = def.wash ? 2 : lerp(2.5, 16, design.reachDraw)
   const reach = flatRadius(run, home, factor, power)
   const hazeScale = lerp(0.7, 1.5, design.hazeDraw)
   const dragReach = dragged ? Math.hypot(dragged.lineLength, 0.12) : 0
