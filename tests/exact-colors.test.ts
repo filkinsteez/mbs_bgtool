@@ -37,8 +37,8 @@ describe('exact pack colors', () => {
     const cyan = lin('#1FCDF0')
     const yb = 0.2126 * blue[0] + 0.7152 * blue[1] + 0.0722 * blue[2]
     const yc = 0.2126 * cyan[0] + 0.7152 * cyan[1] + 0.0722 * cyan[2]
-    // Lighter than Cyan's own lightness, where neither color's own line reaches the blend's hue.
-    const half = blue.map((v, i) => (0.5 * v) / yb + (0.5 * cyan[i]) / yc).map((v) => v * 0.75)
+    // About Cyan's own lightness, where neither color's own line reaches the blend's hue.
+    const half = blue.map((v, i) => (0.5 * v) / yb + (0.5 * cyan[i]) / yc).map((v) => v * 0.45)
     expect(read(half)).toMatchObject({ kind: 'blend', i: 0, j: 1 })
     expect(rules.far).toContainEqual([0, 3])
     const red = lin('#FF4F00')
@@ -50,6 +50,28 @@ describe('exact pack colors', () => {
     const blue = lin('#0064E0')
     const pale = blue.map((v) => 0.25 * v + 0.75 * 0.9)
     expect(read(pale)).toMatchObject({ kind: 'pale', k: 0 })
+  })
+
+  it("reads Atmospheric's light greys as its colors, not as another color's pale", () => {
+    const atmospheric = {
+      colors: [
+        { name: 'Meta Blue', hex: '#0064E0' },
+        { name: 'Ice', hex: '#F2F4F7' },
+        { name: 'Steel', hex: '#6A7788' },
+        { name: 'Slate', hex: '#384753' },
+        { name: 'Near-black', hex: '#1C2B33' },
+      ],
+    }
+    const greys = exactRules(atmospheric, dimPaths(atmospheric.colors.map((c) => c.hex)), apart)
+    for (const hex of ['#D9DDE2', '#C4C9D0', '#B0B6BE', '#8A939E']) {
+      const [L, a, b] = oklab(lin(hex) as [number, number, number])
+      expect(['exact', 'blend'], hex).toContain(readPixel(greys, L, a, b).kind)
+    }
+    // A pale blue reads as Ice or as Meta Blue and Ice mixing as light (near in hue); in Bold, without Ice, it is pale
+    // Meta Blue.
+    const [L, a, b] = oklab(lin('#D5E2FA') as [number, number, number])
+    expect(['exact', 'blend']).toContain(readPixel(greys, L, a, b).kind)
+    expect(readPixel(rules, L, a, b)).toMatchObject({ kind: 'pale', k: 0 })
   })
 
   it('tells a thin line between far-apart colors from a wide off-pack area', () => {

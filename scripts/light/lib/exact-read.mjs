@@ -5,8 +5,10 @@
 // between the straight line to white and the hex's own (the tone curve holds chroma longer than the straight line),
 // up to EXACT.ramp of the way to white. Further up it reads as that color, pale. A soft blend of two pack colors near
 // in hue (their far-apartness by the meeting rule under EXACT.nearApart) counts for both, split by how much light each
-// brings, as the owner lets near hues mix as light. The rest is off-pack: thin meeting lines between two far-apart
-// colors, other thin off-pack areas, and wide off-pack areas.
+// brings, as the owner lets near hues mix as light, up to EXACT.ramp of the way from the lighter of the two to white.
+// A pixel on a color's own line counts as that color first, then as a blend, and only then as another color's pale
+// (Atmospheric's light greys lie on Ice's dim path and on Steel's way to white). The rest is off-pack: thin meeting
+// lines between two far-apart colors, other thin off-pack areas, and wide off-pack areas.
 import { LIN, oklab } from './color-read.mjs'
 
 export const EXACT = {
@@ -51,7 +53,8 @@ export function exactRules(pack, paths, apart) {
         const [L, a, b] = oklab(colors[i].unit.map((v, q) => t * v + (1 - t) * colors[j].unit[q]))
         steps.push([t, a / L, b / L])
       }
-      near.push({ i, j, steps })
+      const lighter = Math.max(colors[i].path[0][0], colors[j].path[0][0])
+      near.push({ i, j, steps, top: lighter + (1 - lighter) * EXACT.ramp })
     }
   return { colors, near, far }
 }
@@ -91,22 +94,28 @@ export function readPixel(rules, L, a, b) {
   if (L < EXACT.black) return { kind: 'black' }
   let best = -1
   let bestD = EXACT.near
-  let pale = false
+  let pale = -1
+  let paleD = EXACT.near
   for (let k = 0; k < rules.colors.length; k++) {
     if (L <= rules.colors[k].stopL) continue
     const e = expected(rules.colors[k].path, L, a, b)
     if (!e) continue
     const d = Math.hypot(a - e[0], b - e[1])
-    if (d <= bestD) {
+    if (e[2]) {
+      if (d <= paleD) {
+        pale = k
+        paleD = d
+      }
+    } else if (d <= bestD) {
       best = k
       bestD = d
-      pale = e[2]
     }
   }
-  if (best >= 0) return { kind: pale ? 'pale' : 'exact', k: best }
+  if (best >= 0) return { kind: 'exact', k: best }
   let blend = null
   bestD = EXACT.near
-  for (const p of rules.near)
+  for (const p of rules.near) {
+    if (L > p.top) continue
     for (const [t, ax, bx] of p.steps) {
       const d = Math.hypot(a - L * ax, b - L * bx)
       if (d <= bestD) {
@@ -114,7 +123,9 @@ export function readPixel(rules, L, a, b) {
         blend = { kind: 'blend', i: p.i, j: p.j, t }
       }
     }
-  return blend ?? { kind: 'other' }
+  }
+  if (blend) return blend
+  return pale >= 0 ? { kind: 'pale', k: pale } : { kind: 'other' }
 }
 
 function integral(mask, w, h) {
