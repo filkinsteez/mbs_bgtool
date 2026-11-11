@@ -581,11 +581,13 @@ const STRETCH_FAR = 0.2
 const RING_FAR = 0.45
 const RING_REACH = 0.8
 const RING_PART_WIDTH = 0.16
+/** A ring's face light against its haze's share of the main light's. */
+const RING_FACE = 2.5
 /** How far a ring's stretch keeps from the main light's edge (short sides): nearer, its halo met the main light's. */
 const RING_CLEAR = 0.4
 /** How far a ring's stretch keeps from the main light's edge (short sides) to be warm: its halo and the main light's
  * haze then stay apart. */
-const WARM_RING_CLEAR = 0.7
+const WARM_RING_CLEAR = 0.45
 /** A ring's core line against the main light's. */
 const RING_CORE = 1.6
 /** Another edge's own light: its half length (this share of its visible length, within these bounds), how far its
@@ -1023,7 +1025,9 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
       // A wash's glow takes the key's color at the same luminance (in its own color it read green, teal or mauve), and
       // the color stage colors it from its warm part.
       secondFar: def.wash ? 0.8 : ringLight ? RING_FAR : STRETCH_FAR,
-      ...(ringLight ? { secondReach: RING_REACH } : {}),
+      // A ring's face light, a faint wash of its own color inside it (the moodboard's ring interiors), stronger than its
+      // haze; never a fill.
+      ...(ringLight ? { secondReach: RING_REACH, secondFace: RING_FACE } : {}),
       secondPale: def.wash ? 1 : 0,
     })
   }
@@ -1270,6 +1274,9 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     tipFade: round4(TIP_FADE * soften),
     keySlot: slotOf(plan.key),
     restBlend: d2 === undefined ? 1 : round4(smooth01(0, BETWEEN, d2 - d1)),
+    // A warm second light's light meets the others' by the engine's meeting rule (lighter where lit, through its own
+    // dark shades where dim), so warm light never adds to Meta Blue's into maroon, purple or mauve.
+    meetUnit: edgeWarm ? Number(secondParams.secondUnit) : 0,
     ...unitParams,
     ...secondParams,
     ...thirdParams,

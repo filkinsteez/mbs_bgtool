@@ -662,6 +662,38 @@ vec3 curveLight(vec2 p, vec3 b0, vec3 b1, vec3 b2, vec3 b3, bool perEmitter) {
   return color;
 }
 
+// curveLight with the first three emitters' light kept apart (e0, e1, e2), so a look can join them by a meeting rule;
+// the return value is the rest (the base, any further emitter and the off-frame glows).
+vec3 curveLightEach(vec2 p, vec3 b0, vec3 b1, vec3 b2, vec3 b3, bool perEmitter, out vec3 e0, out vec3 e1, out vec3 e2) {
+  vec2 q0 = p - clAnchor(0);
+  float light1 = clLightField(0, q0);
+  float light2 = clLightField(1, q0);
+  vec3 color = uClBase;
+  e0 = vec3(0.0);
+  e1 = vec3(0.0);
+  e2 = vec3(0.0);
+  for (int e = 0; e < CL_E; e++) {
+    if (uClEmit[e * ${EMIT_VEC4}].z < 0.5) continue;
+    vec2 q = p - clAnchor(e);
+    float sd = clEmitterMask(e, q);
+    vec3 lit = clNear(e, q, light1, light2, sd) + clFar(e, light1, light2, sd, b0, b1, b2, b3, perEmitter);
+    vec3 drifted = clDrift(lit, uClEmit[e * ${EMIT_VEC4} + 2].rgb, uClEmit[e * ${EMIT_VEC4} + 3], uClEmit[e * ${EMIT_VEC4} + 4].x);
+    if (e == 0) e0 = drifted;
+    else if (e == 1) e1 = drifted;
+    else if (e == 2) e2 = drifted;
+    else color += drifted;
+  }
+  for (int g = 0; g < CL_AIR; g++) {
+    vec4 b = uClAir[g * 4 + 1];
+    if (b.w <= 0.0) continue;
+    vec4 a = uClAir[g * 4];
+    vec4 d = uClAir[g * 4 + 3];
+    float glow = pow(clAirGlow(p, (a.xy - 0.5) * uFrameAspect, (a.zw - 0.5) * uFrameAspect, d.x), d.z);
+    color += clDrift(b.rgb * (b.w * glow), b.rgb, uClAir[g * 4 + 2], d.y);
+  }
+  return color;
+}
+
 // The scatter source: each emitter's thin line, in color, or one channel per emitter.
 vec3 clAux(vec2 p, bool perEmitter) {
   float sigma = max(0.7 * uPixel, 2e-4);

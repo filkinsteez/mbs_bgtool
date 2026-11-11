@@ -1,6 +1,7 @@
 import { linearToOklab } from '../../color/oklab'
 import type { ColorPack } from '../../color/packs'
 import { hexToLinear } from '../../color/srgb'
+import { MEET_GLSL } from '../../engine/meet'
 import type { ParamSpec, RecipeContext, RecipeDefinition } from '../../scene'
 import { frameSize, paleBridge } from './curveCompose'
 import {
@@ -51,6 +52,7 @@ const ownLightParams = ({ name, label, gap }: (typeof OWN_LIGHTS)[number]): Para
   { kind: 'number', key: `${name}Pale`, label: `${label} haze and face in the key color (share)`, min: 0, max: 1, step: 0.01, default: 0 },
   { kind: 'number', key: `${name}Reach`, label: `${label} haze and face reach (times the main ones)`, min: 0.1, max: 2, step: 0.01, default: 0.5 },
   { kind: 'number', key: `${name}FaceSide`, label: `${label} face side (-1 as the main one, 1 inside, 2 outside)`, min: -1, max: 2, step: 1, default: -1 },
+  { kind: 'number', key: `${name}Face`, label: `${label} face light (times its haze's share)`, min: 0, max: 8, step: 0.01, default: 1 },
   { kind: 'number', key: `${gap}At`, label: `The other lights go dark here along the ${label.toLowerCase()}'s edge (-1 nowhere)`, min: -1, max: 1, step: 0.0001, default: -1 },
   { kind: 'number', key: `${gap}Contour`, label: `Contour of the ${label.toLowerCase()}'s gap`, min: 0, max: 16, step: 1, default: 0 },
   { kind: 'number', key: `${gap}Dark`, label: `${label} gap dark half length`, min: 0, max: 2, step: 0.0001, default: 0.05 },
@@ -115,6 +117,7 @@ const params: ParamSpec[] = [
   { kind: 'number', key: 'rayLevel', label: 'Rays level', min: 0, max: 8, step: 0.001, default: 0.9 },
   { kind: 'number', key: 'rayReach', label: 'Rays reach (short sides)', min: 0.05, max: 3, step: 0.001, default: 0.5 },
   { kind: 'number', key: 'rayUnit', label: 'Rays take this unit color', min: 1, max: UNITS, step: 1, default: 1 },
+  { kind: 'number', key: 'meetUnit', label: 'Unit whose light meets the others by the meeting rule (a warm light; 0 none)', min: 0, max: UNITS, step: 1, default: 0 },
   ...OWN_LIGHTS.flatMap(ownLightParams),
   { kind: 'vector', key: 'faceDir', label: 'Into the face at the light', min: -1, max: 1, step: 0.0001, default: [0, 1] },
   { kind: 'vector', key: 'partLead', label: 'Color stage: main light with the face near it (place, radius)', min: -9, max: 9, step: 0.0001, default: [-9, -9, -9, -9] },
@@ -280,7 +283,7 @@ export function mergedEmitters(ctx: RecipeContext): EmitterSettings[] {
         // The second light's haze and face may take the key's color at the same luminance, so its own color stays on
         // its stretch of the edge and never mixes over the key's face.
         const faceSide = n === 3 && own('FaceSide') >= 0 ? { side: own('FaceSide') } : {}
-        const f = second ? { ...read, ...faceSide, weight: read.weight * own('Far'), sigma: read.sigma * own('Reach'), pale: own('Pale') * farPale[n - 1] } : read
+        const f = second ? { ...read, ...faceSide, weight: read.weight * own('Far') * (n === 3 ? own('Face') : 1), sigma: read.sigma * own('Reach'), pale: own('Pale') * farPale[n - 1] } : read
         return accent ? { ...f, pale: farPale[n - 1] } : f
       }),
       maskShift: [0, 0],
@@ -312,6 +315,7 @@ export const contourMerged: RecipeDefinition = {
   params,
   fragment: /* glsl */ `
 ${curveLightGlsl(MERGED_LAYOUT)}
+${MEET_GLSL}
 uniform vec3 uGroundNear;
 uniform vec3 uGroundFar;
 uniform vec4 uGroundDir;
@@ -320,6 +324,41 @@ uniform vec4 uRayShape;
 uniform vec3 uRayColor;
 uniform float uRayUnit;
 uniform float uRayReach;
+uniform float uMeetUnit;
+float cmLum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+// Where a warm unit's light meets the others' (Meta Blue's), by the engine's meeting rule as Rush uses it: along the
+// line where the two are equal the light rises where it is lit, and where it is dim the two keep their own colors and
+// dim through their own dark shades toward black, instead of adding up to a mixed hue (maroon, purple, mauve).
+vec3 contourMeet(vec3 e0, vec3 e1, vec3 e2) {
+  if (uMeetUnit < -0.5) return e0 + e1 + e2;
+  int w = int(uMeetUnit + 0.5);
+  vec3 warm = w == 0 ? e0 : (w == 1 ? e1 : e2);
+  vec3 other = e0 + e1 + e2 - warm;
+  float lw = cmLum(warm);
+  float lo = cmLum(other);
+  if (lw <= 1e-7 || lo <= 1e-7) return warm + other;
+  float total = lw + lo;
+  float shown = total < 0.5 ? total : 0.5 + 0.4 * (1.0 - exp(-(total - 0.5) / 0.4));
+  vec3 groups[5];
+  float levels[5];
+  for (int k = 0; k < 5; k++) {
+    groups[k] = vec3(1.0);
+    levels[k] = 0.0;
+  }
+  groups[0] = other / lo;
+  groups[1] = warm / lw;
+  levels[0] = lo;
+  levels[1] = lw;
+  float meetHere = meetBridgeShares(lo / total, lw / total) * meetApart(groups[0], groups[1]);
+  float litHere = meetBridgeLit(shown);
+  float metShown = meetDarkLight(meetBridgeLight(shown, meetHere * litHere), 0.6 * meetHere * (1.0 - litHere));
+  // Lit, the soft hand-over through a light middle; dim, the two lights' own sum, darkened along the meeting line by
+  // the dip above (the dim half's sharp hand-over drew a hard rim round the warm light's glow).
+  vec3 litHue = meetColors5(groups, levels, 2, 3.0);
+  vec3 dimHue = (warm + other) / total;
+  vec3 hue = mix(dimHue / max(cmLum(dimHue), 1e-5), litHue / max(cmLum(litHue), 1e-5), litHere);
+  return hue / max(cmLum(hue), 1e-5) * total * metShown / max(shown, 1e-5);
+}
 float rayHash(float i) { return fract(sin(i * 127.1 + 311.7) * 43758.5453); }
 float rayNoise(float x) {
   float i = floor(x);
@@ -329,7 +368,11 @@ float rayNoise(float x) {
 vec3 radiance(vec2 uv, vec2 p) { return vec3(0.0); }
 vec3 auxRadiance(vec2 uv, vec2 p) { return clAux(p, true); }
 vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 b0, vec3 b1, vec3 b2, vec3 b3) {
-  vec3 color = light + curveLight(p, b0, b1, b2, b3, true);
+  vec3 e0;
+  vec3 e1;
+  vec3 e2;
+  vec3 rest = curveLightEach(p, b0, b1, b2, b3, true, e0, e1, e2);
+  vec3 color = light + rest + contourMeet(e0, e1, e2);
   color += mix(uGroundNear, uGroundFar, smoothstep(uGroundDir.z, uGroundDir.w, dot(p, uGroundDir.xy)));
   if (uRay.w > 0.5) {
     // Light from behind the edge seen through haze: brightest at its source, in rays, only above the edge.
@@ -372,6 +415,7 @@ vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 b0, vec3 b1, vec3 b2, vec3 b3) {
       uRayColor: litSlot(ctx, ctx.num(`e${rayUnit}Own`)),
       uRayUnit: rayUnit - 1,
       uRayReach: ctx.num('rayReach'),
+      uMeetUnit: ctx.num('meetUnit') - 1,
     }
   },
   scatter: farScatter(

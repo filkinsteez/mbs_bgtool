@@ -23,7 +23,7 @@ const CONTROLS: ControlValues = { intensity: 0.5, softness: 0.7, mood: 0.5 }
 const OWNER: ControlValues = { ...CONTROLS, drag: { from: [1.011, 1.224], to: [-0.078, -0.067] } }
 /** Params that place the shape and the light and set its brightness and widths; the rest only say which color goes where. */
 const isLayout = (key: string) =>
-  !/^e\d/.test(key) && !['keySlot', 'groundNear', 'groundFar', 'air1Color', 'air2Color', 'air3Color', 'rayUnit', 'secondUnit', 'thirdUnit'].includes(key)
+  !/^e\d/.test(key) && !['keySlot', 'groundNear', 'groundFar', 'air1Color', 'air2Color', 'air3Color', 'rayUnit', 'secondUnit', 'thirdUnit', 'meetUnit'].includes(key)
 const layoutOf = (params: Record<string, ParamValue>) => Object.fromEntries(Object.entries(params).filter(([key]) => isLayout(key)))
 
 describe('contour.merged', () => {
