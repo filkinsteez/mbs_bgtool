@@ -135,6 +135,7 @@ vec3 radiance(vec2 uv, vec2 p) {
   float peak[MAX_LIGHTS];
   vec3 fixedHue[MAX_LIGHTS];
   float coreLum[MAX_LIGHTS];
+  float coreBurn[MAX_LIGHTS];
   float total = 0.0;
   // Light added after the shoulder: white streaks' cores, which reach white at their peak, and lead streaks' cores in
   // their own color (Meta Blue toward a lighter blue, white only at the hottest point).
@@ -146,6 +147,7 @@ vec3 radiance(vec2 uv, vec2 p) {
     peak[i] = 1.0;
     fixedHue[i] = vec3(1.0);
     coreLum[i] = 0.0;
+    coreBurn[i] = 0.0;
     vec4 A = uLA[i];
     vec4 B = uLB[i];
     vec4 C = uLC[i];
@@ -251,10 +253,16 @@ vec3 radiance(vec2 uv, vec2 p) {
       // Its hot core: white light that reaches white at the peak.
       hot += vec3(C.x * C.z * body * coreShape * env);
     } else if (C.z > 0.0) {
-      // A lead streak's core in its own color, hottest at one place along it (H.w) and on its bright side, so the
-      // light goes toward a lighter blue and white only at the hottest point.
+      // A lead streak's core in its own color, hottest at one place along it (H.w) and on its bright side. Its middle
+      // line (about an eighth of the band's width) burns white where the core is hottest, as bright light does on
+      // film, with the color at its edges; there its light rises up to two and a half times, so the white reads as
+      // light, not grey.
       float along = (u - H.w) / (1.8 * reach);
-      coreLum[i] = C.x * C.z * coreShape * body * env * grad * exp(-along * along);
+      float level = coreShape * body * env * grad * exp(-along * along);
+      float mid = (s / max(halfW, 1e-4) - F.z) / 0.1;
+      float burn = exp(-0.5 * mid * mid) * smoothstep(0.5, 0.95, level);
+      coreBurn[i] = burn;
+      coreLum[i] = 1.6 * C.x * C.z * level * (1.0 + 1.5 * burn);
     }
   }
   // Each light adds its own color: a pack color read at that light's own level, its own hue at its core and dimming
@@ -289,7 +297,7 @@ vec3 radiance(vec2 uv, vec2 p) {
       float share = lum[i] / max(total, 1e-5);
       share *= share;
       share *= share;
-      hot += own / max(luminance(own), 1e-5) * coreLum[i] * share * share;
+      hot += hotWhiten(own / max(luminance(own), 1e-5), 0.95 * coreBurn[i]) * coreLum[i] * share * share;
     }
   }
   // Each light adds in its own hue, except that a hue far around the color wheel from the leading light's (Meta Blue's
