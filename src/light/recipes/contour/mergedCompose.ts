@@ -858,7 +858,9 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     edgeWarm = !def.wash && blur <= WARM_BLUR && !ringLight && (!edgeLight || clearOfMain)
     // A cool light stays dimmer than the main light's glow: through the stage only its hottest part takes its color
     // and the rest of it is Meta Blue, which would then be Meta Blue's brightest light, lit only beside another color.
-    const peak = (def.wash ? lerp(0.5, 0.75, design.secondGain) : edgeWarm ? lerp(WARM_PEAK[0], WARM_PEAK[1], design.secondGain) : lerp(COOL_PEAK[0], COOL_PEAK[1], design.secondGain)) * near
+    // A ring is as bright as a warm light, so a light color reads as itself in its halo (Lime only shows near its own
+    // lightness).
+    const peak = (def.wash ? lerp(0.5, 0.75, design.secondGain) : edgeWarm || ringLight ? lerp(WARM_PEAK[0], WARM_PEAK[1], design.secondGain) : lerp(COOL_PEAK[0], COOL_PEAK[1], design.secondGain)) * near
     const at = (def.wash ? SECOND_SHAPE : FADE_SHAPE).map((o) => round4(Math.min(0.999, Math.max(0.001, on2.ts[on2.contour] + o * tSpan))))
     const gains = (def.wash ? SECOND_LEVEL : FADE_LEVEL).map((g) => round4(g * peak))
     // The pack's warm or bright color: the unit's warmest (Orange-red) along the stretch and its brightest at the core
