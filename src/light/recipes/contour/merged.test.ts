@@ -82,7 +82,8 @@ describe('contour.merged', () => {
         for (const controls of [CONTROLS, OWNER]) {
           for (let seed = 1; seed <= 27; seed++) {
             const { params } = composeMerged({ colors, shares, controls, seed, aspect })
-            const keyUnit = [1, 2, 3].find((e) => params[`e${e}On`] && params[`e${e}Rest`] === params.keySlot)
+            // The key's unit is the one that lights the other contours; the accents and the second light leave them dark.
+            const keyUnit = [1, 2, 3].find((e) => params[`e${e}On`] && params[`e${e}Rest`] !== 1)
             expect(keyUnit, `seed ${seed}`).toBeDefined()
             const slots = [...(params[`e${keyUnit}StopColor`] as number[]), ...(params[`e${keyUnit}StopColor2`] as number[])]
             const used = slots.slice(0, params[`e${keyUnit}Stops`] as number)

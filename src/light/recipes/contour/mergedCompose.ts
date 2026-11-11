@@ -556,6 +556,8 @@ const RING_CLEAR = 0.4
 /** How far a ring's stretch keeps from the main light's edge (short sides) to be warm: its halo and the main light's
  * haze then stay apart. */
 const WARM_RING_CLEAR = 0.7
+/** A ring's core line against the main light's. */
+const RING_CORE = 1.6
 /** Another edge's own light: its half length (this share of its visible length, within these bounds), how far its
  * hottest place keeps from the main light, and its core line (times the main one). */
 const EDGE_SHARE = 0.33
@@ -747,6 +749,14 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
   const plan = planColors(colors, shares, design.keyDraw, hotAt, (blur > 1 ? 0.35 : 1) * oneEdge, blur >= 3)
   const slotOf = (i: number) => i + 2
   const keyUnit = plan.units.findIndex((u) => u.colors.includes(plan.key))
+  // The pack's lightest light color that isn't warm (Cyan, Ice): it meets Meta Blue's light cleanly, lighter where the
+  // two overlap, and keeps its hue in dim light, so it lights the other edges. A cool second light takes it too, or
+  // where there is none (Elemental) the pack's lightest light color besides the key's (Lime), which reads as itself
+  // only in bright light, so there the other edges keep the key's color.
+  const lightOthers = colors.map((_, i) => i).filter((i) => i !== plan.key && shares[i] > 0.001 && L(colors[i]) >= LIGHT_L)
+  const byLightness = (a: number, b: number) => L(colors[b]) - L(colors[a])
+  const trueCool = lightOthers.filter((i) => !(chroma(colors[i]) > 0.04 && hue(colors[i]) >= 20 && hue(colors[i]) <= 140)).sort(byLightness)[0]
+  const coolest = trueCool ?? lightOthers.sort(byLightness)[0] ?? plan.key
   // Stops per unit: its colors on its stretches, black elsewhere; where two units meet, the accent's unit carries a
   // pale bridge (code 10a + b), so a turn never makes a third hue, and the key's unit needs only two stops per turn,
   // so its eight stops reach both ends of the edge.
@@ -785,8 +795,9 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
       // A unit with no stretch (an accent left out of an out-of-focus shape) draws nothing.
       [`e${e + 1}On`]: stops.length > 0,
       [`e${e + 1}Own`]: slotOf(unit.own),
-      // The other contours take the key's color whole (the key's unit) or no light.
-      [`e${e + 1}Rest`]: unit.colors.includes(plan.key) ? slotOf(plan.key) : 1,
+      // The other contours are lit by the key's unit in the pack's cool color, so each visible edge near the main light
+      // shows a color of its own with its own halo; the other units leave them dark.
+      [`e${e + 1}Rest`]: unit.colors.includes(plan.key) ? slotOf(trueCool ?? plan.key) : 1,
       [`e${e + 1}Stops`]: Math.max(1, stops.length),
       [`e${e + 1}StopAt`]: at.slice(0, 4),
       [`e${e + 1}StopAt2`]: at.slice(4),
@@ -872,15 +883,8 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     // The pack's warm or bright color: the unit's warmest (Orange-red) along the stretch and its brightest at the core
     // (Yellow); a wash's glow takes the brightest, like the poster's yellow glow in the blue.
     const members = plan.second >= 0 ? plan.units[plan.second].colors : [plan.key]
-    // A cool one takes the pack's lightest light color that isn't warm (Cyan, Ice); where there is none (Elemental) the
-    // pack's lightest light color besides the key's (Lime), never the key's, which would only make the frame bluer. Only
-    // the color changes with the pack: the light is a cool light's in every pack.
-    const lightOthers = colors.map((_, i) => i).filter((i) => i !== plan.key && shares[i] > 0.001 && L(colors[i]) >= LIGHT_L)
-    const byLightness = (a: number, b: number) => L(colors[b]) - L(colors[a])
-    const coolest =
-      lightOthers.filter((i) => !(chroma(colors[i]) > 0.04 && hue(colors[i]) >= 20 && hue(colors[i]) <= 140)).sort(byLightness)[0] ??
-      lightOthers.sort(byLightness)[0] ??
-      plan.key
+    // A cool one takes the cool color (never the key's, which would only make the frame bluer). Only the color changes
+    // with the pack: the light is a cool light's in every pack.
     const cool = !def.wash && !edgeWarm
     const warmest = slotOf(cool ? coolest : members.reduce((a, b) => (warmthOf(colors[b]) > warmthOf(colors[a]) ? b : a)))
     const brightest = slotOf(cool ? coolest : members.reduce((a, b) => (L(colors[b]) > L(colors[a]) ? b : a)))
@@ -915,8 +919,9 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     Object.assign(secondParams, {
       secondUnit: e,
       secondAt: [round4(secondPoint[0] - anchorR[0]), round4(secondPoint[1] - anchorR[1])],
-      // An edge's own light turns near white where it is hottest, like a ring's.
-      secondCore: edgeLight ? EDGE_CORE : SECOND_CORE,
+      // An edge's own light turns near white where it is hottest, like a ring's; a ring's core reaches the lightness of a
+      // light pack color (Ice near white, Lime about 0.9), or the color stage keeps that color out of it.
+      secondCore: ringLight ? RING_CORE : edgeLight ? EDGE_CORE : SECOND_CORE,
       // A cool one's glow is a little wider than the main one's, so its color reads in it; a warm one keeps the narrow
       // glow: wider, its color reached the main light's and mixed to mauve or indigo.
       secondGlow: round4(ringLight ? 1 : def.wash || edgeWarm ? 1 / MAIN_GLOW : EDGE_GLOW),
@@ -1081,6 +1086,7 @@ export function composeMerged(input: MergedInput): Composition & { layoutName: s
     tipDark: round4(TIP_DARK * soften),
     tipFade: round4(TIP_FADE * soften),
     keySlot: slotOf(plan.key),
+    restBlend: d2 === undefined ? 1 : round4(smooth01(0, BETWEEN, d2 - d1)),
     ...unitParams,
     ...secondParams,
     faceDir,

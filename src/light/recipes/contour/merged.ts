@@ -63,6 +63,7 @@ const params: ParamSpec[] = [
   { kind: 'number', key: 'tipDark', label: 'Unlit stretch either side of a tip', min: 0, max: 1, step: 0.0005, default: 0 },
   { kind: 'number', key: 'tipFade', label: 'Fade before the unlit stretch', min: 0, max: 1, step: 0.0005, default: 0 },
   { kind: 'number', key: 'keySlot', label: 'The key color slot (the light along the edge)', min: 1, max: COLORS, step: 1, default: 2 },
+  { kind: 'number', key: 'restBlend', label: 'How far the other contours\' color has turned from the key\'s to their own (0 the key\'s)', min: 0, max: 1, step: 0.0001, default: 1 },
   ...[1, 2, 3].flatMap(unitParams),
   ...nearParams('n1', 'Core', { Weight: 2.5, Width: 0.0008, Shape: 8, Light: 2 }),
   ...nearParams('n2', 'Glow', { Weight: 0.7, Width: 0.004, Shape: 3, Side: 1, Light: 1, Grow: 2, GrowBy: [1.5, 2] }),
@@ -152,6 +153,16 @@ function bridge(a: readonly number[], b: readonly number[]): number[] {
 /** A slot's color under the stand-in's lightness. */
 const litSlot = (ctx: RecipeContext, slot: number) => underStandIn(slotColor(ctx, slot))
 
+/** The other contours' color: from the key's to the unit's own (both at the stand-in's lightness, so the mix is too);
+ * none stays none. */
+function restColor(ctx: RecipeContext, slot: number, keySlot: number): number[] {
+  if (Math.round(slot) === 1) return litSlot(ctx, 1)
+  const key = litSlot(ctx, keySlot)
+  const own = litSlot(ctx, slot)
+  const t = Math.min(1, Math.max(0, ctx.num('restBlend')))
+  return key.map((v, c) => v + (own[c] - v) * t)
+}
+
 /** A color at a given Oklab lightness, the same in every pack so the design stays one: a lighter color under less
  * light, a darker one under more. */
 function atLevel(c: readonly number[], level: number): number[] {
@@ -218,7 +229,9 @@ export function mergedEmitters(ctx: RecipeContext): EmitterSettings[] {
       anchor: at,
       stops: unitStops(ctx, i),
       stopContour: ownContour >= 0 ? ownContour : stopContour,
-      restStops: [{ t: 0, color: litSlot(ctx, ctx.num(`e${i}Rest`)), gain: 1 }],
+      // As the light comes between two edges the other contours turn back to the key's color, so when the light passes
+      // to the other edge the two edges' colors don't swap in a jump.
+      restStops: [{ t: 0, color: restColor(ctx, ctx.num(`e${i}Rest`), keySlot), gain: 1 }],
       fades: second ? fades : [...fades, ...gap],
       // The drift measures the light against the color's own level, so a color under the stand-in's lightness dims
       // through its darker neighbour where its light is low.
