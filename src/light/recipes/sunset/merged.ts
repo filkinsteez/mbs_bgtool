@@ -770,12 +770,28 @@ float warmAt(float a, float h) {
   if (uKind == 1) return gHalo;
   float along = sideLight(a, uWarm.x);
   // The band's top drifts and its softness changes along its length, so it never runs parallel to the horizon or to
-  // the ground's edge.
-  float th = uWarm.y * (0.4 + 0.6 * along) * (1.0 + 0.6 * gradientNoise(vec2(a * 1.1 + 5.1, 3.3), uHorizonSeed + 31));
-  float soft = 0.5 + 0.35 * gradientNoise(vec2(a * 1.2 + 8.3, 1.2), uHorizonSeed + 33);
+  // the ground's edge. Each also has a second, quicker drift of its own and leans its own way across the light (the
+  // seed picks the side and how far), so within a narrow frame too the boundaries between the band's levels part and
+  // close along their length instead of stacking in parallel. The band thickens freely but thins to no less than about
+  // three quarters, so it never pinches and never leaves the sky's light right against the dark ground.
+  float lean = tanh(a / 0.5);
+  float leanTh = gradientNoise(vec2(1.7, 4.4), uHorizonSeed + 113);
+  float leanSoft = gradientNoise(vec2(6.3, 2.2), uHorizonSeed + 115);
+  leanTh = sign(leanTh) * (0.6 + 0.4 * abs(leanTh));
+  leanSoft = sign(leanSoft) * (0.6 + 0.4 * abs(leanSoft));
+  // Only in a plain sky: beside a side light and under a low sun the quicker drifts drew firm edges where the band
+  // meets the bright sky or the dark ground.
+  float vary = uKind == 3 ? 1.0 : 0.0;
+  float th = uWarm.y * (0.4 + 0.6 * along) * (1.0 + 0.6 * gradientNoise(vec2(a * 1.1 + 5.1, 3.3), uHorizonSeed + 31))
+    * (0.75 + 0.25 * exp(vary * (0.6 * gradientNoise(vec2(a * 1.5 + 2.3, 6.1), uHorizonSeed + 107) + 1.1 * leanTh * lean)));
+  float soft = 0.5 + mix(0.35, 0.1, vary) * gradientNoise(vec2(a * 1.2 + 8.3, 1.2), uHorizonSeed + 33)
+    + vary * (0.15 * gradientNoise(vec2(a * 1.8 + 0.9, 4.7), uHorizonSeed + 109) + 0.22 * leanSoft * lean);
+  // Where the band thins its top keeps a soft width of its own (at least about a sixth of the band's usual
+  // thickness), so a thin stretch never draws a firm edge.
+  float halfWidth = sqrt(soft * soft * th * th + vary * 0.03 * uWarm.y * uWarm.y);
   // Its light keeps more of its strength along the horizon past the hot middle, where it has fallen near Orange-red's
   // own lightness, so Orange-red has a broad stretch there.
-  return sqrt(along) * (1.0 - smoothstep((0.8 - soft) * th, (0.8 + soft) * th, h));
+  return sqrt(along) * (1.0 - smoothstep(0.8 * th - halfWidth, 0.8 * th + halfWidth, h));
 }
 
 // The warm light's outer glow: wider and dimmer than the warm band (round a high light, than its warm glow).
@@ -833,7 +849,10 @@ float skyLightness(float a, float h) {
   // light itself), dimming with height and along the horizon away from it, with no level stretch.
   // Squares are written out: pow of a negative number is undefined in GLSL.
   float paleScale = max(0.45 * uPale.y * uSpan, 0.03);
-  float paleRise = max(h, 0.0) / paleScale;
+  // In a plain sky how far up the pale light stays bright changes along the width on a drift of its own, unlike the
+  // warm band's, so the white's upper boundary bends apart from the warm band's levels below it.
+  float paleReach = uKind == 3 ? paleScale * exp(0.6 * gradientNoise(vec2(a * 1.4 + 6.8, 2.6), uHorizonSeed + 111)) : paleScale;
+  float paleRise = max(h, 0.0) / paleReach;
   float paleLight = uPale.z - 0.03 + 0.11 * exp(-paleRise * paleRise) + 0.05 * sideLight(a, uPale.x);
   L = mix(L, paleLight, pale);
   // The warm light's wider, dimmer outer glow only adds light where the sky is dimmer than it.
