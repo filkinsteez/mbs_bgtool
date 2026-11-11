@@ -2,13 +2,16 @@
 // same shapes, light positions and light and dark layout in every pack, and only the colors change. For each look,
 // seed, format and view (the default light or a test drag) this renders the three packs, and each color list given
 // with --colors, and compares every two of those frames on their lightness alone, so the colors themselves don't
-// count. Usage and how the limits were set: scripts/light/README.md, "Same design".
+// count. Where two far-apart colors meet, the light along that thin line may rise by a different amount in each pack
+// (owner, 2026-11-10 9:50 PM; AGENTS.md 8ed6a2a), so there the frames may differ by up to 0.15 in lightness
+// (lib/design-maps.mjs, MEET). Usage and how the limits were set: scripts/light/README.md, "Same design".
 import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
 import { list, parseArgs } from './lib/args.mjs'
 import { mixByName } from './lib/color-read.mjs'
+import { compare, MEET, mapsOf, meetingMask } from './lib/design-maps.mjs'
 import { startHarness } from './lib/harness.mjs'
 
 const LOOKS = ['sunset.bands', 'sunset.ramp', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
@@ -28,12 +31,8 @@ const META_BLUE = '#0064E0'
 const RENDER_LONG = 320
 const MAP_SHORT = 72
 
+// The maps and their comparison are in lib/design-maps.mjs.
 const T = {
-  // In the rank map, lightness steps under this (Oklab L) count as equal, so a dark base's faint gradient and the
-  // render's dither stay one level instead of spreading over the whole range.
-  rankStep: 0.06,
-  // The light map stretches each frame's lightness from its darkest 2% (0) to its brightest 0.5% (1).
-  stretch: [0.02, 0.995],
   // Set by eye in compare round 22 (artifacts/compare/rounds/22/NOTES.md). Contour: the owner's case (Beam seed 15,
   // 16:9) splits Bold from Elemental and Atmospheric and passes those two, no pair judged the same or recolored with
   // every param kept fails, and Bold's different beams in seeds 3 and 5 are the only judged differences missed.
@@ -71,100 +70,6 @@ const keep = Boolean(args.keep)
 const sheetAll = args.sheet === 'all'
 const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, '')
 const outDir = path.resolve(typeof args.out === 'string' ? args.out : path.join('artifacts', 'same-design', stamp))
-
-// --- the maps ---
-
-const LIN = Float32Array.from({ length: 256 }, (_, i) => {
-  const v = i / 255
-  return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
-})
-
-function blur(src, w, h, sigma) {
-  const r = Math.ceil(3 * sigma)
-  const k = Array.from({ length: 2 * r + 1 }, (_, i) => Math.exp(-((i - r) ** 2) / (2 * sigma * sigma)))
-  const sum = k.reduce((a, b) => a + b, 0)
-  const tmp = new Float32Array(w * h)
-  const out = new Float32Array(w * h)
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      let s = 0
-      for (let i = -r; i <= r; i++) s += k[i + r] * src[y * w + Math.min(w - 1, Math.max(0, x + i))]
-      tmp[y * w + x] = s / sum
-    }
-  }
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      let s = 0
-      for (let i = -r; i <= r; i++) s += k[i + r] * tmp[Math.min(h - 1, Math.max(0, y + i)) * w + x]
-      out[y * w + x] = s / sum
-    }
-  }
-  return out
-}
-
-// Each pixel's lightness as its rank in its own frame (0 darkest, 1 brightest). Two pixels count as equal when their
-// lightness differs by less than `step`, as fully ordered from `step` apart, and in proportion between.
-function softRank(L, step) {
-  const NB = 1000
-  const hist = new Float64Array(NB)
-  const bin = (v) => Math.min(NB - 1, Math.max(0, Math.floor(v * NB)))
-  for (const v of L) hist[bin(v)]++
-  const below = new Float64Array(NB + 1)
-  for (let b = 0; b < NB; b++) below[b + 1] = below[b] + hist[b]
-  const half = Math.max(1, Math.round((step * NB) / 2))
-  const table = new Float32Array(NB)
-  for (let b = 0; b < NB; b++) {
-    let s = below[Math.max(0, b - half)]
-    for (let c = Math.max(0, b - half); c <= Math.min(NB - 1, b + half); c++) s += hist[c] * Math.min(1, Math.max(0, (b - c) / (2 * half) + 0.5))
-    table[b] = s / L.length
-  }
-  return Float32Array.from(L, (v) => table[bin(v)])
-}
-
-function mapsOf(rgb, w, h) {
-  const n = w * h
-  const L = new Float32Array(n)
-  for (let p = 0; p < n; p++) {
-    const [r, g, b] = [LIN[rgb[3 * p]], LIN[rgb[3 * p + 1]], LIN[rgb[3 * p + 2]]]
-    const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
-    const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
-    const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
-    L[p] = 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s
-  }
-  const Lb = blur(L, w, h, 1)
-  const sorted = Float32Array.from(Lb).sort()
-  const [lo, hi] = T.stretch.map((q) => sorted[Math.floor(q * (n - 1))])
-  const lit = Lb.map((v) => Math.min(1, Math.max(0, (v - lo) / Math.max(0.02, hi - lo))))
-  return { w, h, rank: softRank(Lb, T.rankStep), lit, light: blur(lit, w, h, 1.5) }
-}
-
-// layout: how far each pixel's rank moves, counted by how lit the pixel is in the brighter of the two frames, so a
-// dark base both frames share counts little and a lit shape that moves counts fully. light: one minus the
-// correlation of the two light maps, 0 when one is a brighter or dimmer copy of the other.
-function compare(a, b, limits) {
-  const n = a.rank.length
-  let [d, s] = [0, 0]
-  let [ma, mb] = [0, 0]
-  for (let p = 0; p < n; p++) {
-    const w = Math.max(a.lit[p], b.lit[p])
-    d += w * Math.abs(a.rank[p] - b.rank[p])
-    s += w
-    ma += a.light[p]
-    mb += b.light[p]
-  }
-  ;[ma, mb] = [ma / n, mb / n]
-  let [sab, saa, sbb] = [0, 0, 0]
-  for (let p = 0; p < n; p++) {
-    sab += (a.light[p] - ma) * (b.light[p] - mb)
-    saa += (a.light[p] - ma) ** 2
-    sbb += (b.light[p] - mb) ** 2
-  }
-  const flat = (v) => v / n < 1e-4
-  const corr = flat(saa) && flat(sbb) ? 1 : flat(saa) || flat(sbb) ? 0 : sab / Math.sqrt(saa * sbb)
-  const m = { layout: +(s > 0 ? d / s : 0).toFixed(3), light: +(1 - corr).toFixed(3) }
-  const score = Math.max(m.layout / limits.layout, m.light / limits.light)
-  return { ...m, differs: m.layout > limits.layout || m.light > limits.light, score: +score.toFixed(3) }
-}
 
 const mixLabel = (name) => (name === 'default' ? 'default mix' : name === 'blue-off' ? 'Meta Blue off' : `${name.split(':')[0]} ${Math.round(Number(name.split(':')[1]) * 100)}%`)
 
@@ -262,13 +167,15 @@ try {
               }
             }
             const small = await sharp(png).removeAlpha().resize(mw, mh, { fit: 'fill' }).raw().toBuffer()
-            frames.push({ variant, png, maps: mapsOf(small, mw, mh) })
+            frames.push({ variant, png, maps: mapsOf(small, mw, mh), meet: meetingMask(variant.pack, small, mw, mh) })
           }
           const pairs = []
           const wanted = (a, b) => !stage || (a.mixName === 'default' && b.mixName === 'default') || (a.pack.id === b.pack.id && (a.mixName === 'default' || b.mixName === 'default'))
           for (let i = 0; i < frames.length; i++) {
             for (let j = i + 1; j < frames.length; j++) {
-              if (wanted(frames[i].variant, frames[j].variant)) pairs.push({ frames: [frames[i].variant.key, frames[j].variant.key], ...compare(frames[i].maps, frames[j].maps, limits) })
+              if (!wanted(frames[i].variant, frames[j].variant)) continue
+              const meet = frames[i].meet.map((v, p) => v | frames[j].meet[p])
+              pairs.push({ frames: [frames[i].variant.key, frames[j].variant.key], ...compare(frames[i].maps, frames[j].maps, limits, meet) })
             }
           }
           results.push({ look, seed, format, view, limits, pairs, differs: pairs.some((p) => p.differs), score: Math.max(0, ...pairs.map((p) => p.score)), frames })
@@ -287,12 +194,12 @@ await fs.mkdir(outDir, { recursive: true })
 const seconds = Math.round((Date.now() - started) / 1000)
 const nameOf = (key) => labels.get(key) ?? key
 const viewText = (v) => (v === 'default' ? 'default view' : `drag ${v}`)
-const pairText = (p) => `${p.frames.map(nameOf).join(' / ')} (layout ${p.layout}, light ${p.light})`
+const pairText = (p) => `${p.frames.map(nameOf).join(' / ')} (layout ${p.layout}, light ${p.light}${p.allowed ? `; ${p.allowed} px on far-hue meeting lines left out` : ''})`
 const limitText = Object.entries(T.limits).map(([mood, l]) => `${mood === 'sunset' ? 'Sunrise' : 'Contour'}: layout over ${l.layout} or light over ${l.light}`).join('; ')
 const lines = [
   mixArg ? '# Same design in every pack and mix (color stage on)' : '# Same design in every pack',
   '',
-  `Seeds ${seeds.join(', ')}; ${formats.map((f) => f.replace('x', ':')).join(' and ')}; ${views.map(viewText).join(', ')}; ${results.reduce((s, r) => s + r.frames.length, 0)} frames in ${seconds} s. Two frames differ in design when (${limitText}).`,
+  `Seeds ${seeds.join(', ')}; ${formats.map((f) => f.replace('x', ':')).join(' and ')}; ${views.map(viewText).join(', ')}; ${results.reduce((s, r) => s + r.frames.length, 0)} frames in ${seconds} s. Two frames differ in design when (${limitText}). Pixels near a meeting line of two pack colors ${MEET.hue} degrees or more apart in hue, whose lightness differs by ${MEET.allow} or less, are left out (owner, 2026-11-10 9:50 PM).`,
   '',
   ...notes.map((n) => `- ${n}`),
   ...(notes.length ? [''] : []),
