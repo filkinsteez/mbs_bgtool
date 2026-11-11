@@ -44,7 +44,7 @@ const harness = await startHarness()
 const frames = []
 const started = Date.now()
 try {
-  const { getPack } = await harness.ssr('/src/light/color/packs.ts')
+  const { getPack, HUE_ORDER } = await harness.ssr('/src/light/color/packs.ts')
   const tool = await harness.ssr('/src/tool/controls.ts')
   const { getRecipe } = await harness.ssr('/src/light/recipes/index.ts')
   const { dimPaths } = await harness.ssr('/src/light/engine/dimPath.ts')
@@ -52,7 +52,7 @@ try {
   const stage = await harness.ssr('/src/light/color/stage.ts')
   const mixes = await harness.ssr('/src/light/color/mix.ts')
   const apart = (a, b) => Math.max(meetApart(a, b), meetHueApart(a, b))
-  const rules = Object.fromEntries(packIds.map((id) => [id, exactRules(getPack(id), dimPaths(getPack(id).colors.map((c) => c.hex)), apart)]))
+  const rules = Object.fromEntries(packIds.map((id) => [id, exactRules(getPack(id), dimPaths(getPack(id).colors.map((c) => c.hex)), apart, HUE_ORDER?.[id] ?? [])]))
 
   // The scene the tool draws for a frame and a drag (none: the default view), stage off or on.
   const sceneOf = (f, drag) => {

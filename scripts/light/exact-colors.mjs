@@ -37,7 +37,7 @@ const pct = (v) => (100 * v).toFixed(1)
 
 const harness = await startHarness()
 try {
-  const { getPack } = await harness.ssr('/src/light/color/packs.ts')
+  const { getPack, HUE_ORDER } = await harness.ssr('/src/light/color/packs.ts')
   const { buildScene } = await harness.ssr('/src/tool/controls.ts')
   const { EXPORT_SIZES } = await harness.ssr('/src/light/engine/frame.ts')
   const { dimPaths } = await harness.ssr('/src/light/engine/dimPath.ts')
@@ -48,7 +48,7 @@ try {
   const rules = Object.fromEntries(
     packIds.map((id) => {
       const pack = getPack(id)
-      return [id, exactRules(pack, dimPaths(pack.colors.map((c) => c.hex)), apart)]
+      return [id, exactRules(pack, dimPaths(pack.colors.map((c) => c.hex)), apart, HUE_ORDER?.[id] ?? [])]
     }),
   )
 

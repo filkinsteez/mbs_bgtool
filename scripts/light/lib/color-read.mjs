@@ -56,7 +56,10 @@ const signedGap = (h, h0) => ((((h - h0) % 360) + 540) % 360) - 180
 const lerp = (a, b, t) => a + (b - a) * Math.min(1, Math.max(0, t))
 
 // A pack's reading rules: each chromatic color's hue window and lightness range, and the greys.
-export function rulesFor(pack) {
+// `order`: the pack's color names in hue order (HUE_ORDER in src/light/color/packs.ts). Neighbours in it blend
+// through the hue between them (owner, 2026-11-11 8:14 AM), so such a blend counts for both (neighbourSplit). Without
+// it no blend between far hues counts (color-edges reads that way).
+export function rulesFor(pack, order = []) {
   const colors = pack.colors.map((c) => {
     const [L0, a0, b0] = oklab(toLinear(c.hex))
     const C0 = Math.hypot(a0, b0)
@@ -76,7 +79,33 @@ export function rulesFor(pack) {
   }
   const blue = chromatic.find((c) => c.metaBlue) ?? null
   const cyan = blue ? chromatic.find((c) => !c.metaBlue && signedGap(c.h0, blue.h0) < 0 && signedGap(c.h0, blue.h0) > -60) ?? null : null
-  return { colors, chromatic, blue, cyan, greys: colors.filter((c) => c.neutral).sort((x, y) => x.L0 - y.L0) }
+  const byName = (name) => chromatic.find((c) => c.name === name)
+  const neighbours = order
+    .slice(1)
+    .map((name, k) => [byName(order[k]), byName(name)])
+    .filter(([x, y]) => x && y)
+  return { colors, chromatic, blue, cyan, greys: colors.filter((c) => c.neutral).sort((x, y) => x.L0 - y.L0), neighbours }
+}
+
+/**
+ * A blend of two hue neighbours (rules.neighbours): an Oklab pixel whose hue lies on the short way between their hues
+ * and that keeps READ.keep of their own chroma at its lightness (weighed by where it sits), and isn't grey. Returns
+ * { a, b, t } with t the part of b (0 at a's hue, 1 at b's), or null. Grey, brown and blends of colors that aren't
+ * neighbours stay off-pack.
+ */
+export function neighbourSplit(rules, L, a, b) {
+  if (L < READ.visible) return null
+  const C = Math.hypot(a, b)
+  if (C < Math.min(greyLimit(L), READ.greyDark * L)) return null
+  const h = hueOf(a, b)
+  for (const [ca, cb] of rules.neighbours ?? []) {
+    const span = signedGap(cb.h0, ca.h0)
+    const pos = signedGap(h, ca.h0)
+    if (pos * span <= 0 || Math.abs(pos) >= Math.abs(span)) continue
+    const u = pos / span
+    if (C >= READ.keep * ((1 - u) * ownChroma(ca, L) + u * ownChroma(cb, L))) return { a: ca.name, b: cb.name, t: u }
+  }
+  return null
 }
 
 // The hue where a pale blue stops reading as Meta Blue and reads as Cyan, at lightness L.
@@ -133,14 +162,19 @@ export function sharesOf(rules, rgb, n, wantMap = false) {
   const cache = new Map()
   for (let p = 0; p < n; p++) {
     const key = (rgb[3 * p] << 16) | (rgb[3 * p + 1] << 8) | rgb[3 * p + 2]
-    let label = cache.get(key)
-    if (label === undefined) {
+    let read = cache.get(key)
+    if (read === undefined) {
       const [L, a, b] = oklab([LIN[rgb[3 * p]], LIN[rgb[3 * p + 1]], LIN[rgb[3 * p + 2]]])
-      label = readAs(rules, L, a, b)
-      cache.set(key, label)
+      const label = readAs(rules, L, a, b)
+      read = { label, split: label === 'other' ? neighbourSplit(rules, L, a, b) : null }
+      cache.set(key, read)
     }
-    counts[label]++
-    if (labels) labels[p] = label
+    // A blend of hue neighbours counts for both; its label stays `other`.
+    if (read.split) {
+      counts[read.split.a] += 1 - read.split.t
+      counts[read.split.b] += read.split.t
+    } else counts[read.label]++
+    if (labels) labels[p] = read.label
   }
   const lit = n - counts.none
   const shares = Object.fromEntries(LABELS(rules).map((k) => [k, lit ? counts[k] / lit : 0]))
@@ -516,6 +550,7 @@ export function blendSharesOf(rules, rgb, width, height, labels, wantMap = false
           if (!best || d < best.d) best = { i: ks[i], j: ks[j], t, d, window }
         }
     }
+    const between = !best && label === 'other' ? neighbourSplit(rules, lab[3 * p], lab[3 * p + 1], lab[3 * p + 2]) : null
     if (best) {
       counts[names[best.i]] += 1 - best.t
       counts[names[best.j]] += best.t
@@ -525,6 +560,9 @@ export function blendSharesOf(rules, rgb, width, height, labels, wantMap = false
         split.t[p] = best.t
         split.window[p] = best.window
       }
+    } else if (between) {
+      counts[between.a] += 1 - between.t
+      counts[between.b] += between.t
     } else counts[label]++
   }
   return { shares: Object.fromEntries(keys.map((k) => [k, lit ? counts[k] / lit : 0])), own: Object.fromEntries(names.map((name, k) => [name, lit ? area[k] / lit : 0])), split }

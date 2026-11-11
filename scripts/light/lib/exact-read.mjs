@@ -19,6 +19,8 @@ export const EXACT = {
   blendSteps: 32, // blend fractions tried between two near colors
   thin: 0.006, // off-pack areas narrower than about twice this share of the short side are thin
   around: 0.02, // a thin off-pack pixel is a meeting line when two far-apart colors read within this share of the short side
+  neighbourKeep: 0.5, // a blend of hue neighbours keeps this share of the two colors' own chroma at its lightness
+  neighbourChroma: 0.02, // and at least this Oklab chroma, so grey stays off-pack
 }
 
 const luminance = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
@@ -26,9 +28,11 @@ const toLinear = (hex) => [1, 3, 5].map((i) => LIN[parseInt(hex.slice(i, i + 2),
 
 /**
  * Reading rules for a pack. paths: each color's dim path as [L, C, h] points from the color itself down (the engine's
- * dimPaths). apart(a, b): how far apart two colors at luminance 1 are by the meeting rule, 0 to 1.
+ * dimPaths). apart(a, b): how far apart two colors at luminance 1 are by the meeting rule, 0 to 1. order: the pack's
+ * color names in hue order (HUE_ORDER in src/light/color/packs.ts); neighbours in it blend through the hue between
+ * them (owner, 2026-11-11 8:14 AM), so such a blend counts for both.
  */
-export function exactRules(pack, paths, apart) {
+export function exactRules(pack, paths, apart, order = []) {
   // A dim path that reaches another pack color stops there: below it the light reads as that color (dim Cyan turns into
   // Meta Blue, dim Yellow into Orange-red).
   const own = paths.map((path) => path[0])
@@ -56,7 +60,54 @@ export function exactRules(pack, paths, apart) {
       const lighter = Math.max(colors[i].path[0][0], colors[j].path[0][0])
       near.push({ i, j, steps, top: lighter + (1 - lighter) * EXACT.ramp })
     }
-  return { colors, near, far }
+  const at = (name) => colors.findIndex((c) => c.name === name)
+  const neighbours = order
+    .slice(1)
+    .map((name, k) => [at(order[k]), at(name)])
+    .filter(([i, j]) => i >= 0 && j >= 0)
+    .map(([i, j]) => {
+      const lighter = Math.max(colors[i].path[0][0], colors[j].path[0][0])
+      return { i, j, top: lighter + (1 - lighter) * EXACT.ramp }
+    })
+  return { colors, near, far, neighbours }
+}
+
+// The color's own chroma at lightness L: along its dim path below the hex, on the straight line to white above it.
+function chromaAt(path, L) {
+  const [L0, C0] = path[0]
+  if (L >= L0) return C0 * Math.max(0, 1 - (L - L0) / Math.max(1 - L0, 1e-6))
+  for (let i = 0; i + 1 < path.length; i++) {
+    const [La, Ca] = path[i]
+    const [Lb, Cb] = path[i + 1]
+    if (L <= La && L >= Lb) return Ca + (Cb - Ca) * (La > Lb ? (La - L) / (La - Lb) : 0)
+  }
+  const [Ll, Cl] = path[path.length - 1]
+  return (Cl * L) / Math.max(Ll, 1e-6)
+}
+
+// Signed hue difference from `from` to `to`, the short way (degrees, -180 to 180).
+const hueGap = (to, from) => ((((to - from) % 360) + 540) % 360) - 180
+
+/**
+ * A blend of two hue neighbours (rules.neighbours): the pixel's hue lies on the short way between their hues, with at
+ * least EXACT.neighbourKeep of their own chroma at its lightness (weighed by where it sits) and EXACT.neighbourChroma.
+ * Returns { i, j, t } with t the part from i (1 at i's hue, 0 at j's), or null.
+ */
+export function neighbourBlend(rules, L, a, b) {
+  const C = Math.hypot(a, b)
+  if (C < EXACT.neighbourChroma) return null
+  const h = (Math.atan2(b, a) * 180) / Math.PI
+  for (const p of rules.neighbours ?? []) {
+    if (L > p.top) continue
+    const hi = rules.colors[p.i].path[0][2]
+    const span = hueGap(rules.colors[p.j].path[0][2], hi)
+    const pos = hueGap(h, hi)
+    if (Math.abs(span) < 1e-6 || pos * span <= 0 || Math.abs(pos) >= Math.abs(span)) continue
+    const u = pos / span
+    const own = (1 - u) * chromaAt(rules.colors[p.i].path, L) + u * chromaAt(rules.colors[p.j].path, L)
+    if (C >= EXACT.neighbourKeep * own) return { i: p.i, j: p.j, t: 1 - u }
+  }
+  return null
 }
 
 // The color's expected a, b at lightness L (a, b: the pixel's), and whether that point is past EXACT.ramp to white.
@@ -125,6 +176,8 @@ export function readPixel(rules, L, a, b) {
     }
   }
   if (blend) return blend
+  const between = neighbourBlend(rules, L, a, b)
+  if (between) return { kind: 'blend', ...between }
   return pale >= 0 ? { kind: 'pale', k: pale } : { kind: 'other' }
 }
 

@@ -342,7 +342,7 @@ try {
   const { toneCurve } = await harness.ssr('/src/light/engine/output.ts')
   const { linearToOklab, oklabToLinear } = await harness.ssr('/src/light/color/oklab.ts')
   const { hexToLinear, linearToSrgb, srgbToLinear } = await harness.ssr('/src/light/color/srgb.ts')
-  const { getPack } = await harness.ssr('/src/light/color/packs.ts')
+  const { getPack, HUE_ORDER } = await harness.ssr('/src/light/color/packs.ts')
   const rendering = !fromDir && !dev
   const { buildScene, clampDrag, controlsForDrag } = rendering || dev ? await harness.ssr('/src/tool/controls.ts') : {}
   const { EXPORT_SIZES } = rendering ? await harness.ssr('/src/light/engine/frame.ts') : {}
@@ -1406,7 +1406,7 @@ try {
   if (mixName && rendering && !stage?.withColorMix) throw new Error('--mix: this checkout has no color stage yet (src/light/color/stage.ts with withColorMix and COLOR_DESIGN_PACK)')
   const mixes = mixName ? await harness.ssr('/src/light/color/mix.ts') : null
   const mixOf = (packId) => (mixName ? mixByName(mixes, getPack(packId), mixName) : null)
-  const readRules = Object.fromEntries(PACK_ORDER.map((id) => [id, rulesFor(getPack(id))]))
+  const readRules = Object.fromEntries(PACK_ORDER.map((id) => [id, rulesFor(getPack(id), HUE_ORDER?.[id] ?? [])]))
   // The tool's controls for a frame: at a test drag, the line and the mood control set from its start, as the tool
   // has them right after that drag (with the stage on, from the design pack the tool draws in).
   const controlsOf = (look, f) => {

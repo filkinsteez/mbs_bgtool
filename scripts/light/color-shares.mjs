@@ -335,8 +335,8 @@ function setError(asked, shares) {
 await fs.mkdir(outDir, { recursive: true })
 const harness = await startHarness()
 try {
-  const { PACKS, getPack } = await harness.ssr('/src/light/color/packs.ts')
-  const rulesById = Object.fromEntries(PACKS.map((p) => [p.id, rulesFor(p)]))
+  const { PACKS, getPack, HUE_ORDER } = await harness.ssr('/src/light/color/packs.ts')
+  const rulesById = Object.fromEntries(PACKS.map((p) => [p.id, rulesFor(p, HUE_ORDER?.[p.id] ?? [])]))
   if (args.swatches) await swatches(rulesById, getPack)
   else if (typeof args.files === 'string') await files(rulesById)
   else await looksRun(harness, rulesById, getPack)
