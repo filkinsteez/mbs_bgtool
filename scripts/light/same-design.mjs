@@ -11,7 +11,7 @@ import path from 'node:path'
 import sharp from 'sharp'
 import { list, parseArgs } from './lib/args.mjs'
 import { mixByName } from './lib/color-read.mjs'
-import { compare, MEET, mapsOf, meetingMask } from './lib/design-maps.mjs'
+import { compare, MEET, mapsOf, meetingLines, meetMask } from './lib/design-maps.mjs'
 import { startHarness } from './lib/harness.mjs'
 
 const LOOKS = ['sunset.bands', 'sunset.ramp', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
@@ -170,14 +170,14 @@ try {
               }
             }
             const small = await sharp(png).removeAlpha().resize(mw, mh, { fit: 'fill' }).raw().toBuffer()
-            frames.push({ variant, png, maps: mapsOf(small, mw, mh), meet: meetingMask(variant.pack, small, mw, mh) })
+            frames.push({ variant, png, maps: mapsOf(small, mw, mh), lines: meetingLines(variant.pack, small, mw, mh) })
           }
           const pairs = []
           const wanted = (a, b) => !stage || (a.mixName === 'default' && b.mixName === 'default') || (a.pack.id === b.pack.id && (a.mixName === 'default' || b.mixName === 'default'))
           for (let i = 0; i < frames.length; i++) {
             for (let j = i + 1; j < frames.length; j++) {
               if (!wanted(frames[i].variant, frames[j].variant)) continue
-              const meet = frames[i].meet.map((v, p) => v | frames[j].meet[p])
+              const meet = meetMask([frames[i].lines, frames[j].lines], mw, mh)
               pairs.push({ frames: [frames[i].variant.key, frames[j].variant.key], ...compare(frames[i].maps, frames[j].maps, limits, meet) })
             }
           }
@@ -203,7 +203,7 @@ const limitText = Object.entries(T.limits).map(([mood, l]) => `${MOOD_NAMES[mood
 const lines = [
   mixArg ? '# Same design in every pack and mix (color stage on)' : '# Same design in every pack',
   '',
-  `Seeds ${seeds.join(', ')}; ${formats.map((f) => f.replace('x', ':')).join(' and ')}; ${views.map(viewText).join(', ')}; ${results.reduce((s, r) => s + r.frames.length, 0)} frames in ${seconds} s. Two frames differ in design when (${limitText}). Pixels near a meeting line of two pack colors ${MEET.hue} degrees or more apart in hue, whose lightness differs by ${MEET.allow} or less, are left out (owner, 2026-11-10 9:50 PM).`,
+  `Seeds ${seeds.join(', ')}; ${formats.map((f) => f.replace('x', ':')).join(' and ')}; ${views.map(viewText).join(', ')}; ${results.reduce((s, r) => s + r.frames.length, 0)} frames in ${seconds} s. Two frames differ in design when (${limitText}). Pixels near a meeting line of two pack colors ${MEET.hue} degrees or more apart in hue, whose lightness differs by ${MEET.allow} or less, are left out, the strongest lines first and at most ${Math.round(100 * MEET.cap)}% of a frame (owner, 2026-11-10 9:50 PM).`,
   '',
   ...notes.map((n) => `- ${n}`),
   ...(notes.length ? [''] : []),
