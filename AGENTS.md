@@ -6,7 +6,6 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 3D mode and the Meta symbol were removed on 2026-11-02 by owner decision. Do not bring them back unless the owner asks.
 Later on 2026-11-02 the owner asked for crops of the Meta logo outline as Contour light shapes. Use the official path from git history (`git show 5efa956^:public/icon-fill.svg`). Never show the whole logo, and no 3D.
-Contour's Halo layout of separate circles (a big ring with smaller rings beside it) was removed on 2026-11-11 by owner decision ("dont think we need this one"). Do not bring it back unless the owner asks.
 
 ## Backgrounds are light (owner directive, 2026-11-02)
 
