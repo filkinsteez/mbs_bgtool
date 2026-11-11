@@ -42,17 +42,24 @@ Contour's Halo layout of separate circles (a big ring with smaller rings beside 
   far apart in hue meet and are not neighbours in the hue order, the
   light along that thin meeting line rises so
   the meeting reads lighter instead of grey, and how much it rises may
-  differ by pack. Shapes, light positions and the light and dark layout
-  stay the same. The Meta Blue toggle and the mix control, once
-  built, also change only the colors.
+  differ by pack. Shapes and light positions stay the same. Since the
+  color stage of 2026-11-11 the light and dark layout follows the colors,
+  because each color shows at its own swatch (next bullet). The color
+  sliders, like the pack, change the colors and keep the shapes and light
+  positions.
 - The color sliders set the picture's color makeup: each color covers its
   set share of the picture's colored area (owner, 2026-11-11: "as long
   as the sliders represent the color makeup and they're as close as
-  possible to the actual color swatches thats fine"). A color takes the
-  light nearest its own swatch first and reaches into brighter or dimmer
-  light only as far as its share needs, in paler or deeper shades of
-  itself that stay as close to the swatch as that light allows. Black
-  backgrounds don't count toward any color.
+  possible to the actual color swatches thats fine").
+  - Each color shows at its own swatch, with a little of the picture's
+    light: slightly lighter in the brightest light, up to about 0.08 Oklab
+    L, and fading toward black with the picture's own falloff.
+  - The picture's lightness therefore follows the colors: a mostly Yellow
+    picture is brighter, a mostly Meta Blue one deeper. The owner approved
+    this on 2026-11-11 at 4:24 PM after seeing it: "Yes, all of it".
+  - Cranking a slider must make the picture mostly that color, near its
+    swatch, in every mood.
+  - Black backgrounds don't count toward any color.
 - Dragging moves the light and keeps the picture's colors (owner,
   2026-11-11: "dragging control to change color often overrides all
   original colors to just meta blue it should retain its original"). The
