@@ -71,7 +71,10 @@ Contour's Halo layout of separate circles (a big ring with smaller rings beside 
     build out Research's proposal (report 5): near the rim colors count by
     area again, and the haze far from strong light goes to Meta Blue's dim
     glow or a darker pack color that suits it (Plum, Forest) and counts
-    toward no share. It lands only after he sees it side by side.
+    toward no share. It lands only after he sees it side by side. On
+    2026-11-12 at 7:20 AM, after a hard refresh of his browser, the owner
+    said the current Contour (a9aadb02) "looks way better now. we can keep
+    whats in there currently", so that build-out is on hold.
 - Small changes give small changes (owner, 2026-11-11: "colors pop in and
   out from really small adjustments"). A slider step or a drag of a few
   pixels changes the picture in proportion. No color appears or
