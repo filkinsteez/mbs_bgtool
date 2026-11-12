@@ -233,6 +233,9 @@ Contour's Halo layout of separate circles (a big ring with smaller rings beside 
   step titles in the panel ("1. Pick a color pack" and the others).
 - A third exception, asked for by the owner on 2026-11-12: an "i in a
   circle" at the right of the Colors card's title, with a hover tooltip
-  that explains step 1 and links to documentation ("can we add a little
-  information icon (i in a circle) right aligned inline with colors that
-  links to documentation – should be like a hover tool tip").
+  that links to documentation ("can we add a little information icon (i
+  in a circle) right aligned inline with colors that links to
+  documentation – should be like a hover tool tip"). Until the owner gives
+  the URL (`COLORS_DOC_URL` in `src/tool/panelPickers.tsx`), the tooltip
+  only reads "documentation link here" (owner: "just a "documentation link
+  here""), and that text becomes the link once the URL is set.
