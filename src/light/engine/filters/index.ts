@@ -1,21 +1,20 @@
 import type { OutputSettings } from '../../scene'
 import { GRAIN_FILTER } from '../grain'
-import { PAPER_FILTER } from './paper'
 import { PIXEL_FILTER } from './pixel'
 import type { FilterKey, OutputFilter } from './types'
 
 export type { FilterFrame, FilterKey, FilterSource, OutputFilter } from './types'
 
 /** Every filter strength in the output settings. */
-export const FILTER_KEYS: readonly FilterKey[] = ['grain', 'pixel', 'paper']
+export const FILTER_KEYS: readonly FilterKey[] = ['grain', 'pixel']
 
 /**
- * The output filter chain, in the order the stages run: grain, then paper, then
- * the cell filter, then (in the output pass itself) the sRGB encode and the dither.
+ * The output filter chain, in the order the stages run: grain, then the cell
+ * filter, then (in the output pass itself) the sRGB encode and the dither.
  * A filter plugs in by exporting an OutputFilter from its own file in this
  * folder and adding it here.
  */
-export const OUTPUT_FILTERS: readonly OutputFilter[] = [GRAIN_FILTER, PAPER_FILTER, PIXEL_FILTER]
+export const OUTPUT_FILTERS: readonly OutputFilter[] = [GRAIN_FILTER, PIXEL_FILTER]
 
 /** The stages whose strength is above 0, in chain order. */
 export function activeFilters(output: OutputSettings): OutputFilter[] {

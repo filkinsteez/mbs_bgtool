@@ -159,8 +159,6 @@ export interface OutputSettings {
   grain: number
   /** Pixel filter strength 0..1; 0 off. Output filters run in the order of OUTPUT_FILTERS (engine/filters). */
   pixel: number
-  /** Paper filter strength 0..1: the picture as if printed on uncoated paper (engine/filters/paper.ts); 0 off. */
-  paper: number
   /**
    * Paper toe 0..1 below nominal: dim light gets purer, so dim warm light
    * reads amber and red instead of olive and brown, and dim blue reads navy.
@@ -194,7 +192,6 @@ export const DEFAULT_OUTPUT: OutputSettings = {
   exposure: 0,
   grain: 0,
   pixel: 0,
-  paper: 0,
   toe: 0,
 }
 
@@ -235,7 +232,6 @@ export const OUTPUT_NUMBERS: readonly NumericSetting<NumericKeys<OutputSettings>
   { key: 'exposure', label: 'Exposure', min: -4, max: 4, step: 0.01 },
   { key: 'grain', label: 'Grain', min: 0, max: 1, step: 0.01 },
   { key: 'pixel', label: 'Pixel', min: 0, max: 1, step: 0.01 },
-  { key: 'paper', label: 'Paper', min: 0, max: 1, step: 0.01 },
   { key: 'toe', label: 'Paper toe', min: 0, max: 1, step: 0.01 },
 ]
 

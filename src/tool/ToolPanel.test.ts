@@ -83,11 +83,10 @@ describe('tool panel layout', () => {
     ])
   })
 
-  it('shows the filter slider as Strength with Grain and Paper and Density with Pixel, its key kept, and every other label as DialKit makes it', () => {
+  it('shows the filter slider as Strength with Grain and Density with Pixel, its key kept, and every other label as DialKit makes it', () => {
     for (const [filter, label] of [
       ['grain', 'Strength'],
       ['pixel', 'Density'],
-      ['paper', 'Strength'],
     ] as const) {
       const id = `labels-check-${filter}`
       DialStore.registerPanel(id, 'Check', buildDialConfig(DEFAULT_STATE, 'Export', filter))

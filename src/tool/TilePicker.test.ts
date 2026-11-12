@@ -21,7 +21,7 @@ describe('panel tiles', () => {
 
   it('show the filters and the formats as buttons that share the row, each name inside its button', () => {
     const pickers = [
-      { html: renderToStaticMarkup(createElement(FilterPicker, { value: 'grain', onChange: () => {} })), names: ['None', 'Grain', 'Pixel', 'Paper'] },
+      { html: renderToStaticMarkup(createElement(FilterPicker, { value: 'grain', onChange: () => {} })), names: ['None', 'Grain', 'Pixel'] },
       { html: renderToStaticMarkup(createElement(FormatPicker, { value: '16:9', onChange: () => {} })), names: ['16:9', '9:16', '1:1', '4:5'] },
     ]
     for (const { html, names } of pickers) {
