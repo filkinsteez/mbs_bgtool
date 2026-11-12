@@ -185,7 +185,12 @@ Contour's Halo layout of separate circles (a big ring with smaller rings beside 
   reads "Density": its low end gives bigger pixels and its high end
   smaller ones (owner, 2026-11-11: "for pixel strenght the slider is
   backwards bigger at the bottom. smaller at the top and relabel slider
-  from strength to density"). Grain's slider still reads "Strength". Mood is picked from
+  from strength to density"). Pixel's blocks take the pack color that
+  covers most of each block, not a washed-out average, and come in three
+  sizes on one grid: bigger where the picture is flat, smaller where the
+  light or bands change. The design sets the sizes, so the color sliders
+  never move them (owner, 2026-11-12, approving it side by side: "i like
+  the right column"). Grain's slider still reads "Strength". Mood is picked from
   small pictures, Filter from icons and Format from shapes, each with its
   name, not dropdowns; the pictures are fixed renders from
   `scripts/light/panel-pictures.mjs`, not live, in the Atmospheric pack
