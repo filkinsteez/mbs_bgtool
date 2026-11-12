@@ -188,8 +188,8 @@ Contour's Halo layout of separate circles (a big ring with smaller rings beside 
   `scripts/light/panel-pictures.mjs`, not live, in the Atmospheric pack
   whichever pack is picked. No free color pickers: Colors shows each pack
   as a strip of its exact hexes, and you pick a pack. Every option's name
-  shows under its picture or strip, inside the Filter options and inside
-  the Format squares. The Filter options are rectangles of equal width
+  shows under its picture or strip, and inside the Filter and Format
+  options. The Filter and Format options are rectangles of equal width
   that fill their row (owner, 2026-11-11: "can we have these be
   rectangular so they split the space more evenly?"). A card's title has
   no value beside it, since the ring marks the pick.
