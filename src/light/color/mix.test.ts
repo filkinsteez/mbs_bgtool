@@ -250,8 +250,17 @@ describe('hue order', () => {
 
 describe('steps', () => {
   it('are one Nth of the picture in a pack of N colors: a quarter in Bold, a fifth in Elemental and Atmospheric', () => {
-    expect(MIX_STEPS).toEqual({ bold: 0.25, elemental: 0.2, atmospheric: 0.2 })
-    for (const pack of PACKS) expect(mixStep(pack)).toBeCloseTo(1 / pack.colors.length, 12)
+    expect(MIX_STEPS).toEqual({ primary: 0.25, bold: 0.25, elemental: 0.2, atmospheric: 0.2 })
+    for (const pack of PACKS.filter((p) => p.id !== 'primary')) expect(mixStep(pack)).toBeCloseTo(1 / pack.colors.length, 12)
+  })
+
+  it('are quarters in Primary, so its default of a half and two quarters sits on them and each color reaches 75%', () => {
+    const primary = getPack('primary')
+    expect(mixPercents(primary, defaultMix(primary))).toEqual([50, 25, 25])
+    for (const index of [0, 1, 2]) {
+      expect(stepRange(primary, defaultMix(primary), index)[1]).toBeCloseTo(0.75, 12)
+      expect(setStep(primary, defaultMix(primary), index, 0.75).shares[index]).toBeCloseTo(0.75, 12)
+    }
   })
 
   it('set a color to the nearest step, up to one step short of the whole picture, the others keeping their ratios', () => {

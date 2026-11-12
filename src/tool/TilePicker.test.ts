@@ -38,6 +38,12 @@ describe('panel tiles', () => {
     expect(renderToStaticMarkup(createElement(FilterPicker, { value: 'none', onChange: () => {} }))).not.toContain('tool-info')
   })
 
+  it('show the four packs with Primary first, its strip from White through Meta Blue to Near-black', () => {
+    const html = renderToStaticMarkup(createElement(PackPicker, { value: 'bold', onChange: () => {} }))
+    expect([...html.matchAll(/aria-label="([^"]+)" tabindex/g)].map(([, name]) => name)).toEqual(['Primary', 'Bold', 'Elemental', 'Atmospheric'])
+    expect(html).toContain('<span style="background:#FFFFFF"></span><span style="background:#0064E0"></span><span style="background:#1C2B33"></span>')
+  })
+
   it('have a picture for every mood', () => {
     const pictures = MOOD_IDS.map((mood) => moodPicture(mood))
     expect(pictures).toEqual(['/panel/sunset-merged.webp', '/panel/contour-merged.webp', '/panel/rush-split.webp'])

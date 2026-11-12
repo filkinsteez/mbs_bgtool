@@ -91,8 +91,8 @@ export function rulesFor(pack, order = []) {
   }
   const blue = chromatic.find((c) => c.metaBlue) ?? null
   const cyan = blue ? chromatic.find((c) => !c.metaBlue && signedGap(c.h0, blue.h0) < 0 && signedGap(c.h0, blue.h0) > -60) ?? null : null
-  const ramps = USE_RAMPS && colors.every((c) => rampFor(c.hex))
-  if (ramps) for (const c of colors) c.ramp = rampFor(c.hex)
+  const ramps = USE_RAMPS && colors.every((c) => rampFor(c.hex, pack.id))
+  if (ramps) for (const c of colors) c.ramp = rampFor(c.hex, pack.id)
   const byName = (name) => (ramps ? colors : chromatic).find((c) => c.name === name)
   const neighbours = order
     .slice(1)
@@ -640,7 +640,7 @@ export function blendSharesOf(rules, rgb, width, height, labels, wantMap = false
 }
 
 // The color the mix set holds at half (SHARED, Wed 8:31 AM).
-export const HALF_COLOR = { bold: 'Yellow', elemental: 'Lime', atmospheric: 'Ice' }
+export const HALF_COLOR = { primary: 'White', bold: 'Yellow', elemental: 'Lime', atmospheric: 'Ice' }
 
 // A color mix by name, from src/light/color/mix.ts: `default`, `blue-off` (Meta Blue at 0%), `even` (every color the
 // same share), `half` (HALF_COLOR at 50%), or `<color>:<share>` such as `Cyan:0.6`, set on the default mix with the

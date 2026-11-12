@@ -18,7 +18,7 @@ import { MIX_SET, stageArgs } from './lib/stage-args.mjs'
 const LOOKS = ['sunset.bands', 'sunset.ramp', 'sunset.blooms', 'contour.rim', 'contour.halo', 'contour.beam', 'contour.streaks']
 // The tool's three looks (the merged Sunrise and Contour, and Rush's split) are checked when named; `all` is the seven.
 const MERGED = ['sunset.merged', 'contour.merged', 'rush.split']
-const PACK_IDS = ['bold', 'elemental', 'atmospheric']
+const PACK_IDS = ['primary', 'bold', 'elemental', 'atmospheric']
 // The palette check's test drags (palette-check.mjs DRAGS), in frame units as in the URL.
 const DRAGS = {
   owner: { from: [1.011, 1.224], to: [-0.078, -0.067] },

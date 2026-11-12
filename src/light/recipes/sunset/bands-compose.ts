@@ -1,5 +1,5 @@
 import { linearToOklch } from '../../color/oklab'
-import { PACKS, type ColorPack } from '../../color/packs'
+import { getPack, type ColorPack } from '../../color/packs'
 import { hexToLinear, type Rgb } from '../../color/srgb'
 import type { ControlValues, LensSettings, OutputSettings, ParamValue } from '../../scene'
 import { closeHues, dimDrift, isLightColor, isWarm, needsBridge, paleLight } from './bands-light'
@@ -228,10 +228,11 @@ function paintBands(bands: readonly Pick<Band, 'color' | 'line' | 'mode'>[], rol
 }
 
 /**
- * The three packs' colors. The seed order (`stack`) is the same whatever colors a frame is given, and it makes the
- * eight seeds of a run look different in each pack's colors.
+ * The colors of Bold, Elemental and Atmospheric. The seed order (`stack`) is the same whatever colors a frame is given,
+ * and it makes the eight seeds of a run look different in each of these packs' colors. A pack added later stays out of
+ * it, so it doesn't change these packs' seeds.
  */
-const PACK_COLORS = PACKS.map((p) => p.colors.map((c) => c.hex))
+const PACK_COLORS = (['bold', 'elemental', 'atmospheric'] as const).map((id) => getPack(id).colors.map((c) => c.hex))
 
 /** The light the sky's pale side adds, linear (`skyTint`), for a sky and its tint (`bandsRoles`). */
 function skyTintOf(sky: string, tint: string | undefined): number[] {
@@ -451,7 +452,7 @@ function keepThick(bands: Band[], R: number, frameW: number, frameH: number, see
  * nominal light.
  */
 export function composeBands(input: BandsComposeInput): BandsComposition {
-  const colors = (input.pack ?? PACKS[0]).colors.map((c) => c.hex)
+  const colors = (input.pack ?? getPack('bold')).colors.map((c) => c.hex)
   const intensity = input.intensity ?? 0.5
   const softness = input.softness ?? 0.5
   // With a line set, the line alone places the stack: Horizon keeps the seed's own heights.

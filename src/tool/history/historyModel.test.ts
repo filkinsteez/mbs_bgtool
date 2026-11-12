@@ -87,6 +87,7 @@ describe('history', () => {
 
   it('tells designs apart by mood, look, seed and format only', () => {
     expect(designOf(query(1))).toBe(designOf(query(1).replace('pack=bold', 'pack=atmospheric')))
+    expect(designOf(query(1))).toBe(designOf(query(1).replace('pack=bold', 'pack=primary')))
     expect(designOf(query(1))).toBe(designOf(query(1, '&filter=grain&strength=0.3')))
     expect(designOf(query(1))).not.toBe(designOf(query(2)))
     expect(designOf(query(1))).not.toBe(designOf(query(1).replace('16x9', '9x16')))

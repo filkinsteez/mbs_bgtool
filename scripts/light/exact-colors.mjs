@@ -22,7 +22,7 @@ const args = parseArgs()
 const mixSetCode = runMixSet(args, import.meta.url)
 if (mixSetCode !== null) process.exit(mixSetCode)
 const looks = list(args.look).length ? list(args.look) : ['sunset.merged', 'contour.merged', 'rush.split']
-const packIds = list(args.packs).length ? list(args.packs) : ['bold', 'elemental', 'atmospheric']
+const packIds = list(args.packs).length ? list(args.packs) : ['primary', 'bold', 'elemental', 'atmospheric']
 const seeds = list(args.seeds ?? '1-8').flatMap((part) => {
   const [a, b] = part.split('-').map(Number)
   return b ? Array.from({ length: b - a + 1 }, (_, i) => a + i) : [a]

@@ -90,9 +90,15 @@ describe('Oklab', () => {
 describe('packs', () => {
   it('match the color pack slide exactly, in order', () => {
     expect(PACKS.map((pack) => [pack.id, pack.name, pack.tagline])).toEqual([
+      ['primary', 'Primary', 'The default for anything evergreen'],
       ['bold', 'Bold', 'Blue amplified'],
       ['elemental', 'Elemental', 'Blue contextualized'],
       ['atmospheric', 'Atmospheric', 'Blue distilled'],
+    ])
+    expect(getPack('primary').colors).toEqual([
+      { name: 'Meta Blue', hex: '#0064E0' },
+      { name: 'White', hex: '#FFFFFF' },
+      { name: 'Near-black', hex: '#1C2B33' },
     ])
     expect(getPack('bold').colors).toEqual([
       { name: 'Meta Blue', hex: '#0064E0' },

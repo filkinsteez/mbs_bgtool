@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { getPack } from '@/light'
-import { defaultMix, mixFromShares, setShare } from '@/light/color/mix'
+import { defaultMix, mixFromShares, mixPercents, setShare } from '@/light/color/mix'
 import {
   customMix,
   DEFAULT_STATE,
@@ -42,6 +42,15 @@ describe('tool state in the URL', () => {
     const query = toQuery(state)
     expect(query).toBe('mood=contour&look=merged&pack=atmospheric&seed=43&format=4x5')
     expect(parseQuery(new URLSearchParams(query))).toEqual(state)
+  })
+
+  it('round-trips Primary with its mix, and keeps Bold as the pack a plain link opens with', () => {
+    const query = 'mood=rush&look=split&pack=primary&mix=white:75,meta-blue:13,near-black:12&seed=4&format=9x16'
+    const state = parseQuery(new URLSearchParams(query))
+    expect(state.pack).toBe('primary')
+    expect(mixPercents(getPack('primary'), state.mix)).toEqual([13, 75, 12])
+    expect(toQuery(state)).toBe(query)
+    expect(DEFAULT_STATE.pack).toBe('bold')
   })
 
   it("ignores an old link's intensity (the light's Strength) and no longer writes it", () => {

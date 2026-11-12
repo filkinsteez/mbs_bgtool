@@ -1,7 +1,7 @@
 import { linearToOklab } from './oklab'
 import { hexToLinear } from './srgb'
 
-export type PackId = 'bold' | 'elemental' | 'atmospheric'
+export type PackId = 'primary' | 'bold' | 'elemental' | 'atmospheric'
 
 export interface PackColor {
   name: string
@@ -17,6 +17,16 @@ export interface ColorPack {
 }
 
 export const PACKS: readonly ColorPack[] = [
+  {
+    id: 'primary',
+    name: 'Primary',
+    tagline: 'The default for anything evergreen',
+    colors: [
+      { name: 'Meta Blue', hex: '#0064E0' },
+      { name: 'White', hex: '#FFFFFF' },
+      { name: 'Near-black', hex: '#1C2B33' },
+    ],
+  },
   {
     id: 'bold',
     name: 'Bold',
@@ -60,6 +70,7 @@ export const PACKS: readonly ColorPack[] = [
  * pack's own color list keeps its order, which the looks index.
  */
 export const HUE_ORDER: Readonly<Record<PackId, readonly string[]>> = {
+  primary: ['White', 'Meta Blue', 'Near-black'],
   bold: ['Meta Blue', 'Cyan', 'Yellow', 'Orange-red'],
   elemental: ['Tan', 'Lime', 'Forest', 'Meta Blue', 'Plum'],
   atmospheric: ['Meta Blue', 'Ice', 'Steel', 'Slate', 'Near-black'],

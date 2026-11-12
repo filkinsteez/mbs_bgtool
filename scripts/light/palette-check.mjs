@@ -22,7 +22,7 @@ const LOOKS = ['sunset.ramp', 'sunset.bands', 'sunset.blooms', 'contour.rim', 'c
 // The looks behind a switch in the tool (sunrise=merged, contour=merged, rush=split) are checked when named; `all` is
 // the seven. Rush is light on a dark base, so its frames are read and judged as Contour's are.
 const MERGED = ['sunset.merged', 'contour.merged', 'rush.split']
-const PACK_ORDER = ['bold', 'elemental', 'atmospheric']
+const PACK_ORDER = ['primary', 'bold', 'elemental', 'atmospheric']
 
 // Thresholds, set by eye on the coordinator's shots (artifacts/coordinator/bands-bug, palette-now, palette-now-contour).
 const T = {

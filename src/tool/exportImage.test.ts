@@ -40,6 +40,12 @@ describe('export file names', () => {
     )
   })
 
+  it('name a Primary export by its pack and its mix', () => {
+    expect(exportFileName({ id: 'tool', pack: 'primary', scene: scene('rush.split', 4) }, '9x16', controlNameParts({ mix: 'white:75,meta-blue:13,near-black:12' }))).toBe(
+      'rush.split-primary-9x16-seed4-mix-white75,meta-blue13,near-black12.jpg',
+    )
+  })
+
   it('give different settings different names, and the same settings the same name', () => {
     const named = new Map<string, string>()
     const add = (recipe: Scene['recipe'], seed: number, controls: NamedControls) => {

@@ -16,9 +16,10 @@ export const META_BLUE_HEX = '#0064E0'
 export const MAX_SHARE = 0.9
 /**
  * The share a color's slider moves in, per pack: one Nth of the picture in a pack of N colors (owner, 2026-11-11
- * 8:38 AM: "segmented. so in 25% increments", "or 20 if there are 5 colors").
+ * 8:38 AM: "segmented. so in 25% increments", "or 20 if there are 5 colors"). Primary's three colors move in quarters,
+ * so its default mix of a half and two quarters sits on the steps.
  */
-export const MIX_STEPS: Readonly<Record<PackId, number>> = { bold: 0.25, elemental: 0.2, atmospheric: 0.2 }
+export const MIX_STEPS: Readonly<Record<PackId, number>> = { primary: 0.25, bold: 0.25, elemental: 0.2, atmospheric: 0.2 }
 /** Meta Blue's share in a pack's default mix; the pack's other colors share the rest evenly. */
 export const DEFAULT_META_BLUE_SHARE = 0.5
 /** The fewest colors a mix has on. */

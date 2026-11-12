@@ -59,7 +59,7 @@ export function PacksView({ panelRoot }: { panelRoot: RefObject<HTMLElement | nu
   const exportLabel = exporting ? EXPORTING_LABEL : flash.label('export', 'Export')
   const packConfig = useMemo<DialConfig>(
     () => ({
-      pack: { type: 'select', options: PACK_OPTIONS, default: PACKS[0].id },
+      pack: { type: 'select', options: PACK_OPTIONS, default: 'bold' },
       aspect: { type: 'select', options: [...EXPORT_ASPECTS], default: EXPORT_ASPECTS[0] },
       export: { type: 'action', label: exportLabel },
     }),
@@ -72,7 +72,7 @@ export function PacksView({ panelRoot }: { panelRoot: RefObject<HTMLElement | nu
     },
   })
   const packValue = packDial.values.pack
-  const pack = getPack(typeof packValue === 'string' && isPackId(packValue) ? packValue : PACKS[0].id)
+  const pack = getPack(typeof packValue === 'string' && isPackId(packValue) ? packValue : 'bold')
   const aspect = isAspect(packDial.values.aspect) ? packDial.values.aspect : EXPORT_ASPECTS[0]
 
   const colorsFor = useCallback((recipe: RecipeDefinition) => recipe.fromPack(pack), [pack])

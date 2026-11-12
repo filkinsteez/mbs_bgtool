@@ -489,7 +489,7 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
     solved = remember(solves, solveKey, { colors, assignment, byParts, ...solution, ...drawn, bridge, darkBridge, lift })
   }
   lastReport = { hexes: solved.colors.map((c) => c.hex), light: solved.light, reads: solved.reads, fields: solved.assignment.map((f) => fields[f]?.name ?? '') }
-  const textures = { ...fieldTextures(input.gpu, grid, solved.values), uMixRamps: rampTexture(input.gpu, solved.colors, grid, solved.bridge, solved.darkBridge, solved.lift) }
+  const textures = { ...fieldTextures(input.gpu, grid, solved.values), uMixRamps: rampTexture(input.gpu, solved.colors, grid, solved.bridge, solved.darkBridge, solved.lift, pack.id) }
   return {
     chunk: COLOR_STAGE_GLSL,
     // The engine's glow reads the colors' dim paths with these, so a glow fades through the same colors as its light.
@@ -577,13 +577,13 @@ export function colorRamp(unit: readonly number[], path: readonly DimPoint[] = [
  * on the stage grid (the spill in red, the dark lines in green, row 5 the grid's top row). They share the texture
  * because one more would take a look's shader past WebGL's 16 texture units.
  */
-function rampTexture(gpu: Gpu, colors: readonly StageColor[], grid: StageGrid, bridge: Float32Array, darkBridge: Float32Array, lift: Float32Array): Target {
+function rampTexture(gpu: Gpu, colors: readonly StageColor[], grid: StageGrid, bridge: Float32Array, darkBridge: Float32Array, lift: Float32Array, pack: PackId): Target {
   const gl = gpu.gl
   const width = Math.max(RAMP_STEPS, grid.width)
   const height = 5 + grid.height
   const data = new Float32Array(width * height * 4)
   colors.slice(0, 5).forEach((c, k) => {
-    const own = rampFor(c.hex)
+    const own = rampFor(c.hex, pack)
     const ramp = own ? rampSteps(own, RAMP_STEPS) : colorRamp(c.unit, c.path)
     for (let j = 0; j < RAMP_STEPS; j++) data.set([ramp[3 * j], ramp[3 * j + 1], ramp[3 * j + 2], 1], 4 * (k * width + j))
   })

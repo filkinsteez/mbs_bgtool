@@ -135,6 +135,35 @@ export const RAMPS: Readonly<Record<string, readonly RampPoint[]>> = {
     [0.95, 0.014, 200],
     [0.99, 0, 200],
   ],
+  // White: white at its own lightness; under it a cool pale blue, as white light reads through Meta Blue's haze, so a
+  // dimmed White never goes neutral grey or beige beside the blue.
+  '#FFFFFF': [
+    [0.14, 0.03, 262],
+    [0.4, 0.05, 258],
+    [0.65, 0.05, 252],
+    [0.8, 0.035, 250],
+    [0.9, 0.008, 248],
+    [0.96, 0.003, 246],
+    [1, 0, 246],
+  ],
+}
+
+/**
+ * Ramps a pack gives its own color in place of the one by hex. Primary's Near-black deepens toward a slate blue beside
+ * Meta Blue, so Meta Blue into Near-black reads as blue going dark; Atmospheric's keeps its teal grey, apart from Slate.
+ */
+export const PACK_RAMPS: Readonly<Record<string, Readonly<Record<string, readonly RampPoint[]>>>> = {
+  primary: {
+    '#1C2B33': [
+      [0.279, 0.025, 232.1],
+      [0.4, 0.05, 250],
+      [0.55, 0.065, 256],
+      [0.7, 0.055, 256],
+      [0.84, 0.018, 253],
+      [0.92, 0.004, 251],
+      [0.99, 0, 250],
+    ],
+  },
 }
 
 type Vec3 = [number, number, number]
@@ -154,9 +183,10 @@ const luminance = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.07
 const inGamut = (c: readonly number[]) => c.every((v) => v >= -1e-4 && v <= 1 + 1e-4)
 const toLab = (L: number, C: number, h: number): Vec3 => [L, C * Math.cos((h * Math.PI) / 180), C * Math.sin((h * Math.PI) / 180)]
 
-/** The ramp for a pack hex, or undefined for a color without one. */
-export function rampFor(hex: string): readonly RampPoint[] | undefined {
-  return RAMPS[hex.toUpperCase()]
+/** The ramp for a pack hex, or undefined for a color without one; with a pack id, the pack's own ramp comes first. */
+export function rampFor(hex: string, pack?: string): readonly RampPoint[] | undefined {
+  const key = hex.toUpperCase()
+  return (pack === undefined ? undefined : PACK_RAMPS[pack]?.[key]) ?? RAMPS[key]
 }
 
 /** The ramp's point at Oklab lightness L, before fitting into sRGB. */

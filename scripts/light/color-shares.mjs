@@ -14,7 +14,7 @@ const LOOKS = ['sunset.bands', 'sunset.ramp', 'sunset.blooms', 'contour.rim', 'c
 // The looks behind the tool's switches (sunrise=merged, contour=merged, rush=split) are measured when named; `all` is
 // the seven.
 const MERGED = ['sunset.merged', 'contour.merged', 'rush.split']
-const PACK_IDS = ['bold', 'elemental', 'atmospheric']
+const PACK_IDS = ['primary', 'bold', 'elemental', 'atmospheric']
 // The palette check's test drags (palette-check.mjs DRAGS), in frame units as in the URL.
 const DRAGS = {
   owner: { from: [1.011, 1.224], to: [-0.078, -0.067] },
@@ -278,7 +278,7 @@ function summaryOf(frames, looks, formats, views, seeds, getPack, rulesById, mix
       lines.push('')
     }
   }
-  lines.push('## Meta Blue carries light', '', `Judged where Meta Blue covers ${pct(BLUE_LIGHT.applies)} or more of the lit pixels (owner, 2026-11-09 10:05 PM): it carries light when its lightness spreads ${BLUE_LIGHT.spread} or more (else flat), its brightest tenth reaches its hex's lightness (else dim), and under ${pct(BLUE_LIGHT.borrowed)} of that brightest tenth sits next to another color's lighter light (else borrowed). Each cell: frames where it carries light, of those judged, and the others by reason.`, '', '| Look | Bold | Elemental | Atmospheric |', '| --- | --- | --- | --- |')
+  lines.push('## Meta Blue carries light', '', `Judged where Meta Blue covers ${pct(BLUE_LIGHT.applies)} or more of the lit pixels (owner, 2026-11-09 10:05 PM): it carries light when its lightness spreads ${BLUE_LIGHT.spread} or more (else flat), its brightest tenth reaches its hex's lightness (else dim), and under ${pct(BLUE_LIGHT.borrowed)} of that brightest tenth sits next to another color's lighter light (else borrowed). Each cell: frames where it carries light, of those judged, and the others by reason.`, '', '| Look | Primary | Bold | Elemental | Atmospheric |', '| --- | --- | --- | --- | --- |')
   for (const look of looks) {
     const cells = PACK_IDS.map((packId) => {
       const set = frames.filter((f) => f.look === look && f.pack === packId && f.blue?.applies)
