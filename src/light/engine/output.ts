@@ -1,5 +1,5 @@
 import type { OutputSettings, UniformMap } from '../scene'
-import { activeFilters, OUTPUT_FILTERS, type FilterFrame, type OutputFilter } from './filters'
+import { activeFilters, OUTPUT_FILTERS, type FilterFrame, type FilterSource, type OutputFilter } from './filters'
 import type { Gpu, Target } from './gl'
 import { CHUNK_LIBRARY, GLSL_HEADER } from './glsl'
 import { GRAIN_FILTER } from './grain'
@@ -442,8 +442,35 @@ ${chain}  return display;
 /** The output pass with only the grain stage, which is off while uGrainAmp is 0. */
 export const OUTPUT_SHADER = buildOutputShader([GRAIN_FILTER])
 
-/** Every output pass the tool can draw with one filter at a time (and with none), for compiling ahead. */
-export const OUTPUT_FILTER_SHADERS: readonly string[] = [buildOutputShader([]), ...OUTPUT_FILTERS.map((stage) => buildOutputShader([stage]))]
+const reduceShaders = new Map<string, string>()
+
+/** The fragment shader of a filter source's reduce pass (FilterSource.reduce). */
+export function reduceShader(reduce: NonNullable<FilterSource['reduce']>): string {
+  const cached = reduceShaders.get(reduce.glsl)
+  if (cached) return cached
+  const shader =
+    GLSL_HEADER +
+    CHUNK_LIBRARY +
+    /* glsl */ `
+uniform sampler2D uSrc;
+out vec4 fragColor;
+` +
+    reduce.glsl +
+    /* glsl */ `
+void main() {
+  fragColor = ${reduce.apply}(ivec2(gl_FragCoord.xy));
+}
+`
+  reduceShaders.set(reduce.glsl, shader)
+  return shader
+}
+
+/** Every output pass the tool can draw with one filter at a time (and with none), and the filters' reduce passes, for compiling ahead. */
+export const OUTPUT_FILTER_SHADERS: readonly string[] = [
+  buildOutputShader([]),
+  ...OUTPUT_FILTERS.map((stage) => buildOutputShader([stage])),
+  ...OUTPUT_FILTERS.flatMap((stage) => (stage.source?.reduce ? [reduceShader(stage.source.reduce)] : [])),
+]
 
 /** Samples per axis averaged into each texel of a filter's frame source, unless the filter sets its own (at most 8). */
 const SOURCE_SAMPLES = 4
@@ -487,6 +514,13 @@ export function prepareOutputFilters(gpu: Gpu, output: OutputSettings, frame: Fi
     })
     gpu.release(samples)
     textures[stage.source.uniform] = source
+    const reduce = stage.source.reduce
+    if (reduce) {
+      const cells = reduce.size(frame, strength)
+      const target = gpu.acquire(Math.max(1, Math.round(cells.width)), Math.max(1, Math.round(cells.height)))
+      gpu.draw(gpu.program(reduceShader(reduce)), target, { textures: { uSrc: source }, uniforms })
+      textures[reduce.uniform] = target
+    }
   }
   return {
     shader: buildOutputShader(stages),

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_OUTPUT, OUTPUT_NUMBERS } from '../../scene'
 import { GRAIN_FILTER, grainUniforms } from '../grain'
-import { buildOutputShader, OUTPUT_FILTER_SHADERS, OUTPUT_SHADER } from '../output'
+import { buildOutputShader, OUTPUT_FILTER_SHADERS, OUTPUT_SHADER, reduceShader } from '../output'
 import { activeFilters, FILTER_KEYS, filterFileTag, OUTPUT_FILTERS } from '.'
 
 describe('output filter chain', () => {
@@ -29,7 +29,11 @@ describe('output filter chain', () => {
     expect(OUTPUT_SHADER.indexOf('vec3 filterGrain(')).toBeLessThan(OUTPUT_SHADER.indexOf('vec3 outputFilters('))
     expect(OUTPUT_SHADER.indexOf('linearToSrgb(saturate(outputFilters(')).toBeLessThan(OUTPUT_SHADER.indexOf('dither(saturate(encoded)'))
     expect(buildOutputShader([GRAIN_FILTER])).toBe(OUTPUT_SHADER)
-    expect(OUTPUT_FILTER_SHADERS).toEqual([none, ...OUTPUT_FILTERS.map((stage) => buildOutputShader([stage]))])
+    expect(OUTPUT_FILTER_SHADERS).toEqual([
+      none,
+      ...OUTPUT_FILTERS.map((stage) => buildOutputShader([stage])),
+      ...OUTPUT_FILTERS.flatMap((stage) => (stage.source?.reduce ? [reduceShader(stage.source.reduce)] : [])),
+    ])
   })
 
   it('gives the grain stage the grain uniforms at the output size', () => {

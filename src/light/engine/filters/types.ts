@@ -31,6 +31,18 @@ export interface FilterSource {
   size: (frame: FilterFrame, strength?: number) => { width: number; height: number }
   /** Samples per texel along each axis, 1..8, or a function of the strength like `size`; 4 if not given. */
   samples?: number | ((frame: FilterFrame, strength?: number) => number)
+  /**
+   * An optional pass over the source into a smaller texture bound to `uniform`, for a value per cell worked out once
+   * per frame instead of at every output pixel. `size` gives its texels like the source's. `glsl` declares the
+   * uniforms it needs (the stage's are set) and the function named by `apply`, `vec4 <apply>(ivec2 texel)`, which
+   * reads the source as `uniform sampler2D uSrc;` and has the chunk library.
+   */
+  reduce?: {
+    uniform: string
+    size: (frame: FilterFrame, strength?: number) => { width: number; height: number }
+    glsl: string
+    apply: string
+  }
 }
 
 /**
