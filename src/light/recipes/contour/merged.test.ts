@@ -7,7 +7,8 @@ import { recipesForMood } from '../index'
 import { outlinePieces } from './curveLight'
 import { MERGED_LAYOUT } from './merged'
 import { composeMerged, MERGED_SHAPES, mergedParts, mergedShape, seedWithShape, shapeOfSeed, startedShape } from './mergedCompose'
-import { MERGED_SHAPE_KINDS } from './mergedShapes'
+import { buildMergedShape, MERGED_SHAPE_KINDS } from './mergedShapes'
+import { primitiveLength, primitivePoint, type Vec2 } from './shapes'
 
 const hexes = (id: PackId) => getPack(id).colors.map((c) => c.hex)
 const LISTS: string[][] = [
@@ -69,6 +70,39 @@ describe('contour.merged', () => {
         }
       }
     }
+  })
+
+  it('keeps the straight chords that stand in for far pieces of an outline out of the frame', () => {
+    const problems: string[] = []
+    const same = (a: Vec2, b: Vec2) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9
+    for (const aspect of [16 / 9, 9 / 16, 1, 4 / 5]) {
+      const [fw, fh] = aspect >= 1 ? [aspect, 1] : [1, 1 / aspect]
+      for (let seed = 1; seed <= 48; seed++) {
+        const { params } = composeMerged({ colors: LISTS[0], controls: CONTROLS, seed, aspect })
+        const at = params.at as number[]
+        const anchor: Vec2 = [(at[0] - 0.5) * fw, (at[1] - 0.5) * fh]
+        const spec = {
+          kind: MERGED_SHAPE_KINDS[Math.round(params.shape as number) - 1],
+          size: params.size as number,
+          radius: params.radius as number,
+          rotate: params.rotate as number,
+          flip: params.flip as boolean,
+        }
+        const own = buildMergedShape(spec).contours.flatMap((c) => c.primitives)
+        for (const chord of mergedShape(spec, anchor, aspect).contours.flatMap((c) => c.primitives)) {
+          if (chord.kind !== 'segment' || own.some((p) => p.kind === 'segment' && same(p.a, chord.a) && same(p.b, chord.b))) continue
+          const steps = Math.ceil(primitiveLength(chord) / 5e-4)
+          for (let k = 0; k <= steps; k++) {
+            const [x, y] = primitivePoint(chord, k / steps)
+            if (Math.abs(x + anchor[0]) <= fw / 2 && Math.abs(y + anchor[1]) <= fh / 2) {
+              problems.push(`seed ${seed}, aspect ${aspect.toFixed(3)}`)
+              break
+            }
+          }
+        }
+      }
+    }
+    expect(problems).toEqual([])
   })
 
   it('lights the edge the light is on with the key color out to both ends', () => {

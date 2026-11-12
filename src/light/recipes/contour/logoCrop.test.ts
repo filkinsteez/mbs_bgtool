@@ -3,6 +3,7 @@ import { PACKS } from '../../color/packs'
 import type { ControlValues, ParamValue, RecipeDefinition } from '../../scene'
 import { frameSize, pointsNearFrame } from './curveCompose'
 import { contourHalo } from './halo'
+import { contourMerged } from './merged'
 import { contourRim } from './rim'
 import { META_LOGO_LANDMARKS, type Vec2 } from './shapes'
 
@@ -61,4 +62,22 @@ describe('logo crops never show the whole logo', () => {
       expect(problems).toEqual([])
     }, 60_000)
   }
+
+  // The merged look places its shape from the seed and format only, so one light position covers it.
+  it('contour.merged: at most one of the crossing and the two loop tops inside the frame', () => {
+    const problems: string[] = []
+    let crops = 0
+    for (const pack of PACKS)
+      for (const aspect of ASPECTS)
+        for (let seed = 1; seed <= 54; seed++) {
+          const p = contourMerged.compose?.({ pack, controls: CONTROLS[1], seed, aspect }).params
+          if (!p || p.shape !== 1) continue
+          crops++
+          const size = p.size as number
+          const shown = pointsNearFrame(META_LOGO_LANDMARKS, size, p.rotate as number, p.flip as boolean, at(p.at, aspect), aspect, 0.1 * size)
+          if (shown > 1) problems.push(`${pack.id} ${aspect.toFixed(3)} seed ${seed}: ${shown} landmarks`)
+        }
+    expect(crops).toBeGreaterThan(0)
+    expect(problems).toEqual([])
+  }, 60_000)
 })

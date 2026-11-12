@@ -264,7 +264,21 @@ function simplifyFar(shape: Shape, anchor: Vec2, aspect: number): Shape {
   const frame = [-fw / 2 - anchor[0], -fh / 2 - anchor[1], fw / 2 - anchor[0], fh / 2 - anchor[1]]
   const outside = (v: Vec2) => Math.hypot(Math.max(frame[0] - v[0], 0, v[0] - frame[2]), Math.max(frame[1] - v[1], 0, v[1] - frame[3]))
   const far = (p: Primitive) => extremes(p).every((v) => outside(v) > FAR_MARGIN)
-  const chordClear = (a: Vec2, b: Vec2) => Array.from({ length: 9 }, (_, k) => k / 8).every((f) => outside([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]) > 0.5 * FAR_MARGIN)
+  // A long chord can pass between the nine samples and cut across a corner of the frame. The distance to the frame is
+  // convex along a line, so narrowing in on its least value finds any such crossing.
+  const crossesFrame = (a: Vec2, b: Vec2) => {
+    const gap = (f: number) => outside([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f])
+    let [lo, hi] = [0, 1]
+    for (let k = 0; k < 48; k++) {
+      const m1 = lo + (hi - lo) / 3
+      const m2 = hi - (hi - lo) / 3
+      if (gap(m1) < gap(m2)) hi = m2
+      else lo = m1
+    }
+    return gap((lo + hi) / 2) <= 1e-6
+  }
+  const chordClear = (a: Vec2, b: Vec2) =>
+    Array.from({ length: 9 }, (_, k) => k / 8).every((f) => outside([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]) > 0.5 * FAR_MARGIN) && !crossesFrame(a, b)
   return {
     contours: shape.contours.map((c): Contour => {
       if (!c.closed) return c
