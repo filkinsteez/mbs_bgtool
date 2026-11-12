@@ -480,3 +480,141 @@ export function carriedShares(grid: StageGrid, colors: readonly StageColor[], fi
   }
   return solve(flip ? u.map((v) => 1 - v) : u)
 }
+
+/** Half-width of the blend at a band stop (share of the colored area), at most this share of the narrower color beside it. */
+const STOP_BLEND = 0.09
+const STOP_BLEND_MOST = 0.4
+/**
+ * Light over which a cell at or near the drag's start goes from the order's dark end to the bands, so a start color's
+ * deep shade (brown, olive, maroon) never fills the dim ground by the light.
+ */
+const START_DIM = [0.33, 0.45] as const
+/** Place along the bands over which the start's dim cells stop going to the dark end. */
+const START_NEAR = [0.1, 0.35] as const
+/** The most of a color's share the dim ground takes; past that the ground goes on to the color before it in the order. */
+const GROUND_MOST = 0.6
+/** The lightest swatch (Oklab L) the dim ground goes on to: a light color there would show only its deep shade. */
+const GROUND_LIGHTEST = 0.6
+/** Half-width of the blend between the ground's colors (share of the ground). */
+const GROUND_BLEND = 0.12
+/** Passes that set the stops so each color covers its share as the shares reading counts it. */
+const STOP_PASSES = 8
+
+/** Whether a pack's brighter end of the hue order comes first: the half of its colors, in hue order, that is lighter. */
+export function brightEndFirst(lightness: readonly number[]): boolean {
+  const half = Math.floor(lightness.length / 2)
+  const mean = (xs: readonly number[]) => xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length)
+  return mean(lightness.slice(0, half)) >= mean(lightness.slice(lightness.length - half))
+}
+
+/**
+ * Sunrise's colors along its place along the bands (`mergedBands`), with no solve per cell. `place`: 0 on the horizon
+ * by the light, rising along the drag arrow, negative behind the light. The colors go in the pack's hue order with the
+ * pack's brighter end at the drag's start (`brightFirst`, fixed per pack, so no drag or slider turns the order round),
+ * each a band across the frame as wide as its share of the colored area, counted as the shares reading counts it, with
+ * a soft hand-over at each stop. Dim cells behind the light or just ahead of it are the dim ground: they go to the
+ * order's dark end (Meta Blue's navy in Bold), and the bands start above them, so the start colors keep to the light;
+ * where it is bright behind the light the bands carry on, so the two far hues don't blend where it shows.
+ */
+export function bandShares(grid: StageGrid, colors: readonly StageColor[], place: Float32Array, brightFirst: boolean): Float32Array[] {
+  const { width: w, height: h } = grid
+  const n = w * h
+  const K = colors.length
+  const L = grid.seen ?? grid.lightness
+  const coverage = grid.softCoverage ?? L.map((v) => (v >= VISIBLE ? 1 : 0))
+  const area = coverage.reduce((a, b) => a + b, 0) > 1e-6 ? coverage : L.map((v) => v * v * v)
+  const step = (v: number) => {
+    const t = Math.min(1, Math.max(0, (v - 0.15) / 0.2))
+    return t * t * (3 - 2 * t)
+  }
+  const counts = colors.map((c) => Float32Array.from(L, (v, i) => area[i] * (c.chroma < 0.04 ? 1 : Math.min(1, step(v) / Math.max(1e-6, step(c.lightness))))))
+  const ground = Float32Array.from(place, (v, i) => (1 - smooth01((v - START_NEAR[0]) / (START_NEAR[1] - START_NEAR[0]))) * (1 - smooth01((L[i] - START_DIM[0]) / (START_DIM[1] - START_DIM[0]))))
+  // Each cell's place along the bands as the share of the colored area outside the ground before it.
+  const banded = Float32Array.from(area, (v, i) => v * (1 - ground[i]))
+  const byPlace = Array.from({ length: n }, (_, i) => i).sort((a, b) => place[a] - place[b])
+  const areaTotal = banded.reduce((a, b) => a + b, 0) || 1
+  const u = new Float32Array(n)
+  let run = 0
+  for (const i of byPlace) {
+    u[i] = (run + banded[i] / 2) / areaTotal
+    run += banded[i]
+  }
+  const hues = colors.map((_, k) => k).sort((a, b) => colors[a].packIndex - colors[b].packIndex)
+  const order = brightFirst ? hues : hues.reverse()
+  const mbK = colors.findIndex((c) => c.hex === META_BLUE_HEX)
+  const mbShare = colors[mbK]?.share ?? 0
+  const lead = mbK >= 0 ? Math.min(LEAD_MORE, 1 - mbShare) * smooth01((mbShare - LEAD_RANGE[0]) / (LEAD_RANGE[1] - LEAD_RANGE[0])) : 0
+  const aim = colors.map((c, k) => (k === mbK ? c.share + lead : (c.share * (1 - mbShare - lead)) / Math.max(1e-6, 1 - mbShare)))
+  let widths = order.map((k) => Math.max(0, aim[k]))
+  // The ground's colors by its light: the dark end in the dimmest, then back along the order through the dark colors,
+  // each up to GROUND_MOST of its share, so a small dark end (Plum, Near-black) isn't swollen by a large ground; what
+  // is left stays with the dark end.
+  const groundArea = ground.reduce((a, g, i) => a + g * area[i], 0)
+  const byLight = Array.from({ length: n }, (_, i) => i).sort((a, b) => L[a] - L[b])
+  const v = new Float32Array(n)
+  let lit = 0
+  for (const i of byLight) {
+    v[i] = groundArea > 1e-9 ? (lit + (ground[i] * area[i]) / 2) / groundArea : 0
+    lit += ground[i] * area[i]
+  }
+  const back = [...order].reverse()
+  const allArea = area.reduce((a, b) => a + b, 0) || 1
+  let left = 1
+  const lightest = back.findIndex((k, j) => j > 0 && colors[k].lightness > GROUND_LIGHTEST)
+  const groundWidths = back.map((k, j) => {
+    if (lightest >= 0 && j >= lightest) return 0
+    const take = Math.min(left, (GROUND_MOST * Math.max(0, aim[k]) * allArea) / Math.max(groundArea, 1e-9))
+    left -= take
+    return take
+  })
+  groundWidths[0] += left
+  const groundOf = colors.map(() => new Float32Array(n))
+  for (let i = 0; i < n; i++) {
+    let before = 1
+    let x = 0
+    for (let j = 0; j < K; j++) {
+      x += groundWidths[j]
+      const b = Math.min(GROUND_BLEND, 0.5 * Math.min(groundWidths[j], groundWidths[j + 1] ?? 1))
+      const past = j === K - 1 ? 0 : b > 1e-6 ? smooth01((v[i] - x + b) / (2 * b)) : v[i] >= x ? 1 : 0
+      groundOf[back[j]][i] = Math.max(0, before - past)
+      before = past
+    }
+  }
+  let shares: Float32Array[] = colors.map(() => new Float32Array(n))
+  for (let pass = 0; pass <= STOP_PASSES; pass++) {
+    const sum = widths.reduce((a, b) => a + b, 0) || 1
+    widths = widths.map((v) => v / sum)
+    const stops: number[] = []
+    let x = 0
+    for (let j = 0; j < K - 1; j++) {
+      x += widths[j]
+      stops.push(x)
+    }
+    const blend = stops.map((_, j) => Math.min(STOP_BLEND, STOP_BLEND_MOST * Math.min(widths[j], widths[j + 1])))
+    for (let i = 0; i < n; i++) {
+      const g = ground[i]
+      let before = 1
+      for (let j = 0; j < K; j++) {
+        let past = 0
+        if (j < K - 1) {
+          const b = blend[j]
+          past = b > 1e-6 ? smooth01((u[i] - stops[j] + b) / (2 * b)) : u[i] >= stops[j] ? 1 : 0
+        }
+        const k = order[j]
+        shares[k][i] = (1 - g) * Math.max(0, before - past) + g * groundOf[k][i]
+        before = past
+      }
+    }
+    shares = shares.map((sh) => blurGrid(sh, w, h, SHARE_BLUR))
+    if (pass === STOP_PASSES) break
+    let total = 0
+    const got = order.map((k) => {
+      let v = 0
+      for (let i = 0; i < n; i++) v += counts[k][i] * shares[k][i]
+      total += v
+      return v
+    })
+    widths = widths.map((wd, j) => wd * Math.min(2, Math.max(0.5, (Math.max(aim[order[j]], 1e-6) / Math.max(got[j] / (total || 1), 1e-6)) ** 0.8)))
+  }
+  return shares
+}

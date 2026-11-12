@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { mixFromShares } from './mix'
+import { defaultMix, mixFromShares, setShare } from './mix'
 import { getPack, type PackId } from './packs'
-import { carriedShares } from './stageCarry'
+import { bandShares, brightEndFirst, carriedShares } from './stageCarry'
 import { gridSize, type StageGrid } from './stageFields'
 import { stageColors } from './stageSolve'
 
@@ -138,5 +138,120 @@ describe('carriedShares', () => {
         if (y >= grid.height - dark) inDark += v
       }
     expect(inDark / all).toBeLessThan(0.25)
+  })
+})
+
+/** Sunrise's place along the bands for a drag from the top down: 0 at the top row, 1 at the bottom, tilted by `tilt` across the frame. */
+function placeDown(grid: StageGrid, tilt = 0): Float32Array {
+  const { width: w, height: h } = grid
+  return Float32Array.from({ length: w * h }, (_, i) => (Math.floor(i / w) + 0.5) / h + tilt * ((i % w) / w - 0.5))
+}
+
+/** Whether the pack's brighter end of the hue order comes first, from the default mix's colors. */
+function brightFirstOf(pack: PackId): boolean {
+  const colors = stageColors(getPack(pack), defaultMix(getPack(pack)), true)
+  return brightEndFirst([...colors].sort((a, b) => a.packIndex - b.packIndex).map((c) => c.lightness))
+}
+
+describe('bandShares', () => {
+  it("puts the pack's bright end at the drag's start in every pack and mix, so the order never turns round (owner, 2026-11-11 7:07 PM)", () => {
+    const grid = skyFromTop(0.05)
+    for (const id of ['bold', 'elemental', 'atmospheric'] as PackId[]) {
+      const pack = getPack(id)
+      for (const mix of [defaultMix(pack), setShare(pack, defaultMix(pack), 0, 0), setShare(pack, defaultMix(pack), 2, 0.5)]) {
+        const colors = stageColors(pack, mix, true)
+        const mid = middles(bandShares(grid, colors, placeDown(grid), brightFirstOf(id)), grid)
+        const on = colors.map((_, k) => k).filter((k) => colors[k].share > 0.02)
+        const order = [...on].sort((a, b) => colors[a].packIndex - colors[b].packIndex)
+        if (!brightFirstOf(id)) order.reverse()
+        for (let j = 1; j < order.length; j++) expect(mid[order[j]]).toBeGreaterThan(mid[order[j - 1]])
+      }
+    }
+    expect(brightFirstOf('bold')).toBe(false)
+    expect(brightFirstOf('elemental')).toBe(true)
+    expect(brightFirstOf('atmospheric')).toBe(true)
+  })
+
+  it('keeps the order and moves colors only a little as the drag turns a few pixels', () => {
+    const grid = skyFromTop(0.05)
+    const colors = stageColors(getPack('bold'), defaultMix(getPack('bold')), true)
+    let last: number[] | null = null
+    for (let t = -0.03; t <= 0.0301; t += 0.005) {
+      const mid = middles(bandShares(grid, colors, placeDown(grid, t), false), grid)
+      if (last) mid.forEach((m, k) => expect(Math.abs(m - (last as number[])[k])).toBeLessThan(0.02))
+      last = mid
+    }
+  })
+
+  it('covers each color its share of the colored area, Meta Blue with its lead', () => {
+    const [w, h] = gridSize(16 / 9)
+    const lightness = new Float32Array(w * h).fill(0.6)
+    const full = lightness.map(() => 1)
+    const grid: StageGrid = { width: w, height: h, lightness, coverage: full, softCoverage: full, peak: lightness, seen: lightness }
+    for (const id of ['bold', 'elemental', 'atmospheric'] as PackId[]) {
+      const colors = stageColors(getPack(id), defaultMix(getPack(id)), true)
+      const shares = bandShares(grid, colors, placeDown(grid, 0.1), brightFirstOf(id))
+      colors.forEach((c, k) => {
+        const got = shares[k].reduce((a, b) => a + b, 0) / (w * h)
+        expect(Math.abs(got - (c.hex === '#0064E0' ? c.share + 0.05 : (c.share * 0.45) / 0.5))).toBeLessThan(0.01)
+      })
+    }
+  })
+
+  it('moves colors only a little as a slider moves in small steps', () => {
+    const grid = skyFromTop(0.05)
+    const pack = getPack('bold')
+    let last: Float32Array[] | null = null
+    for (let s = 0.04; s <= 0.4001; s += 0.01) {
+      const shares = bandShares(grid, stageColors(pack, setShare(pack, defaultMix(pack), 2, s), true), placeDown(grid), false)
+      if (last) {
+        const before = last
+        shares.forEach((sh, k) => {
+          let total = 0
+          let moved = 0
+          sh.forEach((v, i) => {
+            total += v - before[k][i]
+            moved += Math.abs(v - before[k][i])
+          })
+          expect(Math.abs(total) / sh.length).toBeLessThan(0.02)
+          expect(moved / sh.length).toBeLessThan(0.02)
+        })
+      }
+      last = shares
+    }
+  })
+
+  it("gives the dim ground by the light to the order's dark end, and keeps the bands where it is bright behind the light", () => {
+    const [w, h] = gridSize(16 / 9)
+    const rows = (light: (y: number) => number): StageGrid => {
+      const lightness = Float32Array.from({ length: w * h }, (_, i) => light(Math.floor(i / w)))
+      const full = lightness.map(() => 1)
+      return { width: w, height: h, lightness, coverage: full, softCoverage: full, peak: lightness, seen: lightness }
+    }
+    // The light at the top, the top quarter behind it.
+    const place = Float32Array.from({ length: w * h }, (_, i) => (Math.floor(i / w) + 0.5) / h - 0.25)
+    const colors = stageColors(getPack('bold'), defaultMix(getPack('bold')), true)
+    const blue = colors.findIndex((c) => c.hex === '#0064E0')
+    const red = colors.findIndex((c) => c.hex === '#FF4F00')
+    const dim = bandShares(rows((y) => (y < h / 4 ? 0.12 : 0.8)), colors, place, false)
+    const bright = bandShares(rows(() => 0.8), colors, place, false)
+    for (let x = 0; x < w; x++) {
+      expect(dim[blue][w + x]).toBeGreaterThan(0.95)
+      expect(bright[red][w + x]).toBeGreaterThan(0.9)
+    }
+  })
+
+  it('gives a small dark end (Plum) at most a little more than its share from a large dim ground', () => {
+    const [w, h] = gridSize(16 / 9)
+    const lightness = Float32Array.from({ length: w * h }, (_, i) => (Math.floor(i / w) < h / 2 ? 0.2 + 0.1 * ((i % w) / w) : 0.8))
+    const full = lightness.map(() => 1)
+    const grid: StageGrid = { width: w, height: h, lightness, coverage: full, softCoverage: full, peak: lightness, seen: lightness }
+    const place = Float32Array.from({ length: w * h }, (_, i) => (Math.floor(i / w) + 0.5) / h - 0.5)
+    const pack = getPack('elemental')
+    const colors = stageColors(pack, defaultMix(pack), true)
+    const plum = colors.findIndex((c) => c.hex === '#4A0A3C')
+    const shares = bandShares(grid, colors, place, brightFirstOf('elemental'))
+    const got = shares[plum].reduce((a, b) => a + b, 0) / (w * h)
+    expect(got).toBeLessThan(colors[plum].share * 1.25)
   })
 })

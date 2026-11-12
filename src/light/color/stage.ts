@@ -6,13 +6,14 @@ import { toneCurve } from '../engine/output'
 import { runPostPasses } from '../engine/passes'
 import { NO_PROFILE } from '../engine/profile'
 import { buildRecipeShader } from '../engine/recipeShader'
-import { lightnessOnlyParams } from '../recipes/sunset/merged'
+import { lightnessOnlyParams, mergedBands } from '../recipes/sunset/merged'
 import { isRecipeId, type ColorMixSettings, type LensSettings, type RecipeContext, type RecipeId, type RecipeProgram, type Scene, type UniformMap } from '../scene'
 import { defaultMix, META_BLUE_HEX, mixFromShares, type ColorMix } from './mix'
-import { oklchToLinear } from './oklab'
-import { getPack, isPackId, type ColorPack, type PackId } from './packs'
+import { linearToOklab, oklchToLinear } from './oklab'
+import { getPack, hueOrder, isPackId, type ColorPack, type PackId } from './packs'
 import { rampFor, rampSteps } from './ramps'
-import { carriedShares, type CarryWay } from './stageCarry'
+import { bandShares, brightEndFirst, carriedShares, type CarryWay } from './stageCarry'
+import { hexToLinear } from './srgb'
 import { COLOR_STAGE_GLSL } from './stageGlsl'
 import { blurGrid, buildFields, COVERAGE_SPLIT, GRID_SHORT, gridSize, lightSlope, lookParts, makeNoise, mulberry32, VISIBLE, type StageField, type StageGrid } from './stageFields'
 import { assignFields, colorFields, coloredByParts, farPairs, guardedParts, KIND_DARK, KIND_PLAIN, KIND_TO_NEIGHBOR, lightPartHolds, neighbourPairs, softFields, solveWeights, stageColors, stageDimPaths, STAGE_SHARPNESS, type StageColor } from './stageSolve'
@@ -463,7 +464,10 @@ export function prepareColorStage(input: ColorStageInput): PreparedColorStage | 
     const id = input.program.id
     const sky = isRecipeId(id) ? lookParts(id, input.ctx.params, input.ctx.aspect).find((p) => p.kind === 'horizon') : undefined
     const way: CarryWay = id === 'contour.merged' ? { kind: 'outline' } : { kind: 'grain', axis: sky && sky.kind === 'horizon' ? sky.sky : null }
-    const soft = byParts ? carriedShares(grid, colors, values, input.ctx.seed, way) : []
+    // Sunrise places its colors along its own place along the bands, the pack's brighter end at the drag's start.
+    const bands = id === 'sunset.merged' ? mergedBands(input.ctx.params, input.ctx.aspect, grid.width, grid.height) : null
+    const brightFirst = brightEndFirst(hueOrder(pack).map((i) => linearToOklab(hexToLinear(pack.colors[i].hex))[0]))
+    const soft = !byParts ? [] : bands ? bandShares(grid, colors, bands.place, brightFirst) : carriedShares(grid, colors, values, input.ctx.seed, way)
     const drawn = byParts
       ? {
           values: [
