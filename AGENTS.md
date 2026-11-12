@@ -29,8 +29,13 @@ On 2026-11-12 at 8:26 AM the owner asked for no major changes ("i think we're ge
     Orange-red `#FF4F00`
   - Elemental: Tan `#B8996E`, Lime `#D6F26C`, Forest `#0F3D33`,
     Meta Blue `#0064E0`, Plum `#4A0A3C`
-  - Atmospheric: Meta Blue `#0064E0`, Ice `#F2F4F7`, Steel `#6A7788`,
-    Slate `#384753`, Near-black `#1C2B33`
+ - Atmospheric: Meta Blue `#0064E0`, Ice `#F2F4F7`, Steel `#6A7788`,
+ Slate `#384753`, Near-black `#1C2B33`
+ - Primary (owner, 2026-11-12, concept file node 188:68; first in the
+ panel, while a plain link still opens on Bold): White `#FFFFFF`, Meta
+ Blue `#0064E0`, Near-black `#1C2B33`, in lightness order. Its White and
+ Near-black have their own ramps, so Near-black deepens through
+ slate-blue, not teal, and Atmospheric's Near-black is unchanged.
 - Colors that are neighbours in the hue order blend through the color
   between them, as on the owner's slide (owner, 2026-11-11): Cyan fades
   through green into Yellow, and Meta Blue through indigo into Plum. The
