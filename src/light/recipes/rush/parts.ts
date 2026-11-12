@@ -1,5 +1,6 @@
 import type { FieldWant, StagePart } from '../../color/stageFields'
 import type { ParamValue } from '../../scene'
+import { hash1 } from '../sunset/boundary'
 import { MAX_LIGHTS, SOFT_TURN, bendAt, softClamp } from './split-shader'
 
 /** Line pieces per streak, across the part of the run the frame sees. */
@@ -138,4 +139,86 @@ export function rushParts(params: Params, aspect: number): StagePart[] {
     }
   }
   return parts
+}
+
+const quintic = (f: number) => f * f * f * (f * (f * 6 - 15) + 10)
+
+/** The engine's `valueNoise(vec2 p, int seed)`, in [-1, 1]. */
+function valueNoise(px: number, py: number, seed: number): number {
+  const ix = Math.floor(px)
+  const iy = Math.floor(py)
+  const ux = quintic(px - ix)
+  const uy = quintic(py - iy)
+  const a = hash1(ix, iy, seed)
+  const b = hash1(ix + 1, iy, seed)
+  const d = hash1(ix, iy + 1, seed)
+  const e = hash1(ix + 1, iy + 1, seed)
+  return ((a + (b - a) * ux) * (1 - uy) + (d + (e - d) * ux) * uy) * 2 - 1
+}
+
+/** Where a frame point lies across Rush's flow and along it: `place` and `along`, both in short sides. */
+export interface RushAcross {
+  place: number
+  along: number
+}
+
+/**
+ * Rush's place across its flow, for the color stage, as the shader's `lookAcross(uv, p)` gives it: a function of a frame
+ * point (x from the left edge, y from the top, 0..1), or null when the params have no run.
+ * - `place` is the same all along each streak's middle: the run's bend and fan, the stack's warp and each streak's
+ *   drift, bow and wander are taken out. Between two neighbouring middles it runs evenly from one to the other (the
+ *   k-th lowest middle at a point along the run keeps the place the k-th lowest has at the run's start), and beyond the
+ *   outer streaks it follows the outer one. It rises toward the right-hand side of the line's direction.
+ * - `along` is the distance along the run from the line's start, negative behind it.
+ * Both depend on the seed, the line and the format only, and move continuously with the line.
+ */
+export function rushAcrossAt(params: Params, aspect: number, seed: number): ((x: number, y: number) => RushAcross) | null {
+  const [hx, hy] = aspect >= 1 ? [aspect / 2, 0.5] : [0.5, 0.5 / aspect]
+  const [fx, fy, angle, reach] = vec(params, 'run')
+  const [hookSquare = 0, hookCube = 0] = vec(params, 'hook')
+  const [fan = 0, warp = 0, warpAlong = 0, warpAcross = 0] = vec(params, 'stack')
+  const la = vec(params, 'la')
+  const ld = vec(params, 'ld')
+  const lf = vec(params, 'lf')
+  const lights = Math.min(MAX_LIGHTS, Math.round(num(params, 'lights')))
+  if (!reach) return null
+  const run = Math.max(reach, 1e-3)
+  const dir = [Math.cos(angle), Math.sin(angle)]
+  const nrm = [-dir[1], dir[0]]
+  const middles = (u: number) =>
+    Array.from({ length: lights }, (_, i) => (la[4 * i] ?? 0) + u * ((lf[4 * i] ?? 0) + u * (lf[4 * i + 1] ?? 0)) + (ld[4 * i + 1] ?? 0) * valueNoise(u * 1.3, i * 4.7, seed + 31 + i)).sort((a, b) => a - b)
+  const rest = middles(0)
+  return (x, y) => {
+    const qx = (x - 0.5) * 2 * hx - fx
+    const qy = (y - 0.5) * 2 * hy - fy
+    const u = qx * dir[0] + qy * dir[1]
+    const t = u / run
+    const v = qx * nrm[0] + qy * nrm[1] - bendAt(t, hookSquare, hookCube) * run
+    const vs = v / Math.max(1 + fan * softClamp(t, -0.3, 1.5, SOFT_TURN), 0.25)
+    const vw = vs + warp * valueNoise(u * warpAlong, vs * warpAcross, seed + 7)
+    if (!lights) return { place: vw, along: u }
+    const at = middles(u)
+    if (vw <= at[0]) return { place: rest[0] + vw - at[0], along: u }
+    for (let k = 0; k + 1 < lights; k++)
+      if (vw <= at[k + 1]) return { place: rest[k] + ((vw - at[k]) / Math.max(at[k + 1] - at[k], 1e-6)) * (rest[k + 1] - rest[k]), along: u }
+    return { place: rest[lights - 1] + vw - at[lights - 1], along: u }
+  }
+}
+
+/**
+ * `rushAcrossAt` at the middle of each cell of a w x h grid, row 0 at the top, as on the color stage's grid
+ * (`gridSize(aspect)`); all zeros when the params have no run.
+ */
+export function rushAcross(params: Params, aspect: number, seed: number, w: number, h: number): { place: Float32Array; along: Float32Array } {
+  const place = new Float32Array(w * h)
+  const along = new Float32Array(w * h)
+  const at = rushAcrossAt(params, aspect, seed)
+  if (at)
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const r = at((x + 0.5) / w, (y + 0.5) / h)
+        place[y * w + x] = r.place
+        along[y * w + x] = r.along
+      }
+  return { place, along }
 }

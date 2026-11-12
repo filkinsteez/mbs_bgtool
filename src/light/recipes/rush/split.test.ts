@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { getPack } from '../../color/packs'
 import type { ControlValues, ParamValue } from '../../scene'
 import { rushColors } from './colors'
-import { rushParts } from './parts'
+import { rushAcross, rushAcrossAt, rushParts } from './parts'
 import { composeRush, composeRushSplit } from './split-compose'
 
 const CONTROLS = { intensity: 0.5, softness: 0.5, mood: 0.5 }
@@ -134,6 +134,109 @@ describe('Rush split', () => {
               expect(Math.abs(part.angle ?? 0)).toBeLessThanOrEqual(180)
             }
           }
+        }
+  })
+
+  // The owner's purple-bleed line (Elemental s2, 2026-11-11 8:17 AM) and the test lines.
+  const ACROSS_LINES: ControlValues['drag'][] = [...LINES, { from: [0.85, 0.5], to: [0.85, 0.9] }]
+
+  it('gives the color stage a place across the flow that crosses each streak at right angles on average', () => {
+    // At the middle of each streak piece the stage's parts give (the streak's middle without the stack's warp and the
+    // streak's wander), the place's gradient against the piece's direction: |cos| near 0 is a right angle.
+    const cosines: number[] = []
+    for (const seed of SEEDS)
+      for (const aspect of ASPECTS)
+        for (const drag of ACROSS_LINES) {
+          const { params } = composeRushSplit(hexesOf('bold'), { ...CONTROLS, drag }, seed, aspect)
+          const at = rushAcrossAt(params, aspect, seed)
+          expect(at).not.toBeNull()
+          if (!at) continue
+          const [fw, fh] = aspect >= 1 ? [aspect, 1] : [1, 1 / aspect]
+          const e = 0.002
+          for (const part of rushParts(params, aspect)) {
+            if (part.kind !== 'line' || part.want === 'dark') continue
+            const [x, y] = [(part.from[0] + part.to[0]) / 2, (part.from[1] + part.to[1]) / 2]
+            if (x < 0.05 || x > 0.95 || y < 0.05 || y > 0.95) continue
+            const gx = (at(x + e / fw, y).place - at(x - e / fw, y).place) / (2 * e)
+            const gy = (at(x, y + e / fh).place - at(x, y - e / fh).place) / (2 * e)
+            const dx = (part.to[0] - part.from[0]) * fw
+            const dy = (part.to[1] - part.from[1]) * fh
+            const g = Math.hypot(gx, gy)
+            const d = Math.hypot(dx, dy)
+            if (g > 1e-6 && d > 1e-6) cosines.push(Math.abs(gx * dx + gy * dy) / (g * d))
+          }
+        }
+    const mean = cosines.reduce((a, b) => a + b, 0) / cosines.length
+    expect(cosines.length).toBeGreaterThan(1000)
+    expect(mean).toBeLessThan(0.1)
+  })
+
+  it('keeps the place across the flow under a few pixels of drag and under any mix, so colors laid on it cannot flip', () => {
+    const grid = (aspect: number) => (aspect >= 1 ? [32, 18] : [18, 32])
+    // The stage lays colors by area along the place, so what counts is each cell's rank in the place (0 at the lowest
+    // cell, 1 at the highest) and whether the place keeps its direction (correlation with the frame before).
+    const ranks = (a: Float32Array) => {
+      const order = Array.from(a.keys()).sort((i, j) => a[i] - a[j])
+      const r = new Float32Array(a.length)
+      order.forEach((i, k) => (r[i] = k / (a.length - 1)))
+      return r
+    }
+    const correlation = (a: Float32Array, b: Float32Array) => {
+      const ma = a.reduce((s, v) => s + v, 0) / a.length
+      const mb = b.reduce((s, v) => s + v, 0) / b.length
+      let ab = 0
+      let aa = 0
+      let bb = 0
+      for (let i = 0; i < a.length; i++) {
+        ab += (a[i] - ma) * (b[i] - mb)
+        aa += (a[i] - ma) ** 2
+        bb += (b[i] - mb) ** 2
+      }
+      return ab / Math.sqrt(aa * bb)
+    }
+    let worstRank = 0
+    let worstCorrelation = 1
+    for (const seed of SEEDS.slice(0, 12))
+      for (const aspect of ASPECTS)
+        for (const line of ACROSS_LINES.slice(1)) {
+          if (!line) continue
+          const [w, h] = grid(aspect)
+          const placeOf = (drag: ControlValues['drag']) => rushAcross(composeRushSplit(hexesOf('bold'), { ...CONTROLS, drag }, seed, aspect).params, aspect, seed, w, h).place
+          // The line's end and the whole line moved by steps of 0.004 of the frame's width (about 2 preview pixels).
+          const moves = [
+            (k: number) => ({ from: line.from, to: [line.to[0] + 0.004 * k, line.to[1]] as [number, number] }),
+            (k: number) => ({ from: [line.from[0] + 0.004 * k, line.from[1]] as [number, number], to: [line.to[0] + 0.004 * k, line.to[1]] as [number, number] }),
+          ]
+          for (const move of moves) {
+            let before = placeOf(move(0))
+            for (let k = 1; k <= 3; k++) {
+              const after = placeOf(move(k))
+              const [ra, rb] = [ranks(after), ranks(before)]
+              for (let i = 0; i < after.length; i++) worstRank = Math.max(worstRank, Math.abs(ra[i] - rb[i]))
+              worstCorrelation = Math.min(worstCorrelation, correlation(after, before))
+              before = after
+            }
+          }
+        }
+    expect(worstRank).toBeLessThan(0.08)
+    expect(worstCorrelation).toBeGreaterThan(0.995)
+    // The mix and the pack never reach the place: every color list gives the same one.
+    for (const seed of SEEDS.slice(0, 6))
+      for (const aspect of ASPECTS)
+        for (const drag of ACROSS_LINES) {
+          const places = LISTS.map((hexes) => Array.from(rushAcross(composeRushSplit(hexes, { ...CONTROLS, drag }, seed, aspect).params, aspect, seed, 16, 9).place))
+          for (const place of places) expect(place).toEqual(places[0])
+        }
+  })
+
+  it('gives the place across the flow and along it on the stage grid, finite and spanning the stack', () => {
+    for (const seed of SEEDS)
+      for (const aspect of ASPECTS)
+        for (const drag of ACROSS_LINES) {
+          const { params } = composeRushSplit(hexesOf('bold'), { ...CONTROLS, drag }, seed, aspect)
+          const { place, along } = rushAcross(params, aspect, seed, 16, 9)
+          expect([...place, ...along].every(Number.isFinite)).toBe(true)
+          expect(Math.max(...place) - Math.min(...place)).toBeGreaterThan(0.2)
         }
   })
 })

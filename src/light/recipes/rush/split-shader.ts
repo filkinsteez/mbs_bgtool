@@ -370,4 +370,59 @@ vec3 radiance(vec2 uv, vec2 p) {
   sum *= shoulder / max(total, 1e-5);
   return uGround + (sum + hot) * shadow(p);
 }
+
+// For the color stage: where p lies across the flow (x) and along it (y), in short sides; parts.ts's rushAcrossAt
+// gives the same on the CPU. x is the same all along each streak's middle (the run's bend and fan, the stack's warp
+// and each streak's drift, bow and wander taken out) and runs evenly between two neighbouring middles, the k-th lowest
+// middle here keeping the place the k-th lowest has at the run's start; beyond the outer streaks it follows the outer
+// one. It rises toward the right-hand side of the line's direction. y is 0 at the line's start, negative behind it.
+#define LOOK_ACROSS
+float streakMiddle(int i, float u) {
+  return uLA[i].x + u * (uLF[i].x + u * uLF[i].y) + uLD[i].y * valueNoise(vec2(u * 1.3, float(i) * 4.7), uSeed + 31 + i);
+}
+vec2 lookAcross(vec2 uv, vec2 p) {
+  vec2 dir = vec2(cos(uRun.z), sin(uRun.z));
+  vec2 q = p - uRun.xy;
+  float u = dot(q, dir);
+  float reach = max(uRun.w, 1e-3);
+  float t = u / reach;
+  float v = dot(q, vec2(-dir.y, dir.x)) - (uHook.x * bendArc(t) + uHook.y * bendLean(t)) * reach;
+  float vs = v / max(1.0 + uStack.x * softClamp(t, -0.3, 1.5, SOFT_TURN), 0.25);
+  float vw = vs + uStack.y * valueNoise(vec2(u * uStack.z, vs * uStack.w), uSeed + 7);
+  int n = min(uLights, MAX_LIGHTS);
+  if (n <= 0) return vec2(vw, u);
+  float at[MAX_LIGHTS];
+  float rest[MAX_LIGHTS];
+  for (int i = 0; i < MAX_LIGHTS; i++) {
+    if (i >= n) break;
+    at[i] = streakMiddle(i, u);
+    rest[i] = streakMiddle(i, 0.0);
+  }
+  // Both lists from low to high.
+  for (int i = 1; i < MAX_LIGHTS; i++) {
+    if (i >= n) break;
+    float a = at[i];
+    float r = rest[i];
+    int j = i - 1;
+    for (int s = 0; s < MAX_LIGHTS; s++) {
+      if (j < 0 || at[j] <= a) break;
+      at[j + 1] = at[j];
+      j--;
+    }
+    at[j + 1] = a;
+    j = i - 1;
+    for (int s = 0; s < MAX_LIGHTS; s++) {
+      if (j < 0 || rest[j] <= r) break;
+      rest[j + 1] = rest[j];
+      j--;
+    }
+    rest[j + 1] = r;
+  }
+  if (vw <= at[0]) return vec2(rest[0] + vw - at[0], u);
+  for (int k = 0; k < MAX_LIGHTS - 1; k++) {
+    if (k + 1 >= n) break;
+    if (vw <= at[k + 1]) return vec2(rest[k] + (vw - at[k]) / max(at[k + 1] - at[k], 1e-6) * (rest[k + 1] - rest[k]), u);
+  }
+  return vec2(rest[n - 1] + vw - at[n - 1], u);
+}
 `
