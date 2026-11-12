@@ -169,6 +169,107 @@
   gap: 12px;
 }
 
+/* The Colors card's "i in a circle" (InfoTip): DialKit's 14px icon, muted until hovered or focused, no taller than the
+   title row. */
+.tool-info {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--dial-text-tertiary);
+  cursor: pointer;
+  outline: 2px solid transparent;
+  outline-offset: 1px;
+  transition: color 0.15s, outline-color 0.15s;
+}
+
+/* A bigger target than the icon, without making the title row taller. */
+.tool-info::before {
+  content: '';
+  position: absolute;
+  inset: -5px;
+}
+
+.tool-info:hover,
+.tool-info:focus-visible {
+  color: var(--dial-text-primary);
+}
+
+.tool-info:focus-visible {
+  outline-color: var(--dial-text-primary);
+}
+
+.tool-info svg {
+  width: 14px;
+  height: 14px;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+}
+
+.tool-info svg > * {
+  stroke-width: 1.5px;
+  vector-effect: non-scaling-stroke;
+}
+
+.tool-info svg > .tool-info-dot {
+  fill: currentColor;
+  stroke: none;
+}
+
+/* The info tip. It is drawn in the page's body, outside DialKit's root and its variables, so DialKit's dropdown look
+   is written out: --dial-glass-bg, --dial-border, --dial-radius, --dial-shadow-dropdown and --dial-text-label. */
+.tool-info-tip {
+  position: fixed;
+  z-index: 10000;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(232px, calc(100vw - 16px));
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: #212121;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 17px;
+  text-align: left;
+}
+
+.tool-info-tip[data-side='left'] {
+  transform: translateX(-100%);
+}
+
+.tool-info-tip[data-side='above'] {
+  transform: translateY(-100%);
+}
+
+.tool-info-tip p {
+  margin: 0;
+}
+
+.tool-info-link {
+  display: inline-block;
+  margin-top: 6px;
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.95);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+
+.tool-info-link:focus-visible {
+  outline-color: rgba(255, 255, 255, 0.95);
+}
+
 .tool-tiles-options {
   display: grid;
   grid-template-columns: repeat(var(--tile-columns), minmax(0, 1fr));

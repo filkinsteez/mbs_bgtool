@@ -3,7 +3,7 @@ import path from 'node:path'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { FilterPicker, FormatPicker } from './panelPickers'
+import { FilterPicker, FormatPicker, PackPicker } from './panelPickers'
 import { moodPicture } from './panelPictures'
 import { MOOD_IDS } from './state'
 import { optionForKey } from './TilePicker'
@@ -30,6 +30,12 @@ describe('panel tiles', () => {
       expect(buttons.map(([, name]) => name)).toEqual(names)
       for (const [, name, inner] of buttons) expect(inner, name).toMatch(new RegExp(`^<span class="tool-tile-face">.*<span class="tool-tile-label">${name}</span></span></span>$`))
     }
+  })
+
+  it('give the Colors card an info icon at the end of its title row, a button named About colors and described by its tip', () => {
+    const html = renderToStaticMarkup(createElement(PackPicker, { value: 'bold', onChange: () => {} }))
+    expect(html).toMatch(/<div class="tool-tiles-head"><span class="dialkit-select-label" aria-hidden="true">Colors<\/span><button type="button" class="tool-info" aria-label="About colors" aria-describedby="[^"]+-text">/)
+    expect(renderToStaticMarkup(createElement(FilterPicker, { value: 'none', onChange: () => {} }))).not.toContain('tool-info')
   })
 
   it('have a picture for every mood', () => {

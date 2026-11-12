@@ -58,6 +58,9 @@ const PANEL_CONTROL = '.dialkit-slider-wrapper, button, [role="button"]'
 
 const inControl = (target: EventTarget | null) => target instanceof Element && target.closest(PANEL_CONTROL) !== null
 
+/** The panel's info icons: their tip opens on focus, so focusing one counts as using it. */
+const PANEL_INFO = '.tool-info'
+
 export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const [start] = useState(() => parseQuery(searchParams))
   const panelMood = useSyncExternalStore(subscribePanel, readPanelMood, readNoMood)
@@ -254,6 +257,9 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
         }}
         onClickCapture={(event) => {
           if (inControl(event.target)) setDragHint(false)
+        }}
+        onFocusCapture={(event) => {
+          if (event.target instanceof Element && event.target.matches(PANEL_INFO)) setDragHint(false)
         }}
         onKeyDown={(event) => {
           // A key that changes a control has its default prevented by now, by usePanelAccess's handler on this

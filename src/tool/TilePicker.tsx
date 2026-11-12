@@ -42,13 +42,15 @@ interface TilePickerProps<T extends string> {
   value: T
   onChange: (value: T) => void
   tile: (option: TileOption<T>) => ReactNode
+  /** An info icon at the right end of the title row (InfoTip). */
+  info?: ReactNode
 }
 
 /**
  * A panel choice drawn as a row of named tiles, the chosen one ringed. A radio group: the arrow keys move the choice,
  * and Tab reaches the chosen tile only.
  */
-export function TilePicker<T extends string>({ label, path, kind, options, value, onChange, tile }: TilePickerProps<T>) {
+export function TilePicker<T extends string>({ label, path, kind, options, value, onChange, tile, info }: TilePickerProps<T>) {
   const buttons = useRef<(HTMLButtonElement | null)[]>([])
   const chosen = options.find((option) => option.value === value) ?? options[0]
 
@@ -62,8 +64,11 @@ export function TilePicker<T extends string>({ label, path, kind, options, value
 
   return (
     <div className="tool-tiles" data-kind={kind} role="radiogroup" aria-label={label}>
-      <div className="tool-tiles-head" aria-hidden="true">
-        <span className="dialkit-select-label">{label}</span>
+      <div className="tool-tiles-head">
+        <span className="dialkit-select-label" aria-hidden="true">
+          {label}
+        </span>
+        {info}
       </div>
       <div className="tool-tiles-options" style={{ '--tile-columns': options.length } as CSSProperties}>
         {options.map((option, index) => (

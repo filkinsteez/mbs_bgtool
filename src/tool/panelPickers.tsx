@@ -3,8 +3,16 @@ import { EXPORT_SIZES, getPack, type ExportAspect, type MoodId, type PackId } fr
 import { hueOrder } from '@/light/color/packs'
 import { FORMAT_OPTIONS, MOOD_OPTIONS, PACK_DIAL_KEY, PACK_OPTIONS } from './dialConfig'
 import { FILTER_DIAL_KEY, FILTER_OPTIONS, type FilterChoice } from './filterControl'
+import { InfoTip } from './InfoTip'
 import { moodPicture } from './panelPictures'
 import { TilePicker } from './TilePicker'
+
+/** The documentation the Colors card's info icon links to; while it is empty, the tip shows no link. */
+export const COLORS_DOC_URL = ''
+
+/** What the Colors card's info icon says about step 1. */
+export const COLORS_INFO =
+  'Pick a pack, and the picture uses only its colors. Each slider sets how much of the picture is that color. Meta Blue starts at half, and the other colors share the rest.'
 
 /** A fixed picture of the option. */
 function Picture({ src }: { src: string }) {
@@ -45,6 +53,7 @@ export function PackPicker({ value, onChange }: { value: PackId; onChange: (pack
       options={PACK_OPTIONS}
       value={value}
       onChange={onChange}
+      info={<InfoTip label="About colors" text={COLORS_INFO} href={COLORS_DOC_URL} />}
       tile={(option) => {
         const pack = getPack(option.value)
         return hueOrder(pack).map((index) => <span key={pack.colors[index].hex} style={{ background: pack.colors[index].hex }} />)
