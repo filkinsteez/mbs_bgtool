@@ -7,6 +7,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 3D mode and the Meta symbol were removed on 2026-11-02 by owner decision. Do not bring them back unless the owner asks.
 Later on 2026-11-02 the owner asked for crops of the Meta logo outline as Contour light shapes. Use the official path from git history (`git show 5efa956^:public/icon-fill.svg`). Never show the whole logo, and no 3D.
 Contour's Halo layout of separate circles (a big ring with smaller rings beside it) was removed on 2026-11-11 by owner decision ("dont think we need this one"). Do not bring it back unless the owner asks.
+On 2026-11-12 at 8:26 AM the owner asked for no major changes ("i think we're getting into a decent place so i dont want any major changes going in. i feel like we were flip flopping on quality yesterday"). The pictures at git tag `saved-2026-11-12` are the baseline. Only small fixes go in, each shown to the owner next to the baseline first. Rush's fixed color order and the Sunrise Elemental top-edge fix stay out unless he asks for them.
 
 ## Backgrounds are light (owner directive, 2026-11-02)
 
