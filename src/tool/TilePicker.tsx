@@ -6,10 +6,10 @@ export interface TileOption<T extends string> {
 }
 
 /**
- * What the tiles show, which sets their height in tool.css: color strips or pictures with the option's name under
- * them, or shapes and icons with the name inside.
+ * What the tiles show, which sets their size in tool.css: color strips or pictures with the option's name under them;
+ * shapes in squares, or icons in buttons that share the row evenly, with the name inside.
  */
-export type TileKind = 'swatch' | 'picture' | 'shape'
+export type TileKind = 'swatch' | 'picture' | 'shape' | 'icon'
 
 /** The option an arrow, Home or End key moves to from `index` of `count`, or null for other keys. Arrows wrap around. */
 export function optionForKey(key: string, index: number, count: number): number | null {
@@ -81,7 +81,7 @@ export function TilePicker<T extends string>({ label, path, kind, options, value
             onKeyDown={(event) => handleKeyDown(event, index)}
           >
             <span className="tool-tile-face">{tile(option)}</span>
-            {kind !== 'shape' && <span className="tool-tile-label">{option.label}</span>}
+            {(kind === 'swatch' || kind === 'picture') && <span className="tool-tile-label">{option.label}</span>}
           </button>
         ))}
       </div>

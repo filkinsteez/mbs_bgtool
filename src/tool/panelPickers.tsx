@@ -91,7 +91,7 @@ export function FilterPicker({ value, onChange }: { value: FilterChoice; onChang
     <TilePicker
       label="Filter"
       path={FILTER_DIAL_KEY}
-      kind="shape"
+      kind="icon"
       options={FILTER_OPTIONS}
       value={value}
       onChange={onChange}

@@ -107,8 +107,8 @@
 
 /*
  * A card of the panel (ToolPanel's `card`): one surface with its sliders and buttons inside, inset like the tiles. Its
- * bottom padding is the space under its lowest part (the names, Shuffle, a slider, or a chosen square's ring), the same
- * as under the ring in the Format card: 4px less than the tiles' bottom padding.
+ * bottom padding is the space under its lowest part (the names, Shuffle, a slider, or a chosen square's or button's
+ * ring), the same as under the ring in the Format card: 4px less than the tiles' bottom padding.
  */
 .tool-card {
   --card-gap: 8px;
@@ -126,13 +126,13 @@
   background: none;
 }
 
-/* In a card the tiles leave the space below them to the card, keeping only room for a chosen square's ring (4px past
-   the square). */
+/* In a card the tiles leave the space below them to the card, keeping only room for a chosen square's or button's
+   ring (4px past it). */
 .tool-card > .tool-tiles {
   padding-bottom: 0;
 }
 
-.tool-card > .tool-tiles[data-kind='shape'] {
+.tool-card > .tool-tiles:is([data-kind='shape'], [data-kind='icon']) {
   padding-bottom: 4px;
 }
 
@@ -206,13 +206,13 @@
   flex: 1;
 }
 
-/* Filter and Format: square buttons, at most 64px across. */
+/* Format: square buttons, at most 64px across. */
 .tool-tiles[data-kind='shape'] .tool-tile {
   width: min(100%, 64px);
   justify-self: center;
 }
 
-/* The first and last squares sit at the card's inner edges, as the strips, the pictures and the Format squares do. */
+/* The first and last squares sit at the card's inner edges, as the strips, the pictures and the Filter buttons do. */
 .tool-tiles[data-kind='shape'] .tool-tile:where(:first-child) {
   justify-self: start;
 }
@@ -224,6 +224,12 @@
 .tool-tiles[data-kind='shape'] .tool-tile-face {
   height: auto;
   aspect-ratio: 1;
+}
+
+/* Filter: buttons that share the row evenly (owner, 2026-11-11: "rectangular so they split the space more evenly"),
+   wider than tall, with the icon above the name. */
+.tool-tiles[data-kind='icon'] .tool-tile-face {
+  height: calc(var(--tile-height) + 12px);
 }
 
 /* A thin edge, so dark swatches (Forest, Plum, Near-black) and Contour's black stay visible on the dark panel. */
@@ -417,13 +423,14 @@
     --tile-height: 20px;
   }
 
-  /* Too short for squares: the buttons fill the row again, with the icon beside the name. */
+  /* Too short for squares: the Format buttons fill the row like the Filter buttons, and both are one row high, with
+     the icon beside the name. */
   .tool-tiles[data-kind='shape'] .tool-tile {
     width: auto;
     justify-self: stretch;
   }
 
-  .tool-tiles[data-kind='shape'] .tool-tile-face {
+  .tool-tiles:is([data-kind='shape'], [data-kind='icon']) .tool-tile-face {
     height: var(--tile-height);
     aspect-ratio: auto;
   }
