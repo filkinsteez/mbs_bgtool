@@ -52,7 +52,9 @@ export async function startHarness({ verbose = false } = {}) {
     root: ROOT,
     logLevel: verbose ? 'info' : 'error',
     resolve: { alias: { '@': path.join(ROOT, 'src') } },
-    server: { host: '127.0.0.1', port: 0, watch: null, hmr: false },
+    // No websocket: Vite's client script on the page would otherwise reload the page whenever its connection drops
+    // and comes back, which killed renders in the middle of a run.
+    server: { host: '127.0.0.1', port: 0, watch: null, hmr: false, ws: false },
     optimizeDeps: { noDiscovery: true, include: [] },
     plugins: [ioPlugin],
   })
@@ -75,6 +77,18 @@ export async function startHarness({ verbose = false } = {}) {
     const body = await response.text().catch(() => '')
     moduleErrors.push(`${response.url().replace(`http://127.0.0.1:${port}`, '')}: ${body.slice(0, 2000)}`)
   })
+  // Vite adds its client script to the page. It opens a websocket (to port 5173, since this server's port is random)
+  // and reloads the page when that connection drops and comes back, so the page gets an empty stand-in instead.
+  await page.route('**/@vite/client', (route) =>
+    route.fulfill({
+      contentType: 'application/javascript',
+      body: 'export const createHotContext = () => ({ accept() {}, dispose() {}, prune() {}, invalidate() {}, on() {}, off() {}, send() {}, data: {} }); export const updateStyle = () => {}; export const removeStyle = () => {}; export const injectQuery = (url) => url; export class ErrorOverlay {}',
+    }),
+  )
+  let started = false
+  page.on('framenavigated', (frame) => {
+    if (started && frame === page.mainFrame()) console.error(`[harness] the page navigated to ${frame.url()}`)
+  })
   await page.goto(`http://127.0.0.1:${port}/scripts/light/harness/index.html`)
   try {
     const deadline = Date.now() + 60_000
@@ -89,6 +103,7 @@ export async function startHarness({ verbose = false } = {}) {
     await server.close()
     throw new Error(`Harness page did not start: ${pageErrors.join('\n') || error.message}`)
   }
+  started = true
 
   const call = async (method, ...args) =>
     page.evaluate(({ method, args }) => window.lightHarness[method](...args), { method, args })
