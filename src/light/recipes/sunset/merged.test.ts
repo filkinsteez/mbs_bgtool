@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { defaultMix, setMetaBlue } from '../../color/mix'
 import { getPack } from '../../color/packs'
-import { composeMerged, mergedParts } from './merged'
+import { composeMerged, mergedBands, mergedParts } from './merged'
 
 const CONTROLS = { intensity: 0.5, softness: 0.7, mood: 0.5 }
 const PACKS = ['bold', 'elemental', 'atmospheric'].map((id) => getPack(id as 'bold'))
@@ -20,6 +20,12 @@ const DIRECTION_LINES: Record<string, { from: [number, number]; to: [number, num
   "owner's corner drag": OWNER_LINE,
   'mirrored corner drag': { from: [-0.011, 1.224], to: [1.078, -0.067] },
   "owner's left-to-right drag": { from: [-0.001, 0.418], to: [0.62, 0.428] },
+}
+// The owner's arrows of 2026-11-11 7:05 and 7:06 PM (Bold, seed 44, 16:9), where the colors' order flipped.
+const OWNER_ARROWS: Record<string, { from: [number, number]; to: [number, number] }> = {
+  "owner's 7:05 PM arrow, bottom to top": { from: [0.569, 1.04], to: [0.579, 0.056] },
+  "owner's 7:06 PM arrow, top to bottom": { from: [0.452, 0.069], to: [0.452, 0.983] },
+  "owner's 7:06 PM arrow, shorter": { from: [0.452, 0.069], to: [0.45, 0.913] },
 }
 
 // Everything in the params but how far each part's color may dim, which comes from the colors.
@@ -110,5 +116,68 @@ describe('merged Sunrise', () => {
           expect(rise / alongChange, `${label}: the bands stack from the line's start toward its end`).toBeGreaterThan(0.5)
           expect(sun[0] * along[0] + sun[1] * along[1], `${label}: the light sits on the start's side`).toBeLessThan(0)
         }
+  })
+
+  // The place along the bands the color stage reads (mergedBands, the shader's lookBand): the pack's bright end goes at
+  // its low end, by the line's start, and its dark end at its high end, by the line's end, so the order never flips.
+  const bandsFor = (drag: { from: [number, number]; to: [number, number] }, seed: number, aspect: number) => {
+    const [w, h] = aspect > 1 ? [64, 36] : [36, 64]
+    const { params } = composeMerged({ pack: PACKS[0], controls: { ...CONTROLS, drag }, seed, aspect })
+    return { w, h, ...mergedBands(params, aspect, w, h) }
+  }
+  // Each cell's place along the line, 0 at its start and 1 at its end.
+  const alongLine = (drag: { from: [number, number]; to: [number, number] }, aspect: number, w: number, h: number) => {
+    const frameW = Math.max(aspect, 1)
+    const frameH = Math.max(1 / aspect, 1)
+    const line = [(drag.to[0] - drag.from[0]) * frameW, (drag.to[1] - drag.from[1]) * frameH]
+    const length2 = line[0] ** 2 + line[1] ** 2
+    return Float32Array.from({ length: w * h }, (_, i) => {
+      const x = (((i % w) + 0.5) / w - drag.from[0]) * frameW
+      const y = ((Math.floor(i / w) + 0.5) / h - drag.from[1]) * frameH
+      return (x * line[0] + y * line[1]) / length2
+    })
+  }
+
+  it("gives the stage its place along the bands: lowest at the line's start, rising along it, highest toward its end", () => {
+    for (const [name, drag] of Object.entries({ ...DIRECTION_LINES, ...OWNER_ARROWS }))
+      for (const seed of SEEDS)
+        for (const aspect of ASPECTS) {
+          const { w, h, place } = bandsFor(drag, seed, aspect)
+          const along = alongLine(drag, aspect, w, h)
+          const meanOf = (v: Float32Array) => v.reduce((s, x) => s + x, 0) / v.length
+          const [mp, ma] = [meanOf(place), meanOf(along)]
+          let cov = 0
+          let vp = 0
+          let va = 0
+          for (let i = 0; i < place.length; i++) {
+            cov += (place[i] - mp) * (along[i] - ma)
+            vp += (place[i] - mp) ** 2
+            va += (along[i] - ma) ** 2
+          }
+          const label = `${name}, s${seed} ${aspect > 1 ? '16:9' : '9:16'}`
+          expect(cov / Math.sqrt(vp * va), `${label}: the place rises along the line`).toBeGreaterThan(0.8)
+        }
+  })
+
+  it("keeps the place along the bands under a few pixels' drag and any mix, so the colors' order can't flip", () => {
+    // A step is 0.004 of the frame's width, about 3 pixels of the preview at 16:9.
+    for (const [name, arrow] of Object.entries(OWNER_ARROWS)) {
+      const base = bandsFor(arrow, 44, 16 / 9)
+      for (let k = -5; k <= 5; k++) {
+        const moves: Record<string, { from: [number, number]; to: [number, number] }> = {
+          'end along the arrow': { from: arrow.from, to: [arrow.to[0], arrow.to[1] + 0.004 * k * (16 / 9) * Math.sign(arrow.to[1] - arrow.from[1])] },
+          'arrow sideways': { from: [arrow.from[0] + 0.004 * k, arrow.from[1]], to: [arrow.to[0] + 0.004 * k, arrow.to[1]] },
+        }
+        for (const [move, drag] of Object.entries(moves)) {
+          const moved = bandsFor(drag, 44, 16 / 9)
+          let most = 0
+          for (let i = 0; i < base.place.length; i++) most = Math.max(most, Math.abs(moved.place[i] - base.place[i]))
+          expect(most, `${name}, ${move} ${k}: the most any cell's place moves`).toBeLessThan(0.02 * Math.abs(k) + 1e-6)
+        }
+      }
+      // The mix never reaches the design, so a slider step can't move the place at all.
+      const mixed = composeMerged({ pack: PACKS[0], controls: { ...CONTROLS, drag: arrow }, seed: 44, aspect: 16 / 9, mix: setMetaBlue(PACKS[0], defaultMix(PACKS[0]), false).shares })
+      expect(Array.from(mergedBands(mixed.params, 16 / 9, base.w, base.h).place), `${name}: the place under another mix`).toEqual(Array.from(base.place))
+    }
   })
 })

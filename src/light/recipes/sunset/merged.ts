@@ -6,6 +6,7 @@ import { hexToLinear, type Rgb } from '../../color/srgb'
 import type { ComposeInput, Composition, ControlValues, ParamSpec, RecipeContext, RecipeDefinition, UniformMap } from '../../scene'
 import { MEET_GLSL } from '../../engine/meet'
 import { bridgeLight } from './bands-light'
+import { gradientNoise } from './boundary'
 
 /**
  * Sunrise as one look (hidden; the tool shows it with `sunrise=merged`). The seed picks one of four kinds of sky, in
@@ -573,6 +574,58 @@ export function lightnessOnlyParams<T extends Record<string, unknown>>(params: T
   return { ...params, lightnessOnly: true }
 }
 
+/**
+ * How the place along the bands drifts and fans out along the horizon (as the color stage's grain place did): the
+ * drift's size, the fan's size against the place's distance from the middle of the bands, and the short sides between
+ * their bumps.
+ */
+const BAND_DRIFT = 0.08
+const BAND_FAN = 0.35
+const BAND_BUMP = 0.6
+
+/** Sunrise's place along its bands at points of the frame, as the shader's `lookBand` gives it per pixel. */
+export interface MergedBands {
+  /**
+   * The place along the bands: 0 on the horizon line by the light, rising along the drag arrow (without a drag, up
+   * the sky) to 1 where the far colors are reached, bent as the horizon bends. Behind the light it goes on falling
+   * below 0, so it rises along the whole arrow.
+   */
+  place: Float32Array
+  /** How far behind the light a point is: 0 ahead of it, 1 where the light has dimmed to the deep sky's (0.8 short sides behind). */
+  behind: Float32Array
+}
+
+/**
+ * `lookBand` on a w by h grid of the frame, row 0 at the top, each value at its cell's middle. Kind 1 (a high light,
+ * which measures height from the light) is no longer drawn, so its height isn't followed here.
+ */
+export function mergedBands(params: Record<string, unknown>, aspect: number, w: number, h: number): MergedBands {
+  const frameW = Math.max(aspect, 1)
+  const frameH = Math.max(1 / aspect, 1)
+  const sun = params.sun as number[]
+  const up = params.up as number[]
+  const span = params.span as number
+  const [off, bend, lean, drift] = params.horizon as number[]
+  const [wave, waveSeed] = params.horizonWave as number[]
+  const seed = Math.round(waveSeed)
+  const slant = (params.slant as number[])[0]
+  const place = new Float32Array(w * h)
+  const behind = new Float32Array(w * h)
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const dx = ((x + 0.5) / w - 0.5) * frameW - sun[0]
+      const dy = ((y + 0.5) / h - 0.5) * frameH - sun[1]
+      const a = -dx * up[1] + dy * up[0]
+      const bow = (a * a) / Math.sqrt(1 + a ** 4)
+      const height = dx * up[0] + dy * up[1] - (off + bend * bow + lean * a + drift * gradientNoise(a * wave + 3.1, 7.7, seed))
+      const t = (height + slant * a) / span + 0.05 * gradientNoise(a * 0.6 + 2.1, Math.abs(height) * 0.6 + 5.3, seed + 3)
+      place[y * w + x] = t + BAND_DRIFT * gradientNoise(a / BAND_BUMP + 4.4, 1.3, seed + 13) + BAND_FAN * (t - 0.5) * gradientNoise(a / BAND_BUMP + 8.1, 6.2, seed + 15)
+      const back = Math.min(1, Math.max(0, -height / 0.8))
+      behind[y * w + x] = back * back * (3 - 2 * back)
+    }
+  return { place, behind }
+}
+
 // ---------------------------------------------------------------------------------------------------------- recipe
 
 const vec = (key: string, label: string, def: number[], min = -20, max = 20): ParamSpec => ({ kind: 'vector', key, label, min, max, step: 1e-4, default: def })
@@ -1090,6 +1143,23 @@ vec3 auxRadiance(vec2 uv, vec2 p) {
     col = meetColorsAt5(pc, pq, 2, ${SKY_MEET_SHARPNESS.toFixed(1)}, edgeLit) * y * meetDarkLight(edgeShown, edgeDark) / max(edgeShown, 1e-8);
   }
   return col * uLevel;
+}
+
+// The place along the bands for the color stage (mergedBands gives the same on a grid). x: 0 on the horizon line by
+// the light, rising along the drag arrow (without a drag, up the sky) to 1 where the far colors are reached, bent as
+// the horizon bends; behind the light it goes on falling below 0, so it rises along the whole arrow (mirrored as the
+// lightness is, it would fold the colors into a V). Along the horizon the places drift and fan out from the middle of
+// the bands, so neighbouring boundaries are never parallel; the drift and fan change only along the horizon, so the
+// place still rises along the whole arrow. y: how far behind the light, 0 ahead of it and 1 where its light has
+// dimmed to the deep sky's. Nothing here calls it.
+#define LOOK_BAND
+vec2 lookBand(vec2 uv, vec2 p) {
+  vec2 d = p - uSun;
+  float a = dot(d, vec2(-uUp.y, uUp.x));
+  float h = dot(d, uUp) - baseAt(a);
+  float t = (h + uSlant.x * a) / uSpan + 0.05 * gradientNoise(vec2(a * 0.6 + 2.1, abs(h) * 0.6 + 5.3), uHorizonSeed + 3);
+  t += ${BAND_DRIFT.toFixed(2)} * gradientNoise(vec2(a / ${BAND_BUMP.toFixed(2)} + 4.4, 1.3), uHorizonSeed + 13) + ${BAND_FAN.toFixed(2)} * (t - 0.5) * gradientNoise(vec2(a / ${BAND_BUMP.toFixed(2)} + 8.1, 6.2), uHorizonSeed + 15);
+  return vec2(t, smoothstep(0.0, 0.8, -h));
 }
 
 vec3 radiance(vec2 uv, vec2 p) { return vec3(0.0); }
