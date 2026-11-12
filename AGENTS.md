@@ -62,12 +62,16 @@ Contour's Halo layout of separate circles (a big ring with smaller rings beside 
     elsewhere ("the gradient and control is still fucked. it was working
     earlier today"). Change the stage only in small steps, each shown to
     the owner on a full before-and-after sheet before it lands.
-  - In Contour a color's share is its share of the light, not of the area,
-    and each color's light spreads from its own stretch of the rim
-    (a9aadb02, approved by the owner on 2026-11-11 at 7:00 PM after seeing
-    it side by side). Counting by area had painted small colors over the
-    dark top as a maroon field ("looking splotchy as hell"). Don't go back
-    to counting by area in Contour.
+  - In Contour no color paints the faint haze far from the rim in a deep
+    shade of a light color. Counting shares by area over all the haze had
+    painted small colors over the dark top as a maroon field ("looking
+    splotchy as hell"). The fix of 7:00 PM (a9aadb02) counted shares by
+    light instead, but it lost the warm colors along the rim, Elemental's
+    purple haze and Atmospheric's blue arc. At 8:50 PM the owner chose to
+    build out Research's proposal (report 5): near the rim colors count by
+    area again, and the haze far from strong light goes to Meta Blue's dim
+    glow or a darker pack color that suits it (Plum, Forest) and counts
+    toward no share. It lands only after he sees it side by side.
 - Small changes give small changes (owner, 2026-11-11: "colors pop in and
   out from really small adjustments"). A slider step or a drag of a few
   pixels changes the picture in proportion. No color appears or
