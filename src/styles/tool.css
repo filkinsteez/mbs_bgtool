@@ -107,8 +107,8 @@
 
 /*
  * A card of the panel (ToolPanel's `card`): one surface with its sliders and buttons inside, inset like the tiles. Its
- * bottom padding is the space under its lowest part (the names, Shuffle, a slider, or a chosen square's or button's
- * ring), the same as under the ring in the Format card: 4px less than the tiles' bottom padding.
+ * bottom padding is the space under its lowest part (the names, Shuffle, a slider, or a chosen button's ring), the same
+ * as under the ring in the Format card: 4px less than the tiles' bottom padding.
  */
 .tool-card {
   --card-gap: 8px;
@@ -126,13 +126,13 @@
   background: none;
 }
 
-/* In a card the tiles leave the space below them to the card, keeping only room for a chosen square's or button's
-   ring (4px past it). */
+/* In a card the tiles leave the space below them to the card, keeping only room for a chosen button's ring (4px past
+   the button). */
 .tool-card > .tool-tiles {
   padding-bottom: 0;
 }
 
-.tool-card > .tool-tiles:is([data-kind='shape'], [data-kind='icon']) {
+.tool-card > .tool-tiles[data-kind='icon'] {
   padding-bottom: 4px;
 }
 
@@ -175,7 +175,7 @@
   gap: 8px;
 }
 
-/* A tile is its face (the picture, strip or square, which takes the ring) with the name under it or inside it. */
+/* A tile is its face (the picture, strip or button, which takes the ring) with the name under it or inside it. */
 .tool-tile {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -206,28 +206,8 @@
   flex: 1;
 }
 
-/* Format: square buttons, at most 64px across. */
-.tool-tiles[data-kind='shape'] .tool-tile {
-  width: min(100%, 64px);
-  justify-self: center;
-}
-
-/* The first and last squares sit at the card's inner edges, as the strips, the pictures and the Filter buttons do. */
-.tool-tiles[data-kind='shape'] .tool-tile:where(:first-child) {
-  justify-self: start;
-}
-
-.tool-tiles[data-kind='shape'] .tool-tile:where(:last-child) {
-  justify-self: end;
-}
-
-.tool-tiles[data-kind='shape'] .tool-tile-face {
-  height: auto;
-  aspect-ratio: 1;
-}
-
-/* Filter: buttons that share the row evenly (owner, 2026-11-11: "rectangular so they split the space more evenly"),
-   wider than tall, with the icon above the name. */
+/* Filter and Format: buttons of equal width that fill the row (owner, 2026-11-11: "rectangular so they split the space
+   more evenly"), wider than tall, with the filter's mark or the format's frame above the name. */
 .tool-tiles[data-kind='icon'] .tool-tile-face {
   height: calc(var(--tile-height) + 12px);
 }
@@ -373,10 +353,6 @@
     --tile-height: 24px;
   }
 
-  .tool-tiles[data-kind='shape'] .tool-tile {
-    width: min(100%, 48px);
-  }
-
   .tool-tile-mark {
     gap: 4px;
   }
@@ -423,16 +399,9 @@
     --tile-height: 20px;
   }
 
-  /* Too short for squares: the Format buttons fill the row like the Filter buttons, and both are one row high, with
-     the icon beside the name. */
-  .tool-tiles[data-kind='shape'] .tool-tile {
-    width: auto;
-    justify-self: stretch;
-  }
-
-  .tool-tiles:is([data-kind='shape'], [data-kind='icon']) .tool-tile-face {
+  /* Too short for the taller buttons: Filter's and Format's are one row high, with the mark or frame beside the name. */
+  .tool-tiles[data-kind='icon'] .tool-tile-face {
     height: var(--tile-height);
-    aspect-ratio: auto;
   }
 
   .tool-tile-mark {

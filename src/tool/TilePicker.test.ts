@@ -19,13 +19,17 @@ describe('panel tiles', () => {
     expect(optionForKey('Enter', 1, 4)).toBeNull()
   })
 
-  it('show the filters as buttons that share the row, each name inside its button, and the formats as squares', () => {
-    const filter = renderToStaticMarkup(createElement(FilterPicker, { value: 'grain', onChange: () => {} }))
-    expect(filter).toContain('data-kind="icon"')
-    const buttons = [...filter.matchAll(/<button[^>]*aria-label="([^"]+)"[^>]*>(.*?)<\/button>/g)]
-    expect(buttons.map(([, name]) => name)).toEqual(['None', 'Grain', 'Pixel'])
-    for (const [, name, inner] of buttons) expect(inner, name).toMatch(new RegExp(`^<span class="tool-tile-face">.*<span class="tool-tile-label">${name}</span></span></span>$`))
-    expect(renderToStaticMarkup(createElement(FormatPicker, { value: '16:9', onChange: () => {} }))).toContain('data-kind="shape"')
+  it('show the filters and the formats as buttons that share the row, each name inside its button', () => {
+    const pickers = [
+      { html: renderToStaticMarkup(createElement(FilterPicker, { value: 'grain', onChange: () => {} })), names: ['None', 'Grain', 'Pixel'] },
+      { html: renderToStaticMarkup(createElement(FormatPicker, { value: '16:9', onChange: () => {} })), names: ['16:9', '9:16', '1:1', '4:5'] },
+    ]
+    for (const { html, names } of pickers) {
+      expect(html).toContain('data-kind="icon"')
+      const buttons = [...html.matchAll(/<button[^>]*aria-label="([^"]+)"[^>]*>(.*?)<\/button>/g)]
+      expect(buttons.map(([, name]) => name)).toEqual(names)
+      for (const [, name, inner] of buttons) expect(inner, name).toMatch(new RegExp(`^<span class="tool-tile-face">.*<span class="tool-tile-label">${name}</span></span></span>$`))
+    }
   })
 
   it('have a picture for every mood', () => {

@@ -118,7 +118,7 @@ export function FormatPicker({ value, onChange }: { value: ExportAspect; onChang
     <TilePicker
       label="Format"
       path="format"
-      kind="shape"
+      kind="icon"
       options={FORMAT_OPTIONS}
       value={value}
       onChange={onChange}
