@@ -119,7 +119,8 @@ On 2026-11-12 at 8:26 AM the owner asked for no major changes ("i think we're ge
 - Sunrise (the old Sunset) and Contour first, then Rush (the old Warp
   Speed; its moodboard is node 4:439 of the concept file; the owner
   started it on 2026-11-09). Filters: Grain and Pixel. The owner removed
-  ASCII on 2026-11-09.
+  ASCII on 2026-11-09, and a Paper filter on 2026-11-12 ("no paper"); don't
+  bring either back unless he asks.
 - Sunrise's gradient follows the drag arrow at any angle, like a design
   tool's gradient tool: its bands cross the frame at right angles to the
   arrow and stack along it (owner, 2026-11-11: "here i'm dragging left to
