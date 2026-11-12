@@ -132,6 +132,8 @@ On 2026-11-12 at 8:26 AM the owner asked for no major changes ("i think we're ge
     a V.
   - The bands stay organic: they curve and drift and are never parallel.
   - A drag never changes which colors show or their shares.
+ - The tilt comes from the drag only; seeds don't tilt the default view
+ (owner, 2026-11-12: "tilt should be controlled by drag not random seed").
   - A test in the repo checks the direction. Don't change Sunrise's drag
     handling unless it passes.
   - The colors lie along the arrow in a fixed order for each pack: the
