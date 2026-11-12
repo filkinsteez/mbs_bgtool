@@ -7,12 +7,11 @@ import { InfoTip } from './InfoTip'
 import { moodPicture } from './panelPictures'
 import { TilePicker } from './TilePicker'
 
-/** The documentation the Colors card's info icon links to; while it is empty, the tip shows no link. */
+/** The documentation the Colors card's info icon links to; while it is empty, the tip's text is not a link. */
 export const COLORS_DOC_URL = ''
 
-/** What the Colors card's info icon says about step 1. */
-export const COLORS_INFO =
-  'Pick a pack, and the picture uses only its colors. Each slider sets how much of the picture is that color. Meta Blue starts at half, and the other colors share the rest.'
+/** The Colors card's info tip, which becomes the documentation link once `COLORS_DOC_URL` is set (owner, 2026-11-12). */
+export const COLORS_INFO = 'documentation link here'
 
 /** A fixed picture of the option. */
 function Picture({ src }: { src: string }) {

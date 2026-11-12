@@ -68,24 +68,27 @@ interface TipBubbleProps {
   onLinkBlur?: (event: FocusEvent<HTMLAnchorElement>) => void
 }
 
-/** The tip: its text, and a "Read more" link to the documentation when there is one. */
+/** The tip: its text, which links to the documentation when there is one. */
 export function TipBubble({ id, textId, text, href, place, open, ref, linkRef, onPointerEnter, onLinkKeyDown, onLinkBlur }: TipBubbleProps) {
   return (
     <div ref={ref} id={id} role="tooltip" className="tool-info-tip" data-side={place?.side} style={place?.style} hidden={!open} onPointerEnter={onPointerEnter}>
-      <p id={textId}>{text}</p>
-      {href !== '' && (
-        <a ref={linkRef} className="tool-info-link" href={href} target="_blank" rel="noreferrer" onKeyDown={onLinkKeyDown} onBlur={onLinkBlur}>
-          Read more
-        </a>
-      )}
+      <p id={textId}>
+        {href === '' ? (
+          text
+        ) : (
+          <a ref={linkRef} className="tool-info-link" href={href} target="_blank" rel="noreferrer" onKeyDown={onLinkKeyDown} onBlur={onLinkBlur}>
+            {text}
+          </a>
+        )}
+      </p>
     </div>
   )
 }
 
 /**
  * An "i in a circle" that shows `text` in a tip on hover and on keyboard focus, and on a tap on touch screens. Escape,
- * leaving it or moving focus away closes the tip. With `href` the tip ends in a "Read more" link, which the pointer and
- * Tab both reach.
+ * leaving it or moving focus away closes the tip. With `href` the tip's text is a link, which the pointer and Tab both
+ * reach.
  */
 export function InfoTip({ label, text, href }: { label: string; text: string; href: string }) {
   const id = useId()

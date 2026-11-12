@@ -23,9 +23,10 @@ describe('the info tip', () => {
     expect(tipPath('below', icon, { left: 1184, top: 70.75, right: 1416, bottom: 180 })).toEqual({ left: 1394, top: 44.75, right: 1420, bottom: 70.75 })
   })
 
-  it('shows Read more only with a documentation URL, and opens it in a new tab', () => {
+  it('makes its text a link only with a documentation URL, and opens it in a new tab', () => {
     expect(bubble('')).not.toContain('<a')
-    expect(bubble('https://example.com/colors')).toContain('<a class="tool-info-link" href="https://example.com/colors" target="_blank" rel="noreferrer">Read more</a>')
+    expect(bubble('')).toContain('<p id="t-text">Some text.</p>')
+    expect(bubble('https://example.com/colors')).toContain('<a class="tool-info-link" href="https://example.com/colors" target="_blank" rel="noreferrer">Some text.</a>')
     expect(bubble('')).toContain('role="tooltip"')
     expect(bubble('', false)).toContain('hidden=""')
   })
