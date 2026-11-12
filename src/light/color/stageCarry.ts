@@ -497,6 +497,10 @@ const GROUND_MOST = 0.6
 const GROUND_LIGHTEST = 0.6
 /** Half-width of the blend between the ground's colors (share of the ground). */
 const GROUND_BLEND = 0.12
+/** Place along the bands over which a cell starts to count as ahead of the light, for the far ground. */
+const FAR_AHEAD = [0.35, 0.6] as const
+/** Light over which a cell ahead of the light goes from the far ground (dimmer) to the light colors' bands. */
+const FAR_DIM = [0.45, 0.55] as const
 /** Passes that set the stops so each color covers its share as the shares reading counts it. */
 const STOP_PASSES = 8
 
@@ -580,6 +584,15 @@ export function bandShares(grid: StageGrid, colors: readonly StageColor[], place
       before = past
     }
   }
+  // The far ground: dim light ahead of the light where the bands put a light color with a hue, which there would show
+  // only its deep shade (olive, brown, maroon, dark petrol), goes to the first of the dark colors that end the order
+  // (Meta Blue's navy in Bold) and counts toward no share, like a black background, so the light colors keep to
+  // brighter light. A light grey (Ice, White) only greys further as it dims, so it keeps its band.
+  let tail = K
+  while (tail > 0 && colors[order[tail - 1]].lightness <= GROUND_LIGHTEST) tail--
+  const toward = tail < K ? order[tail] : -1
+  const far = Float32Array.from(place, (v, i) => (toward < 0 ? 0 : smooth01((v - FAR_AHEAD[0]) / (FAR_AHEAD[1] - FAR_AHEAD[0])) * (1 - smooth01((L[i] - FAR_DIM[0]) / (FAR_DIM[1] - FAR_DIM[0])))))
+  const moved = new Float32Array(n)
   let shares: Float32Array[] = colors.map(() => new Float32Array(n))
   for (let pass = 0; pass <= STOP_PASSES; pass++) {
     const sum = widths.reduce((a, b) => a + b, 0) || 1
@@ -591,6 +604,7 @@ export function bandShares(grid: StageGrid, colors: readonly StageColor[], place
       stops.push(x)
     }
     const blend = stops.map((_, j) => Math.min(STOP_BLEND, STOP_BLEND_MOST * Math.min(widths[j], widths[j + 1])))
+    moved.fill(0)
     for (let i = 0; i < n; i++) {
       const g = ground[i]
       let before = 1
@@ -601,12 +615,21 @@ export function bandShares(grid: StageGrid, colors: readonly StageColor[], place
           past = b > 1e-6 ? smooth01((u[i] - stops[j] + b) / (2 * b)) : u[i] >= stops[j] ? 1 : 0
         }
         const k = order[j]
-        shares[k][i] = (1 - g) * Math.max(0, before - past) + g * groundOf[k][i]
+        const band = Math.max(0, before - past)
+        const off = colors[k].lightness > GROUND_LIGHTEST && colors[k].chroma >= 0.04 ? far[i] * band : 0
+        shares[k][i] = (1 - g) * (band - off) + g * groundOf[k][i]
+        moved[i] += (1 - g) * off
         before = past
       }
     }
     shares = shares.map((sh) => blurGrid(sh, w, h, SHARE_BLUR))
-    if (pass === STOP_PASSES) break
+    if (pass === STOP_PASSES) {
+      if (toward >= 0) {
+        const farShare = blurGrid(moved, w, h, SHARE_BLUR)
+        for (let i = 0; i < n; i++) shares[toward][i] += farShare[i]
+      }
+      break
+    }
     let total = 0
     const got = order.map((k) => {
       let v = 0
