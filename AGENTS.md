@@ -126,6 +126,13 @@ Contour's Halo layout of separate circles (a big ring with smaller rings beside 
   - A drag never changes which colors show or their shares.
   - A test in the repo checks the direction. Don't change Sunrise's drag
     handling unless it passes.
+  - The colors lie along the arrow in a fixed order for each pack: the
+    pack's lighter end at the drag start, its dark end toward the arrow's
+    end and on the dim ground at the start (navy in Bold), never brown or
+    maroon. A small drag or slider step never flips the order (76cadf81,
+    approved by the owner on 2026-11-11 at 8:43 PM after his report at
+    7:07 PM: "unpredictability with spots and color direction flips of
+    the gradient").
 - Rush is soft, with its light smeared along each band like a long
   exposure (owner, 2026-11-11, approving the round 27 candidate: "Yes,
   this is it"). A few seeds may look alike in Rush ("OK, a few
