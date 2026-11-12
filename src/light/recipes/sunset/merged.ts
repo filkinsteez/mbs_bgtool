@@ -400,34 +400,35 @@ export function composeMerged({ pack, controls, seed, aspect, mix }: MergedInput
   const L = mergedLayout(seed, aspect, controls.drag)
   const on = mixColors(pack, { shares: mix ?? defaultMix(pack).shares }).map((entry) => ({ hex: entry.color.hex }))
   const roles = fillRoles(on, seed)
+  const params = {
+    lens: lerp(0.045, 0.12, clamp(controls.softness, 0, 1)),
+    level: 2 ** ((clamp(controls.intensity, 0, 1) - 0.5) * 1.2),
+    kind: L.kind,
+    sun: L.sun.map((v) => clamp(v, -6, 6)),
+    up: L.up,
+    span: clamp(L.span, 0.1, 20),
+    squash: L.squash,
+    ground: L.ground,
+    groundL: L.groundL,
+    horizon: L.horizon,
+    horizonWave: L.horizonWave,
+    dome: L.dome,
+    pale: L.pale,
+    paleBase: L.paleBase,
+    warm: L.warm,
+    sky: L.sky,
+    deep: L.deep,
+    slant: L.slant,
+    skew: L.skew,
+    patch: L.patch,
+    spread: L.spread,
+    halo: L.halo,
+    farCorner: L.farCorner,
+    lowest: roles.lowest,
+  }
   return {
     colors: [roles.sky, roles.glow, roles.warm, roles.pale, roles.bank, roles.near, roles.deep, NO_LIGHT],
-    params: {
-      lens: lerp(0.045, 0.12, clamp(controls.softness, 0, 1)),
-      level: 2 ** ((clamp(controls.intensity, 0, 1) - 0.5) * 1.2),
-      kind: L.kind,
-      sun: L.sun.map((v) => clamp(v, -6, 6)),
-      up: L.up,
-      span: clamp(L.span, 0.1, 20),
-      squash: L.squash,
-      ground: L.ground,
-      groundL: L.groundL,
-      horizon: L.horizon,
-      horizonWave: L.horizonWave,
-      dome: L.dome,
-      pale: L.pale,
-      paleBase: L.paleBase,
-      warm: L.warm,
-      sky: L.sky,
-      deep: L.deep,
-      slant: L.slant,
-      skew: L.skew,
-      patch: L.patch,
-      spread: L.spread,
-      halo: L.halo,
-      farCorner: L.farCorner,
-      lowest: roles.lowest,
-    },
+    params: { ...params, bandTurn: bandTurn(params, aspect) },
     lens: { bloom: 0, halation: 0 },
     output: { grain: 0, exposure: 0 },
   }
@@ -579,20 +580,63 @@ export function lightnessOnlyParams<T extends Record<string, unknown>>(params: T
  * drift's size, the fan's size against the place's distance from the middle of the bands, and the short sides between
  * their bumps.
  */
-const BAND_DRIFT = 0.08
+const BAND_DRIFT = 0.05
 const BAND_FAN = 0.35
-const BAND_BUMP = 0.6
+const BAND_BUMP = 0.9
 
 /** Sunrise's place along its bands at points of the frame, as the shader's `lookBand` gives it per pixel. */
 export interface MergedBands {
   /**
    * The place along the bands: 0 on the horizon line by the light, rising along the drag arrow (without a drag, up
-   * the sky) to 1 where the far colors are reached, bent as the horizon bends. Behind the light it goes on falling
-   * below 0, so it rises along the whole arrow.
+   * the sky) to 1 where the far colors are reached, bent as the horizon bends; its lines cross the arrow square on
+   * average (bandTurn). Behind the light it goes on falling below 0, so it rises along the whole arrow.
    */
   place: Float32Array
   /** How far behind the light a point is: 0 ahead of it, 1 where the light has dimmed to the deep sky's (0.8 short sides behind). */
   behind: Float32Array
+}
+
+/**
+ * At a point of the frame (short sides from its middle, y down): its place along the horizon from the light (`a`), its
+ * height above the horizon, and its place along the bands before `bandTurn`.
+ */
+function bandPoint(params: Record<string, unknown>, px: number, py: number): { a: number; height: number; place: number } {
+  const sun = params.sun as number[]
+  const up = params.up as number[]
+  const span = params.span as number
+  const [off, bend, lean, drift] = params.horizon as number[]
+  const [wave, waveSeed] = params.horizonWave as number[]
+  const seed = Math.round(waveSeed)
+  const dx = px - sun[0]
+  const dy = py - sun[1]
+  const a = -dx * up[1] + dy * up[0]
+  const bow = (a * a) / Math.sqrt(1 + a ** 4)
+  const height = dx * up[0] + dy * up[1] - (off + bend * bow + lean * a + drift * gradientNoise(a * wave + 3.1, 7.7, seed))
+  const t = height / span + 0.05 * gradientNoise(a * 0.6 + 2.1, Math.abs(height) * 0.6 + 5.3, seed + 3)
+  return { a, height, place: t + BAND_DRIFT * gradientNoise(a / BAND_BUMP + 4.4, 1.3, seed + 13) + BAND_FAN * (t - 0.5) * gradientNoise(a / BAND_BUMP + 8.1, 6.2, seed + 15) }
+}
+
+/**
+ * How much the place along the bands changes per short side along the horizon, against the way it leans on average
+ * over the frame, so its lines cross the line (or, without one, the sky's way up) at right angles on average and keep
+ * only their curve and drift. The horizon's own tilt and the drifts lean them a few degrees in some frames.
+ */
+function bandTurn(params: Record<string, unknown>, aspect: number): number {
+  const frameW = Math.max(aspect, 1)
+  const frameH = Math.max(1 / aspect, 1)
+  const up = params.up as number[]
+  const step = 0.01
+  const cells = 24
+  let lean = 0
+  for (let i = 0; i < cells; i++)
+    for (let j = 0; j < cells; j++) {
+      const px = ((i + 0.5) / cells - 0.5) * frameW
+      const py = ((j + 0.5) / cells - 0.5) * frameH
+      const right = bandPoint(params, px - step * up[1], py + step * up[0]).place
+      const left = bandPoint(params, px + step * up[1], py - step * up[0]).place
+      lean += (right - left) / (2 * step)
+    }
+  return -lean / (cells * cells)
 }
 
 /**
@@ -602,25 +646,14 @@ export interface MergedBands {
 export function mergedBands(params: Record<string, unknown>, aspect: number, w: number, h: number): MergedBands {
   const frameW = Math.max(aspect, 1)
   const frameH = Math.max(1 / aspect, 1)
-  const sun = params.sun as number[]
-  const up = params.up as number[]
-  const span = params.span as number
-  const [off, bend, lean, drift] = params.horizon as number[]
-  const [wave, waveSeed] = params.horizonWave as number[]
-  const seed = Math.round(waveSeed)
-  const slant = (params.slant as number[])[0]
+  const turn = (params.bandTurn as number | undefined) ?? 0
   const place = new Float32Array(w * h)
   const behind = new Float32Array(w * h)
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
-      const dx = ((x + 0.5) / w - 0.5) * frameW - sun[0]
-      const dy = ((y + 0.5) / h - 0.5) * frameH - sun[1]
-      const a = -dx * up[1] + dy * up[0]
-      const bow = (a * a) / Math.sqrt(1 + a ** 4)
-      const height = dx * up[0] + dy * up[1] - (off + bend * bow + lean * a + drift * gradientNoise(a * wave + 3.1, 7.7, seed))
-      const t = (height + slant * a) / span + 0.05 * gradientNoise(a * 0.6 + 2.1, Math.abs(height) * 0.6 + 5.3, seed + 3)
-      place[y * w + x] = t + BAND_DRIFT * gradientNoise(a / BAND_BUMP + 4.4, 1.3, seed + 13) + BAND_FAN * (t - 0.5) * gradientNoise(a / BAND_BUMP + 8.1, 6.2, seed + 15)
-      const back = Math.min(1, Math.max(0, -height / 0.8))
+      const p = bandPoint(params, ((x + 0.5) / w - 0.5) * frameW, ((y + 0.5) / h - 0.5) * frameH)
+      place[y * w + x] = p.place + turn * p.a
+      const back = Math.min(1, Math.max(0, -p.height / 0.8))
       behind[y * w + x] = back * back * (3 - 2 * back)
     }
   return { place, behind }
@@ -657,6 +690,7 @@ const PARAMS: readonly ParamSpec[] = [
   vec('farCorner', 'The corner where the dim far sky gathers', [0.5, -0.5], -0.5, 0.5),
   { kind: 'boolean', key: 'lightnessOnly', label: 'Show the design lightness only (grey)', default: false },
   vec('lowest', 'Lowest light of the sky, glow, warm band and pale sky colors', [0.25, 0.85, 0.25, 0.5], 0, 1),
+  num('bandTurn', 'Change of the place along the bands per short side along the horizon, so its lines cross the line square on average', -5, 5, 0),
 ]
 
 function uniforms(ctx: RecipeContext): UniformMap {
@@ -686,6 +720,7 @@ function uniforms(ctx: RecipeContext): UniformMap {
     uHalo: ctx.vec('halo'),
     uLightnessOnly: ctx.bool('lightnessOnly') ? 1 : 0,
     uLowest: ctx.vec('lowest'),
+    uBandTurn: ctx.num('bandTurn'),
     uSky: c(0),
     uGlowColor: c(1),
     uWarmColor: c(2),
@@ -742,6 +777,7 @@ float gDeepWave = 0.0;       // round a high light: how far the deep sky's edge 
 float gDeepSoft = 0.5;       // round a high light: how soft the deep sky's edge is here (0 to 1)
 uniform int uLightnessOnly;  // 1: the design's lightness as grey, for proof sheets and the color stage
 uniform vec4 uLowest;        // lowest light of the sky, glow, warm band and pale sky colors (share of their own)
+uniform float uBandTurn;     // change of the place along the bands per short side along the horizon (bandTurn)
 uniform vec3 uSky;
 uniform vec3 uGlowColor;
 uniform vec3 uWarmColor;
@@ -1150,16 +1186,17 @@ vec3 auxRadiance(vec2 uv, vec2 p) {
 // the horizon bends; behind the light it goes on falling below 0, so it rises along the whole arrow (mirrored as the
 // lightness is, it would fold the colors into a V). Along the horizon the places drift and fan out from the middle of
 // the bands, so neighbouring boundaries are never parallel; the drift and fan change only along the horizon, so the
-// place still rises along the whole arrow. y: how far behind the light, 0 ahead of it and 1 where its light has
-// dimmed to the deep sky's. Nothing here calls it.
+// place still rises along the whole arrow. It leaves out the sky's slant, and uBandTurn takes away what the horizon's
+// tilt and the drifts lean it on average, so its lines cross the arrow square on average. y: how far behind the light,
+// 0 ahead of it and 1 where its light has dimmed to the deep sky's. Nothing here calls it.
 #define LOOK_BAND
 vec2 lookBand(vec2 uv, vec2 p) {
   vec2 d = p - uSun;
   float a = dot(d, vec2(-uUp.y, uUp.x));
   float h = dot(d, uUp) - baseAt(a);
-  float t = (h + uSlant.x * a) / uSpan + 0.05 * gradientNoise(vec2(a * 0.6 + 2.1, abs(h) * 0.6 + 5.3), uHorizonSeed + 3);
+  float t = h / uSpan + 0.05 * gradientNoise(vec2(a * 0.6 + 2.1, abs(h) * 0.6 + 5.3), uHorizonSeed + 3);
   t += ${BAND_DRIFT.toFixed(2)} * gradientNoise(vec2(a / ${BAND_BUMP.toFixed(2)} + 4.4, 1.3), uHorizonSeed + 13) + ${BAND_FAN.toFixed(2)} * (t - 0.5) * gradientNoise(vec2(a / ${BAND_BUMP.toFixed(2)} + 8.1, 6.2), uHorizonSeed + 15);
-  return vec2(t, smoothstep(0.0, 0.8, -h));
+  return vec2(t + uBandTurn * a, smoothstep(0.0, 0.8, -h));
 }
 
 vec3 radiance(vec2 uv, vec2 p) { return vec3(0.0); }

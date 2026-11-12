@@ -159,6 +159,39 @@ describe('merged Sunrise', () => {
         }
   })
 
+  it('crosses the line square: on average the lines of equal place meet the line at right angles, and they still curve', () => {
+    const lines: Record<string, { from: [number, number]; to: [number, number] } | undefined> = { ...DIRECTION_LINES, ...OWNER_ARROWS, 'no line (the sky’s way up)': undefined }
+    for (const [name, drag] of Object.entries(lines))
+      for (const seed of SEEDS)
+        for (const aspect of ASPECTS) {
+          const [w, h] = aspect > 1 ? [64, 36] : [36, 64]
+          const frameW = Math.max(aspect, 1)
+          const frameH = Math.max(1 / aspect, 1)
+          const { params } = composeMerged({ pack: PACKS[0], controls: { ...CONTROLS, drag }, seed, aspect })
+          const up = params.up as number[]
+          const { place } = mergedBands(params, aspect, w, h)
+          // The place's change along the line and across it, summed over the frame, and each cell's angle off the line.
+          let along = 0
+          let across = 0
+          let turned = 0
+          let weight = 0
+          for (let y = 1; y < h - 1; y++)
+            for (let x = 1; x < w - 1; x++) {
+              const gx = (place[y * w + x + 1] - place[y * w + x - 1]) / ((2 * frameW) / w)
+              const gy = (place[(y + 1) * w + x] - place[(y - 1) * w + x]) / ((2 * frameH) / h)
+              const ga = gx * up[0] + gy * up[1]
+              const gc = -gx * up[1] + gy * up[0]
+              along += ga
+              across += gc
+              turned += Math.hypot(ga, gc) * Math.abs(Math.atan2(gc, ga))
+              weight += Math.hypot(ga, gc)
+            }
+          const label = `${name}, s${seed} ${aspect > 1 ? '16:9' : '9:16'}`
+          expect(Math.abs((Math.atan2(across, along) * 180) / Math.PI), `${label}: degrees the lines lean off square on average`).toBeLessThan(3)
+          expect(((turned / weight) * 180) / Math.PI, `${label}: degrees the lines curve off square, cell by cell`).toBeGreaterThan(2)
+        }
+  })
+
   it("keeps the place along the bands under a few pixels' drag and any mix, so the colors' order can't flip", () => {
     // A step is 0.004 of the frame's width, about 3 pixels of the preview at 16:9.
     for (const [name, arrow] of Object.entries(OWNER_ARROWS)) {
