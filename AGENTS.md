@@ -149,10 +149,17 @@ On 2026-11-12 at 8:26 AM the owner asked for no major changes ("i think we're ge
     approved by the owner on 2026-11-11 at 8:43 PM after his report at
     7:07 PM: "unpredictability with spots and color direction flips of
     the gradient").
+  - With Meta Blue set low, the dim far side of the picture turns navy
+    instead of light colors stretching into it, and that navy counts
+    toward no color's share, so Yellow and Cyan meet through green, not
+    olive (owner, 2026-11-12). The owner accepted that the Meta Blue
+    slider then barely changes the picture between about 5% and 28%.
 - Rush is soft, with its light smeared along each band like a long
   exposure (owner, 2026-11-11, approving the round 27 candidate: "Yes,
   this is it"). A few seeds may look alike in Rush ("OK, a few
   near-repeats are fine"), so its alike check is reported, not a gate.
+  Which way Rush's colors run comes from the pack's default mix, so a
+  slider step never flips them (owner, 2026-11-12).
 - Owner feedback of 2026-11-09 (concept file node 86:380) changes the
   panel:
   - Three moods, each one option with no Look picker: Sunrise, Contour
