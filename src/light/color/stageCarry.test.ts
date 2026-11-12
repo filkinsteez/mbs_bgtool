@@ -82,6 +82,35 @@ describe('carriedShares', () => {
     }
   })
 
+  it("keeps the way the colors run across a grain as a slider moves: the way of the pack's default mix", () => {
+    // Light across the flow in three soft bumps. Judged on the current shares, the order turned round as Tan went from
+    // 12% to 14% (in Rush, 2% slider steps turned the order round and repainted 41-66% of the picture).
+    const [w, h] = gridSize(16 / 9)
+    const bumps = [
+      [0.86, 0.89, 0.29],
+      [0.64, 0.25, 0.17],
+      [0.41, 0.77, 0.27],
+    ] as const
+    const lightness = new Float32Array(w * h)
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const v = bumps.reduce((a, [amount, at, size]) => a + amount * Math.exp(-(((y / (h - 1) - at) / size) ** 2)), 0.23 + 0.04 * Math.sin((x / w) * Math.PI * 2))
+        lightness[y * w + x] = Math.min(0.95, Math.max(0.05, v))
+      }
+    const full = lightness.map(() => 1)
+    const grid: StageGrid = { width: w, height: h, lightness, coverage: full, softCoverage: full, peak: lightness, seen: lightness }
+    const pack = getPack('elemental')
+    const way = (shares: readonly number[]) => {
+      const colors = stageColors(pack, { shares }, true)
+      const fields = colors.map(() => new Float32Array(w * h))
+      const mid = middles(carriedShares(grid, colors, fields, 5, { kind: 'grain', axis: [0, 1] }), grid)
+      return Math.sign(mid[colors.findIndex((c) => c.hex === '#B8996E')] - mid[colors.findIndex((c) => c.hex === '#4A0A3C')])
+    }
+    const atDefault = way(defaultMix(pack).shares)
+    const tan = pack.colors.findIndex((c) => c.name === 'Tan')
+    for (let share = 0.02; share <= 0.5001; share += 0.02) expect(way(setShare(pack, defaultMix(pack), tan, share).shares), `Tan ${share.toFixed(2)}`).toBe(atDefault)
+  })
+
   it('along an outline counts shares by light, and the dark room is not a small color (owner, 2026-11-11 6:12 PM)', () => {
     const pack = getPack('bold')
     const mix = mixFromShares(pack, [0.75, 0.09, 0.08, 0.08])

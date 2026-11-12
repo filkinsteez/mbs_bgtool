@@ -378,10 +378,21 @@ export function carriedShares(grid: StageGrid, colors: readonly StageColor[], fi
   const counts = colors.map((c) => (way.kind === 'outline' ? lit : Float32Array.from(L, (v, i) => area[i] * (c.chroma < 0.04 ? 1 : Math.min(1, step(v) / Math.max(1e-6, step(c.lightness)))))))
   // Which end of the hue order goes where, judged on the places by colored area as before the shares were of the
   // light: the way whose stretches lie on light clearly nearer their colors' swatches, else the way that keeps each
-  // color nearer the part of the look that asks for it.
+  // color nearer the part of the look that asks for it. Across a grain (Rush) the stretches it judges are those of the
+  // pack's default mix, so no slider turns the order round; at the default mix the choice is the same.
+  const defaultSum = colors.reduce((a, c) => a + Math.max(c.defaultShare, 1e-4), 0)
+  let judgedAt = 0
+  const judged =
+    way.kind === 'outline'
+      ? slots
+      : order.map((k) => {
+          const wd = Math.max(colors[k].defaultShare, 1e-4) / defaultSum
+          judgedAt += wd
+          return { k, lo: judgedAt - wd, hi: judgedAt }
+        })
   const fit = (flip: boolean) => {
     let f = 0
-    for (const s of slots)
+    for (const s of judged)
       for (let i = 0; i < n; i++) {
         const v = flip ? 1 - byArea[i] : byArea[i]
         if (v >= s.lo && v < s.hi) f += area[i] * Math.min(4, lightOff[s.k][i])
@@ -404,8 +415,7 @@ export function carriedShares(grid: StageGrid, colors: readonly StageColor[], fi
   // Each color's pull, set until it covers its share of the colored area: it takes the cells nearest what it asks for
   // first and reaches further only as far as its share needs.
   const mbShare = colors[mbK]?.share ?? 0
-  // Along an outline it starts and finishes leading over LEAD_RANGE; elsewhere from 40%.
-  const leads = way.kind === 'outline' ? smooth01((mbShare - LEAD_RANGE[0]) / (LEAD_RANGE[1] - LEAD_RANGE[0])) : mbShare >= 0.4 ? 1 : 0
+  const leads = smooth01((mbShare - LEAD_RANGE[0]) / (LEAD_RANGE[1] - LEAD_RANGE[0]))
   const lead = mbK >= 0 ? Math.min(LEAD_MORE, 1 - mbShare) * leads : 0
   const aim = colors.map((c, k) => (k === mbK ? c.share + lead : (c.share * (1 - mbShare - lead)) / Math.max(1e-6, 1 - mbShare)))
   const brightest = Math.max(...emit, 1e-12)
