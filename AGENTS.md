@@ -118,9 +118,8 @@ On 2026-11-12 at 8:26 AM the owner asked for no major changes ("i think we're ge
   target, and look at the images. Code checks are not enough.
 - Sunrise (the old Sunset) and Contour first, then Rush (the old Warp
   Speed; its moodboard is node 4:439 of the concept file; the owner
-  started it on 2026-11-09). Filters: Grain, Pixel and Paper. The owner
-  removed ASCII on 2026-11-09. Paper (owner, 2026-11-12) looks like a print
-  on uncoated paper and stays subtle, with no folds, stains or wear.
+  started it on 2026-11-09). Filters: Grain and Pixel. The owner removed
+  ASCII on 2026-11-09.
 - Sunrise's gradient follows the drag arrow at any angle, like a design
   tool's gradient tool: its bands cross the frame at right angles to the
   arrow and stack along it (owner, 2026-11-11: "here i'm dragging left to
@@ -167,7 +166,7 @@ On 2026-11-12 at 8:26 AM the owner asked for no major changes ("i think we're ge
   - The panel is four numbered steps, top to bottom: "1. Pick a color
     pack" (the pack strips, then the color control once built), "2. Pick
     a mood" (the moods, then Shuffle), "3. Apply a filter" (None, Grain,
-    Pixel, Paper and the filter's Strength), "4. Export" (Format and the Export
+    Pixel and the filter's Strength), "4. Export" (Format and the Export
     button).
   - Color is the biggest piece of feedback: the pack's colors aren't
     represented properly. Build a simple control that changes the
@@ -199,7 +198,7 @@ On 2026-11-12 at 8:26 AM the owner asked for no major changes ("i think we're ge
   sizes on one grid: bigger where the picture is flat, smaller where the
   light or bands change. The design sets the sizes, so the color sliders
   never move them (owner, 2026-11-12, approving it side by side: "i like
-  the right column"). Grain's and Paper's sliders read "Strength". Mood is picked from
+  the right column"). Grain's slider still reads "Strength". Mood is picked from
   small pictures, Filter from icons and Format from shapes, each with its
   name, not dropdowns; the pictures are fixed renders from
   `scripts/light/panel-pictures.mjs`, not live, in the Atmospheric pack
