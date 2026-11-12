@@ -687,7 +687,7 @@ describe('grain', () => {
       uniforms: () => ({}),
     }
     const resolved = resolveScene(program, { output: { grain: 1, grainSize: 1.5, grainChroma: 0.2 } as Record<string, number> })
-    expect(resolved.output).toEqual({ exposure: 0, grain: 1, pixel: 0, toe: 0 })
+    expect(resolved.output).toEqual({ exposure: 0, grain: 1, pixel: 0, paper: 0, toe: 0 })
   })
 })
 

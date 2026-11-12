@@ -17,16 +17,16 @@ export const FILTER_DIAL_KEY = 'filter'
  * The key of the slider under Filter for each filter. The tool panel shows it by `STRENGTH_LABELS`. Its value is the
  * filter's strength, `strength` in the URL.
  */
-export const STRENGTH_DIAL_KEYS: Readonly<Record<FilterKey, string>> = { grain: 'density', pixel: 'density' }
+export const STRENGTH_DIAL_KEYS: Readonly<Record<FilterKey, string>> = { grain: 'density', pixel: 'density', paper: 'density' }
 
 /**
- * The slider's label for each filter (owner, 2026-11-06 and 2026-11-11): Strength for Grain; Density for Pixel, whose
- * low end gives the biggest cells and high end the smallest.
+ * The slider's label for each filter (owner, 2026-11-06 and 2026-11-11): Strength for Grain and Paper; Density for
+ * Pixel, whose low end gives the biggest cells and high end the smallest.
  */
-export const STRENGTH_LABELS: Readonly<Record<FilterKey, string>> = { grain: 'Strength', pixel: 'Density' }
+export const STRENGTH_LABELS: Readonly<Record<FilterKey, string>> = { grain: 'Strength', pixel: 'Density', paper: 'Strength' }
 
 /** Filters the tool offers, in panel order. A filter joins once it runs in the tool. */
-export const TOOL_FILTERS: readonly FilterKey[] = ['grain', 'pixel']
+export const TOOL_FILTERS: readonly FilterKey[] = ['grain', 'pixel', 'paper']
 
 /** Off by default (the brief); a filter turned on starts at 0.5. */
 export const DEFAULT_FILTER: FilterState = { filter: 'none', strength: 0.5 }
@@ -38,7 +38,7 @@ export const DEFAULT_FILTER: FilterState = { filter: 'none', strength: 0.5 }
 const DENSITY_FLOOR = 0.001
 const FLOORED: readonly FilterKey[] = ['pixel']
 
-const LABELS: Readonly<Record<FilterChoice, string>> = { none: 'None', grain: 'Grain', pixel: 'Pixel' }
+const LABELS: Readonly<Record<FilterChoice, string>> = { none: 'None', grain: 'Grain', pixel: 'Pixel', paper: 'Paper' }
 
 const CHOICES: readonly FilterChoice[] = ['none', ...TOOL_FILTERS]
 

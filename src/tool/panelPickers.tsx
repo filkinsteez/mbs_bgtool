@@ -92,6 +92,12 @@ const FILTER_ICONS: Readonly<Record<FilterChoice, ReactNode>> = {
   pixel: PIXEL_CELLS.map(({ x, y, opacity }) => (
     <rect key={`${x} ${y}`} className="tool-tile-fill" x={x} y={y} width="5.5" height="5.5" rx="1" fillOpacity={opacity} />
   )),
+  paper: (
+    <>
+      <rect x="3" y="2" width="14" height="16" rx="1.5" />
+      <path d="M6 7.5c1.6-.9 3.2-.3 4.6-.8M8.5 11.2c1.5-.6 3-.1 5.2-.9M6 14.6c1.3-.5 2.4-.1 3.6-.5" />
+    </>
+  ),
 }
 
 export function FilterPicker({ value, onChange }: { value: FilterChoice; onChange: (filter: FilterChoice) => void }) {

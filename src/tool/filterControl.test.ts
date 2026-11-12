@@ -18,10 +18,10 @@ import {
 const scene: Scene = { recipe: 'sunset.ramp', seed: 4, colors: [], params: {}, lens: {}, output: { grain: 0, exposure: 0.25 } }
 
 describe('filter control', () => {
-  it('offers None, Grain and Pixel, off by default', () => {
-    expect(TOOL_FILTERS).toEqual(['grain', 'pixel'])
+  it('offers None, Grain, Pixel and Paper, off by default', () => {
+    expect(TOOL_FILTERS).toEqual(['grain', 'pixel', 'paper'])
     for (const key of TOOL_FILTERS) expect(OUTPUT_FILTERS.some((stage) => stage.key === key)).toBe(true)
-    expect(OUTPUT_FILTERS.map((stage) => stage.key)).toEqual(['grain', 'pixel'])
+    expect(OUTPUT_FILTERS.map((stage) => stage.key)).toEqual(['grain', 'paper', 'pixel'])
     expect(DEFAULT_FILTER).toEqual({ filter: 'none', strength: 0.5 })
     const dials = filterDials(DEFAULT_FILTER, 'none')
     expect(dials[FILTER_DIAL_KEY]).toEqual({
@@ -30,6 +30,7 @@ describe('filter control', () => {
         { value: 'none', label: 'None' },
         { value: 'grain', label: 'Grain' },
         { value: 'pixel', label: 'Pixel' },
+        { value: 'paper', label: 'Paper' },
       ],
       default: 'none',
     })
@@ -37,7 +38,8 @@ describe('filter control', () => {
 
   it('shows the slider only while a filter is chosen, named for what it sets: Density for every filter', () => {
     expect(Object.keys(filterDials(DEFAULT_FILTER, 'none'))).toEqual([FILTER_DIAL_KEY])
-    expect(STRENGTH_DIAL_KEYS).toEqual({ grain: 'density', pixel: 'density' })
+    expect(STRENGTH_DIAL_KEYS).toEqual({ grain: 'density', pixel: 'density', paper: 'density' })
+    expect(readChoice('paper')).toBe('paper')
     expect(filterDials({ filter: 'grain', strength: 0.8 }, 'grain').density).toEqual([0.8, 0, 1, 0.01])
     expect(Object.keys(filterDials({ filter: 'grain', strength: 0.8 }, 'pixel'))).toEqual([FILTER_DIAL_KEY, 'density'])
     expect(Object.keys(filterDials(DEFAULT_FILTER, 'pixel'))).toEqual([FILTER_DIAL_KEY, 'density'])
@@ -79,8 +81,9 @@ describe('filter control', () => {
   })
 
   it('sets the chosen filter in the scene and turns the others off', () => {
-    expect(withFilter(scene, { filter: 'grain', strength: 0.5 }).output).toEqual({ grain: 0.5, pixel: 0, exposure: 0.25 })
-    expect(withFilter({ ...scene, output: { grain: 1 } }, DEFAULT_FILTER).output).toEqual({ grain: 0, pixel: 0 })
+    expect(withFilter(scene, { filter: 'grain', strength: 0.5 }).output).toEqual({ grain: 0.5, pixel: 0, paper: 0, exposure: 0.25 })
+    expect(withFilter(scene, { filter: 'paper', strength: 0.5 }).output).toEqual({ grain: 0, pixel: 0, paper: 0.5, exposure: 0.25 })
+    expect(withFilter({ ...scene, output: { grain: 1 } }, DEFAULT_FILTER).output).toEqual({ grain: 0, pixel: 0, paper: 0 })
     expect(withFilter(scene, { filter: 'grain', strength: 0.5 }).params).toBe(scene.params)
     expect(scene.output).toEqual({ grain: 0, exposure: 0.25 })
   })
@@ -90,5 +93,6 @@ describe('filter control', () => {
     expect(withFilter(scene, { filter: 'pixel', strength: 0 }).output.pixel).toBeLessThan(0.005)
     expect(withFilter(scene, { filter: 'pixel', strength: 0.3 }).output.pixel).toBe(0.3)
     expect(withFilter(scene, { filter: 'grain', strength: 0 }).output.grain).toBe(0)
+    expect(withFilter(scene, { filter: 'paper', strength: 0 }).output.paper).toBe(0)
   })
 })

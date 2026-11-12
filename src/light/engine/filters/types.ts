@@ -1,7 +1,7 @@
 import type { OutputSettings, UniformMap } from '../../scene'
 
 /** Output settings that hold a filter's strength, 0..1. 0 leaves the stage out of the output pass. */
-export type FilterKey = 'grain' | 'pixel'
+export type FilterKey = 'grain' | 'pixel' | 'paper'
 
 /** The output frame a filter is drawn for. */
 export interface FilterFrame {
