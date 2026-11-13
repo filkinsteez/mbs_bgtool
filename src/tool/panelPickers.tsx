@@ -42,13 +42,17 @@ export function MoodPicker({ value, onChange }: { value: MoodId; onChange: (mood
   )
 }
 
-/** Each pack as a strip of its own colors in hue order, as the color rows and the pictures have them. */
+/**
+ * Each pack as a strip of its own colors in hue order, as the color rows and the pictures have them, two to a row
+ * (owner, 2026-11-13: "can you make the color palettes 2 rows of 2?").
+ */
 export function PackPicker({ value, onChange }: { value: PackId; onChange: (pack: PackId) => void }) {
   return (
     <TilePicker
       label="Colors"
       path={PACK_DIAL_KEY}
       kind="swatch"
+      columns={2}
       options={PACK_OPTIONS}
       value={value}
       onChange={onChange}

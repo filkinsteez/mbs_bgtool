@@ -393,14 +393,6 @@
   white-space: nowrap;
 }
 
-/* With four packs a strip is narrower than "Atmospheric": a pack's name spills past its strip's edges, centred under
-   it, instead of being cut off. */
-.tool-tiles[data-kind='swatch'] .tool-tile > .tool-tile-label {
-  display: flex;
-  justify-content: center;
-  overflow: visible;
-}
-
 /* The color percentages (MixControl), under the pack strips: DialKit's sliders, one per pack color, as far apart as
    DialKit's controls in a folder, or as the card's parts where the panel is shorter. */
 .tool-mix {

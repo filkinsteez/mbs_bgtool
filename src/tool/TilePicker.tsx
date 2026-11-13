@@ -11,15 +11,23 @@ export interface TileOption<T extends string> {
  */
 export type TileKind = 'swatch' | 'picture' | 'icon'
 
-/** The option an arrow, Home or End key moves to from `index` of `count`, or null for other keys. Arrows wrap around. */
-export function optionForKey(key: string, index: number, count: number): number | null {
+/**
+ * The option an arrow, Home or End key moves to from `index` of `count`, or null for other keys. Arrows wrap around.
+ * In rows of `columns`, Up and Down move to the same column in the row above or below; in one row they go to the
+ * previous and next option, as Left and Right do.
+ */
+export function optionForKey(key: string, index: number, count: number, columns = count): number | null {
   const last = count - 1
   switch (key) {
-    case 'ArrowRight':
     case 'ArrowDown':
+      if (columns < count) return index + columns <= last ? index + columns : index % columns
       return index === last ? 0 : index + 1
-    case 'ArrowLeft':
+    case 'ArrowRight':
+      return index === last ? 0 : index + 1
     case 'ArrowUp':
+      if (columns < count) return index - columns >= 0 ? index - columns : (index % columns) + columns * Math.floor((last - (index % columns)) / columns)
+      return index === 0 ? last : index - 1
+    case 'ArrowLeft':
       return index === 0 ? last : index - 1
     case 'Home':
       return 0
@@ -44,18 +52,20 @@ interface TilePickerProps<T extends string> {
   tile: (option: TileOption<T>) => ReactNode
   /** An info icon at the right end of the title row (InfoTip). */
   info?: ReactNode
+  /** Tiles per row; all of them in one row when left out. */
+  columns?: number
 }
 
 /**
- * A panel choice drawn as a row of named tiles, the chosen one ringed. A radio group: the arrow keys move the choice,
+ * A panel choice drawn as rows of named tiles, the chosen one ringed. A radio group: the arrow keys move the choice,
  * and Tab reaches the chosen tile only.
  */
-export function TilePicker<T extends string>({ label, path, kind, options, value, onChange, tile, info }: TilePickerProps<T>) {
+export function TilePicker<T extends string>({ label, path, kind, options, value, onChange, tile, info, columns = options.length }: TilePickerProps<T>) {
   const buttons = useRef<(HTMLButtonElement | null)[]>([])
   const chosen = options.find((option) => option.value === value) ?? options[0]
 
   function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
-    const next = optionForKey(event.key, index, options.length)
+    const next = optionForKey(event.key, index, options.length, columns)
     if (next === null) return
     event.preventDefault()
     onChange(options[next].value)
@@ -70,7 +80,7 @@ export function TilePicker<T extends string>({ label, path, kind, options, value
         </span>
         {info}
       </div>
-      <div className="tool-tiles-options" style={{ '--tile-columns': options.length } as CSSProperties}>
+      <div className="tool-tiles-options" style={{ '--tile-columns': columns } as CSSProperties}>
         {options.map((option, index) => (
           <button
             key={option.value}

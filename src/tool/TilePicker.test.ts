@@ -19,6 +19,19 @@ describe('panel tiles', () => {
     expect(optionForKey('Enter', 1, 4)).toBeNull()
   })
 
+  it('in two rows of two, move between rows with Up and Down in the same column, wrapping, and in order with Left and Right', () => {
+    expect([0, 1, 2, 3].map((i) => optionForKey('ArrowDown', i, 4, 2))).toEqual([2, 3, 0, 1])
+    expect([0, 1, 2, 3].map((i) => optionForKey('ArrowUp', i, 4, 2))).toEqual([2, 3, 0, 1])
+    expect([0, 1, 2, 3].map((i) => optionForKey('ArrowRight', i, 4, 2))).toEqual([1, 2, 3, 0])
+    expect([0, 1, 2, 3].map((i) => optionForKey('ArrowLeft', i, 4, 2))).toEqual([3, 0, 1, 2])
+    expect([optionForKey('Home', 3, 4, 2), optionForKey('End', 0, 4, 2)]).toEqual([0, 3])
+    expect([0, 2, 4].map((i) => optionForKey('ArrowUp', i, 5, 2))).toEqual([4, 0, 2])
+  })
+
+  it('lay the four pack strips out two to a row', () => {
+    expect(renderToStaticMarkup(createElement(PackPicker, { value: 'bold', onChange: () => {} }))).toContain('style="--tile-columns:2"')
+  })
+
   it('show the filters and the formats as buttons that share the row, each name inside its button', () => {
     const pickers = [
       { html: renderToStaticMarkup(createElement(FilterPicker, { value: 'grain', onChange: () => {} })), names: ['None', 'Grain', 'Pixel'] },
