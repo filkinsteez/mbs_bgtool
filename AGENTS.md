@@ -211,7 +211,9 @@ On 2026-11-12 at 8:26 AM the owner asked for no major changes ("i think we're ge
   name, not dropdowns; the pictures are fixed renders from
   `scripts/light/panel-pictures.mjs`, not live, in the Atmospheric pack
   whichever pack is picked. No free color pickers: Colors shows each pack
-  as a strip of its exact hexes, and you pick a pack. Every option's name
+  as a strip of its exact hexes, and you pick a pack. The strips sit in two
+  rows of two (owner, 2026-11-13: "can you make the color palettes 2 rows
+  of 2?"). Every option's name
   shows under its picture or strip, and inside the Filter and Format
   options. The Filter and Format options are rectangles of equal width
   that fill their row (owner, 2026-11-11: "can we have these be
