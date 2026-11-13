@@ -7,19 +7,17 @@ const icon = { left: 1398, top: 44.75, right: 1416, bottom: 62.75 }
 const bubble = (href: string, open = true) => renderToStaticMarkup(createElement(TipBubble, { id: 't', textId: 't-text', text: 'Some text.', href, place: null, open }))
 
 describe('the info tip', () => {
-  it('opens beside the panel, over the picture, level with the icon, when the panel is at the right', () => {
-    expect(placeTip(icon, { left: 1140, top: 0, right: 1440, bottom: 900 }, 1440)).toEqual({ side: 'left', style: { top: 36.75, left: 1132 } })
+  it('opens just left of the icon, 8 px from it, its bottom 2 px under the icon, on the desktop and on a phone', () => {
+    expect(placeTip(icon, 1440)).toEqual({ side: 'beside', style: { top: 64.75, left: 1390 } })
+    expect(placeTip({ left: 348, top: 467.75, right: 366, bottom: 485.75 }, 390)).toEqual({ side: 'beside', style: { top: 487.75, left: 340 } })
   })
 
-  it('opens above the panel when the panel spans the window, and under the icon when there is no room above', () => {
-    const panel = { left: 0, top: 450, right: 700, bottom: 900 }
-    const low = { left: 668, top: 494, right: 686, bottom: 512 }
-    expect(placeTip(low, panel, 700)).toEqual({ side: 'above', style: { top: 442, right: 14 } })
-    expect(placeTip(low, { ...panel, top: 60 }, 700)).toEqual({ side: 'below', style: { top: 520, right: 14 } })
+  it('opens under the icon when the window has no room on its left', () => {
+    expect(placeTip({ left: 200, top: 40, right: 218, bottom: 58 }, 250)).toEqual({ side: 'below', style: { top: 66, right: 32 } })
   })
 
   it('stays open along the way from the icon to the tip', () => {
-    expect(tipPath('left', icon, { left: 900, top: 36.75, right: 1132, bottom: 143.75 })).toEqual({ left: 1132, top: 40.75, right: 1416, bottom: 66.75 })
+    expect(tipPath('beside', icon, { left: 1224, top: 33.75, right: 1390, bottom: 64.75 })).toEqual({ left: 1390, top: 40.75, right: 1416, bottom: 66.75 })
     expect(tipPath('below', icon, { left: 1184, top: 70.75, right: 1416, bottom: 180 })).toEqual({ left: 1394, top: 44.75, right: 1420, bottom: 70.75 })
   })
 

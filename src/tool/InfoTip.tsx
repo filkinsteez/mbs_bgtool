@@ -1,16 +1,18 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type CSSProperties, type FocusEvent, type KeyboardEvent, type PointerEvent, type Ref } from 'react'
 import { createPortal } from 'react-dom'
 
-/** Space between the tip and the panel or the icon. */
+/** Space between the tip and the icon, which its pointer crosses. */
 const GAP = 8
+/** How far the tip beside the icon reaches below the icon: little enough to stay above the row under the icon. */
+const DROP = 2
 /** The tip's widest (tool.css `.tool-info-tip`). */
 const TIP_WIDTH = 232
-/** Room the tip needs above the panel to open there. */
-const TIP_ROOM_ABOVE = 140
+/** The least room the tip keeps from the window's edge. */
+const EDGE = 8
 /** How long the tip stays after the pointer leaves it, the icon and the way between them. */
 const CLOSE_MS = 150
 
-export type TipSide = 'left' | 'above' | 'below'
+export type TipSide = 'beside' | 'below'
 
 export interface TipPlace {
   side: TipSide
@@ -25,22 +27,20 @@ interface Box {
 }
 
 /**
- * Where the tip opens: beside the panel, over the picture, level with the icon, so it never covers the panel's
- * controls; above the panel when the panel spans the window; under the icon when neither has room.
+ * Where the tip opens, next to the icon (owner, 2026-11-13: "can you float the tool tip closer to the actual i?"): just
+ * left of it on its row, pointing at it, its bottom just under the icon's, so it grows upward and covers nothing under
+ * the icon (the pack strips); under the icon when the window has no room on its left.
  */
-export function placeTip(icon: Box, panel: Box, windowWidth: number): TipPlace {
-  if (panel.left >= TIP_WIDTH + 2 * GAP) return { side: 'left', style: { top: icon.top - GAP, left: panel.left - GAP } }
-  if (panel.top >= TIP_ROOM_ABOVE) return { side: 'above', style: { top: panel.top - GAP, right: windowWidth - icon.right } }
+export function placeTip(icon: Box, windowWidth: number): TipPlace {
+  if (icon.left - GAP - TIP_WIDTH >= EDGE) return { side: 'beside', style: { top: icon.bottom + DROP, left: icon.left - GAP } }
   return { side: 'below', style: { top: icon.bottom + GAP, right: windowWidth - icon.right } }
 }
 
 /** The way between the icon and the tip, which keeps the tip open while the pointer crosses it. */
 export function tipPath(side: TipSide, icon: Box, tip: Box): Box {
   switch (side) {
-    case 'left':
+    case 'beside':
       return { left: tip.right, top: icon.top - 4, right: icon.right, bottom: icon.bottom + 4 }
-    case 'above':
-      return { left: icon.left - 4, top: tip.bottom, right: icon.right + 4, bottom: icon.bottom }
     case 'below':
       return { left: icon.left - 4, top: icon.top, right: icon.right + 4, bottom: tip.top }
     default: {
@@ -86,9 +86,9 @@ export function TipBubble({ id, textId, text, href, place, open, ref, linkRef, o
 }
 
 /**
- * An "i in a circle" that shows `text` in a tip on hover and on keyboard focus, and on a tap on touch screens. Escape,
- * leaving it or moving focus away closes the tip. With `href` the tip's text is a link, which the pointer and Tab both
- * reach.
+ * An "i in a circle" that shows `text` in a tip on hover and on keyboard focus, and on a tap on touch screens; Enter or
+ * Space on the focused icon closes and opens it again. Escape, leaving it or moving focus away closes the tip. With
+ * `href` the tip's text is a link, which the pointer and Tab both reach.
  */
 export function InfoTip({ label, text, href }: { label: string; text: string; href: string }) {
   const id = useId()
@@ -107,9 +107,8 @@ export function InfoTip({ label, text, href }: { label: string; text: string; hr
 
   const findPlace = () => {
     const button = buttonRef.current
-    const panel = button?.closest('.tool-panel')
-    if (!button || !panel) return null
-    return placeTip(button.getBoundingClientRect(), panel.getBoundingClientRect(), window.innerWidth)
+    if (!button) return null
+    return placeTip(button.getBoundingClientRect(), window.innerWidth)
   }
   const cancelClose = () => {
     if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
@@ -214,10 +213,13 @@ export function InfoTip({ label, text, href }: { label: string; text: string; hr
           setHovered(true)
         }}
         onPointerDown={(event) => void (pointerType.current = event.pointerType)}
-        onClick={() => {
+        onClick={(event) => {
           if (pointerType.current === 'touch') {
             setPlace(findPlace())
             setPinned((was) => !was)
+          } else if (event.detail === 0) {
+            setPlace(findPlace())
+            setFocused((was) => !was)
           }
           pointerType.current = ''
         }}

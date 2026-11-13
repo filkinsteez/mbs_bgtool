@@ -224,18 +224,19 @@
 }
 
 /* The info tip. It is drawn in the page's body, outside DialKit's root and its variables, so DialKit's dropdown look
-   is written out: --dial-glass-bg, --dial-border, --dial-radius, --dial-shadow-dropdown and --dial-text-label. */
+   is written out: --dial-glass-bg, --dial-border, --dial-radius and --dial-text-label, with a shadow small enough not
+   to darken the pack strips just under it. */
 .tool-info-tip {
   position: fixed;
   z-index: 10000;
   box-sizing: border-box;
   width: max-content;
   max-width: min(232px, calc(100vw - 16px));
-  padding: 10px 12px;
+  padding: 6px 10px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   background: #212121;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
   color: rgba(255, 255, 255, 0.7);
   font-size: 12px;
   font-weight: 500;
@@ -243,12 +244,35 @@
   text-align: left;
 }
 
-.tool-info-tip[data-side='left'] {
-  transform: translateX(-100%);
+/* Just left of the icon, its bottom at the point placeTip gives, so it grows upward. */
+.tool-info-tip[data-side='beside'] {
+  transform: translate(-100%, -100%);
 }
 
-.tool-info-tip[data-side='above'] {
-  transform: translateY(-100%);
+/* The pointer at the icon: a square turned on its corner, half of it out of the tip, edged like the tip. Beside the
+   icon it is level with the icon's middle (9 px up from the icon's bottom, which is 2 px over the tip's); under the
+   icon it sits over the icon's middle. */
+.tool-info-tip::after {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: #212121;
+  transform: rotate(45deg);
+}
+
+.tool-info-tip[data-side='beside']::after {
+  right: -5px;
+  bottom: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tool-info-tip[data-side='below']::after {
+  top: -5px;
+  right: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .tool-info-tip p {
