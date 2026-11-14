@@ -33,7 +33,7 @@ describe('pack color ramps', () => {
     }
   })
 
-  it("gives Primary its own Near-black, which deepens toward slate blue, and leaves Atmospheric's teal grey as it was", () => {
+  it("gives Primary its own Near-black, which deepens toward navy, and leaves Atmospheric's teal grey as it was", () => {
     expect(rampFor('#1C2B33', 'atmospheric')).toBe(RAMPS['#1C2B33'])
     expect(rampFor('#1C2B33')).toBe(RAMPS['#1C2B33'])
     const primary = rampFor('#1C2B33', 'primary')!
@@ -43,6 +43,16 @@ describe('pack color ramps', () => {
       const hue = ((Math.atan2(b, a) * 180) / Math.PI + 360) % 360
       expect(hue, `hue at ${L}`).toBeGreaterThan(240)
       expect(hue, `hue at ${L}`).toBeLessThan(262)
+    }
+    // In the mid light at a Sunrise's far end it is a deep navy, not a grey slate, and stays apart from Meta Blue and
+    // from White's dim shades at the same lightness.
+    for (const L of [0.38, 0.42, 0.46, 0.5]) {
+      const [, a, b] = rampOklab(primary, L)
+      expect(Math.hypot(a, b), `chroma at ${L}`).toBeGreaterThan(0.1)
+      for (const hex of ['#0064E0', '#FFFFFF']) {
+        const [, a2, b2] = rampOklab(rampFor(hex, 'primary')!, L)
+        expect(Math.hypot(a - a2, b - b2), `${hex} at ${L}`).toBeGreaterThan(0.035)
+      }
     }
   })
 

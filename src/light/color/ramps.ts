@@ -149,15 +149,18 @@ export const RAMPS: Readonly<Record<string, readonly RampPoint[]>> = {
 }
 
 /**
- * Ramps a pack gives its own color in place of the one by hex. Primary's Near-black deepens toward a slate blue beside
- * Meta Blue, so Meta Blue into Near-black reads as blue going dark; Atmospheric's keeps its teal grey, apart from Slate.
+ * Ramps a pack gives its own color in place of the one by hex. Primary's Near-black is a deep navy in mid light (where
+ * Sunrise's far end puts it), so Meta Blue into Near-black reads as blue going dark, not grey; Atmospheric's keeps its
+ * teal grey, apart from Slate.
  */
 export const PACK_RAMPS: Readonly<Record<string, Readonly<Record<string, readonly RampPoint[]>>>> = {
   primary: {
     '#1C2B33': [
       [0.279, 0.025, 232.1],
-      [0.4, 0.05, 250],
-      [0.55, 0.065, 256],
+      [0.34, 0.085, 259],
+      [0.42, 0.13, 261],
+      [0.5, 0.115, 260],
+      [0.6, 0.075, 257],
       [0.7, 0.055, 256],
       [0.84, 0.018, 253],
       [0.92, 0.004, 251],
