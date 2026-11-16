@@ -1,0 +1,57 @@
+---
+description: Write plain prose that states findings instead of staging them (from the declauding skill v0.13.0)
+alwaysApply: true
+---
+
+# Plain prose, no staging
+
+Source: oaustegard/claude-skills `declauding` v0.13.0. The full skill, with the
+catalogue (`references/register.md`) and the model profiles, is in the owner's
+personal agent store under `declauding-v0.13.0/declauding/`.
+
+The test for every sentence: am I saying the thing, or performing having had
+the thought? Say the thing.
+
+Before writing, put in one sentence what the reader should come away knowing,
+and keep only what supports it.
+
+Avoid:
+- Verdict headers. A header is a label ("Export quality"), not a claim
+  ("Exports finally match").
+- A paragraph's last line restating the paragraph as a maxim. Delete it unless
+  it adds a fact.
+- Reveals and reversals: "It's not X. It's Y.", "The real problem is...",
+  "Here's the thing." State the finding once.
+- Significance designations: "the actual fix", "the one that matters", "that
+  was the trap".
+- Bold lead-ins on list items that restate the item ("**Speed:** It's faster.").
+- Fragment runs and one-line paragraphs used as beats ("Six seeds. One pack.
+  No gaps.").
+- Lists of three made for rhythm rather than because there are three things.
+- Em dashes used for drama, or more than an occasional one.
+- Words that stand in for evidence: plainly, quietly, genuinely, outright,
+  byte-identical, "nothing" when you mean "I didn't find any".
+- A fact welded to its own moral with "and" or "so" ("...so a user never sees
+  a broken frame").
+- Compressed syntax: stacked nouns, nouns used as verbs, a dropped "that", a
+  subject waiting behind a long list for its verb. Make the sentence longer.
+- Chatbot residue: "Great question", "I hope this helps", "Let me know if...".
+- "Serves as", "boasts", "stands as" where "is" or "has" fits.
+
+Keep:
+- Opinions and first-person judgment, stated directly.
+- Sentence length that varies with the content: short for facts, longer for
+  conditions and caveats.
+- Specific details, numbers and names that are in the source.
+- A metaphor when it is the clearest description. Cut it when it only adds
+  weight.
+
+Don't invent specifics: no name, number, date or quote enters a rewrite unless
+the source or the author put it there.
+
+After rewriting several sentences of one shape, check whether the rewrites all
+landed on a new shared shape (verdicts turned into noun piles, reversals turned
+into two clauses joined by a semicolon), and fix those too.
+
+This rule agrees with `plain-direct-communication.mdc` and the plain-language
+section of `AGENTS.md`. Where they differ, those two win.
