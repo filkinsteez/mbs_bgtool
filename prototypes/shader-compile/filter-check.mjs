@@ -49,9 +49,15 @@ function difference(a, b) {
   return { mean: sum / a.length, max }
 }
 
+/** The slider under Filter is named for what it sets. */
+const SLIDER = { grain: 'Amount', ascii: 'Density', pixel: 'Density' }
+
 const browser = await chromium.launch({ channel: 'chrome', headless: true })
 try {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, acceptDownloads: true })
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, acceptDownloads: true })
+  // The drag hint stays off the screenshots (SHARED.md, 7719d96).
+  await context.addInitScript(() => localStorage.setItem('mbs-bgtool:drag-hint-seen', '1'))
+  const page = await context.newPage()
   page.on('pageerror', (error) => errors.push(`page error: ${error.message}`))
   page.on('console', (message) => {
     if (message.type() === 'error' || message.type() === 'warning') errors.push(`console ${message.type()}: ${message.text().slice(0, 300)}`)
@@ -70,7 +76,7 @@ try {
     await pick(page, label)
     const panel = await panelText(page)
     const url = page.url()
-    const strengthShown = panel.includes('Strength')
+    const strengthShown = key === 'none' ? !/Amount|Density/.test(panel) : panel.includes(`${SLIDER[key]} 0.50`)
     const urlHas = key === 'none' ? !url.includes('filter=') : url.includes(`filter=${key}&strength=0.5`)
     const preview = await page.locator('canvas.tool-canvas').screenshot()
     shots[key] = preview
@@ -79,10 +85,10 @@ try {
     const crop = { left: Math.round(meta.width * 0.4), top: Math.round(meta.height * 0.3), width: 300, height: 300 }
     await sharp(preview).extract(crop).resize(900, 900, { kernel: 'nearest' }).jpeg({ quality: 90 }).toFile(`${out}/preview-${key}-crop3x.jpg`)
     notes.push(`${label}: panel "${panel}"`)
-    notes.push(`  url ${url.replace(base, '')}; strength slider ${strengthShown ? 'shown' : 'hidden'}; url keeps the choice: ${urlHas}`)
+    notes.push(`  url ${url.replace(base, '')}; slider ${key === 'none' ? 'gone' : `"${SLIDER[key]} 0.50"`}: ${strengthShown}; url keeps the choice: ${urlHas}`)
 
     if (key !== 'none') {
-      const reload = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 })
+      const reload = await context.newPage()
       reload.on('pageerror', (error) => errors.push(`page error (reload): ${error.message}`))
       reload.on('console', (message) => {
         if (message.type() === 'error') errors.push(`console error (reload): ${message.text().slice(0, 300)}`)
@@ -92,7 +98,7 @@ try {
       await settled(reload)
       const reloadPanel = await panelText(reload)
       const same = difference(await small(await reload.locator('canvas.tool-canvas').screenshot()), await small(preview))
-      notes.push(`  reload from the url: panel shows ${label}: ${reloadPanel.includes(`Filter ${label}`)}, strength shown: ${reloadPanel.includes('Strength')}; preview vs before mean ${same.mean.toFixed(2)} max ${same.max} code values`)
+      notes.push(`  reload from the url: panel shows ${label}: ${reloadPanel.includes(`Filter ${label}`)}, slider "${SLIDER[key]}": ${reloadPanel.includes(SLIDER[key])}; preview vs before mean ${same.mean.toFixed(2)} max ${same.max} code values`)
       await reload.close()
     }
 
@@ -120,6 +126,12 @@ try {
     const d = difference(await small(shots[key]), strengthNone)
     notes.push(`${key} preview vs none at ${COMPARE.width}x${COMPARE.height}: mean ${d.mean.toFixed(2)}, max ${d.max}`)
   }
+  const old = await context.newPage()
+  await old.goto(`${base}/?${query}&filter=grain&strength=0.3`, { waitUntil: 'domcontentloaded', timeout: 120_000 })
+  await old.waitForSelector('canvas.tool-canvas', { timeout: 120_000 })
+  await settled(old)
+  notes.push(`old link filter=grain&strength=0.3: panel shows "Amount 0.30": ${(await panelText(old)).includes('Amount 0.30')}`)
+  await old.close()
 } finally {
   await browser.close()
 }

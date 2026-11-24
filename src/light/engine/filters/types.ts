@@ -10,6 +10,11 @@ export interface FilterFrame {
   height: number
   /** The scene's seed; also available in GLSL as `uSeed`. */
   seed: number
+  /**
+   * The frame's width / height as the recipe saw it (`ctx.aspect`), which per-cell grids follow so a preview and an
+   * export of a format get the same cells; `frameAspect(width, height)` when left out.
+   */
+  aspect?: number
 }
 
 /**
@@ -23,14 +28,14 @@ export interface FilterSource {
   /** Sampler name the stage's GLSL declares (`uniform sampler2D <name>;`). */
   uniform: string
   /**
-   * Texels across and down, 1..512 each, for the stage's strength (the chain
-   * passes it). Make it depend on the frame's aspect and the strength only
-   * (cells sized to the short side), so a preview and an export read the
-   * same texels.
+   * Texels across and down, 1..1024 each, for the stage's strength and the
+   * scene's output settings (the chain passes both). Make it depend on the
+   * frame's aspect, the strength and the stage's own settings only (cells
+   * sized to the short side), so a preview and an export read the same texels.
    */
-  size: (frame: FilterFrame, strength?: number) => { width: number; height: number }
+  size: (frame: FilterFrame, strength?: number, output?: Partial<OutputSettings>) => { width: number; height: number }
   /** Samples per texel along each axis, 1..8, or a function of the strength like `size`; 4 if not given. */
-  samples?: number | ((frame: FilterFrame, strength?: number) => number)
+  samples?: number | ((frame: FilterFrame, strength?: number, output?: Partial<OutputSettings>) => number)
   /**
    * An optional pass over the source into a smaller texture bound to `uniform`, for a value per cell worked out once
    * per frame instead of at every output pixel. `size` gives its texels like the source's. `glsl` declares the
@@ -39,7 +44,7 @@ export interface FilterSource {
    */
   reduce?: {
     uniform: string
-    size: (frame: FilterFrame, strength?: number) => { width: number; height: number }
+    size: (frame: FilterFrame, strength?: number, output?: Partial<OutputSettings>) => { width: number; height: number }
     glsl: string
     apply: string
   }
@@ -63,8 +68,11 @@ export interface OutputFilter {
    */
   glsl: string
   apply: string
-  /** The stage's uniforms for a strength above 0 at this output size. */
-  uniforms: (strength: number, frame: FilterFrame) => UniformMap
+  /**
+   * The stage's uniforms for a strength above 0 at this output size. `output` is the scene's output settings, for a
+   * stage with settings besides its strength (Pixel's `pixelEven`).
+   */
+  uniforms: (strength: number, frame: FilterFrame, output?: Partial<OutputSettings>) => UniformMap
   source?: FilterSource
 }
 

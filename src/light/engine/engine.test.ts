@@ -5,7 +5,7 @@ import { hexToLinear, linearToSrgb, srgbToLinear } from '../color/srgb'
 import { getRecipe, RECIPE_LIST } from '../recipes'
 import { DEFAULT_LENS, RECIPE_IDS, type RecipeContext, type RecipeProgram } from '../scene'
 import { encodeJpeg, exportFileName, exportSize } from './export'
-import { EXPORT_ASPECTS, EXPORT_SIZES, frameAspect, type ExportAspect } from './frame'
+import { DEVICE_FRAMES, EXPORT_ASPECTS, EXPORT_FORMATS, EXPORT_SIZES, FORMAT_SIZES, frameAspect, type DeviceFormat, type ExportAspect } from './frame'
 import { grainAmplitude, grainCellPx, grainDrift, grainField, grainLightDensity, grainParams, grainUniforms } from './grain'
 import {
   bloomLevelFactors,
@@ -687,7 +687,7 @@ describe('grain', () => {
       uniforms: () => ({}),
     }
     const resolved = resolveScene(program, { output: { grain: 1, grainSize: 1.5, grainChroma: 0.2 } as Record<string, number> })
-    expect(resolved.output).toEqual({ exposure: 0, grain: 1, pixel: 0, toe: 0 })
+    expect(resolved.output).toEqual({ exposure: 0, grain: 1, pixel: 0, pixelEven: 0, toe: 0 })
   })
 })
 
@@ -787,6 +787,19 @@ describe('frame aspect', () => {
     expect(frameAspect(2000, 1000)).toBe(2)
   })
 
+  it("gives every device format's export its exact aspect, and snaps no frame to a device format", () => {
+    for (const format of EXPORT_FORMATS) {
+      const { width, height } = FORMAT_SIZES[format]
+      expect(frameAspect(width, height), format).toBe(width / height)
+    }
+    // iPhone 16 Pro and Pro Max are 0.07 % apart: a whole-pixel preview of one can lie nearer the other's aspect.
+    expect(Math.abs(FORMAT_SIZES['iphone-16-pro'].width / FORMAT_SIZES['iphone-16-pro'].height / (440 / 956) - 1)).toBeLessThan(0.001)
+    expect(frameAspect(431, 936)).toBe(431 / 936)
+    // Reference frames within 2 % of a device's aspect (Surface Pro 8, iPad Pro 12.9") keep their own.
+    expect(frameAspect(925, 617)).toBe(925 / 617)
+    expect(frameAspect(925, 1233)).toBe(925 / 1233)
+  })
+
   it('reaches recipe functions through the context', () => {
     const program: RecipeProgram = { id: 'test.aspect', colorSlots: [], defaultColors: [], params: [], fragment: '', uniforms: () => ({}) }
     expect(recipeContext(resolveScene(program, {}), frameAspect(1597, 898)).aspect).toBe(16 / 9)
@@ -803,6 +816,21 @@ describe('export', () => {
     expect(exportSize({ aspect: '4:5' })).toEqual({ width: 3072, height: 3840, label: '4x5' })
     expect(exportFileName({ id: 'x', pack: 'bold', scene: { ...scene, output: { grain: 0.5 } } }, '16x9')).toBe('sunset.ramp-bold-16x9-seed7-grain50.jpg')
     expect(exportFileName({ id: 'x', pack: 'bold', scene: { ...scene, output: { grain: 0 } } }, '16x9')).toBe('sunset.ramp-bold-16x9-seed7.jpg')
+  })
+
+  it("draws a device format at the screen's pixels, phones and the TV at 3x Figma's frame and the rest at 2x, named by its id", () => {
+    expect(exportSize({ aspect: 'iphone-16' })).toEqual({ width: 1179, height: 2556, label: 'iphone-16' })
+    expect(exportSize({ aspect: 'macbook-air' })).toEqual({ width: 2560, height: 1664, label: 'macbook-air' })
+    expect(exportSize({ aspect: 'tv' })).toEqual({ width: 3840, height: 2160, label: 'tv' })
+    for (const [id, frame] of Object.entries(DEVICE_FRAMES)) {
+      const scale = frame.group === 'Phone' || id === 'tv' ? 3 : 2
+      expect(exportSize({ aspect: id as DeviceFormat }), id).toEqual({ width: frame.points[0] * scale, height: frame.points[1] * scale, label: id })
+    }
+    expect(exportFileName({ id: 'x', pack: 'bold', scene: { recipe: 'contour.merged', seed: 1 } }, exportSize({ aspect: 'ipad-pro-12-9' }).label)).toBe(
+      'contour.merged-bold-ipad-pro-12-9-seed1.jpg',
+    )
+    for (const aspect of EXPORT_ASPECTS) expect(FORMAT_SIZES[aspect]).toEqual(EXPORT_SIZES[aspect])
+    expect(EXPORT_FORMATS.slice(0, EXPORT_ASPECTS.length)).toEqual(EXPORT_ASPECTS)
   })
 
   it('encodes a JPEG at quality 0.95 from an opaque canvas', async () => {

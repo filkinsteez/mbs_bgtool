@@ -9,10 +9,20 @@ export interface FilterState {
   filter: FilterChoice
   /** 0..1, in steps of 0.01. */
   strength: number
+  /**
+   * Pixel's Asymmetrical toggle: blocks in three sizes (true, the default) or every block one cell, an even grid
+   * (false). It is true with any other filter.
+   */
+  asymmetrical: boolean
 }
 
 /** Panel key; DialKit shows it as "Filter". */
 export const FILTER_DIAL_KEY = 'filter'
+/**
+ * Panel key of Pixel's toggle under Density; DialKit shows it as "Asymmetrical" with Off and On (owner, 2026-11-17
+ * 11:43 AM). It is `asymmetrical=off` in the URL when off and missing when on.
+ */
+export const ASYMMETRICAL_DIAL_KEY = 'asymmetrical'
 /**
  * The key of the slider under Filter for each filter. The tool panel shows it by `STRENGTH_LABELS`. Its value is the
  * filter's strength, `strength` in the URL.
@@ -28,8 +38,8 @@ export const STRENGTH_LABELS: Readonly<Record<FilterKey, string>> = { grain: 'St
 /** Filters the tool offers, in panel order. A filter joins once it runs in the tool. */
 export const TOOL_FILTERS: readonly FilterKey[] = ['grain', 'pixel']
 
-/** Off by default (the brief); a filter turned on starts at 0.5. */
-export const DEFAULT_FILTER: FilterState = { filter: 'none', strength: 0.5 }
+/** Off by default (the brief); a filter turned on starts at 0.5, and Pixel with its blocks in three sizes. */
+export const DEFAULT_FILTER: FilterState = { filter: 'none', strength: 0.5, asymmetrical: true }
 
 /**
  * The least value Pixel gets in the scene: the filter chain leaves out a filter at 0, but Pixel's Density 0 is its
@@ -63,19 +73,27 @@ export function isFilterOn(value: unknown): boolean {
 
 /**
  * The Filter choice, and under it the chosen filter's Density slider only while one is chosen, so the panel never
- * shows a slider that does nothing.
+ * shows a slider that does nothing. With Pixel, its Asymmetrical toggle goes under the slider.
  */
 export function filterDials(initial: FilterState, chosen: FilterChoice): DialConfig {
   return {
     [FILTER_DIAL_KEY]: { type: 'select', options: [...FILTER_OPTIONS], default: readChoice(initial.filter) },
     ...(chosen === 'none' ? {} : { [STRENGTH_DIAL_KEYS[chosen]]: [readStrength(initial.strength), 0, 1, 0.01] as [number, number, number, number] }),
+    ...(chosen === 'pixel' ? { [ASYMMETRICAL_DIAL_KEY]: initial.asymmetrical !== false } : {}),
   }
 }
 
-/** The filter from the panel's live values; anything missing or unknown is no filter at the default strength. */
+/**
+ * The filter from the panel's live values; anything missing or unknown is no filter at the default strength, and
+ * Asymmetrical is on unless Pixel's toggle is off.
+ */
 export function readFilter(values: Readonly<Record<string, unknown>>): FilterState {
   const filter = readChoice(values[FILTER_DIAL_KEY])
-  return { filter, strength: readStrength(filter === 'none' ? undefined : values[STRENGTH_DIAL_KEYS[filter]]) }
+  return {
+    filter,
+    strength: readStrength(filter === 'none' ? undefined : values[STRENGTH_DIAL_KEYS[filter]]),
+    asymmetrical: filter !== 'pixel' || values[ASYMMETRICAL_DIAL_KEY] !== false,
+  }
 }
 
 type QueryInput = URLSearchParams | Readonly<Record<string, string | string[] | undefined>>
@@ -86,29 +104,50 @@ function readParam(query: QueryInput, key: string): string | undefined {
   return Array.isArray(value) ? value[0] : value
 }
 
-/** `filter=grain&strength=0.5` from a URL query; missing or unknown values give no filter. */
+/** Values of `asymmetrical=` in a URL that turn Pixel's toggle off; any other value, or none, leaves it on. */
+const OFF_VALUES: readonly string[] = ['off', '0', 'false']
+
+/**
+ * `filter=pixel&strength=0.5&asymmetrical=off` from a URL query; missing or unknown values give no filter, and a link
+ * without `asymmetrical=off` (every link from before the toggle) has Asymmetrical on.
+ */
 export function parseFilterQuery(query: QueryInput): FilterState {
-  return { filter: readChoice(readParam(query, 'filter')), strength: readStrength(readParam(query, 'strength')) }
+  const filter = readChoice(readParam(query, 'filter'))
+  return {
+    filter,
+    strength: readStrength(readParam(query, 'strength')),
+    asymmetrical: filter !== 'pixel' || !OFF_VALUES.includes(readParam(query, 'asymmetrical')?.toLowerCase() ?? ''),
+  }
 }
 
-/** The URL query part for a filter, or '' for none, so links without a filter stay as they were. */
+/**
+ * The URL query part for a filter, or '' for none, so links without a filter stay as they were. Pixel adds
+ * `asymmetrical=off` only while its toggle is off, so links with it on stay as they were too.
+ */
 export function filterQuery(state: FilterState): string {
   const filter = readChoice(state.filter)
   if (filter === 'none') return ''
-  return new URLSearchParams([
+  const params = [
     ['filter', filter],
     ['strength', String(readStrength(state.strength))],
-  ]).toString()
+  ]
+  if (filter === 'pixel' && state.asymmetrical === false) params.push(['asymmetrical', 'off'])
+  return new URLSearchParams(params).toString()
 }
 
-/** The scene with the chosen filter at its strength and every other filter off. */
+/**
+ * The scene with the chosen filter at its strength and every other filter off. With Pixel and Asymmetrical off it
+ * also sets Pixel's even grid (output.pixelEven 1); otherwise the scene has no pixelEven, as before the toggle.
+ */
 export function withFilter(scene: Scene, state: FilterState): Scene {
   const output: Partial<OutputSettings> = { ...scene.output }
   for (const key of FILTER_KEYS) output[key] = 0
+  delete output.pixelEven
   const filter = readChoice(state.filter)
   if (filter !== 'none') {
     const strength = readStrength(state.strength)
     output[filter] = FLOORED.includes(filter) ? Math.max(strength, DENSITY_FLOOR) : strength
   }
+  if (filter === 'pixel' && state.asymmetrical === false) output.pixelEven = 1
   return { ...scene, output }
 }

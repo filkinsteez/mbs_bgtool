@@ -1,6 +1,6 @@
 import { linearToOklab, oklabToLinear } from '../../color/oklab'
 import type { Rgb } from '../../color/srgb'
-import type { UniformMap } from '../../scene'
+import type { OutputSettings, UniformMap } from '../../scene'
 import { frameAspect } from '../frame'
 import type { FilterFrame, OutputFilter } from './types'
 
@@ -23,6 +23,11 @@ import type { FilterFrame, OutputFilter } from './types'
  *   group splits gradually around its limit (PIXEL_SPLIT_SOFT): its parts' colors and inner lines fade in, so a small
  *   drag never switches a block between whole and split. Only lightness counts, so a pack or a color slider, which
  *   change only colors, leaves the layout as it is.
+ * - Asymmetrical off (owner, 2026-11-17 11:43 AM: "also can we add in a button/toggle for asymmetrical pixel?", and
+ *   11:45 AM: "toggle on shows what we have currently, toggle off its just 1:1 square"). With output.pixelEven at 1
+ *   every block is one cell, a 2 x 2 group of base cells, on a grid of whole cells across and down (pixelGrid), so
+ *   the lines lie on every cell edge and Density sets the same cell size either way. The colors, the lines and the
+ *   frame source work as described here. At 0, the default, the blocks come in three sizes as above.
  * - Each block shows one color, flat; the color changes to the next block's under the line between them.
  * - The lines are PIXEL_LINE_SHARE of a cell wide, as in the deck's picture, up to PIXEL_LINE_MAX of the frame's short
  *   side, so big cells keep thin lines (crisp at every size, so a preview shows the grid an export shows), and they lie
@@ -73,9 +78,9 @@ const PIXEL_SPLIT_SOFT = 0.35
 /**
  * The frame source follows the density: an even number of texels a base cell each way, so the short side keeps at
  * least 36 texels, or one texel a base cell from ONE_TEXEL_FROM base cells on the short side, so a 16:9 source at
- * Density 1 is 512 x 288, the chain's largest. Each texel is the mean of enough samples (at most 8 a side) that the
- * frame is drawn at least 288 px on the short side (3.75 px apart at 1080p, close enough for a Contour line), and at
- * least 2 x 2.
+ * Density 1 is 512 x 288, and the tallest phone format's 288 x 641 the chain's largest. Each texel is the mean of
+ * enough samples (at most 8 a side) that the frame is drawn at least 288 px on the short side (3.75 px apart at
+ * 1080p, close enough for a Contour line), and at least 2 x 2.
  */
 const SOURCE_TEXELS_ON_SHORT_SIDE = 36
 const SOURCE_SAMPLES_ON_SHORT_SIDE = 288
@@ -210,9 +215,11 @@ function mergeFactor(gx: number, gy: number, seed: number, level: number): numbe
 /**
  * The block layout (CPU twin of the reduce pass's): for each base cell (row by row, `lightness` its Oklab lightness),
  * how far its 4 x 4 group and its 2 x 2 group are split, 0 (one block) to 1 (split). A group past the grid's edge is
- * split. pixelLevelWeights turns them into the shares of the 4 x 4, 2 x 2 and 1 x 1 blocks a cell shows.
+ * split. pixelLevelWeights turns them into the shares of the 4 x 4, 2 x 2 and 1 x 1 blocks a cell shows. With `even`
+ * (Asymmetrical off) every 4 x 4 group is split and every 2 x 2 group whole, so each base cell shows its cell.
  */
-export function pixelLayout(lightness: readonly number[], across: number, down: number, seed: number): { split4: number[]; split2: number[] } {
+export function pixelLayout(lightness: readonly number[], across: number, down: number, seed: number, even = false): { split4: number[]; split2: number[] } {
+  if (even) return { split4: lightness.map(() => 1), split2: lightness.map(() => 0) }
   const span = (x0: number, y0: number, size: number) => {
     if (x0 + size > across || y0 + size > down) return Infinity
     let [lo, hi] = [Infinity, -Infinity]
@@ -265,14 +272,14 @@ export function pixelCells(density: number): number {
   return Math.round(PIXEL_MIN_CELLS * (PIXEL_MAX_CELLS / PIXEL_MIN_CELLS) ** d)
 }
 
-function gridOf(frame: Pick<FilterFrame, 'width' | 'height'>, cellsOnShort: number): { across: number; down: number } {
-  const aspect = frameAspect(frame.width, frame.height)
+function gridOf(frame: Pick<FilterFrame, 'width' | 'height' | 'aspect'>, cellsOnShort: number): { across: number; down: number } {
+  const aspect = frame.aspect ?? frameAspect(frame.width, frame.height)
   const long = Math.max(1, Math.round(cellsOnShort * Math.max(aspect, 1 / aspect)))
   return aspect >= 1 ? { across: long, down: cellsOnShort } : { across: cellsOnShort, down: long }
 }
 
 /** Cells across and down at a density (0.5 by default): pixelCells on the short side, a whole number on the long side. */
-export function pixelGrid(frame: Pick<FilterFrame, 'width' | 'height'>, density = 0.5): { across: number; down: number } {
+export function pixelGrid(frame: Pick<FilterFrame, 'width' | 'height' | 'aspect'>, density = 0.5): { across: number; down: number } {
   return gridOf(frame, pixelCells(density))
 }
 
@@ -281,9 +288,14 @@ export function pixelBaseCells(density = 0.5): number {
   return PIXEL_BASE_PER_CELL * pixelCells(density)
 }
 
-/** Base cells across and down at a density: pixelBaseCells on the short side, a whole number on the long side. */
-export function pixelBaseGrid(frame: Pick<FilterFrame, 'width' | 'height'>, density = 0.5): { across: number; down: number } {
-  return gridOf(frame, pixelBaseCells(density))
+/**
+ * Base cells across and down at a density: pixelBaseCells on the short side, a whole number on the long side. With
+ * `even` (Asymmetrical off) PIXEL_BASE_PER_CELL for each of pixelGrid's whole cells, so every cell is whole.
+ */
+export function pixelBaseGrid(frame: Pick<FilterFrame, 'width' | 'height' | 'aspect'>, density = 0.5, even = false): { across: number; down: number } {
+  if (!even) return gridOf(frame, pixelBaseCells(density))
+  const { across, down } = pixelGrid(frame, density)
+  return { across: PIXEL_BASE_PER_CELL * across, down: PIXEL_BASE_PER_CELL * down }
 }
 
 /** Source texels a base cell along each axis at a density: the even number that gives the short side 36 or more, or 1 from ONE_TEXEL_FROM base cells. */
@@ -293,8 +305,8 @@ export function pixelSourceTexelsPerCell(density = 0.5): number {
 }
 
 /** The frame source's texels at a density: pixelSourceTexelsPerCell a base cell each way. */
-export function pixelSourceSize(frame: Pick<FilterFrame, 'width' | 'height'>, density = 0.5): { width: number; height: number } {
-  const { across, down } = pixelBaseGrid(frame, density)
+export function pixelSourceSize(frame: Pick<FilterFrame, 'width' | 'height' | 'aspect'>, density = 0.5, even = false): { width: number; height: number } {
+  const { across, down } = pixelBaseGrid(frame, density, even)
   const texels = pixelSourceTexelsPerCell(density)
   return { width: across * texels, height: down * texels }
 }
@@ -310,16 +322,22 @@ export function pixelLineWidth(density: number): number {
   return Math.min(PIXEL_LINE_SHARE, PIXEL_LINE_MAX * pixelCells(density))
 }
 
-/** The slider's value is the density. The grid and the line width are in base cells. */
-export function pixelUniforms(density: number, frame: FilterFrame): UniformMap {
-  const { across, down } = pixelBaseGrid(frame, density)
+/** The slider's value is the density, and `even` is Asymmetrical off. The grid and the line width are in base cells. */
+export function pixelUniforms(density: number, frame: FilterFrame, even = false): UniformMap {
+  const { across, down } = pixelBaseGrid(frame, density, even)
   return {
     uPixelCells: [across, down],
     uPixelFrame: [frame.width, frame.height],
     uPixelLine: PIXEL_BASE_PER_CELL * pixelLineWidth(density),
     uPixelShort: pixelBaseCells(density),
     uPixelSeed: frame.seed,
+    uPixelEven: even,
   }
+}
+
+/** Whether a scene's output settings turn Asymmetrical off (output.pixelEven): every block one cell. */
+export function isPixelEven(output?: Partial<OutputSettings>): boolean {
+  return (output?.pixelEven ?? 0) > 0.5
 }
 
 const glslFloat = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v))
@@ -335,6 +353,7 @@ export const PIXEL_COLORS_GLSL = /* glsl */ `
 uniform vec2 uPixelCells;  // base cells across and down
 uniform float uPixelShort; // base cells on the short side
 uniform int uPixelSeed;
+uniform bool uPixelEven;   // Asymmetrical off: every block a cell (a 2 x 2 group), on whole cells
 
 // A base cell's Oklab lightness: that of the mean of its texels.
 float pixelLight(ivec2 cell, int per) {
@@ -482,6 +501,11 @@ vec3 pixelBlockColor(ivec2 origin, int side, float vivid) {
 vec4 pixelColorOf(ivec2 texel) {
   ivec2 cell = ivec2(texel.x / 2, texel.y);
   int per = textureSize(uSrc, 0).x / int(uPixelCells.x + 0.5);
+  // Asymmetrical off: every base cell shows its 2 x 2 group's block, split from its 4 x 4 group and whole.
+  if (uPixelEven) {
+    if (texel.x % 2 == 1) return vec4(0.0, 0.0, 0.0, 1.0);
+    return vec4(pixelBlockColor((cell / 2) * 2 * per, 2 * per, pixelBlockVivid(uPixelShort / 2.0)), 1.0);
+  }
   float scale = ${glslFloat(PIXEL_MERGE_BASE)} / uPixelShort;
   float split2 = pixelSplit(pixelSpan((cell / 2) * 2, 2, per), ${glslFloat(PIXEL_MERGE[0])} * scale * pixelJitter(cell / 2, 1));
   if (texel.x % 2 == 1) return vec4(split2, 0.0, 0.0, 1.0);
@@ -576,15 +600,15 @@ export const PIXEL_FILTER: OutputFilter = {
   key: 'pixel',
   glsl: PIXEL_GLSL,
   apply: 'filterPixel',
-  uniforms: pixelUniforms,
+  uniforms: (density, frame, output) => pixelUniforms(density, frame, isPixelEven(output)),
   source: {
     uniform: 'uPixelSource',
-    size: pixelSourceSize,
+    size: (frame, density, output) => pixelSourceSize(frame, density, isPixelEven(output)),
     samples: pixelSourceSamples,
     reduce: {
       uniform: 'uPixelColors',
-      size: (frame, density) => {
-        const { across, down } = pixelBaseGrid(frame, density)
+      size: (frame, density, output) => {
+        const { across, down } = pixelBaseGrid(frame, density, isPixelEven(output))
         return { width: 2 * across, height: down }
       },
       glsl: PIXEL_COLORS_GLSL,

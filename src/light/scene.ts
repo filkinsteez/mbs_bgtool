@@ -160,6 +160,11 @@ export interface OutputSettings {
   /** Pixel filter strength 0..1; 0 off. Output filters run in the order of OUTPUT_FILTERS (engine/filters). */
   pixel: number
   /**
+   * Pixel's even grid, 0 or 1: at 1 every block is one cell of the strength's size, on whole cells across and down
+   * (the tool's Asymmetrical off); at 0, the default, blocks come in three sizes (engine/filters/pixel.ts).
+   */
+  pixelEven: number
+  /**
    * Paper toe 0..1 below nominal: dim light gets purer, so dim warm light
    * reads amber and red instead of olive and brown, and dim blue reads navy.
    * Light at and above nominal is unchanged, and slot colors (ctx.colors) are
@@ -192,6 +197,7 @@ export const DEFAULT_OUTPUT: OutputSettings = {
   exposure: 0,
   grain: 0,
   pixel: 0,
+  pixelEven: 0,
   toe: 0,
 }
 
@@ -232,6 +238,7 @@ export const OUTPUT_NUMBERS: readonly NumericSetting<NumericKeys<OutputSettings>
   { key: 'exposure', label: 'Exposure', min: -4, max: 4, step: 0.01 },
   { key: 'grain', label: 'Grain', min: 0, max: 1, step: 0.01 },
   { key: 'pixel', label: 'Pixel', min: 0, max: 1, step: 0.01 },
+  { key: 'pixelEven', label: 'Pixel even grid', min: 0, max: 1, step: 1 },
   { key: 'toe', label: 'Paper toe', min: 0, max: 1, step: 0.01 },
 ]
 
@@ -281,9 +288,9 @@ export interface RecipeContext {
   seed: number
   /**
    * The frame's width / height. A preview and an export of the same format
-   * get the same value (frames within 2 % of a format's aspect get exactly
-   * the number compose gets), so the same scene gives the same picture at
-   * every size.
+   * get the same value (the tool gives its format's exact aspect, and frames
+   * within 2 % of a ratio format's aspect get exactly the number compose
+   * gets), so the same scene gives the same picture at every size.
    */
   aspect: number
   num(key: string): number

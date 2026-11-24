@@ -475,7 +475,8 @@ export const OUTPUT_FILTER_SHADERS: readonly string[] = [
 /** Samples per axis averaged into each texel of a filter's frame source, unless the filter sets its own (at most 8). */
 const SOURCE_SAMPLES = 4
 const MAX_SOURCE_SAMPLES = 8
-const MAX_SOURCE_SIDE = 512
+/** A frame source's longest side in texels: Pixel at Density 1 needs 641 for the tallest phone format (Android Compact). */
+export const MAX_SOURCE_SIDE = 1024
 
 export interface OutputFilterPass {
   /** Fragment shader of the output pass with the stages that are on. */
@@ -498,12 +499,12 @@ export function prepareOutputFilters(gpu: Gpu, output: OutputSettings, frame: Fi
   const textures: Record<string, Target> = {}
   for (const stage of stages) {
     const strength = output[stage.key]
-    Object.assign(uniforms, stage.uniforms(strength, frame))
+    Object.assign(uniforms, stage.uniforms(strength, frame, output))
     if (!stage.source) continue
-    const size = stage.source.size(frame, strength)
+    const size = stage.source.size(frame, strength, output)
     const width = Math.min(MAX_SOURCE_SIDE, Math.max(1, Math.round(size.width)))
     const height = Math.min(MAX_SOURCE_SIDE, Math.max(1, Math.round(size.height)))
-    const wanted = typeof stage.source.samples === 'function' ? stage.source.samples(frame, strength) : stage.source.samples
+    const wanted = typeof stage.source.samples === 'function' ? stage.source.samples(frame, strength, output) : stage.source.samples
     const taps = Math.min(MAX_SOURCE_SAMPLES, Math.max(1, Math.round(wanted ?? SOURCE_SAMPLES)))
     const samples = gpu.acquire(width * taps, height * taps)
     drawFrame(samples)
@@ -516,7 +517,7 @@ export function prepareOutputFilters(gpu: Gpu, output: OutputSettings, frame: Fi
     textures[stage.source.uniform] = source
     const reduce = stage.source.reduce
     if (reduce) {
-      const cells = reduce.size(frame, strength)
+      const cells = reduce.size(frame, strength, output)
       const target = gpu.acquire(Math.max(1, Math.round(cells.width)), Math.max(1, Math.round(cells.height)))
       gpu.draw(gpu.program(reduceShader(reduce)), target, { textures: { uSrc: source }, uniforms })
       textures[reduce.uniform] = target

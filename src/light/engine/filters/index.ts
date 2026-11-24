@@ -1,6 +1,6 @@
 import type { OutputSettings } from '../../scene'
 import { GRAIN_FILTER } from '../grain'
-import { PIXEL_FILTER } from './pixel'
+import { isPixelEven, PIXEL_FILTER } from './pixel'
 import type { FilterKey, OutputFilter } from './types'
 
 export type { FilterFrame, FilterKey, FilterSource, OutputFilter } from './types'
@@ -21,11 +21,15 @@ export function activeFilters(output: OutputSettings): OutputFilter[] {
   return OUTPUT_FILTERS.filter((stage) => output[stage.key] > 0)
 }
 
-/** For export file names: `-grain50` for grain at 0.5, one part per stage that is on, '' with none. */
+/**
+ * For export file names: `-grain50` for grain at 0.5, one part per stage that is on, '' with none. Pixel's even grid
+ * (Asymmetrical off) adds `-even`, as in `-pixel50-even`.
+ */
 export function filterFileTag(output?: Partial<OutputSettings>): string {
   return OUTPUT_FILTERS.map((stage) => {
     const strength = output?.[stage.key]
     if (typeof strength !== 'number' || !Number.isFinite(strength) || strength <= 0) return ''
-    return `-${stage.key}${Math.max(1, Math.round(Math.min(1, strength) * 100))}`
+    const even = stage.key === 'pixel' && isPixelEven(output) ? '-even' : ''
+    return `-${stage.key}${Math.max(1, Math.round(Math.min(1, strength) * 100))}${even}`
   }).join('')
 }
