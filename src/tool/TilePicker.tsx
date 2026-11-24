@@ -7,7 +7,7 @@ export interface TileOption<T extends string> {
 
 /**
  * What the tiles show, which sets their size in tool.css: color strips or pictures with the option's name under them,
- * or icons (the filters' marks, the formats' frames) in buttons that share the row evenly, with the name inside.
+ * or icons (the filters' marks) in buttons that share the row evenly, with the name inside.
  */
 export type TileKind = 'swatch' | 'picture' | 'icon'
 

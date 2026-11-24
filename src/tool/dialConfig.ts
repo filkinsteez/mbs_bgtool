@@ -1,8 +1,8 @@
 import type { DialConfig } from 'dialkit'
-import { EXPORT_ASPECTS, getPack, isPackId, PACKS, type ColorPack, type MoodId } from '@/light'
+import { DEVICE_FRAMES, EXPORT_FORMATS, getPack, isDeviceFormat, isPackId, PACKS, type ColorPack, type DeviceFrame, type ExportFormat, type MoodId } from '@/light'
 import { defaultMix, mixFromShares, type ColorMix } from '@/light/color/mix'
 import { filterDials, readFilter, STRENGTH_DIAL_KEYS, STRENGTH_LABELS, type FilterChoice } from './filterControl'
-import { DEFAULT_STATE, isExportAspect, MOOD_LOOKS, readSeed, SEED_MAX, SEED_MIN, type ToolState } from './state'
+import { DEFAULT_STATE, isExportFormat, MOOD_LOOKS, readSeed, SEED_MAX, SEED_MIN, type ToolState } from './state'
 
 export const PANEL_ID = 'tool'
 export const PANEL_NAME = 'Background'
@@ -30,7 +30,28 @@ export const MOOD_OPTIONS = [
 
 export const PACK_OPTIONS = PACKS.map((pack) => ({ value: pack.id, label: pack.name }))
 
-export const FORMAT_OPTIONS = EXPORT_ASPECTS.map((aspect) => ({ value: aspect, label: aspect }))
+/** A format's name in the panel and the history: its ratio (`16:9`), or the device's name in Figma (`iPhone 16`). */
+export function formatName(format: ExportFormat): string {
+  return isDeviceFormat(format) ? DEVICE_FRAMES[format].name : format
+}
+
+/** A format's option in the Format list: its name, and for a device Figma's frame size ("iPhone 16 · 393 × 852"). */
+function formatLabel(format: ExportFormat): string {
+  if (!isDeviceFormat(format)) return format
+  const { points } = DEVICE_FRAMES[format]
+  return `${formatName(format)} · ${points[0]} × ${points[1]}`
+}
+
+export const FORMAT_OPTIONS = EXPORT_FORMATS.map((format) => ({ value: format, label: formatLabel(format) }))
+
+/** The Format list in order: the ratios under "Aspect ratio", then the devices under Figma's Phone, Tablet and Desktop. */
+export const FORMAT_GROUPS: readonly { title: DeviceFrame['group'] | 'Aspect ratio'; options: typeof FORMAT_OPTIONS }[] = [
+  { title: 'Aspect ratio', options: FORMAT_OPTIONS.filter((option) => !isDeviceFormat(option.value)) },
+  ...(['Phone', 'Tablet', 'Desktop'] as const).map((title) => ({
+    title,
+    options: FORMAT_OPTIONS.filter((option) => isDeviceFormat(option.value) && DEVICE_FRAMES[option.value].group === title),
+  })),
+]
 
 /**
  * The mix as the panel keeps it: every share in full, not the URL's whole percents, so moving one color many times
@@ -75,7 +96,7 @@ export function readToolState(values: Readonly<Record<string, unknown>>, mood: M
     look: MOOD_LOOKS[mood],
     pack,
     seed,
-    format: isExportAspect(format) ? format : DEFAULT_STATE.format,
+    format: isExportFormat(format) ? format : DEFAULT_STATE.format,
     mix: readMix(getPack(pack), values[MIX_DIAL_KEY]),
     ...readFilter(values),
   }

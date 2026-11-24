@@ -40,4 +40,21 @@ describe('panel values', () => {
     expect(DialStore.getValue(id, 'density')).toBe(0.8)
     DialStore.unregisterPanel(id)
   })
+
+  it("shows a history row's Pixel toggle off, and a row from before the toggle with it on", () => {
+    vi.useFakeTimers()
+    const id = 'history-asymmetrical-test'
+    const plain = stateOf('mood=sunset&pack=bold&seed=3&format=16x9')
+    expect(panelValues(configOf('mood=rush&pack=bold&seed=5&format=16x9&filter=pixel&strength=0.4'))).toMatchObject({ filter: 'pixel', density: 0.4, asymmetrical: true })
+    const row = 'mood=rush&look=split&pack=bold&seed=5&format=16x9&filter=pixel&strength=0.4&asymmetrical=off'
+    expect(panelValues(configOf(row))).toMatchObject({ filter: 'pixel', density: 0.4, asymmetrical: false })
+    DialStore.registerPanel(id, 'Test', buildDialConfig(plain, 'Export', 'none'))
+    applyPanelValues(id, panelValues(configOf(row)))
+    expect(DialStore.getValues(id)).not.toHaveProperty('asymmetrical')
+    // The panel adds the toggle at the page's own start value (on), and the row's value replaces it.
+    DialStore.updatePanel(id, 'Test', buildDialConfig(plain, 'Export', 'pixel'))
+    expect(DialStore.getValue(id, 'asymmetrical')).toBe(false)
+    vi.runAllTimers()
+    DialStore.unregisterPanel(id)
+  })
 })

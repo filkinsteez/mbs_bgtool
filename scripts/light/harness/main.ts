@@ -73,6 +73,8 @@ export interface RenderRequest {
   scene: HarnessScene
   width: number
   height: number
+  /** The frame aspect recipes see (`RenderOptions.aspect`), as the tool gives its format's; by default the size's own. */
+  aspect?: number
   supersample?: 1 | 2 | 3 | 4
   dither?: boolean
   tileSize?: number
@@ -146,6 +148,7 @@ function renderImage(request: RenderRequest): { image: RgbaImage; ms: number } {
   renderer.renderProgram(requestProgram(request), request.scene, {
     width: request.width,
     height: request.height,
+    aspect: request.aspect,
     supersample: request.supersample ?? 2,
     dither: request.dither ?? true,
     tileSize: request.tileSize,
@@ -305,9 +308,12 @@ const api = {
     return { ...measure(program), stub: measure(stubProgram(program)) }
   },
 
-  /** What a program's uniforms, radianceScale, post pass settings and scatter radius get as ctx.aspect, per frame size. */
-  aspectProbe(sizes: { width: number; height: number }[]): Record<string, number[]>[] {
-    return sizes.map(({ width, height }) => {
+  /**
+   * What a program's uniforms, radianceScale, post pass settings and scatter radius get as ctx.aspect, per frame size
+   * and the aspect given with it, if any.
+   */
+  aspectProbe(sizes: { width: number; height: number; aspect?: number }[]): Record<string, number[]>[] {
+    return sizes.map(({ width, height, aspect }) => {
       const seen: Record<string, number[]> = { uniforms: [], radianceScale: [], post: [], scatter: [] }
       const program: RecipeProgram = {
         id: 'test.aspect',
@@ -329,7 +335,7 @@ vec3 combine(vec2 uv, vec2 p, vec3 light, vec3 blurred0) { return light; }
         post: [{ kind: 'gaussianBlur', settings: (ctx) => (seen.post.push(ctx.aspect), { radius: 0 }) }],
         scatter: [{ source: 'radiance', radius: (ctx) => (seen.scatter.push(ctx.aspect), 0.01) }],
       }
-      renderer.renderProgram(program, {}, { width, height, supersample: 1 })
+      renderer.renderProgram(program, {}, { width, height, aspect, supersample: 1 })
       return seen
     })
   },

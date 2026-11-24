@@ -38,6 +38,7 @@ describe('tool state in the URL', () => {
       mix: defaultMix(atmospheric),
       filter: 'none',
       strength: 0.5,
+      asymmetrical: true,
     }
     const query = toQuery(state)
     expect(query).toBe('mood=contour&look=merged&pack=atmospheric&seed=43&format=4x5')
@@ -72,6 +73,17 @@ describe('tool state in the URL', () => {
     expect(query).toBe('mood=sunset&look=merged&pack=bold&seed=1&format=16x9&filter=grain&strength=0.35')
     expect(parseQuery(new URLSearchParams(query))).toEqual(state)
     expect(toQuery(DEFAULT_STATE)).not.toContain('filter')
+  })
+
+  it("writes Pixel's Asymmetrical toggle after the strength only when it is off, so links with it on stay as they were", () => {
+    const off: ToolState = { ...DEFAULT_STATE, filter: 'pixel', strength: 0.5, asymmetrical: false }
+    expect(toQuery(off)).toBe('mood=sunset&look=merged&pack=bold&seed=1&format=16x9&filter=pixel&strength=0.5&asymmetrical=off')
+    expect(parseQuery(new URLSearchParams(toQuery(off)))).toEqual(off)
+    const on: ToolState = { ...off, asymmetrical: true }
+    expect(toQuery(on)).toBe('mood=sunset&look=merged&pack=bold&seed=1&format=16x9&filter=pixel&strength=0.5')
+    expect(parseQuery(new URLSearchParams(toQuery(on)))).toEqual(on)
+    // An old link or history row with Pixel opens with the toggle on.
+    expect(parseQuery(new URLSearchParams('mood=contour&look=merged&pack=bold&seed=4&format=16x9&filter=pixel&strength=0.3')).asymmetrical).toBe(true)
   })
 
   it("ignores old links' Softness, Horizon and Light position, and no longer writes them", () => {
@@ -237,6 +249,7 @@ describe('dragged line in the URL', () => {
     drag: { from: [0.312, 0.681], to: [0.75, 0.2] },
     filter: 'none',
     strength: 0.5,
+    asymmetrical: true,
   }
 
   it('round-trips a line, written after the pack with its commas as they are', () => {

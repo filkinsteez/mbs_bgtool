@@ -123,7 +123,7 @@ export function resolveScene(program: RecipeProgram, scene: SceneInput): Resolve
   }
 }
 
-/** The context a recipe's functions get; `aspect` is the frame's width / height from `frameAspect`. */
+/** The context a recipe's functions get; `aspect` is the frame's width / height (`RenderOptions.aspect` or `frameAspect`). */
 export function recipeContext(resolved: ResolvedScene, aspect: number): RecipeContext {
   const { params, colors, hex, seed, program } = resolved
   const get = (key: string): ParamValue => {

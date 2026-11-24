@@ -1,7 +1,7 @@
 import '@/styles/history.css'
 import { memo, useId, useLayoutEffect, useRef, type CSSProperties, type KeyboardEvent } from 'react'
-import { EXPORT_SIZES, getPack } from '@/light'
-import { MOOD_OPTIONS } from '../dialConfig'
+import { FORMAT_SIZES, getPack } from '@/light'
+import { formatName, MOOD_OPTIONS } from '../dialConfig'
 import { FILTER_OPTIONS } from '../filterControl'
 import { parseQuery } from '../state'
 import { optionForKey } from '../TilePicker'
@@ -9,16 +9,17 @@ import type { History } from './historyModel'
 
 const TITLE = 'History'
 
-/** What a screen reader says for an entry: "Contour, Bold, Grain, 16:9, seed 15". */
-function entryName(query: string): string {
+/** What a screen reader says for an entry: "Contour, Bold, Grain, 16:9, seed 15", or "..., iPhone 16, seed 15". */
+export function entryName(query: string): string {
   const state = parseQuery(new URLSearchParams(query))
   const mood = MOOD_OPTIONS.find((option) => option.value === state.mood)?.label ?? state.mood
   const filter = state.filter === 'none' ? [] : [FILTER_OPTIONS.find((option) => option.value === state.filter)?.label ?? state.filter]
-  return [mood, getPack(state.pack).name, ...filter, state.format, `seed ${state.seed}`].join(', ')
+  return [mood, getPack(state.pack).name, ...filter, formatName(state.format), `seed ${state.seed}`].join(', ')
 }
 
-function entryShape(query: string): CSSProperties {
-  const { width, height } = EXPORT_SIZES[parseQuery(new URLSearchParams(query)).format]
+/** An entry's picture has its format's shape. */
+export function entryShape(query: string): CSSProperties {
+  const { width, height } = FORMAT_SIZES[parseQuery(new URLSearchParams(query)).format]
   return { aspectRatio: `${width} / ${height}` }
 }
 

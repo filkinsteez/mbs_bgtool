@@ -1,13 +1,24 @@
 import type { Preset, Scene } from '../scene'
 import { filterFileTag } from './filters'
-import { EXPORT_SIZES, type ExportAspect } from './frame'
+import { FORMAT_SIZES, type ExportFormat } from './frame'
 import { LightRenderer, type RenderOptions } from './renderer'
 
-export { EXPORT_ASPECTS, EXPORT_SIZES, type ExportAspect } from './frame'
+export {
+  DEVICE_FRAMES,
+  EXPORT_ASPECTS,
+  EXPORT_FORMATS,
+  EXPORT_SIZES,
+  FORMAT_SIZES,
+  isDeviceFormat,
+  type DeviceFormat,
+  type DeviceFrame,
+  type ExportAspect,
+  type ExportFormat,
+} from './frame'
 
 export interface ExportRequest {
-  /** A preset size, or give width and height. */
-  aspect?: ExportAspect
+  /** A format's size (a ratio at 4K, `16:9`, or a device, `iphone-16`), or give width and height. */
+  aspect?: ExportFormat
   width?: number
   height?: number
   /** 2 by default, as the deck asks. */
@@ -25,7 +36,7 @@ export interface ExportResult {
 
 export function exportSize(request: ExportRequest): { width: number; height: number; label: string } {
   if (request.aspect) {
-    const size = EXPORT_SIZES[request.aspect]
+    const size = FORMAT_SIZES[request.aspect]
     return { ...size, label: request.aspect.replace(':', 'x') }
   }
   if (!request.width || !request.height) throw new Error('Export needs an aspect or a width and height.')

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
-import { EXPORT_SIZES, getPack, type ExportAspect, type MoodId, type PackId } from '@/light'
+import { getPack, type MoodId, type PackId } from '@/light'
 import { hueOrder } from '@/light/color/packs'
-import { FORMAT_OPTIONS, MOOD_OPTIONS, PACK_DIAL_KEY, PACK_OPTIONS } from './dialConfig'
+import { MOOD_OPTIONS, PACK_DIAL_KEY, PACK_OPTIONS } from './dialConfig'
 import { FILTER_DIAL_KEY, FILTER_OPTIONS, type FilterChoice } from './filterControl'
 import { InfoTip } from './InfoTip'
 import { moodPicture } from './panelPictures'
@@ -84,7 +84,7 @@ const GRAIN_DOTS = [
 /** Pixel's cells: a 3 by 3 mosaic that fades from the top left. */
 const PIXEL_CELLS = [0, 1, 2].flatMap((row) => [0, 1, 2].map((col) => ({ x: col * 7.25, y: row * 7.25, opacity: 1 - (row + col) * 0.2 })))
 
-/** The filters' icons, in the tile's text color like the format shapes. */
+/** The filters' icons, in the tile's text color. */
 const FILTER_ICONS: Readonly<Record<FilterChoice, ReactNode>> = {
   none: (
     <>
@@ -112,31 +112,6 @@ export function FilterPicker({ value, onChange }: { value: FilterChoice; onChang
           <svg className="tool-tile-icon" viewBox="0 0 20 20" aria-hidden="true">
             {FILTER_ICONS[option.value]}
           </svg>
-        </Mark>
-      )}
-    />
-  )
-}
-
-/** The format's frame, its long side the size of `--shape-box` (tool.css). */
-function shapeStyle(aspect: ExportAspect) {
-  const { width, height } = EXPORT_SIZES[aspect]
-  const long = Math.max(width, height)
-  return { width: `calc(var(--shape-box) * ${width / long})`, height: `calc(var(--shape-box) * ${height / long})` }
-}
-
-export function FormatPicker({ value, onChange }: { value: ExportAspect; onChange: (format: ExportAspect) => void }) {
-  return (
-    <TilePicker
-      label="Format"
-      path="format"
-      kind="icon"
-      options={FORMAT_OPTIONS}
-      value={value}
-      onChange={onChange}
-      tile={(option) => (
-        <Mark label={option.label}>
-          <span className="tool-tile-shape" style={shapeStyle(option.value)} />
         </Mark>
       )}
     />

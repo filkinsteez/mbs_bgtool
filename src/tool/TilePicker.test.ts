@@ -3,7 +3,7 @@ import path from 'node:path'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { FilterPicker, FormatPicker, PackPicker } from './panelPickers'
+import { FilterPicker, PackPicker } from './panelPickers'
 import { moodPicture } from './panelPictures'
 import { MOOD_IDS } from './state'
 import { optionForKey } from './TilePicker'
@@ -32,11 +32,8 @@ describe('panel tiles', () => {
     expect(renderToStaticMarkup(createElement(PackPicker, { value: 'bold', onChange: () => {} }))).toContain('style="--tile-columns:2"')
   })
 
-  it('show the filters and the formats as buttons that share the row, each name inside its button', () => {
-    const pickers = [
-      { html: renderToStaticMarkup(createElement(FilterPicker, { value: 'grain', onChange: () => {} })), names: ['None', 'Grain', 'Pixel'] },
-      { html: renderToStaticMarkup(createElement(FormatPicker, { value: '16:9', onChange: () => {} })), names: ['16:9', '9:16', '1:1', '4:5'] },
-    ]
+  it('show the filters as buttons that share the row, each name inside its button', () => {
+    const pickers = [{ html: renderToStaticMarkup(createElement(FilterPicker, { value: 'grain', onChange: () => {} })), names: ['None', 'Grain', 'Pixel'] }]
     for (const { html, names } of pickers) {
       expect(html).toContain('data-kind="icon"')
       const buttons = [...html.matchAll(/<button[^>]*aria-label="([^"]+)"[^>]*>(.*?)<\/button>/g)]

@@ -1,4 +1,4 @@
-import { EXPORT_ASPECTS, getPack, isPackId, type ExportAspect, type MoodId, type PackId, type RecipeId } from '@/light'
+import { EXPORT_FORMATS, getPack, isPackId, type ExportFormat, type MoodId, type PackId, type RecipeId } from '@/light'
 import { defaultMix, formatMix, parseMix, type ColorMix } from '@/light/color/mix'
 import { clampDrag, clampPoint, type LightDrag, type LightPoint } from './controls'
 import { DEFAULT_FILTER, filterQuery, parseFilterQuery, type FilterChoice } from './filterControl'
@@ -10,7 +10,8 @@ export interface ToolState {
   look: RecipeId
   pack: PackId
   seed: number
-  format: ExportAspect
+  /** A ratio at 4K or a device (`format=16x9` or `format=iphone-16` in the URL). */
+  format: ExportFormat
   /**
    * Each pack color's share of the picture, which the color stage gives the design (`mix=meta-blue:25,cyan:75` in the
    * URL, by color name; none for the pack's default mix).
@@ -21,6 +22,8 @@ export interface ToolState {
   /** The surface filter (`filter=grain` in the URL), none by default, and its strength 0..1 (`strength=0.5`). */
   filter: FilterChoice
   strength: number
+  /** Pixel's Asymmetrical toggle, on by default (`asymmetrical=off` in the URL only when off; on with other filters). */
+  asymmetrical: boolean
 }
 
 export const MOOD_IDS: readonly MoodId[] = ['sunset', 'contour', 'rush']
@@ -52,8 +55,8 @@ export function isMoodId(value: unknown): value is MoodId {
   return typeof value === 'string' && (MOOD_IDS as readonly string[]).includes(value)
 }
 
-export function isExportAspect(value: unknown): value is ExportAspect {
-  return typeof value === 'string' && (EXPORT_ASPECTS as readonly string[]).includes(value)
+export function isExportFormat(value: unknown): value is ExportFormat {
+  return typeof value === 'string' && (EXPORT_FORMATS as readonly string[]).includes(value)
 }
 
 /** The look the picture draws: the mood's one look. */
@@ -115,7 +118,13 @@ function readParam(query: QueryInput, key: string): string | undefined {
 }
 
 const shortLook = (look: RecipeId) => look.slice(look.indexOf('.') + 1)
-const formatToQuery = (format: ExportAspect) => format.replace(':', 'x')
+/** A format as the link names it: `16x9` for 16:9, a device by its id (`iphone-16`). */
+const formatToQuery = (format: ExportFormat) => format.replace(':', 'x')
+
+/** The format a link's `format=` names: `16x9` or `16:9` for 16:9, a device by its id; undefined for anything else. */
+export function formatFromQuery(value: string | undefined): ExportFormat | undefined {
+  return EXPORT_FORMATS.find((format) => value === format || value === formatToQuery(format))
+}
 
 /**
  * Reads the tool state from a URL query; missing or invalid values take the defaults. The look is always the mood's
@@ -131,14 +140,14 @@ export function parseQuery(query: QueryInput): ToolState {
   const packParam = readParam(query, 'pack')
   const pack = packParam && isPackId(packParam) ? packParam : DEFAULT_STATE.pack
   const seed = readSeed(readParam(query, 'seed'), DEFAULT_STATE.seed)
-  const format = readParam(query, 'format')?.replace('x', ':')
+  const format = formatFromQuery(readParam(query, 'format'))
   const drag = parseDrag(readParam(query, 'from'), readParam(query, 'to'))
   return {
     mood,
     look: MOOD_LOOKS[mood],
     pack,
     seed,
-    format: isExportAspect(format) ? format : DEFAULT_STATE.format,
+    format: format ?? DEFAULT_STATE.format,
     mix: parseMix(getPack(pack), readParam(query, 'mix')),
     ...(drag ? { drag } : {}),
     ...parseFilterQuery(query),

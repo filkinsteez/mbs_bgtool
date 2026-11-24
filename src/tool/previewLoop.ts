@@ -124,6 +124,8 @@ export class PreviewLoop {
   private scene: Scene | null = null
   private width = 0
   private height = 0
+  /** The format's aspect, which every frame of the scene is drawn with (`RenderOptions.aspect`), whatever its size. */
+  private aspect: number | undefined = undefined
   private version = 0
   private frames = 0
   private inFlight: InFlight | null = null
@@ -165,12 +167,14 @@ export class PreviewLoop {
     canvas.addEventListener('webglcontextlost', this.handleLost)
   }
 
-  update(scene: Scene, width: number, height: number): void {
+  /** Draws the scene at this size for a format of this aspect (width / height); without one, `frameAspect` of the size. */
+  update(scene: Scene, width: number, height: number, aspect?: number): void {
     // A new mix alone is drawn like a moving slider's frame first, so a slow look shows it at once and sharp after.
-    const mixStep = this.scene !== null && width === this.width && height === this.height && onlyMixDiffers(this.scene, scene)
+    const mixStep = this.scene !== null && width === this.width && height === this.height && aspect === this.aspect && onlyMixDiffers(this.scene, scene)
     this.scene = scene
     this.width = width
     this.height = height
+    this.aspect = aspect
     this.version++
     this.presolveQueue = []
     const now = performance.now()
@@ -260,7 +264,13 @@ export class PreviewLoop {
     if (scene) {
       const scale = PRESOLVE_LONG_SIDE / Math.max(this.width, this.height, 1)
       try {
-        this.renderer.render(scene, { width: Math.max(1, Math.round(this.width * scale)), height: Math.max(1, Math.round(this.height * scale)), supersample: 1, background: true })
+        this.renderer.render(scene, {
+          width: Math.max(1, Math.round(this.width * scale)),
+          height: Math.max(1, Math.round(this.height * scale)),
+          aspect: this.aspect,
+          supersample: 1,
+          background: true,
+        })
       } catch (error) {
         console.error('Solving a mix ahead of time failed', error)
         this.presolveQueue = []
@@ -304,7 +314,7 @@ export class PreviewLoop {
     let ready = false
     try {
       // Presented once the GPU has finished it: resizing the canvas before then would wait for the GPU.
-      const stats = this.renderer.render(scene, { width, height, supersample, background: true })
+      const stats = this.renderer.render(scene, { width, height, aspect: this.aspect, supersample, background: true })
       this.compiling = stats.compiling
       ready = stats.ready
     } catch (error) {

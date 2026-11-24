@@ -797,8 +797,14 @@ try {
       { name: '4:5 export', width: 3072, height: 3840, expected: 3072 / 3840 },
       { name: '4:5 preview', width: 717, height: 897, expected: 3072 / 3840 },
       { name: 'reference', width: 925, height: 1002, expected: 925 / 1002 },
+      // Device formats aren't snapped to (iPhone 16 Pro and Pro Max are 0.07 % apart); the tool gives the preview the
+      // format's aspect, and the export's size has it.
+      { name: 'iPhone 16 Pro export', width: 1206, height: 2622, expected: 402 / 874 },
+      { name: 'iPhone 16 Pro preview with the aspect', width: 431, height: 936, aspect: 402 / 874, expected: 402 / 874 },
+      { name: 'iPhone 16 Pro preview without it', width: 431, height: 936, expected: 431 / 936 },
+      { name: 'MacBook Air preview with the aspect', width: 1385, height: 900, aspect: 1280 / 832, expected: 1280 / 832 },
     ]
-    const seen = await harness.call('aspectProbe', frames.map(({ width, height }) => ({ width, height })))
+    const seen = await harness.call('aspectProbe', frames.map(({ width, height, aspect }) => ({ width, height, aspect })))
     const rows = frames.map((frame, i) => {
       const values = Object.values(seen[i]).flat()
       const ok = values.length === 4 && values.every((value) => value === frame.expected)

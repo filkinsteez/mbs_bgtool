@@ -25,6 +25,12 @@ export interface RenderOptions {
   /** Output size in pixels. */
   width: number
   height: number
+  /**
+   * The frame's width / height as recipes and filters see it (`ctx.aspect`); `frameAspect(width, height)` when left
+   * out or not a positive number. The tool gives its format's exact aspect, so its preview gets the export's value at
+   * any size, also for the device formats, which `frameAspect` doesn't snap to.
+   */
+  aspect?: number
   /** Render scale before the resolve filter: 2 by default, 1 for fast previews and fitting. */
   supersample?: 1 | 2 | 3 | 4
   /** Dither before rounding to 8 bits. On by default; only engine checks turn it off. */
@@ -110,8 +116,8 @@ export function radianceScaleFor(program: RecipeProgram, ctx: RecipeContext, ren
 const DESIGN_SHORT_SIDE = 512
 
 /**
- * The frame the color stage reads a design from: the format's own shape (`ctx.aspect`, which `frameAspect` snaps to
- * the nearest export format) at DESIGN_SHORT_SIDE, as [width, height] in render pixels and in short sides.
+ * The frame the color stage reads a design from: the format's own shape (`ctx.aspect`: the format's aspect the tool
+ * gives, or what `frameAspect` snaps to) at DESIGN_SHORT_SIDE, as [width, height] in render pixels and in short sides.
  */
 export function designFrame(aspect: number): { size: [number, number]; inShorts: [number, number] } {
   const inShorts: [number, number] = aspect >= 1 ? [aspect, 1] : [1, 1 / aspect]
@@ -202,7 +208,8 @@ export class ProgramRenderer {
     const tileSize = Math.max(64, Math.round(options.tileSize ?? Math.floor(RENDER_TILE_SIDE / factor)))
 
     const resolved = resolveScene(program, scene)
-    const ctx = recipeContext(resolved, frameAspect(width, height))
+    const given = options.aspect
+    const ctx = recipeContext(resolved, given !== undefined && Number.isFinite(given) && given > 0 ? given : frameAspect(width, height))
     const recipeUniforms = program.uniforms(ctx)
     const renderWidth = width * factor
     const renderHeight = height * factor
@@ -337,7 +344,7 @@ export class ProgramRenderer {
     const resolveX = gpu.program(RESOLVE_X_SHADER)
     // Filters that work per cell read a small copy of the whole frame, drawn by the same composite.
     const frameProgram = postScene || pixelScene ? gpu.program(TEXTURE_COMPOSITE_SHADER) : compositeProgram
-    const filters = prepareOutputFilters(gpu, resolved.output, { width, height, seed: resolved.seed }, (target) =>
+    const filters = prepareOutputFilters(gpu, resolved.output, { width, height, seed: resolved.seed, aspect: ctx.aspect }, (target) =>
       gpu.draw(frameProgram, target, {
         uniforms: { ...engine(target.width, target.height, [0, 0], 1 / Math.min(target.width, target.height), 1), ...scatter.uniforms, ...lensUniforms },
         textures: sceneTextures,

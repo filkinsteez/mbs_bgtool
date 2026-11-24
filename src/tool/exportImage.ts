@@ -1,4 +1,4 @@
-import { exportPreset, type ControlValues, type ExportAspect, type PackId, type Scene } from '@/light'
+import { exportPreset, type ControlValues, type ExportFormat, type PackId, type Scene } from '@/light'
 import { clampDrag } from './controls'
 
 export interface ExportOutcome {
@@ -47,10 +47,10 @@ function download(blob: Blob, fileName: string): void {
 }
 
 /**
- * Renders the scene at the format's 4K preset size at 2x and downloads it; retries at 1x if 2x fails. Given the
- * controls, the file name carries their values.
+ * Renders the scene at the format's size (4K for a ratio, the screen's pixels for a device) at 2x and downloads it;
+ * retries at 1x if 2x fails. The file name names the format (`16x9`, `iphone-16`) and, given the controls, their values.
  */
-export async function exportImage(scene: Scene, pack: PackId, aspect: ExportAspect, controls?: NamedControls): Promise<ExportOutcome> {
+export async function exportImage(scene: Scene, pack: PackId, aspect: ExportFormat, controls?: NamedControls): Promise<ExportOutcome> {
   const preset = { id: 'tool', pack, scene }
   const nameParts = controls ? controlNameParts(controls) : []
   const start = performance.now()

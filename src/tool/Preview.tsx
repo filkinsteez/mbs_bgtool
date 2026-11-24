@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react'
-import { EXPORT_SIZES, type ExportAspect, type Scene } from '@/light'
+import { FORMAT_SIZES, type ExportFormat, type Scene } from '@/light'
 import { clampPoint, type LightDrag, type LightPoint } from './controls'
 import { thumbnailOf } from './history/thumbnail'
 import { PreviewLoop } from './previewLoop'
@@ -37,8 +37,8 @@ interface Press {
   dragging: boolean
 }
 
-function fitBox(stage: Box, aspect: ExportAspect): Box {
-  const frame = EXPORT_SIZES[aspect]
+function fitBox(stage: Box, aspect: ExportFormat): Box {
+  const frame = FORMAT_SIZES[aspect]
   const scale = Math.min(
     Math.max(1, stage.width - 2 * STAGE_PADDING) / frame.width,
     Math.max(1, stage.height - 2 * STAGE_PADDING) / frame.height,
@@ -94,7 +94,8 @@ const sizeKey = (size: Box) => `${size.width}x${size.height}`
 
 export interface PreviewProps {
   scene: Scene
-  aspect: ExportAspect
+  /** The format, which sets the frame's shape. */
+  aspect: ExportFormat
   paused: boolean
   /** Shows the drag hint on the image once the image is drawn. */
   hint: boolean
@@ -133,6 +134,8 @@ export function Preview({ scene, aspect, paused, hint, onDrag, onDragging, onRes
   const [shownBox, setShownBox] = useState<Box | null>(null)
   const [cantDraw, setCantDraw] = useState(false)
   const showDragHint = hint && !cantDraw && shownBox !== null
+  // Every frame is drawn with the format's own aspect, which a box in whole pixels only comes near.
+  const formatAspect = FORMAT_SIZES[aspect].width / FORMAT_SIZES[aspect].height
   const target = stage ? fitBox(stage, aspect) : null
   const boxWidth = target?.width ?? 0
   const boxHeight = target?.height ?? 0
@@ -228,8 +231,8 @@ export function Preview({ scene, aspect, paused, hint, onDrag, onDragging, onRes
     const size = renderSize(next, window.devicePixelRatio || 1)
     nextBoxRef.current = { box: next, key: sizeKey(size) }
     drawnSceneRef.current = scene
-    loop.update(scene, size.width, size.height)
-  }, [scene, boxWidth, boxHeight, generation])
+    loop.update(scene, size.width, size.height, formatAspect)
+  }, [scene, boxWidth, boxHeight, formatAspect, generation])
 
   useEffect(() => {
     loopRef.current?.setPaused(paused)

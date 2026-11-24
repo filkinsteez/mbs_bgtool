@@ -5,13 +5,20 @@ export { RECIPES, RECIPE_LIST, getRecipe, recipesForMood } from './recipes'
 export { LightRenderer, type RenderOptions, type RenderStats } from './engine/renderer'
 export { LightEngineError } from './engine/gl'
 export {
+  DEVICE_FRAMES,
   EXPORT_ASPECTS,
+  EXPORT_FORMATS,
   EXPORT_SIZES,
+  FORMAT_SIZES,
   encodeJpeg,
   exportFileName,
   exportPreset,
   exportSize,
+  isDeviceFormat,
+  type DeviceFormat,
+  type DeviceFrame,
   type ExportAspect,
+  type ExportFormat,
   type ExportRequest,
   type ExportResult,
 } from './engine/export'
