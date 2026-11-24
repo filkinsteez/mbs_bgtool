@@ -62,6 +62,13 @@ On 2026-11-12 at 8:26 AM the owner asked for no major changes ("i think we're ge
   - Cranking a slider must make the picture mostly that color, near its
     swatch, in every mood.
   - Black backgrounds don't count toward any color.
+  - One color at 100% was tried and taken out on 2026-11-17. At 2:27 PM
+    the owner asked for it ("can we make it so you can 100% of one color
+    and its just mixed with white?"), and at 4:39 PM, after seeing every
+    color at 100% with white, he said "mmm i dont like just one color".
+    The sliders stop one step short of 100% again, as before. The change
+    is saved in `artifacts/color-100/one-color.patch` (with
+    `stageSolo.ts` beside it) in case he asks for it again.
   - On 2026-11-11 at 6:03 PM the owner had the color stage rolled back to
     the 2:36 PM version (28a0ebd2), which he had said "feels more inline
     with expected behavior". The later versions broke the gradient
@@ -175,7 +182,20 @@ On 2026-11-12 at 8:26 AM the owner asked for no major changes ("i think we're ge
     pack" (the pack strips, then the color control once built), "2. Pick
     a mood" (the moods, then Shuffle), "3. Apply a filter" (None, Grain,
     Pixel and the filter's Strength), "4. Export" (Format and the Export
-    button).
+    button, and since 2026-11-17 Share under it). Each step's title folds
+    the step open and shut, with a chevron at its right; every step is
+    open when the page loads (owner, 2026-11-17 2:43 PM: "can we make the
+    numbered sections expandable/collapsable/?"). The step titles are
+    14px (owner, 2026-11-18: "make the numbered list text slightly
+    larger"). Step 4 is one card like the other steps, with Format, Export
+    and Share inside it as rows of the same height as Shuffle and the color
+    sliders, inset and spaced like them (owner, 2026-11-18 2:23 PM: "these
+    dont seem like they are one unit and the height o fthe dropdown is
+    larger. make consistent with the rest of the components"). It replaces
+    the 2:15 PM version, three rows 4px apart with no card (owner, 2:15 PM:
+    "can you lessen the paddign here so these feel like one module"). His
+    2:23 PM screenshot still showed the layout from before 2:15 PM. The
+    open Format list is as wide as the card.
   - Color is the biggest piece of feedback: the pack's colors aren't
     represented properly. Build a simple control that changes the
     percentage of each pack color in the picture (a Meta Blue on/off
@@ -206,19 +226,65 @@ On 2026-11-12 at 8:26 AM the owner asked for no major changes ("i think we're ge
   sizes on one grid: bigger where the picture is flat, smaller where the
   light or bands change. The design sets the sizes, so the color sliders
   never move them (owner, 2026-11-12, approving it side by side: "i like
-  the right column"). Grain's slider still reads "Strength". Mood is picked from
-  small pictures, Filter from icons and Format from shapes, each with its
-  name, not dropdowns; the pictures are fixed renders from
-  `scripts/light/panel-pictures.mjs`, not live, in the Atmospheric pack
+  the right column"). A toggle named "Asymmetrical" under Density, shown
+  only with Pixel, turns the three sizes on and off (owner, 2026-11-17
+  11:43 AM: "also can we add in a button/toggle for asymmetrical pixel?",
+  and 11:45 AM: "toggle on shows what we have currently, toggle off its
+  just 1:1 square"). On, the default, draws the three sizes as before. Off
+  makes every block one square cell of Density's size, on an even grid with
+  lines on every cell edge, and the colors and lines follow the same rules.
+  The link has `asymmetrical=off` only while it is off, so old links and
+  history rows open with it on. Grain's slider still reads "Strength". Mood is picked from
+  small pictures and Filter from icons, each with its name, not dropdowns
+  (Format is a dropdown since 2026-11-17, below); the pictures are fixed
+  renders from `scripts/light/panel-pictures.mjs`, not live, in the Atmospheric pack
   whichever pack is picked. No free color pickers: Colors shows each pack
   as a strip of its exact hexes, and you pick a pack. The strips sit in two
   rows of two (owner, 2026-11-13: "can you make the color palettes 2 rows
   of 2?"). Every option's name
-  shows under its picture or strip, and inside the Filter and Format
-  options. The Filter and Format options are rectangles of equal width
-  that fill their row (owner, 2026-11-11: "can we have these be
-  rectangular so they split the space more evenly?"). A card's title has
-  no value beside it, since the ring marks the pick.
+  shows under its picture or strip, and inside the Filter options. The
+  Filter options are rectangles of equal width that fill their row
+  (owner, 2026-11-11: "can we have these be rectangular so they split the
+  space more evenly?"). A card's title has no value beside it, since the
+  ring marks the pick.
+- Format is a dropdown (owner, 2026-11-17 11:38 AM: "for sizes, lets
+  change to a drop down and add in device sizes like iphone, android,
+  ipad, etc etc. reference figma device size presets"). It lists 16:9,
+  9:16, 1:1 and 4:5, exported at 4K as before, then Figma's device frames
+  under Phone, Tablet and Desktop (`DEVICE_FRAMES` in
+  `src/light/engine/frame.ts`). Each device option shows its name and
+  Figma's frame size ("iPhone 16 · 393 × 852"); the closed dropdown shows
+  the chosen format's name. Since 2026-11-17 12:16 PM (owner: "for
+  resolutions can we add lil icons on the left that are a preview of each
+  aspect ratio. also give the 16:9, 9:16, etc section a header") every
+  option has a small rectangle on its left in its format's aspect ratio,
+  the closed dropdown shows the chosen format's rectangle too, and the four
+  ratios sit under the header "Aspect ratio". The dropdown is our own list
+  (`src/tool/FormatPicker.tsx`), not a native select, since a native
+  select can't show the icons. A device exports at the screen's pixels:
+  phones at 3x Figma's frame, tablets and laptops at 2x, and the TV at 3x,
+  which is 4K (3840 x 2160). The link names a device by its id
+  (`format=iphone-16`), and old links (`format=16x9`) open as before. The
+  preview draws every format with the format's exact aspect, so it
+  matches the export also for devices whose shapes differ by under 1 %.
+- Share sits under Export (owner, 2026-11-17 11:38 AM: "below export put
+  another button called "Share" which just copies the link with a little
+  toast that says link copied"). It copies the link to what the panel
+  shows: the page's address with the state's query, built when Share is
+  pressed. A toast then reads "Link copied" for about 2 seconds, or
+  "Couldn't copy link" when the browser blocks copying.
+- Contour shape presets were tried and rolled back on 2026-11-17. At
+  11:38 AM the owner asked for presets in place of Shuffle ("can we add
+  presets for contour shapes rather than shuffle?", concept file "Shape
+  crops WIP", node 111:445), and ten tiles of Figma crops of the Meta
+  symbol and the rounded square went in. At 2:42 PM he found them boxy
+  and blurred next to the seed layouts ("this looks very rectangular, and
+  the shapes all look blurry compared to what we had"), and at 2:47 PM he
+  asked for the old Contour back ("mmmm i dont like this, can we roll
+  back to what we had for contour?"). Contour has Shuffle and the seed
+  layouts again. He still likes choosing the shape ("i like the idea of
+  selection but what we have isn't working right now"), so a new way to
+  pick Contour's shape needs his OK before it goes in.
 - Brief: `docs/light/BRIEF.md`. Roadmap: `docs/light/ROADMAP.md`.
 
 ## This is a RASTER tool (owner directive)
@@ -257,3 +323,7 @@ On 2026-11-12 at 8:26 AM the owner asked for no major changes ("i think we're ge
   the URL (`COLORS_DOC_URL` in `src/tool/panelPickers.tsx`), the tooltip
   only reads "documentation link here" (owner: "just a "documentation link
   here""), and that text becomes the link once the URL is set.
+- A fourth exception, asked for by the owner on 2026-11-17: the toast
+  after Share, which reads "Link copied" for about 2 seconds (owner: "a
+  little toast that says link copied"), or "Couldn't copy link" when the
+  browser blocks copying (`src/tool/Tool.tsx`, `src/tool/share.ts`).
