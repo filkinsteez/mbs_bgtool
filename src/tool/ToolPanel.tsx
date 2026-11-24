@@ -1,5 +1,8 @@
 import { ControlRenderer, DialStore, type ControlMeta, type DialValue } from 'dialkit'
-import { Fragment, useCallback, useId, useSyncExternalStore, type ReactNode } from 'react'
+import { Fragment, useCallback, useId, useState, useSyncExternalStore, type ReactNode } from 'react'
+
+/** DialKit's chevron, as its selects draw it. */
+const CHEVRON = 'M6 9.5L12 15.5L18 9.5'
 
 const NO_VALUES: Record<string, DialValue> = {}
 const subscribePanels = (onChange: () => void) => DialStore.subscribeGlobal(onChange)
@@ -85,6 +88,32 @@ export function panelSteps(blocks: readonly PanelBlock[], slots: readonly Omit<P
   return steps
 }
 
+/**
+ * A numbered step's title: a button that folds the step open and shut (owner, 2026-11-17: "can we make the numbered
+ * sections expandable/collapsable/?"), with DialKit's chevron at its right, turned to the side while the step is shut.
+ */
+export function StepTitle({ id, bodyId, title, open, onToggle }: { id: string; bodyId: string; title: string; open: boolean; onToggle: () => void }) {
+  return (
+    <h2 id={id} className="tool-step-title">
+      <button type="button" className="tool-step-toggle" aria-expanded={open} aria-controls={bodyId} onClick={onToggle}>
+        {title}
+        <svg
+          className="tool-step-chevron"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d={CHEVRON} />
+        </svg>
+      </button>
+    </h2>
+  )
+}
+
 /** The controls with the label `labels` gives for their path, where it gives one, instead of DialKit's label from the key. */
 export function withLabels(controls: readonly ControlMeta[], labels: Readonly<Record<string, string>>): ControlMeta[] {
   return controls.map((control) => (Object.hasOwn(labels, control.path) ? { ...control, label: labels[control.path] } : control))
@@ -110,6 +139,14 @@ export function ToolPanel({
   const subscribeValues = useCallback((onChange: () => void) => DialStore.subscribe(panelId, onChange), [panelId])
   const values = useSyncExternalStore(subscribeValues, () => DialStore.getValues(panelId), () => NO_VALUES)
   const titleId = useId()
+  // The steps folded shut, by step key. Every step is open when the page loads.
+  const [shut, setShut] = useState<ReadonlySet<string>>(() => new Set())
+  const toggleStep = (key: string) =>
+    setShut((before) => {
+      const next = new Set(before)
+      if (!next.delete(key)) next.add(key)
+      return next
+    })
   if (!panel) return null
   const controls = (from: number, to: number) => withLabels(panel.controls.slice(from, to), labels)
   const renderPart = (part: PanelPart) =>
@@ -142,11 +179,23 @@ export function ToolPanel({
                     step.title === undefined ? (
                       <Fragment key={step.key}>{step.blocks.map(renderBlock)}</Fragment>
                     ) : (
-                      <div key={step.key} className="tool-step" role="group" aria-labelledby={`${titleId}-${step.key}`}>
-                        <h2 id={`${titleId}-${step.key}`} className="tool-step-title">
-                          {step.title}
-                        </h2>
-                        {step.blocks.map(renderBlock)}
+                      <div
+                        key={step.key}
+                        className="tool-step"
+                        role="group"
+                        aria-labelledby={`${titleId}-${step.key}`}
+                        data-shut={shut.has(step.key) || undefined}
+                      >
+                        <StepTitle
+                          id={`${titleId}-${step.key}`}
+                          bodyId={`${titleId}-${step.key}-body`}
+                          title={step.title}
+                          open={!shut.has(step.key)}
+                          onToggle={() => toggleStep(step.key)}
+                        />
+                        <div id={`${titleId}-${step.key}-body`} className="tool-step-body" hidden={shut.has(step.key)}>
+                          {step.blocks.map(renderBlock)}
+                        </div>
                       </div>
                     ),
                   )}

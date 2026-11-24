@@ -100,15 +100,68 @@
   margin: 0 0 calc(var(--title-gap) - var(--block-gap));
   padding-inline: 12px;
   color: var(--dial-text-primary);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
-  line-height: 16px;
+  line-height: 18px;
+}
+
+/* The title is a button that folds its step open and shut, with DialKit's chevron at the right. */
+.tool-step-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+
+.tool-step-toggle:focus-visible {
+  outline-color: var(--dial-text-primary);
+}
+
+.tool-step-chevron {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  opacity: 0.6;
+  transition: transform 0.15s, opacity 0.15s;
+}
+
+.tool-step-toggle:hover .tool-step-chevron {
+  opacity: 1;
+}
+
+.tool-step-toggle[aria-expanded='false'] .tool-step-chevron {
+  transform: rotate(-90deg);
+}
+
+.tool-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--block-gap);
+}
+
+.tool-step-body[hidden] {
+  display: none;
+}
+
+.tool-step[data-shut] .tool-step-title {
+  margin-bottom: 0;
 }
 
 /*
  * A card of the panel (ToolPanel's `card`): one surface with its sliders and buttons inside, inset like the tiles. Its
- * bottom padding is the space under its lowest part (the names, Shuffle, a slider, or a chosen button's ring), the same
- * as under the ring in the Format card: 4px less than the tiles' bottom padding.
+ * bottom padding is the space under its lowest part (the names, Shuffle, Share, a slider, or a chosen button's ring): 4px
+ * less than the tiles' bottom padding, the space a chosen button's ring leaves under it in tiles of their own.
  */
 .tool-card {
   --card-gap: 8px;
@@ -144,6 +197,12 @@
   flex: none;
   height: var(--dial-row-height);
   padding-block: 0;
+}
+
+/* A card that starts with a row instead of tiles (step 4: Format, then Export and Share) has as much space above its
+   first row as under its last. */
+.tool-card > :first-child:not(.tool-tiles) {
+  margin-top: var(--card-bottom);
 }
 
 .tool-tiles {
@@ -330,8 +389,8 @@
   flex: 1;
 }
 
-/* Filter and Format: buttons of equal width that fill the row (owner, 2026-11-11: "rectangular so they split the space
-   more evenly"), wider than tall, with the filter's mark or the format's frame above the name. */
+/* Filter: buttons of equal width that fill the row (owner, 2026-11-11: "rectangular so they split the space more
+   evenly"), wider than tall, with the filter's mark above the name. */
 .tool-tiles[data-kind='icon'] .tool-tile-face {
   height: calc(var(--tile-height) + 12px);
 }
@@ -381,7 +440,7 @@
   stroke: currentColor;
 }
 
-/* The same 1.5px line as the format shapes at every tile size. */
+/* The same 1.5px line at every tile size. */
 .tool-tile-icon > * {
   stroke-width: 1.5px;
   vector-effect: non-scaling-stroke;
@@ -390,15 +449,6 @@
 .tool-tile-icon > .tool-tile-fill {
   fill: currentColor;
   stroke: none;
-}
-
-.tool-tile-shape {
-  border: 1.5px solid currentColor;
-  border-radius: 2px;
-}
-
-.tool-tile[aria-checked='true'] .tool-tile-shape {
-  background: rgba(255, 255, 255, 0.16);
 }
 
 .tool-tile-label {
@@ -450,6 +500,206 @@
 /* A color at 0% is off. */
 .tool-mix-row[data-off] :is(.dialkit-slider-label, .dialkit-slider-value) {
   color: var(--dial-text-tertiary);
+}
+
+/*
+ * The Format dropdown (FormatPicker), drawn as DialKit's select row: the name on the left, the chosen format's icon,
+ * name and DialKit's chevron on the right. Its list is DialKit's dropdown (--dial-glass-bg, --dial-border,
+ * --dial-radius and --dial-shadow-dropdown), 4px from the row and as wide as it, or as its card; FormatPicker sets its
+ * height to the room the panel has, and it scrolls past that.
+ */
+.tool-format {
+  --format-shape-box: 14px;
+  position: relative;
+}
+
+.tool-format-button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: var(--dial-row-height);
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--dial-radius);
+  background: var(--dial-surface);
+  color: var(--dial-text-label);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  transition: background 0.15s;
+}
+
+.tool-format-button:hover {
+  background: var(--dial-surface-hover);
+}
+
+.tool-format-button[aria-expanded='true'] {
+  background: var(--dial-surface-active);
+}
+
+.tool-format-button:focus-visible {
+  outline-color: var(--text);
+}
+
+.tool-format-value {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  color: var(--dial-text-primary);
+}
+
+.tool-format-value > .dialkit-select-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A format's icon: its aspect ratio as a rectangle in the text's color, centred in a 14px box. */
+.tool-format-icon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--format-shape-box);
+  height: var(--format-shape-box);
+}
+
+.tool-format-shape {
+  box-sizing: border-box;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+}
+
+.tool-format-list {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  box-sizing: border-box;
+  padding: 4px;
+  border: 1px solid var(--dial-border);
+  border-radius: var(--dial-radius);
+  background: var(--dial-glass-bg);
+  box-shadow: var(--dial-shadow-dropdown);
+  backdrop-filter: blur(24px);
+  color: var(--dial-text-label);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  outline: none;
+}
+
+.tool-format-list[data-above] {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+/* In a card the row is inset 12px, and the list spans the card's width to give the longest device names room. */
+.tool-card > .tool-format .tool-format-list {
+  right: -12px;
+  left: -12px;
+}
+
+.tool-format-group {
+  padding: 6px 10px 2px;
+  color: var(--dial-text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.tool-format-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tool-format-option[data-active] {
+  background: var(--dial-surface-hover);
+}
+
+.tool-format-option[aria-selected='true'] {
+  color: var(--dial-text-primary);
+}
+
+.tool-format-option-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-format-check {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+/*
+ * The toast after Share (owner, 2026-11-17), just above the bottom of the preview. It sits in a box with no height
+ * between the preview and the history, so it takes no room from either. It is drawn outside DialKit's root, so
+ * DialKit's dropdown look is written out, as for the info tip.
+ */
+.tool-toast {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  height: 0;
+}
+
+.tool-toast-text {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  padding: 7px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: #212121;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  color: rgba(255, 255, 255, 0.95);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 17px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(-50%);
+  transition: opacity 0.2s ease;
+}
+
+.tool-toast-text[data-shown] {
+  opacity: 1;
+  animation: tool-toast-in 0.2s ease-out;
+}
+
+@keyframes tool-toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-toast-text,
+  .tool-toast-text[data-shown] {
+    animation: none;
+    transition: none;
+  }
 }
 
 /* The full-size panel is about 940px tall with a filter on and a five-color pack's sliders. */
@@ -523,7 +773,7 @@
     --tile-height: 20px;
   }
 
-  /* Too short for the taller buttons: Filter's and Format's are one row high, with the mark or frame beside the name. */
+  /* Too short for the taller buttons: Filter's are one row high, with the mark beside the name. */
   .tool-tiles[data-kind='icon'] .tool-tile-face {
     height: var(--tile-height);
   }
@@ -554,8 +804,8 @@
   }
 
   .tool-step-title {
-    font-size: 12px;
-    line-height: 14px;
+    font-size: 13px;
+    line-height: 16px;
   }
 
   .tool-panel .dialkit-button {

@@ -1,8 +1,10 @@
 import { DialStore } from 'dialkit'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { buildDialConfig, panelLabels } from './dialConfig'
 import { DEFAULT_STATE } from './state'
-import { panelLayout, panelSteps, withLabels, type PanelBlock, type PanelStep } from './ToolPanel'
+import { panelLayout, panelSteps, StepTitle, withLabels, type PanelBlock, type PanelStep } from './ToolPanel'
 
 /** The tool's slots in panel order, as `Tool` lays them out. */
 const SLOTS = [
@@ -11,7 +13,8 @@ const SLOTS = [
   { paths: ['mood'], replace: true, card: 'mood', step: '2. Pick a mood' },
   { paths: ['seed'], replace: true, card: 'mood' },
   { paths: ['filter'], replace: true, card: 'filter', step: '3. Apply a filter' },
-  { paths: ['format'], replace: true, step: '4. Export' },
+  { paths: ['format'], replace: true, card: 'export', step: '4. Export' },
+  { paths: ['export'], card: 'export' },
 ]
 
 /** What a block shows: a slot as its first path, a run of DialKit controls as their paths. */
@@ -39,8 +42,7 @@ describe('tool panel layout', () => {
       { card: 'colors', shows: ['colors', 'mix'] },
       { card: 'mood', shows: ['mood', 'seed'] },
       { card: 'filter', shows: ['filter'] },
-      { card: undefined, shows: ['format'] },
-      { card: undefined, shows: ['export'] },
+      { card: 'export', shows: ['format', 'export'] },
     ])
     const off = panelSteps(offBlocks, SLOTS)
     expect(stepShows(paths(), off)).toEqual([
@@ -54,6 +56,12 @@ describe('tool panel layout', () => {
     const grain = panelSteps(panelLayout(paths(), SLOTS), SLOTS)
     expect(stepShows(paths(), grain)[2]).toEqual({ title: '3. Apply a filter', shows: ['filter', 'density'] })
     expect(tree(grain)).toEqual(tree(off))
+
+    // Pixel's Asymmetrical toggle sits in the Filter card under Density.
+    DialStore.updatePanel(id, 'Check', buildDialConfig(DEFAULT_STATE, 'Export', 'pixel'))
+    const pixelBlocks = panelLayout(paths(), SLOTS)
+    expect(shows(paths(), pixelBlocks)[2]).toEqual({ card: 'filter', shows: ['filter', 'density', 'asymmetrical'] })
+    expect(tree(panelSteps(pixelBlocks, SLOTS))).toEqual(tree(off))
     DialStore.unregisterPanel(id)
   })
 
@@ -97,5 +105,15 @@ describe('tool panel layout', () => {
       ])
       DialStore.unregisterPanel(id)
     }
+  })
+})
+
+describe('numbered step titles', () => {
+  const title = (open: boolean) =>
+    renderToStaticMarkup(createElement(StepTitle, { id: 'step', bodyId: 'step-body', title: '2. Pick a mood', open, onToggle: () => {} }))
+
+  it('are buttons that fold their step open and shut, saying whether it is open and which part they fold', () => {
+    expect(title(true)).toMatch(/^<h2 id="step" class="tool-step-title"><button type="button" class="tool-step-toggle" aria-expanded="true" aria-controls="step-body">2\. Pick a mood<svg/)
+    expect(title(false)).toContain('aria-expanded="false"')
   })
 })

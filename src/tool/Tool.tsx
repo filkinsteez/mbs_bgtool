@@ -5,7 +5,7 @@ import '@/styles/dial-panel.css'
 import '@/styles/tool.css'
 import { DialStore, useDialKitController } from 'dialkit'
 import { useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { EXPORT_SIZES, getPack, type ExportAspect, type PackId } from '@/light'
+import { FORMAT_SIZES, getPack, type ExportFormat, type PackId } from '@/light'
 import { mixForPack } from '@/light/color/mix'
 import { COLOR_DESIGN_PACK, withColorMix } from '@/light/color/stage'
 import { buildScene, clampDrag, keepsLine, toolControls, type LightDrag } from './controls'
@@ -17,8 +17,10 @@ import { HistoryStrip } from './history/HistoryStrip'
 import { applyPanelValues, panelValues } from './history/panelValues'
 import { useHistory } from './history/useHistory'
 import { MixControl } from './MixControl'
-import { FilterPicker, FormatPicker, MoodPicker, PackPicker } from './panelPickers'
+import { FormatPicker } from './FormatPicker'
+import { FilterPicker, MoodPicker, PackPicker } from './panelPickers'
 import { Preview } from './Preview'
+import { copyText, LINK_COPIED, LINK_NOT_COPIED, shareLink } from './share'
 import { customMix, isMoodId, parseQuery, randomSeed, sceneLook, toQuery, type SearchParams } from './state'
 import { ToolPanel } from './ToolPanel'
 import { usePictureMix } from './usePictureMix'
@@ -27,8 +29,8 @@ const EXPORT_LABEL = 'Export'
 const EXPORTING_LABEL = 'Exporting…'
 const EXPORT_FAILED_LABEL = 'Export failed'
 /**
- * The tiles take the place of DialKit's selects, Shuffle the place of the Seed slider, and the color percentages the
- * place of the mix's text field.
+ * The tiles and the Format dropdown take the place of DialKit's selects, Shuffle the place of the Seed slider, and the
+ * color percentages the place of the mix's text field.
  */
 const MOOD_PATHS = ['mood']
 const PACK_PATHS = [PACK_DIAL_KEY]
@@ -36,7 +38,12 @@ const MIX_PATHS = [MIX_DIAL_KEY]
 const SEED_PATHS = [SEED_DIAL_KEY]
 const FILTER_PATHS = [FILTER_DIAL_KEY]
 const FORMAT_PATHS = ['format']
+/** Share goes under Export, in the same step. */
+const EXPORT_PATHS = ['export']
 const URL_DELAY_MS = 200
+/** How long the toast after Share shows, and how long it takes to fade out after (tool.css). */
+const TOAST_MS = 2000
+const TOAST_FADE_MS = 200
 
 type ExportStatus = 'idle' | 'busy' | 'failed'
 
@@ -48,13 +55,13 @@ const readNoMood = () => undefined
 const nextPaint = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
 
 /** Width / height of the format's frame; recipes with `compose` lay out the scene for it. */
-const frameAspect = (format: ExportAspect) => EXPORT_SIZES[format].width / EXPORT_SIZES[format].height
+const frameAspect = (format: ExportFormat) => FORMAT_SIZES[format].width / FORMAT_SIZES[format].height
 
 const isTextField = (target: EventTarget | null) =>
-  target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select') !== null)
+  target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea') !== null)
 
-/** The panel's sliders, tiles and buttons. */
-const PANEL_CONTROL = '.dialkit-slider-wrapper, button, [role="button"]'
+/** The panel's sliders, tiles, buttons and the Format dropdown's list. */
+const PANEL_CONTROL = '.dialkit-slider-wrapper, button, [role="button"], [role="listbox"]'
 
 const inControl = (target: EventTarget | null) => target instanceof Element && target.closest(PANEL_CONTROL) !== null
 
@@ -73,6 +80,10 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   // The drag hint shows on every page load until the first drag or the first use of a control in the panel
   // (owner, 2026-11-06 and 2026-11-09).
   const [dragHint, setDragHint] = useState(true)
+  // The toast after Share (owner, 2026-11-17): its text, a new id for each press so a screen reader says it again,
+  // and whether it shows or is fading out.
+  const [toast, setToast] = useState<{ text: string; id: number; shown: boolean } | null>(null)
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const exportingRef = useRef(false)
   const panelRef = useRef<HTMLElement>(null)
   // The line and the mood as this component last set or saw them. The panel store calls back before React renders, so
@@ -87,7 +98,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
   const { setValue } = dial
   const state = { ...readToolState(dial.values, mood), drag }
   const query = toQuery(state)
-  const { look, pack, seed, format, filter, strength, mix } = state
+  const { look, pack, seed, format, filter, strength, asymmetrical, mix } = state
   const drawn = sceneLook(state)
   // Every pack draws one design, and the color stage gives it the pack's colors and the mix (always on, owner 2026-11-11).
   const pictureMix = usePictureMix(mixPanelValue(mix))
@@ -97,8 +108,8 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     const design = getPack(COLOR_DESIGN_PACK)
     const controls = toolControls(drawn, design, seed, aspect, drag)
     const built = buildScene(drawn, design, seed, controls, aspect)
-    return withFilter(withColorMix(built, getPack(pack), { shares: shares.split(',').map(Number) }), { filter, strength })
-  }, [drawn, pack, seed, drag, format, filter, strength, shares])
+    return withFilter(withColorMix(built, getPack(pack), { shares: shares.split(',').map(Number) }), { filter, strength, asymmetrical })
+  }, [drawn, pack, seed, drag, format, filter, strength, asymmetrical, shares])
 
   const labels = useMemo(() => panelLabels(chosenFilter), [chosenFilter])
   const access = useMemo(
@@ -228,6 +239,28 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
     }
   }
 
+  /**
+   * Copies the link to what the panel shows, built from the state now rather than read from the address bar, which
+   * the tool updates a moment after a change. A toast then says whether it copied, for about 2 seconds.
+   */
+  async function share() {
+    const copied = await copyText(shareLink(window.location, toQuery(state)))
+    clearTimeout(toastTimerRef.current)
+    setToast((last) => ({ text: copied ? LINK_COPIED : LINK_NOT_COPIED, id: (last?.id ?? 0) + 1, shown: true }))
+    toastTimerRef.current = setTimeout(() => {
+      setToast((last) => last && { ...last, shown: false })
+      toastTimerRef.current = setTimeout(() => setToast(null), TOAST_FADE_MS)
+    }, TOAST_MS)
+  }
+
+  useEffect(() => () => clearTimeout(toastTimerRef.current), [])
+
+  const shareButton = (
+    <button type="button" className="dialkit-button" onClick={() => void share()}>
+      Share
+    </button>
+  )
+
   const shuffleButton = (
     <button type="button" className="dialkit-button" onClick={shuffle}>
       Shuffle
@@ -247,6 +280,13 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
           onReset={resetLight}
           onSettle={history.onSettle}
         />
+        <div className="tool-toast" role="status">
+          {toast && (
+            <span key={toast.id} className="tool-toast-text" data-shown={toast.shown || undefined}>
+              {toast.text}
+            </span>
+          )}
+        </div>
         <HistoryStrip history={history.history} onRestore={history.restore} onRemove={history.remove} />
       </div>
       <aside
@@ -263,7 +303,7 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
         }}
         onKeyDown={(event) => {
           // A key that changes a control has its default prevented by now, by usePanelAccess's handler on this
-          // element (sliders) or by TilePicker's own (tiles).
+          // element (sliders) or by TilePicker's and FormatPicker's own (tiles, the Format list).
           if (event.defaultPrevented && inControl(event.target)) setDragHint(false)
         }}
       >
@@ -300,7 +340,14 @@ export function Tool({ searchParams }: { searchParams: SearchParams }) {
               card: 'filter',
               step: '3. Apply a filter',
             },
-            { paths: FORMAT_PATHS, node: <FormatPicker value={format} onChange={(next) => setValue('format', next)} />, replace: true, step: '4. Export' },
+            {
+              paths: FORMAT_PATHS,
+              node: <FormatPicker value={format} onChange={(next) => setValue('format', next)} />,
+              replace: true,
+              card: 'export',
+              step: '4. Export',
+            },
+            { paths: EXPORT_PATHS, node: shareButton, card: 'export' },
           ]}
           labels={labels}
         />
